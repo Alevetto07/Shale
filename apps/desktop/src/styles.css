@@ -113,6 +113,9 @@ button.primary, button.selected { color: var(--ink); }
   margin: 0 1.4rem 0.4rem;
   color: var(--muted);
   font-size: 13px;
+  white-space: pre-wrap;
+  max-height: 9rem;
+  overflow: auto;
 }
 .banner.error { color: var(--ink); }
 

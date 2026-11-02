@@ -457,6 +457,22 @@ mod tests {
         assert!(ball.report.triangles > 40);
         assert!(ball.report.max_deviation_mm.unwrap() <= 0.15);
         assert!(ball.report.max_turning_deg.unwrap() <= 16.0);
+
+        let started = std::time::Instant::now();
+        let dense = import_step(
+            step_of_shell(&sphere()).as_bytes(),
+            &TessellationTolerance::new(0.01, 12.0),
+        )
+        .expect("dense sphere");
+        eprintln!(
+            "dense sphere chord 0.01 mm: {} triangles, deviation {:.4} mm, turn {:.2} deg, {} ms",
+            dense.report.triangles,
+            dense.report.max_deviation_mm.unwrap_or(0.0),
+            dense.report.max_turning_deg.unwrap_or(0.0),
+            started.elapsed().as_millis()
+        );
+        assert!(dense.report.triangles > ball.report.triangles);
+        assert!(dense.report.max_deviation_mm.unwrap() <= 0.02);
     }
 
     #[test]

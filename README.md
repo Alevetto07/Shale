@@ -138,7 +138,15 @@ cmake --preset conan-release
 cmake --build --preset conan-release
 ```
 
-`SHALE_CURAENGINE` should be the full path to `CuraEngine.exe`. Shale prepends `SHALE_CURAENGINE_LIB_DIR` to `PATH` on Windows so accompanying DLLs are found.
+`SHALE_CURAENGINE` should be the full path to `CuraEngine.exe`. If it is unset, Shale looks for `CuraEngine.exe` in an `UltiMaker Cura*` folder under Program Files and loads DLLs from that folder. Paths are passed as separate arguments, so a space in `C:\Program Files` does not need extra quotes.
+
+Fetch the printer data from PowerShell (Git for Windows is required):
+
+```powershell
+.\scripts\fetch-resources.ps1
+```
+
+Cura 5.13 does not include a Bambu Lab A1 definition. The only `BambuLab` text in that tree is a g-code flavour name on the base printer. A1 profiles arrived in a later Cura release, so they are not in this pin.
 
 `CuraEngine help` should print the AGPL banner and the `slice` usage before you bother with the window.
 
@@ -158,6 +166,10 @@ cd apps/desktop
 npm install
 npm run build                   # or: npm run tauri dev
 ```
+
+On Windows the same fetch is `scripts\fetch-resources.ps1`. With no `SHALE_CURA_DIR`, Shale also looks next to the executable, in `vendor/` above the working directory, and in an installed UltiMaker Cura 5.x tree. If nothing matches, the window lists every path it tried instead of showing an empty printer menu.
+
+Large STL files are read on a background thread. A binary STL is a straight scan of 50-byte records, and the window only receives a decimated preview (at most 48,000 triangles, as one flat buffer). A banner shows progress and a cancel button. Measured on this machine: 1,000,000 triangles in 0.61 s (48 MB of mesh, resident memory 6 MB to 53 MB) and 5,000,000 triangles in 3.31 s (240 MB of mesh, resident memory 7 MB to 236 MB). A sphere STEP at a 0.01 mm chord (tighter than the default) produced 5,224 triangles in 258 ms, with the surface 0.020 mm from the chords.
 
 `npm run tauri dev` starts Vite and the window. Import `examples/cube.stl` if you want a known-good 20 mm cube.
 

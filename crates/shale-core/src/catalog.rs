@@ -31,37 +31,186 @@ impl ResourcePaths {
         }
     }
 
-    /// Walk upwards from the working directory and the executable looking for
-    /// `vendor/Cura` and `vendor/fdm_materials`, unless the environment points
-    /// somewhere else.
+    /// Find Cura's definitions and the material library.
+    ///
+    /// Order: `SHALE_CURA_DIR` and `SHALE_MATERIALS_DIR`, then `vendor/` next
+    /// to the working directory or the executable, then an installed
+    /// UltiMaker Cura 5.x (`share/cura/resources`, and on Windows the
+    /// `UltiMaker Cura*` folder under Program Files). The error names every
+    /// path that was tried.
     pub fn discover() -> Result<Self, Error> {
+        let mut tried = Vec::new();
         if let (Some(cura), Some(materials)) = (
             env::var_os("SHALE_CURA_DIR"),
             env::var_os("SHALE_MATERIALS_DIR"),
         ) {
-            return Ok(Self {
+            let paths = Self {
                 cura: PathBuf::from(cura),
                 materials: PathBuf::from(materials),
-            });
+            };
+            tried.push(format!(
+                "SHALE_CURA_DIR={} SHALE_MATERIALS_DIR={}",
+                paths.cura.display(),
+                paths.materials.display()
+            ));
+            if paths.has_definitions() {
+                return Ok(paths);
+            }
+        } else if env::var_os("SHALE_CURA_DIR").is_some()
+            || env::var_os("SHALE_MATERIALS_DIR").is_some()
+        {
+            tried.push("SHALE_CURA_DIR and SHALE_MATERIALS_DIR must both be set".to_string());
         }
-        let mut candidates = Vec::new();
-        push_ancestors(&mut candidates, env::current_dir().ok());
+
+        let mut roots = Vec::new();
+        push_ancestors(&mut roots, env::current_dir().ok());
         push_ancestors(
-            &mut candidates,
+            &mut roots,
             env::current_exe()
                 .ok()
                 .and_then(|path| path.parent().map(Path::to_path_buf)),
         );
-        for vendor in candidates {
+        for vendor in roots {
             let cura = vendor.join("Cura");
             let materials = vendor.join("fdm_materials");
-            if cura.join("resources").join("definitions").is_dir() && materials.is_dir() {
-                return Ok(Self { cura, materials });
+            tried.push(format!(
+                "{} (materials {})",
+                cura.display(),
+                materials.display()
+            ));
+            let paths = Self { cura, materials };
+            if paths.has_definitions() {
+                return Ok(paths);
             }
         }
-        Err(Error::message(
-            "Cura resources were not found. Run scripts/fetch-resources.sh, or set SHALE_CURA_DIR and SHALE_MATERIALS_DIR.",
-        ))
+
+        for paths in installed_cura_resources() {
+            tried.push(format!(
+                "installed Cura {} (materials {})",
+                paths.cura.display(),
+                paths.materials.display()
+            ));
+            if paths.has_definitions() {
+                return Ok(paths);
+            }
+        }
+
+        Err(Error::message(format!(
+            "Cura printer definitions were not found, so the printer list is empty. Paths tried:\n{}\nOn Windows run scripts/fetch-resources.ps1, or install UltiMaker Cura 5.x. On Linux or macOS run scripts/fetch-resources.sh. Both environment variables can point at an existing tree: SHALE_CURA_DIR and SHALE_MATERIALS_DIR.",
+            if tried.is_empty() {
+                "(none)".to_string()
+            } else {
+                tried.join("\n")
+            }
+        )))
+    }
+
+    fn has_definitions(&self) -> bool {
+        self.resources()
+            .join("definitions")
+            .join("fdmprinter.def.json")
+            .is_file()
+    }
+}
+
+/// UltiMaker Cura 5.x installs its definitions under `share/cura/resources`.
+/// Materials ship in that tree as well; the separate fdm_materials checkout is
+/// only needed for the fetched copy.
+fn installed_cura_resources() -> Vec<ResourcePaths> {
+    let mut found = Vec::new();
+    for root in cura_install_roots() {
+        if !root.is_dir() {
+            continue;
+        }
+        let direct = root.join("share").join("cura");
+        push_cura_tree(&direct, &mut found);
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.to_ascii_lowercase().starts_with("ultimaker cura") {
+                push_cura_tree(&entry.path().join("share").join("cura"), &mut found);
+                push_cura_tree(&entry.path(), &mut found);
+            }
+        }
+    }
+    found
+}
+
+fn cura_install_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for key in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
+        if let Some(value) = env::var_os(key) {
+            roots.push(PathBuf::from(value));
+        }
+    }
+    if let Some(local) = env::var_os("LOCALAPPDATA") {
+        let local = PathBuf::from(local);
+        roots.push(local.join("Programs"));
+    }
+    roots.push(PathBuf::from("/usr/share"));
+    roots.push(PathBuf::from("/usr/local/share"));
+    if let Some(home) = env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        roots.push(home.join(".local").join("share"));
+    }
+    roots
+}
+
+fn push_cura_tree(cura_root: &Path, found: &mut Vec<ResourcePaths>) {
+    let resources = if cura_root.join("resources").join("definitions").is_dir() {
+        cura_root.join("resources")
+    } else if cura_root.join("definitions").is_dir() {
+        cura_root.to_path_buf()
+    } else {
+        return;
+    };
+    let materials = if resources.join("materials").is_dir() {
+        resources.join("materials")
+    } else {
+        cura_root.join("fdm_materials")
+    };
+    // `ResourcePaths::resources` looks for `<cura>/resources` first. Point
+    // `cura` at the parent of the definitions folder when that parent is the
+    // resources directory itself.
+    let cura = if resources.file_name().and_then(|n| n.to_str()) == Some("resources") {
+        resources
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or(resources)
+    } else {
+        resources
+    };
+    found.push(ResourcePaths { cura, materials });
+}
+
+#[cfg(test)]
+mod discover_tests {
+    use super::*;
+
+    #[test]
+    fn an_installed_tree_is_recognised_and_a_miss_names_the_path() {
+        let root = std::env::temp_dir().join(format!("shale-cura-tree-{}", std::process::id()));
+        let cura = root.join("share").join("cura");
+        let definitions = cura.join("resources").join("definitions");
+        fs::create_dir_all(&definitions).unwrap();
+        fs::write(definitions.join("fdmprinter.def.json"), b"{}").unwrap();
+        let mut found = Vec::new();
+        push_cura_tree(&cura, &mut found);
+        assert_eq!(found.len(), 1, "looked at {}", cura.display());
+        assert!(found[0].has_definitions());
+        let _ = fs::remove_dir_all(&root);
+
+        let missing = ResourcePaths::discover();
+        if let Err(err) = missing {
+            let text = err.to_string();
+            assert!(
+                text.contains("Paths tried"),
+                "the empty-list failure must name the paths: {text}"
+            );
+        }
     }
 }
 
@@ -449,15 +598,13 @@ fn load_instances(dir: &Path, into: &mut Vec<InstanceFile>, warnings: &mut Vec<S
 }
 
 fn load_materials(dir: &Path, into: &mut Vec<Material>, warnings: &mut Vec<String>) {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(err) => {
-            warnings.push(format!("materials: {err}"));
-            return;
-        }
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
+    let mut files = Vec::new();
+    collect_files(dir, &mut files);
+    if files.is_empty() {
+        warnings.push(format!("materials: nothing under {}", dir.display()));
+        return;
+    }
+    for path in files {
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
@@ -483,6 +630,9 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
+            if path.file_name().and_then(|name| name.to_str()) == Some(".git") {
+                continue;
+            }
             collect_files(&path, out);
         } else {
             out.push(path);

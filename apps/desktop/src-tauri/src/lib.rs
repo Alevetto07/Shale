@@ -3,11 +3,13 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use shale_core::{
-    compare_support, drop_to_bed, load_mesh_with, overlays, place_on_bed, propose, set_enabled,
+    compare_support, drop_to_bed, load_mesh_reporting, load_mesh_with, overlays, place_on_bed,
+    propose, set_enabled,
     slice, TessellationTolerance,
     Catalog, CustomInstruction, Engine, EngineBackend, ImportReport, MaterialInfo, PlacedModel,
     PrinterInfo,
@@ -28,6 +30,8 @@ struct Inner {
     toolpath: Option<Toolpath>,
     gcode_path: Option<PathBuf>,
     slicing: bool,
+    cancel_import: Arc<AtomicBool>,
+    engine_message: String,
 }
 
 struct LoadedModel {
@@ -47,8 +51,10 @@ struct Status {
     engine_path: String,
     engine_lib_dir: String,
     engine_ok: bool,
+    engine_message: String,
     engine_backend: String,
     printer_count: usize,
+    demo_model: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -129,12 +135,14 @@ fn app_status(state: State<AppState>) -> Result<Status, String> {
             .map(|path| path.display().to_string())
             .unwrap_or_default(),
         engine_ok,
+        engine_message: inner.engine_message.clone(),
         engine_backend: inner.engine.backend.as_str().to_string(),
         printer_count: inner
             .catalog
             .as_ref()
             .map(|c| c.printers().len())
             .unwrap_or(0),
+        demo_model: std::env::var("SHALE_DEMO_MODEL").ok(),
     })
 }
 
@@ -151,7 +159,26 @@ fn set_engine(
     if let Some(backend) = backend {
         inner.engine.backend = EngineBackend::parse(&backend);
     }
-    Ok(inner.engine.available())
+    match inner.engine.cli.probe() {
+        Ok(()) => {
+            inner.engine_message = format!(
+                "CuraEngine answered at {}",
+                inner.engine.cli.program.display()
+            );
+            Ok(true)
+        }
+        Err(err) => {
+            inner.engine_message = err;
+            Ok(false)
+        }
+    }
+}
+
+#[tauri::command]
+fn cancel_import(state: State<AppState>) -> Result<(), String> {
+    let inner = lock(&state)?;
+    inner.cancel_import.store(true, Ordering::Relaxed);
+    Ok(())
 }
 
 #[tauri::command]
@@ -239,8 +266,9 @@ fn printer_bed(
 }
 
 #[tauri::command]
-fn import_model(
-    state: State<AppState>,
+async fn import_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
     path: String,
     printer_id: Option<String>,
     variant_name: Option<String>,
@@ -252,8 +280,30 @@ fn import_model(
         (Some(chordal), Some(angular)) => TessellationTolerance::new(chordal, angular),
         _ => TessellationTolerance::standard(),
     };
-    let imported = load_mesh_with(PathBuf::from(&path).as_path(), &tolerance)
-        .map_err(|err| err.to_string())?;
+    let cancel = {
+        let inner = lock(&state)?;
+        inner.cancel_import.store(false, Ordering::Relaxed);
+        inner.cancel_import.clone()
+    };
+    let file = PathBuf::from(path);
+    let load_path = file.clone();
+    let app_progress = app.clone();
+    let imported = tauri::async_runtime::spawn_blocking(move || {
+        load_mesh_reporting(
+            &load_path,
+            &tolerance,
+            &mut |fraction, message| {
+                let _ = app_progress.emit(
+                    "import-progress",
+                    serde_json::json!({ "fraction": fraction, "message": message }),
+                );
+            },
+            &cancel,
+        )
+    })
+    .await
+    .map_err(|err| format!("import task failed: {err}"))?
+    .map_err(|err| err.to_string())?;
     let mesh = imported.mesh;
     let report = imported.report;
     let mut inner = lock(&state)?;
@@ -285,7 +335,7 @@ fn import_model(
     };
     let id = inner.next_id;
     inner.next_id += 1;
-    let name = PathBuf::from(&path)
+    let name = file
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("model")
@@ -539,9 +589,9 @@ fn compare_supports(
 }
 
 #[tauri::command]
-fn slice_model(
+async fn slice_model(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     printer_id: String,
     variant_name: Option<String>,
     quality_type: Option<String>,
@@ -596,20 +646,23 @@ fn slice_model(
     //
     // Resolve and slice under a short lock for the resolve, then release for
     // the engine by splitting the work: resolve now, slice after.
-    let resolved_and_models = {
+    let (catalog, instructions, support) = {
         let inner = lock(&state)?;
-        let catalog = catalog_of(&inner)?;
-        // We only need the catalog for resolve + slice. slice() takes &Catalog.
-        // Keep the lock for the whole slice so we don't deep-copy the catalog.
-        // Emit progress from this thread; Tauri's command pool is not the UI thread.
         let _ = paths;
-        let instructions: Vec<CustomInstruction> = inner
-            .instructions
-            .iter()
-            .map(|(_, instruction)| instruction.clone())
-            .collect();
-        let outcome = slice(
-            catalog,
+        (
+            catalog_of(&inner)?.clone(),
+            inner
+                .instructions
+                .iter()
+                .map(|(_, instruction)| instruction.clone())
+                .collect::<Vec<_>>(),
+            inner.support.clone(),
+        )
+    };
+    let app_progress = app.clone();
+    let resolved_and_models = tauri::async_runtime::spawn_blocking(move || {
+        slice(
+            &catalog,
             &engine,
             &printer_id,
             variant_name,
@@ -618,7 +671,7 @@ fn slice_model(
             settings,
             &placed,
             &instructions,
-            inner.support.as_ref(),
+            support.as_ref(),
             output,
             &mut |progress| {
                 let layer = progress.layer.as_ref().map(|layer| {
@@ -631,7 +684,7 @@ fn slice_model(
                         })).collect::<Vec<_>>(),
                     })
                 });
-                let _ = app.emit(
+                let _ = app_progress.emit(
                     "slice-progress",
                     serde_json::json!({
                         "fraction": progress.fraction,
@@ -640,9 +693,15 @@ fn slice_model(
                     }),
                 );
             },
-        );
-        outcome
-    };
+        )
+    })
+    .await
+    .map_err(|err| {
+        if let Ok(mut inner) = lock(&state) {
+            inner.slicing = false;
+        }
+        format!("slice task failed: {err}")
+    })?;
 
     let mut inner = lock(&state)?;
     inner.slicing = false;
@@ -772,7 +831,7 @@ fn view_of(
     ModelView {
         id,
         name: name.to_string(),
-        positions: mesh.preview_positions(80_000),
+        positions: mesh.preview_positions(48_000),
         transform: transform.clone(),
         triangles: report.triangles,
         max_deviation_mm: report.max_deviation_mm,
@@ -795,6 +854,13 @@ fn preload_demo(
     let Some(path) = std::env::var_os("SHALE_DEMO_MODEL") else {
         return (Vec::new(), Vec::new(), None, None);
     };
+    // A plain demo model is imported from the window so a large file does not
+    // freeze startup. Preload only when a slice or a support plan is requested.
+    let preload = std::env::var("SHALE_DEMO_SLICE").ok().as_deref() == Some("1")
+        || std::env::var("SHALE_DEMO_SUPPORTS").ok().as_deref() == Some("1");
+    if !preload {
+        return (Vec::new(), Vec::new(), None, None);
+    }
     let Ok(imported) = load_mesh_with(
         std::path::Path::new(&path),
         &TessellationTolerance::standard(),
@@ -901,6 +967,11 @@ pub fn run() {
         Err(err) => (None, Some(err.to_string())),
     };
     let engine = Engine::from_env();
+    let engine_message = match engine.cli.probe() {
+        Ok(()) => format!("CuraEngine answered at {}", engine.cli.program.display()),
+        Err(err) => err,
+    };
+    let import_cancel = Arc::new(AtomicBool::new(false));
     let (models, instructions, toolpath, gcode_path) = if let Some(catalog) = &catalog {
         preload_demo(catalog, &engine)
     } else {
@@ -930,10 +1001,13 @@ pub fn run() {
             toolpath,
             gcode_path,
             slicing: false,
+            cancel_import: import_cancel,
+            engine_message,
         })))
         .invoke_handler(tauri::generate_handler![
             app_status,
             set_engine,
+            cancel_import,
             list_printers,
             list_variants,
             list_qualities,
