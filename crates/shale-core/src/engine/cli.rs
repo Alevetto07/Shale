@@ -28,26 +28,113 @@ pub struct CliEngine {
 }
 
 impl CliEngine {
+    /// `SHALE_CURAENGINE` wins. Otherwise look next to the executable and in an
+    /// installed UltiMaker Cura (Windows Program Files, `CuraEngine.exe`).
+    /// The library directory defaults to the folder that contains the binary
+    /// so Windows can load the DLLs that sit beside `CuraEngine.exe`.
     pub fn from_env() -> Self {
-        let program = env::var_os("SHALE_CURAENGINE")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("CuraEngine"));
-        let lib_dir = env::var_os("SHALE_CURAENGINE_LIB_DIR").map(PathBuf::from);
-        Self { program, lib_dir }
+        if let Some(program) = env::var_os("SHALE_CURAENGINE") {
+            let program = PathBuf::from(program);
+            let lib_dir = env::var_os("SHALE_CURAENGINE_LIB_DIR")
+                .map(PathBuf::from)
+                .or_else(|| program.parent().map(Path::to_path_buf));
+            return Self { program, lib_dir };
+        }
+        if let Some(found) = find_installed_engine() {
+            return found;
+        }
+        Self {
+            program: PathBuf::from("CuraEngine"),
+            lib_dir: None,
+        }
     }
 
     pub fn available(&self) -> bool {
+        self.probe().is_ok()
+    }
+
+    /// Run `CuraEngine help` and keep stderr. A missing DLL or a bad path
+    /// shows up here instead of disappearing.
+    pub fn probe(&self) -> Result<(), String> {
         let mut command = Command::new(&self.program);
         command
             .arg("help")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(dir) = self.program.parent().filter(|dir| dir.is_dir()) {
+            command.current_dir(dir);
+        }
         apply_lib_dir(&mut command, self.lib_dir.as_deref());
-        command
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
+        match command.output() {
+            Ok(output) if output.status.success() => Ok(()),
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                Err(format!(
+                    "CuraEngine at {} exited {}.\n{stderr}{stdout}",
+                    self.program.display(),
+                    output.status
+                ))
+            }
+            Err(err) => Err(format!(
+                "could not start CuraEngine at '{}': {err}. On Windows, Shale looks for CuraEngine.exe inside an UltiMaker Cura folder under Program Files. Set SHALE_CURAENGINE to the full path if it lives somewhere else. DLLs are loaded from {}.",
+                self.program.display(),
+                self.lib_dir
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "the system search path".into())
+            )),
+        }
     }
+}
+
+fn find_installed_engine() -> Option<CliEngine> {
+    let mut roots = Vec::new();
+    for key in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
+        if let Some(value) = env::var_os(key) {
+            roots.push(PathBuf::from(value));
+        }
+    }
+    if let Some(local) = env::var_os("LOCALAPPDATA") {
+        roots.push(PathBuf::from(local).join("Programs"));
+    }
+    if let Some(dir) = env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+    {
+        roots.push(dir);
+    }
+    for root in roots {
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let lower = name.to_ascii_lowercase();
+            if lower.starts_with("ultimaker cura") || lower == "cura" {
+                for exe_name in ["CuraEngine.exe", "CuraEngine"] {
+                    let program = entry.path().join(exe_name);
+                    if program.is_file() {
+                        return Some(CliEngine {
+                            lib_dir: Some(entry.path()),
+                            program,
+                        });
+                    }
+                }
+            }
+        }
+        for exe_name in ["CuraEngine.exe", "CuraEngine"] {
+            let program = root.join(exe_name);
+            if program.is_file() {
+                return Some(CliEngine {
+                    lib_dir: Some(root),
+                    program,
+                });
+            }
+        }
+    }
+    None
 }
 
 impl SlicingEngine for CliEngine {
@@ -84,13 +171,20 @@ impl SlicingEngine for CliEngine {
                 command.arg("-s").arg(format!("{key}={value}"));
             }
         }
+        if let Some(dir) = self.program.parent().filter(|dir| dir.is_dir()) {
+            command.current_dir(dir);
+        }
         apply_lib_dir(&mut command, self.lib_dir.as_deref());
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let mut child = command.spawn().map_err(|err| {
             Error::Engine(format!(
-                "could not start CuraEngine at '{}': {err}. Set SHALE_CURAENGINE to the binary. The README explains how to build it; Shale does not ship the executable.",
-                self.program.display()
+                "could not start CuraEngine at '{}': {err}. Paths are passed as separate arguments, including paths with spaces. DLLs are loaded from the engine's own folder ({}).",
+                self.program.display(),
+                self.lib_dir
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "the system search path".into())
             ))
         })?;
 
@@ -285,6 +379,22 @@ fn count_layers(path: &Path) -> Option<u32> {
         None
     } else {
         Some(count)
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_temp_path_with_spaces_stays_one_argument() {
+        let output = PathBuf::from(r"C:\Users\Alessio\AppData\Local\Temp\shale files\slice.gcode");
+        let resolved = output.with_extension("resolved.json");
+        assert_eq!(
+            resolved,
+            PathBuf::from(r"C:\Users\Alessio\AppData\Local\Temp\shale files\slice.resolved.json")
+        );
+        assert!(!resolved.to_string_lossy().contains('"'));
     }
 }
 

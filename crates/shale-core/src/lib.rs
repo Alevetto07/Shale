@@ -31,7 +31,10 @@ pub use error::Error;
 pub use gcode::Toolpath;
 pub use instructions::{CustomInstruction, GcodeFlavour};
 pub use job::{compare_support, slice, PlacedModel, SliceOutcome};
-pub use mesh::{drop_to_bed, load_mesh, load_mesh_with, place_on_bed, Transform, TriangleMesh};
+pub use mesh::{
+    drop_to_bed, load_mesh, load_mesh_reporting, load_mesh_with, place_on_bed, Transform,
+    TriangleMesh,
+};
 pub use resolver::{ProfileSummary, ResolveRequest, ResolvedSettings, UserSettings};
 pub use session::{JobSliceSummary, Session, SettingsPatch, SettingsView, StoredInstruction};
 pub use supports::{

@@ -102,6 +102,8 @@ export function App() {
   const [chord, setChord] = useState(0.1);
   const [turn, setTurn] = useState(15);
   const [chordTied, setChordTied] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<Progress | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -111,6 +113,12 @@ export function App() {
         setEnginePath(next.engine_path);
         setLibDir(next.engine_lib_dir || "");
         setBackend(next.engine_backend || "cli");
+        if (!next.resources_ok) {
+          setError(next.resources_message);
+        }
+        if (next.resources_ok && !next.engine_ok && next.engine_message) {
+          setError(next.engine_message);
+        }
         if (next.resources_ok) {
           const [list, loaded, existing] = await Promise.all([
             api.printers(),
@@ -140,6 +148,9 @@ export function App() {
             list.find((printer) => printer.id === "prusa_i3") ??
             list[0];
           if (preferred) setPrinterId(preferred.id);
+          if (next.demo_model && loaded.length === 0) {
+            void importFromPath(next.demo_model);
+          }
         }
       } catch (err) {
         setError(messageOf(err));
@@ -208,6 +219,9 @@ export function App() {
   }, [printerId, variant, quality, material]);
 
   useEffect(() => {
+    const unlistenImport = listen<Progress>("import-progress", (event) => {
+      setImportProgress(event.payload);
+    });
     const unlisten = listen<Progress>("slice-progress", (event) => {
       setProgress(event.payload);
       const live = event.payload.layer;
@@ -224,6 +238,7 @@ export function App() {
       }
     });
     return () => {
+      void unlistenImport.then((stop) => stop());
       void unlisten.then((stop) => stop());
     };
   }, []);
@@ -279,19 +294,38 @@ export function App() {
 
   const selected = models.find((model) => model.id === selectedId) ?? null;
 
-  async function importModel() {
+  async function importFromPath(picked: string) {
     setError(null);
-    const picked = await open({
-      multiple: false,
-      filters: [{ name: "Models", extensions: ["stl", "STL", "3mf", "3MF", "step", "stp", "STEP", "STP"] }],
-    });
-    if (typeof picked !== "string") return;
+    setImporting(true);
+    setImportProgress({ fraction: 0.01, message: "Reading model" });
     try {
       const model = await api.importModel(picked, printerId || null, variant, quality, chord, turn);
       setModels((current) => [...current, model]);
       setSelectedId(model.id);
       setPreview(false);
       setShowModel(true);
+      setImportProgress({ fraction: 1, message: `${model.triangles} triangles` });
+    } catch (err) {
+      const message = messageOf(err);
+      if (!message.toLowerCase().includes("cancel")) setError(message);
+      setImportProgress(null);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function importModel() {
+    const picked = await open({
+      multiple: false,
+      filters: [{ name: "Models", extensions: ["stl", "STL", "3mf", "3MF", "step", "stp", "STEP", "STP"] }],
+    });
+    if (typeof picked !== "string") return;
+    await importFromPath(picked);
+  }
+
+  async function cancelImport() {
+    try {
+      await api.cancelImport();
     } catch (err) {
       setError(messageOf(err));
     }
@@ -511,7 +545,10 @@ export function App() {
           ? { ...current, engine_ok: ok, engine_path: enginePath, engine_backend: backend }
           : current,
       );
-      if (!ok) setError("CuraEngine did not respond to `help` at that path.");
+      if (!ok) {
+        const fresh = await api.status();
+        setError(fresh.engine_message || "CuraEngine did not respond to `help` at that path.");
+      }
     } catch (err) {
       setError(messageOf(err));
     }
@@ -542,14 +579,22 @@ export function App() {
       </header>
 
       {status && !status.resources_ok && (
-        <p className="banner" role="status">
-          {status.resources_message} Run <code>scripts/fetch-resources.sh</code> from the repository, then restart Shale.
+        <p className="banner error" role="status">
+          {status.resources_message}
         </p>
       )}
       {status && status.resources_ok && !status.engine_ok && (
+        <p className="banner error" role="status">
+          {status.engine_message || `CuraEngine was not found at ${status.engine_path}.`}
+        </p>
+      )}
+      {importing && (
         <p className="banner" role="status">
-          CuraEngine was not found at <code>{status.engine_path}</code>. Set the path under Engine, or export{" "}
-          <code>SHALE_CURAENGINE</code>. Slicing stays disabled until it answers.
+          import {(importProgress ? importProgress.fraction * 100 : 0).toFixed(0)}%{" "}
+          {importProgress?.message ?? "reading"}{" "}
+          <button type="button" onClick={() => void cancelImport()}>
+            [ cancel ]
+          </button>
         </p>
       )}
       {error && (

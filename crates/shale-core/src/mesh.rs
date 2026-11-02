@@ -7,9 +7,10 @@
 //! before slicing. Transforms match three.js object order: scale, then the
 //! XYZ Euler rotation used by TransformControls, then translation. Z is up.
 
-use std::fs;
+use std::fs::{self, File};
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
@@ -84,22 +85,127 @@ pub fn load_mesh_with(
     path: &Path,
     tolerance: &crate::cad::TessellationTolerance,
 ) -> Result<crate::cad::ImportedMesh, Error> {
+    load_mesh_reporting(path, tolerance, &mut |_, _| {}, &AtomicBool::new(false))
+}
+
+/// Like [`load_mesh_with`], but reports progress and stops when `cancel` is set.
+///
+/// Binary STL is read straight from the file in 50-byte records. The preview
+/// the window receives is a decimated flat buffer, not one object per triangle.
+pub fn load_mesh_reporting(
+    path: &Path,
+    tolerance: &crate::cad::TessellationTolerance,
+    progress: &mut dyn FnMut(f32, &str),
+    cancel: &AtomicBool,
+) -> Result<crate::cad::ImportedMesh, Error> {
     let started = std::time::Instant::now();
-    let bytes = fs::read(path)?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Error::Mesh("Import cancelled".into()));
+    }
     let extension = path
         .extension()
         .and_then(|ext| ext.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
     let mut imported = match extension.as_str() {
-        "3mf" => crate::cad::ImportedMesh::from_mesh(load_3mf(&bytes)?, "3mf"),
-        "step" | "stp" => crate::cad::import_step(&bytes, tolerance)?,
-        _ => crate::cad::ImportedMesh::from_mesh(load_stl(&bytes)?, "stl"),
+        "3mf" => {
+            progress(0.05, "reading 3MF");
+            let bytes = std::fs::read(path)?;
+            crate::cad::ImportedMesh::from_mesh(load_3mf(&bytes)?, "3mf")
+        }
+        "step" | "stp" => {
+            progress(0.05, "reading STEP");
+            let bytes = std::fs::read(path)?;
+            if cancel.load(Ordering::Relaxed) {
+                return Err(Error::Mesh("Import cancelled".into()));
+            }
+            progress(0.2, "tessellating STEP");
+            crate::cad::import_step(&bytes, tolerance)?
+        }
+        _ => {
+            progress(0.02, "reading STL");
+            let mesh = load_stl_path(path, progress, cancel)?;
+            crate::cad::ImportedMesh::from_mesh(mesh, "stl")
+        }
     };
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Error::Mesh("Import cancelled".into()));
+    }
     if imported.report.milliseconds == 0 {
         imported.report.milliseconds = started.elapsed().as_millis() as u64;
     }
+    progress(1.0, "import finished");
     Ok(imported)
+}
+
+fn load_stl_path(
+    path: &Path,
+    progress: &mut dyn FnMut(f32, &str),
+    cancel: &AtomicBool,
+) -> Result<TriangleMesh, Error> {
+    let mut file = File::open(path)?;
+    let len = file.metadata()?.len();
+    let mut header = [0u8; 84];
+    if file.read(&mut header)? < 84 {
+        return Err(Error::Mesh("STL is too small to be a binary mesh".into()));
+    }
+    let count = u32::from_le_bytes(header[80..84].try_into().unwrap()) as u64;
+    let expected = 84u64.saturating_add(count.saturating_mul(50));
+    let named_solid = header.starts_with(b"solid") || header.starts_with(b"SOLID");
+    let binary = count > 0 && len >= expected && (len == expected || !named_solid);
+    if binary {
+        return parse_binary_stl_records(&mut file, count as usize, progress, cancel);
+    }
+    drop(file);
+    progress(0.1, "reading ASCII STL");
+    let bytes = std::fs::read(path)?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Error::Mesh("Import cancelled".into()));
+    }
+    load_stl(&bytes)
+}
+
+fn parse_binary_stl_records<R: Read>(
+    reader: &mut R,
+    count: usize,
+    progress: &mut dyn FnMut(f32, &str),
+    cancel: &AtomicBool,
+) -> Result<TriangleMesh, Error> {
+    let mut vertices = Vec::with_capacity(count.saturating_mul(3));
+    let mut triangles = Vec::with_capacity(count);
+    let mut record = [0u8; 50];
+    for index in 0..count {
+        if index % 100_000 == 0 {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(Error::Mesh("Import cancelled".into()));
+            }
+            progress(
+                index as f32 / count.max(1) as f32,
+                &format!("triangle {index} of {count}"),
+            );
+        }
+        reader.read_exact(&mut record).map_err(|_| {
+            Error::Mesh(format!(
+                "binary STL ended early at triangle {index} of {count}"
+            ))
+        })?;
+        let mut tri = [0; 3];
+        for corner in 0..3 {
+            let offset = 12 + corner * 12;
+            tri[corner] = vertices.len() as u32;
+            vertices.push([
+                f32::from_le_bytes(record[offset..offset + 4].try_into().unwrap()),
+                f32::from_le_bytes(record[offset + 4..offset + 8].try_into().unwrap()),
+                f32::from_le_bytes(record[offset + 8..offset + 12].try_into().unwrap()),
+            ]);
+        }
+        triangles.push(tri);
+    }
+    progress(1.0, &format!("{count} triangles"));
+    Ok(TriangleMesh {
+        vertices,
+        triangles,
+    })
 }
 
 pub fn load_stl(bytes: &[u8]) -> Result<TriangleMesh, Error> {
@@ -128,28 +234,8 @@ fn parse_binary_stl(bytes: &[u8]) -> Result<TriangleMesh, Error> {
     if bytes.len() < 84 + count * 50 {
         return Err(Error::Mesh("binary STL ended early".into()));
     }
-    let mut vertices = Vec::with_capacity(count * 3);
-    let mut triangles = Vec::with_capacity(count);
-    for index in 0..count {
-        let start = 84 + index * 50;
-        let record = &bytes[start..start + 50];
-        let mut tri = [0; 3];
-        for corner in 0..3 {
-            let offset = 12 + corner * 12;
-            let vertex = [
-                f32::from_le_bytes(record[offset..offset + 4].try_into().unwrap()),
-                f32::from_le_bytes(record[offset + 4..offset + 8].try_into().unwrap()),
-                f32::from_le_bytes(record[offset + 8..offset + 12].try_into().unwrap()),
-            ];
-            tri[corner] = vertices.len() as u32;
-            vertices.push(vertex);
-        }
-        triangles.push(tri);
-    }
-    Ok(TriangleMesh {
-        vertices,
-        triangles,
-    })
+    let mut cursor = Cursor::new(&bytes[84..]);
+    parse_binary_stl_records(&mut cursor, count, &mut |_, _| {}, &AtomicBool::new(false))
 }
 
 fn parse_ascii_stl(bytes: &[u8]) -> Result<TriangleMesh, Error> {
@@ -721,6 +807,66 @@ mod tests {
         assert!((point[0]).abs() < 1e-9);
         assert!((point[1] - 1.0).abs() < 1e-9);
         assert!(point[2].abs() < 1e-9);
+    }
+
+    #[test]
+    fn binary_stl_one_and_five_million_triangles() {
+        for count in [1_000_000usize, 5_000_000] {
+            let path = std::env::temp_dir().join(format!("shale-tris-{count}.stl"));
+            write_flat_binary_stl(&path, count).unwrap();
+            let before = resident_mb();
+            let started = std::time::Instant::now();
+            let mesh =
+                super::load_stl_path(&path, &mut |_, _| {}, &AtomicBool::new(false)).unwrap();
+            let elapsed = started.elapsed();
+            let after = resident_mb();
+            let mesh_mb =
+                (mesh.vertices.len() * 12 + mesh.triangles.len() * 12) as f64 / 1_000_000.0;
+            eprintln!(
+                "{count} triangles: {:.2}s, mesh {mesh_mb:.1} MB, rss {before:.0} -> {after:.0} MB",
+                elapsed.as_secs_f64()
+            );
+            assert_eq!(mesh.triangles.len(), count);
+            assert!(
+                elapsed.as_secs() < 90,
+                "{count} triangles took {}s",
+                elapsed.as_secs()
+            );
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    fn write_flat_binary_stl(path: &Path, count: usize) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::File::create(path)?;
+        file.write_all(&[0u8; 80])?;
+        file.write_all(&(count as u32).to_le_bytes())?;
+        let mut record = [0u8; 50];
+        record[12..16].copy_from_slice(&1.0f32.to_le_bytes());
+        record[24..28].copy_from_slice(&1.0f32.to_le_bytes());
+        record[32..36].copy_from_slice(&1.0f32.to_le_bytes());
+        for _ in 0..count {
+            file.write_all(&record)?;
+        }
+        Ok(())
+    }
+
+    fn resident_mb() -> f64 {
+        let Ok(text) = std::fs::read_to_string("/proc/self/status") else {
+            return 0.0;
+        };
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("VmRSS:") {
+                let kb: f64 = rest
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("0")
+                    .parse()
+                    .unwrap_or(0.0);
+                return kb / 1024.0;
+            }
+        }
+        0.0
     }
 
     #[test]
