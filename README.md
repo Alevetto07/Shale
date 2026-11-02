@@ -68,6 +68,24 @@ Still rough:
 
 Creality's preferred quality type in 5.13 is `standard`, and that profile does not itself set a layer height. The window reloads the resolved layer height when you change quality; set 0.2 mm yourself for a typical draft.
 
+## CAD import
+
+STL is a mesh already. 3MF mesh import reads the triangles in the package (units, build items, and component transforms) and does not tessellate anything. STEP is a boundary representation. Shale reads it with truck (Apache-2.0) and tessellates the surfaces here. OpenCASCADE is not linked; see [LICENSING.md](LICENSING.md).
+
+The chordal tolerance is the largest gap, in millimetres, between a triangle edge and the curve it stands in for. It starts at half the layer height and is never coarser than half the nozzle, clamped to 0.02–0.5 mm. The angular tolerance is the largest turn, in degrees, between two neighbouring chords of a curved edge. If the first mesh turns more sharply than that, the chord is tightened and the shape is meshed again. Both controls sit in the Slice panel. Planes ignore them. A file whose length unit is centimetres, metres, or inches is scaled to millimetres; a file with no unit is treated as millimetres.
+
+`truck-stepio` 0.3 reads the analytic surfaces and NURBS shells used by the sample parts. A solid that exists only as the result of a boolean, or an entity the reader does not know, is rejected with the parser's error rather than replaced by a coarser STL.
+
+Measured on the three sample parts at 0.1 mm chord and 15° turn. Triangle count and deviation are exact for that tolerance. The times are one debug build, so they move by a few tens of milliseconds:
+
+| Part | Triangles | Max deviation | Max turn | Import |
+| --- | --- | --- | --- | --- |
+| `examples/block-20.step` | 12 | 0.000 mm | 0° | about 10 ms |
+| `examples/cylinder-r10-h20.step` | 1788 | 0.066 mm | 10.2° | about 150 ms |
+| `examples/sphere-r10.step` | 2139 | 0.077 mm | 14.3° | about 110 ms |
+
+The cylinder is the curved solid that is sliced end to end. The sphere is a spun semicircle, so it is a shell rather than a closed solid, and it is still tessellated from the surface.
+
 ## Fetch the printer data
 
 Cura 5.13.0 and fdm_materials are downloaded, not copied into git. Their licence files land next to the data.
