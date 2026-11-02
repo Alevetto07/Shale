@@ -77,6 +77,38 @@ export interface PreviewPath {
   points: [number, number, number][];
 }
 
+export type CustomInstruction =
+  | {
+      kind: "pause";
+      layer?: number | null;
+      height_mm?: number | null;
+      filament_change?: boolean;
+      message?: string | null;
+    }
+  | {
+      kind: "temperature";
+      layer: number;
+      nozzle_c?: number | null;
+      bed_c?: number | null;
+      wait?: boolean;
+    }
+  | { kind: "fan"; height_mm: number; percent: number }
+  | { kind: "beep"; layer: number }
+  | { kind: "message"; layer: number; text: string }
+  | {
+      kind: "park_and_wait";
+      layer: number;
+      x?: number | null;
+      y?: number | null;
+      message?: string | null;
+    };
+
+export interface StoredInstruction {
+  id: number;
+  summary: string;
+  instruction: CustomInstruction;
+}
+
 export interface SliceSettings {
   layer_height: number;
   infill_sparse_density: number;
@@ -115,6 +147,10 @@ export const api = {
       materialId,
       settings,
     }),
+  instructions: () => invoke<StoredInstruction[]>("list_instructions"),
+  addInstruction: (instruction: CustomInstruction) =>
+    invoke<StoredInstruction>("add_instruction", { instruction }),
+  removeInstruction: (id: number) => invoke<StoredInstruction[]>("remove_instruction", { id }),
   previewUntil: (layer: number) => invoke<PreviewPath[]>("preview_until", { layer }),
   exportGcode: (destination: string) => invoke<string>("export_gcode", { destination }),
   loadedModels: () => invoke<ModelView[]>("loaded_models"),

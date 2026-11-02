@@ -37,7 +37,7 @@ pub fn annotate_header(gcode: &str, print_time_seconds: Option<f64>) -> String {
         let seconds = seconds.round().max(0.0) as i64;
         text = text.replacen(";TIME:6666", &format!(";TIME:{seconds}"), 1);
     }
-    let metres = filament_metres(&text);
+    let metres = filament_length_metres(&text);
     if metres > 0.0 {
         text = text.replacen(
             ";Filament used: 0m",
@@ -59,7 +59,7 @@ fn elapsed_seconds(gcode: &str) -> Option<f64> {
         .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
 }
 
-fn filament_metres(gcode: &str) -> f64 {
+pub fn filament_length_metres(gcode: &str) -> f64 {
     let mut absolute = true;
     let mut position = 0.0f64;
     let mut total = 0.0f64;

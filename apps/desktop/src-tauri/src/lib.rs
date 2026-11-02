@@ -7,9 +7,9 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use shale_core::{
-    drop_to_bed, load_mesh, place_on_bed, slice, Catalog, CliEngine, MaterialInfo, PlacedModel,
-    PrinterInfo, QualityInfo, ResourcePaths, Toolpath, Transform, TriangleMesh, UserSettings,
-    VariantInfo,
+    drop_to_bed, load_mesh, place_on_bed, slice, Catalog, CliEngine, CustomInstruction,
+    MaterialInfo, PlacedModel, PrinterInfo, QualityInfo, ResourcePaths, StoredInstruction,
+    Toolpath, Transform, TriangleMesh, UserSettings, VariantInfo,
 };
 use tauri::{AppHandle, Emitter, State};
 
@@ -18,6 +18,8 @@ struct Inner {
     catalog_error: Option<String>,
     models: Vec<LoadedModel>,
     next_id: u32,
+    instructions: Vec<(u32, CustomInstruction)>,
+    next_instruction: u32,
     engine: CliEngine,
     toolpath: Option<Toolpath>,
     gcode_path: Option<PathBuf>,
@@ -297,6 +299,52 @@ fn remove_model(state: State<AppState>, id: u32) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn list_instructions(state: State<AppState>) -> Result<Vec<StoredInstruction>, String> {
+    let inner = lock(&state)?;
+    Ok(stored_instructions(&inner))
+}
+
+#[tauri::command]
+fn add_instruction(
+    state: State<AppState>,
+    instruction: CustomInstruction,
+) -> Result<StoredInstruction, String> {
+    let mut inner = lock(&state)?;
+    let id = inner.next_instruction;
+    inner.next_instruction += 1;
+    let stored = StoredInstruction {
+        id,
+        summary: instruction.summary(),
+        instruction: instruction.clone(),
+    };
+    inner.instructions.push((id, instruction));
+    Ok(stored)
+}
+
+#[tauri::command]
+fn remove_instruction(state: State<AppState>, id: u32) -> Result<Vec<StoredInstruction>, String> {
+    let mut inner = lock(&state)?;
+    let before = inner.instructions.len();
+    inner.instructions.retain(|(existing, _)| *existing != id);
+    if inner.instructions.len() == before {
+        return Err(format!("no instruction with id {id}"));
+    }
+    Ok(stored_instructions(&inner))
+}
+
+fn stored_instructions(inner: &Inner) -> Vec<StoredInstruction> {
+    inner
+        .instructions
+        .iter()
+        .map(|(id, instruction)| StoredInstruction {
+            id: *id,
+            summary: instruction.summary(),
+            instruction: instruction.clone(),
+        })
+        .collect()
+}
+
+#[tauri::command]
 fn slice_model(
     app: AppHandle,
     state: State<AppState>,
@@ -361,6 +409,11 @@ fn slice_model(
         // Keep the lock for the whole slice so we don't deep-copy the catalog.
         // Emit progress from this thread; Tauri's command pool is not the UI thread.
         let _ = paths;
+        let instructions: Vec<CustomInstruction> = inner
+            .instructions
+            .iter()
+            .map(|(_, instruction)| instruction.clone())
+            .collect();
         let outcome = slice(
             catalog,
             &engine,
@@ -370,6 +423,7 @@ fn slice_model(
             material_id,
             settings,
             &placed,
+            &instructions,
             output,
             &mut |progress| {
                 let _ = app.emit(
@@ -515,19 +569,24 @@ fn view_of(id: u32, name: &str, mesh: &TriangleMesh, transform: &Transform) -> M
 fn preload_demo(
     catalog: &Catalog,
     engine: &CliEngine,
-) -> (Vec<LoadedModel>, Option<Toolpath>, Option<PathBuf>) {
+) -> (
+    Vec<LoadedModel>,
+    Vec<(u32, CustomInstruction)>,
+    Option<Toolpath>,
+    Option<PathBuf>,
+) {
     let Some(path) = std::env::var_os("SHALE_DEMO_MODEL") else {
-        return (Vec::new(), None, None);
+        return (Vec::new(), Vec::new(), None, None);
     };
     let Ok(mesh) = load_mesh(std::path::Path::new(&path)) else {
-        return (Vec::new(), None, None);
+        return (Vec::new(), Vec::new(), None, None);
     };
     let printer_id = if catalog.printer("creality_ender3").is_some() {
         "creality_ender3".to_string()
     } else if let Some(printer) = catalog.printers().first() {
         printer.id.clone()
     } else {
-        return (Vec::new(), None, None);
+        return (Vec::new(), Vec::new(), None, None);
     };
     let resolved = catalog
         .resolve(&shale_core::ResolveRequest {
@@ -558,7 +617,15 @@ fn preload_demo(
         .to_string();
     let mut toolpath = None;
     let mut gcode_path = None;
+    let mut instructions = Vec::new();
     if std::env::var("SHALE_DEMO_SLICE").ok().as_deref() == Some("1") {
+        let pause = CustomInstruction::Pause {
+            layer: Some(40),
+            height_mm: None,
+            filament_change: true,
+            message: Some("swap filament".into()),
+        };
+        instructions.push((1, pause.clone()));
         let output = std::env::temp_dir().join("shale").join("demo.gcode");
         if let Ok(outcome) = slice(
             catalog,
@@ -580,6 +647,7 @@ fn preload_demo(
                 mesh: mesh.clone(),
                 transform: transform.clone(),
             }],
+            &[pause],
             output,
             &mut |_| {},
         ) {
@@ -594,6 +662,7 @@ fn preload_demo(
             mesh,
             transform,
         }],
+        instructions,
         toolpath,
         gcode_path,
     )
@@ -608,12 +677,13 @@ pub fn run() {
         Err(err) => (None, Some(err.to_string())),
     };
     let engine = CliEngine::from_env();
-    let (models, toolpath, gcode_path) = if let Some(catalog) = &catalog {
+    let (models, instructions, toolpath, gcode_path) = if let Some(catalog) = &catalog {
         preload_demo(catalog, &engine)
     } else {
-        (Vec::new(), None, None)
+        (Vec::new(), Vec::new(), None, None)
     };
     let next_id = models.len() as u32 + 1;
+    let next_instruction = instructions.iter().map(|(id, _)| *id).max().unwrap_or(0) + 1;
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState(Mutex::new(Inner {
@@ -621,6 +691,8 @@ pub fn run() {
             catalog_error,
             models,
             next_id,
+            instructions,
+            next_instruction,
             engine,
             toolpath,
             gcode_path,
@@ -638,6 +710,9 @@ pub fn run() {
             update_transform,
             drop_model,
             remove_model,
+            list_instructions,
+            add_instruction,
+            remove_instruction,
             slice_model,
             preview_until,
             loaded_models,

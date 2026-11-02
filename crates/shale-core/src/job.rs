@@ -10,6 +10,7 @@ use crate::catalog::Catalog;
 use crate::engine::{EngineProgress, EngineRequest, SlicingEngine};
 use crate::error::Error;
 use crate::gcode::{self, Toolpath};
+use crate::instructions::{self, CustomInstruction, GcodeFlavour};
 use crate::mesh::{self, Transform, TriangleMesh};
 use crate::resolver::{ResolveRequest, ResolvedSettings, UserSettings};
 
@@ -26,6 +27,8 @@ pub struct SliceOutcome {
     pub resolved: ResolvedSettings,
     pub toolpath: Toolpath,
     pub print_time_seconds: Option<f64>,
+    pub filament_metres: f64,
+    pub flavour: GcodeFlavour,
     pub log_tail: String,
 }
 
@@ -38,6 +41,7 @@ pub fn slice(
     material_id: Option<String>,
     settings: UserSettings,
     models: &[PlacedModel],
+    instructions: &[CustomInstruction],
     output_path: PathBuf,
     on_progress: &mut dyn FnMut(EngineProgress),
 ) -> Result<SliceOutcome, Error> {
@@ -85,6 +89,15 @@ pub fn slice(
     )?;
     let gcode = fs::read_to_string(&output.gcode_path)?;
     let gcode = gcode::annotate_header(&gcode, output.print_time_seconds);
+    let flavour = GcodeFlavour::from_cura(
+        resolved
+            .global
+            .get("machine_gcode_flavor")
+            .map(String::as_str)
+            .unwrap_or(""),
+    );
+    let gcode = instructions::apply(&gcode, instructions, flavour)?;
+    let filament_metres = gcode::filament_length_metres(&gcode);
     fs::write(&output.gcode_path, &gcode)?;
     let toolpath = gcode::parse_toolpaths(&gcode);
     let _ = fs::remove_dir_all(&model_dir);
@@ -93,6 +106,8 @@ pub fn slice(
         resolved,
         toolpath,
         print_time_seconds: output.print_time_seconds,
+        filament_metres,
+        flavour,
         log_tail: output.log_tail,
     })
 }

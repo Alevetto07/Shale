@@ -360,6 +360,12 @@ endsolid cube
             mesh,
             transform: shale_core::Transform::default(),
         }],
+        &[shale_core::CustomInstruction::Pause {
+            layer: Some(10),
+            height_mm: None,
+            filament_change: true,
+            message: Some("swap".into()),
+        }],
         dir.join("cube.gcode"),
         &mut |progress| eprintln!("{:.0}% {}", progress.fraction * 100.0, progress.message),
     );
@@ -372,6 +378,10 @@ endsolid cube
                 outcome.log_tail
             );
             assert!(gcode.contains("G1") || gcode.contains("G0"));
+            assert!(
+                gcode.contains("M600 ; swap"),
+                "custom pause was not compiled into the engine G-code"
+            );
             assert!(!outcome.toolpath.layers.is_empty(), "{}", outcome.log_tail);
             eprintln!(
                 "sliced {} layers, print time {:?}",

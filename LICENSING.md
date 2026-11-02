@@ -26,6 +26,10 @@ Material profiles come from [fdm_materials](https://github.com/Ultimaker/fdm_mat
 
 The wordmark is set in Space Grotesk, weight 600. Interface text is IBM Plex Mono. Both are SIL Open Font License 1.1. The font files and the OFL texts are in `apps/desktop/src/fonts/` (`OFL.txt` for Space Grotesk, `IBMPlexMono-OFL.txt` for Plex). They are bundled with the app and are not loaded from a font host at runtime.
 
+## MCP SDK (Apache-2.0)
+
+`crates/shale-mcp` depends on the [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) crate to speak the Model Context Protocol. That crate is Apache-2.0. Shale does not copy its source; Cargo fetches it as a normal dependency. Shale's own code is still unlicensed, as stated at the top of this file.
+
 ## What you need to do before a release
 
 1. Choose a licence for Shale's own code and replace the note at the top of this file.
