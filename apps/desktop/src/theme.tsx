@@ -38,10 +38,19 @@ export function meter(fraction: number, width = 24): string {
   return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
-export function track(value: number, max: number, width = 28): string {
-  if (max <= 0) return "●" + theme.box.h.repeat(width - 1);
-  const index = Math.round((value / max) * (width - 1));
-  return theme.box.h.repeat(index) + "●" + theme.box.h.repeat(width - 1 - index);
+/** Layer track. `marks` are instruction positions in the same units as `value`. */
+export function track(value: number, max: number, width = 28, marks: number[] = []): string {
+  const cells: string[] = Array.from({ length: width }, () => theme.box.h);
+  const at = (n: number) => {
+    if (max <= 0) return 0;
+    return Math.min(width - 1, Math.max(0, Math.round((n / max) * (width - 1))));
+  };
+  for (const mark of marks) {
+    const index = at(mark);
+    if (cells[index] === theme.box.h) cells[index] = "+";
+  }
+  cells[at(value)] = "●";
+  return cells.join("");
 }
 
 export function Frame({ title, children }: { title: string; children: ReactNode }) {

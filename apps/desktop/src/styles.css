@@ -195,7 +195,16 @@ label.check input { width: auto; }
   white-space: pre-line;
 }
 
-.models { list-style: none; margin: 0; padding: 0; }
+.models, .instructions { list-style: none; margin: 0; padding: 0; }
+.instructions li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: baseline;
+  font-size: 12px;
+}
+.instructions li span::before { content: "+ "; color: var(--muted); }
+.instructions button { color: var(--dim); padding: 0; }
 button.model { display: block; width: 100%; text-align: left; padding-left: 0; }
 button.model::before { content: "  "; }
 button.model.selected::before { content: "> "; color: var(--ink); }

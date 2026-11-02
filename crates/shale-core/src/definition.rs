@@ -18,6 +18,8 @@ pub struct RawSetting {
     pub default_value: Option<Json>,
     pub value: Option<Json>,
     pub resolve: Option<Json>,
+    pub label: Option<String>,
+    pub description: Option<String>,
 }
 
 impl RawSetting {
@@ -33,6 +35,12 @@ impl RawSetting {
         }
         if other.resolve.is_some() {
             self.resolve.clone_from(&other.resolve);
+        }
+        if other.label.is_some() {
+            self.label.clone_from(&other.label);
+        }
+        if other.description.is_some() {
+            self.description.clone_from(&other.description);
         }
     }
 }
@@ -184,5 +192,13 @@ fn raw_from(node: &Json) -> RawSetting {
         default_value: obj.get("default_value").cloned(),
         value: obj.get("value").cloned(),
         resolve: obj.get("resolve").filter(|value| !value.is_null()).cloned(),
+        label: obj
+            .get("label")
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+        description: obj
+            .get("description")
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
     }
 }

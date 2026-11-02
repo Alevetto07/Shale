@@ -193,6 +193,17 @@ impl Catalog {
         self.definitions.get(id)
     }
 
+    /// Label and description for a setting, after definition inheritance.
+    pub fn setting_text(&self, printer_id: &str, key: &str) -> (Option<String>, Option<String>) {
+        let Ok(merged) = self.merged_settings(printer_id) else {
+            return (None, None);
+        };
+        let Some(setting) = merged.get(key) else {
+            return (None, None);
+        };
+        (setting.label.clone(), setting.description.clone())
+    }
+
     pub fn variants_for(&self, printer_id: &str) -> Vec<VariantInfo> {
         let Some(ancestry) = self.ancestry_ids(printer_id) else {
             return Vec::new();

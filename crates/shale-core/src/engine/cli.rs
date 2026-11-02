@@ -226,6 +226,17 @@ fn apply_lib_dir(command: &mut Command, lib_dir: Option<&Path>) {
 
 fn fraction_from_log(line: &str) -> Option<f32> {
     let lower = line.to_ascii_lowercase();
+    if lower.contains("starting export") {
+        return Some(0.93);
+    }
+    if let Some(fraction) = layer_fraction(&lower) {
+        let (base, span) = if lower.contains("skin") || lower.contains("infill") {
+            (0.55, 0.32)
+        } else {
+            (0.18, 0.36)
+        };
+        return Some((base + fraction * span).clamp(0.05, 0.92));
+    }
     if let Some(index) = lower.find("progress") {
         let tail = &lower[index..];
         let digits: String = tail
@@ -238,6 +249,31 @@ fn fraction_from_log(line: &str) -> Option<f32> {
         return Some(fraction.clamp(0.0, 0.99));
     }
     None
+}
+
+/// `Processing insets for layer 12 of 50` and the same shape for skin/infill.
+fn layer_fraction(lower: &str) -> Option<f32> {
+    let marker = "layer ";
+    let index = lower.find(marker)?;
+    let rest = lower[index + marker.len()..].trim();
+    let mut words = rest.split_whitespace();
+    let current: f32 = words
+        .next()?
+        .trim_matches(|ch: char| !ch.is_ascii_digit() && ch != '.')
+        .parse()
+        .ok()?;
+    if words.next() != Some("of") {
+        return None;
+    }
+    let total: f32 = words
+        .next()?
+        .trim_matches(|ch: char| !ch.is_ascii_digit() && ch != '.')
+        .parse()
+        .ok()?;
+    if total <= 0.0 {
+        return None;
+    }
+    Some((current / total).clamp(0.0, 1.0))
 }
 
 fn count_layers(path: &Path) -> Option<u32> {

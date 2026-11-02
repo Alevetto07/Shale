@@ -4,12 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import {
   api,
   type Bed,
+  type CustomInstruction,
   type MaterialInfo,
   type ModelView,
   type PreviewPath,
   type PrinterInfo,
   type QualityInfo,
   type Status,
+  type StoredInstruction,
   type Transform,
   type VariantInfo,
 } from "./api";
@@ -72,6 +74,16 @@ export function App() {
   const [printSeconds, setPrintSeconds] = useState<number | null>(null);
   const [enginePath, setEnginePath] = useState("");
   const [libDir, setLibDir] = useState("");
+  const [instructions, setInstructions] = useState<StoredInstruction[]>([]);
+  const [kind, setKind] = useState<InstructionKind>("pause");
+  const [anchor, setAnchor] = useState<"layer" | "height">("layer");
+  const [at, setAt] = useState(40);
+  const [note, setNote] = useState("");
+  const [filament, setFilament] = useState(true);
+  const [tempNozzle, setTempNozzle] = useState(200);
+  const [tempBed, setTempBed] = useState(60);
+  const [tempWait, setTempWait] = useState(false);
+  const [fanPercent, setFanPercent] = useState(50);
 
   useEffect(() => {
     void (async () => {
@@ -90,10 +102,15 @@ export function App() {
             setModels(loaded);
             setSelectedId(loaded[0].id);
           }
+          const stored = await api.instructions();
+          setInstructions(stored);
           if (existing && existing.layer_count > 0) {
+            const zs = existing.layers.map((item) => item.z);
             setLayerCount(existing.layer_count);
-            setLayerZ(existing.layers.map((item) => item.z));
-            setLayer(Math.max(0, Math.floor(existing.layer_count / 2)));
+            setLayerZ(zs);
+            const marked = instructionMarks(stored, zs, 0.2);
+            const focus = marked.find((index) => index >= 0 && index < existing.layer_count);
+            setLayer(focus ?? Math.max(0, Math.floor(existing.layer_count / 2)));
             setPreview(true);
             setShowModel(false);
           }
@@ -320,6 +337,62 @@ export function App() {
     }
   }
 
+  async function addInstruction() {
+    setError(null);
+    const text = note.trim();
+    let instruction: CustomInstruction;
+    if (kind === "pause") {
+      instruction = {
+        kind: "pause",
+        layer: anchor === "layer" ? at : null,
+        height_mm: anchor === "height" ? at : null,
+        filament_change: filament,
+        message: text || null,
+      };
+    } else if (kind === "temperature") {
+      instruction = {
+        kind: "temperature",
+        layer: at,
+        nozzle_c: tempNozzle,
+        bed_c: tempBed,
+        wait: tempWait,
+      };
+    } else if (kind === "fan") {
+      instruction = { kind: "fan", height_mm: at, percent: fanPercent };
+    } else if (kind === "beep") {
+      instruction = { kind: "beep", layer: at };
+    } else if (kind === "message") {
+      if (!text) {
+        setError("A message needs some text.");
+        return;
+      }
+      instruction = { kind: "message", layer: at, text };
+    } else {
+      instruction = {
+        kind: "park_and_wait",
+        layer: at,
+        x: 5,
+        y: 5,
+        message: text || null,
+      };
+    }
+    try {
+      const stored = await api.addInstruction(instruction);
+      setInstructions((current) => [...current, stored]);
+      setNote("");
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  async function removeInstruction(id: number) {
+    try {
+      setInstructions(await api.removeInstruction(id));
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
   async function applyEngine() {
     try {
       const ok = await api.setEngine(enginePath, libDir);
@@ -331,6 +404,8 @@ export function App() {
   }
 
   const minutes = printSeconds == null ? null : Math.max(1, Math.round(printSeconds / 60));
+  const marks = instructionMarks(instructions, layerZ, layerHeight);
+  const marksHere = instructions.filter((item) => markOf(item, layerZ, layerHeight) === layer);
 
   return (
     <div className="app">
@@ -481,6 +556,99 @@ export function App() {
             <p className="hint">layer height also sets the first layer. changing quality reloads these values.</p>
           </Frame>
 
+          <Frame title="instructions">
+            <label>
+              kind
+              <select value={kind} onChange={(event) => setKind(event.target.value as InstructionKind)}>
+                <option value="pause">pause</option>
+                <option value="temperature">temperature</option>
+                <option value="fan">fan</option>
+                <option value="beep">beep</option>
+                <option value="message">message</option>
+                <option value="park_and_wait">park and wait</option>
+              </select>
+            </label>
+            {kind === "pause" && (
+              <label>
+                by
+                <select value={anchor} onChange={(event) => setAnchor(event.target.value as "layer" | "height")}>
+                  <option value="layer">layer</option>
+                  <option value="height">height mm</option>
+                </select>
+              </label>
+            )}
+            <label>
+              {kind === "fan" || (kind === "pause" && anchor === "height") ? "height" : "layer"}
+              <input
+                type="number"
+                min={kind === "fan" || (kind === "pause" && anchor === "height") ? 0 : 0}
+                step={kind === "fan" || (kind === "pause" && anchor === "height") ? 0.1 : 1}
+                value={at}
+                onChange={(event) => setAt(Number(event.target.value))}
+              />
+            </label>
+            {kind === "fan" && (
+              <label>
+                percent
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={fanPercent}
+                  onChange={(event) => setFanPercent(Number(event.target.value))}
+                />
+              </label>
+            )}
+            {kind === "temperature" && (
+              <>
+                <label>
+                  hotend C
+                  <input
+                    type="number"
+                    value={tempNozzle}
+                    onChange={(event) => setTempNozzle(Number(event.target.value))}
+                  />
+                </label>
+                <label>
+                  bed C
+                  <input type="number" value={tempBed} onChange={(event) => setTempBed(Number(event.target.value))} />
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={tempWait} onChange={(event) => setTempWait(event.target.checked)} />
+                  wait until reached
+                </label>
+              </>
+            )}
+            {kind === "pause" && (
+              <label className="check">
+                <input type="checkbox" checked={filament} onChange={(event) => setFilament(event.target.checked)} />
+                filament change
+              </label>
+            )}
+            {(kind === "pause" || kind === "message" || kind === "park_and_wait") && (
+              <label>
+                note
+                <input value={note} onChange={(event) => setNote(event.target.value)} />
+              </label>
+            )}
+            <button type="button" onClick={() => void addInstruction()}>
+              [ add ]
+            </button>
+            {instructions.length === 0 && <p className="hint">none yet. they are stored on this job.</p>}
+            <ul className="instructions">
+              {instructions.map((item) => (
+                <li key={item.id}>
+                  <span>{item.summary}</span>
+                  <button type="button" onClick={() => void removeInstruction(item.id)} aria-label="Remove instruction">
+                    x
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <p className="hint">Marlin gets M600 / M0. RepRap pauses with M226. Klipper uses PAUSE, or M600 for a filament change.</p>
+          </Frame>
+
           <Frame title="model">
             {models.length === 0 && <p className="hint">Import an STL or a simple 3MF. It is centred on the bed.</p>}
             <ul className="models">
@@ -621,10 +789,11 @@ export function App() {
                     layer {String(layer + 1).padStart(3, " ")} / {layerCount}
                     {layerZ[layer] != null ? `   z ${layerZ[layer].toFixed(2)}` : ""}
                     {minutes == null ? "" : `   ~${minutes} min`}
+                    {marksHere.length > 0 ? `   + ${marksHere.map((item) => item.summary).join(" / ")}` : ""}
                     {"   [ ]"}
                   </div>
                   <div className="glyphs" aria-hidden="true">
-                    {track(layer, Math.max(0, layerCount - 1))}
+                    {track(layer, Math.max(0, layerCount - 1), 28, marks)}
                   </div>
                   <input
                     type="range"
@@ -649,6 +818,26 @@ export function App() {
       </div>
     </div>
   );
+}
+
+type InstructionKind = "pause" | "temperature" | "fan" | "beep" | "message" | "park_and_wait";
+
+function markOf(item: StoredInstruction, layerZ: number[], layerHeight: number): number | null {
+  const instruction = item.instruction;
+  if ("layer" in instruction && instruction.layer != null) return instruction.layer;
+  if ("height_mm" in instruction && instruction.height_mm != null) {
+    const height = instruction.height_mm;
+    const found = layerZ.findIndex((z) => z + 0.0001 >= height);
+    if (found >= 0) return found;
+    return Math.max(0, Math.ceil(height / Math.max(layerHeight, 0.05)) - 1);
+  }
+  return null;
+}
+
+function instructionMarks(items: StoredInstruction[], layerZ: number[], layerHeight: number): number[] {
+  return items
+    .map((item) => markOf(item, layerZ, layerHeight))
+    .filter((value): value is number => value != null);
 }
 
 function round3(value: number): number {

@@ -1,3 +1,3 @@
 [workspace]
 resolver = "2"
-members = ["crates/shale-core", "apps/desktop/src-tauri"]
+members = ["crates/shale-core", "crates/shale-mcp", "apps/desktop/src-tauri"]

@@ -11,22 +11,29 @@ This is the first MVP:
 3. Slice with CuraEngine, follow progress, then scrub a layer-by-layer toolpath preview.
 4. Export the G-code.
 
-Out of scope for now, but the layout leaves room for them: an MCP server on the core library, custom instructions that are not G-code, smarter supports, camera-based print removal, and automatic non-planar placement.
+Two more pieces sit on the same core:
+
+5. An MCP server, so an agent can list printers, load a model, change settings, slice, and export G-code.
+6. Custom instructions (a pause, a temperature change, a beep) stored on the job and compiled into the engine's G-code. You do not edit the file by hand.
+
+Still out of scope: smarter supports, camera-based print removal, and automatic non-planar placement.
 
 ## Layout
 
 ```
 crates/shale-core     job model, profiles, formulas, meshes, engine boundary
+crates/shale-mcp      MCP server over that same job API
 apps/desktop          Tauri 2 shell and the React / three.js view
 scripts/fetch-resources.sh
 vendor/               created by the script; not in git
 ```
 
-`shale-core` is an ordinary Rust library. The Tauri app is a client of it. A later MCP server can call the same library without going through the window.
+`shale-core` is an ordinary Rust library. The window and `shale-mcp` both call it. `Session` is the job the MCP tools use (load, transform, settings, instructions, slice, export). The window calls the same `slice` function, including the instruction pass, and keeps the mesh preview the viewport needs.
 
 ```
-UI  →  shale-core  →  CuraEngine (separate process)
-                 ↘  Cura resources + fdm_materials (data files)
+UI  ↘
+      shale-core  →  CuraEngine (separate process)
+MCP ↗            ↘  Cura resources + fdm_materials (data files)
 ```
 
 ### Why the command-line engine, not Arcus, for now
@@ -35,7 +42,7 @@ Cura's own frontend speaks [Arcus](https://github.com/Ultimaker/libArcus): proto
 
 That is the right long-term path, and `shale_core::engine::SlicingEngine` is the seam for it. `ArcusEngine` is a stub that returns a clear error. The MVP uses `CliEngine` instead:
 
-* CuraEngine 5.13's command-line `sendProgress` is empty, and `-p` is a leftover no-op, so the CLI cannot stream real percentages. Shale estimates progress by counting `;LAYER:` lines as they are flushed, and reads `;TIME_ELAPSED:` from the finished file. Arcus `Progress` messages are the proper stream.
+* CuraEngine 5.13's command-line `sendProgress` is empty, and `-p` is a leftover no-op, so the CLI cannot stream real percentages. Shale estimates progress from the engine's log (`layer N of M` during insets, skin, and infill, then `starting export`) and from `;LAYER:` lines as they are flushed, and reads `;TIME_ELAPSED:` from the finished file. Arcus `Progress` messages are the proper stream. The engine is not forked to get that.
 * A CLI-only binary is the practical one to build and to point Shale at. The AGPL boundary stays obvious: we never link the engine.
 * The layer preview the MVP needs is already in the G-code CuraEngine writes (`;LAYER:` and `;TYPE:`). Arcus polygons can replace that parser later without a UI change.
 
@@ -138,7 +145,66 @@ SHALE_DEMO_SLICE=1 \
   ./target/debug/shale-desktop
 ```
 
-`SHALE_DEMO_SLICE=1` slices before the window opens, so the layer scrubber is already filled.
+`SHALE_DEMO_SLICE=1` slices before the window opens, so the layer scrubber is already filled. That launch also stores a sample filament-change pause at layer 40, which shows up as a `+` on the layer track.
+
+## MCP server
+
+`shale-mcp` speaks the Model Context Protocol. Stdio is the default. `--http` serves streamable HTTP and refuses any address that is not loopback.
+
+```bash
+cargo build -p shale-mcp
+./target/debug/shale-mcp
+# or
+./target/debug/shale-mcp --http 127.0.0.1:7337
+```
+
+The HTTP endpoint is `http://127.0.0.1:7337/mcp`. A client that is not on this machine cannot be bound.
+
+Tools call `shale_core::Session`: `list_printers`, `list_materials`, `list_profiles`, `load_model`, `transform_model`, `arrange_model`, `get_settings`, `set_settings`, `list_instructions`, `add_instruction`, `remove_instruction`, `slice`, `slice_summary`, `export_gcode`. `get_settings` returns the resolved value plus the definition's label and description when Cura wrote them. A `shale://job` resource reads the current models, instructions, and last summary. The `slice_a_model` prompt is a short checklist for an agent.
+
+### Claude Desktop
+
+In Claude Desktop's config (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "shale": {
+      "command": "/absolute/path/to/shale-mcp",
+      "env": {
+        "SHALE_CURAENGINE": "/absolute/path/to/CuraEngine",
+        "SHALE_CURA_DIR": "/absolute/path/to/vendor/Cura",
+        "SHALE_MATERIALS_DIR": "/absolute/path/to/vendor/fdm_materials"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop after saving. The server has no arguments for stdio; do not add `--http` here.
+
+### Any other MCP client
+
+A client that launches a subprocess and speaks MCP on stdin/stdout uses the same command and environment. Hermes Agent can use that stdio shape. A client that wants HTTP instead runs `shale-mcp --http 127.0.0.1:7337` itself and connects to `http://127.0.0.1:7337/mcp`. Binding `0.0.0.0` is rejected.
+
+## Custom instructions
+
+Instructions are data on the job, not hand-edited G-code. The window edits them in the instructions panel. The layer track draws a `+` where one applies. The MCP server adds the same objects with `add_instruction`.
+
+Kinds:
+
+| Kind | What you say | G-code |
+| --- | --- | --- |
+| pause | layer 40, or 12.4 mm, optional filament change | Marlin `M600` or `M0`. RepRap `M226` (there is no standard `M600`). Klipper `PAUSE`, or `M600` when it is a filament change |
+| temperature | from layer N, nozzle and/or bed, optional wait | `M104` / `M140`, plus `M109` / `M190` when waiting. Later engine setpoints on those heaters are rewritten |
+| fan | X% from height Y | `M106` / `M107`. Later engine fan commands are rewritten |
+| beep | at a layer | `M300` |
+| message | at a layer | `M117` |
+| park and wait | at a layer | travel to the park point (default 5, 5), pause, travel back |
+
+Layer numbers are Cura's `;LAYER:` index, which starts at 0. A height picks the first layer whose Z reaches it. The block is inserted at the start of that layer, after CuraEngine has finished. The engine binary is not modified, and its plugin slot is not used.
+
+Klipper's `PAUSE` and `M600` only do what the printer's macros say. RepRap gets a comment that a filament change is a plain pause.
 
 ## Tests
 
