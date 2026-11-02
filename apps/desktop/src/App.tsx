@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   type Bed,
@@ -18,8 +18,10 @@ import {
   type VariantInfo,
 } from "./api";
 import mark from "./brand/shale-mark-dark.svg";
+import { MarginField } from "./field/MarginField";
+import { PlateField } from "./field/PlateField";
 import { worldCentre, translationForCentre } from "./coords";
-import { Frame, meter, theme, track } from "./theme";
+import { Frame, meter, track } from "./theme";
 import { Viewport, type TransformMode, type ViewStyle } from "./Viewport";
 import { AsciiCheck, AsciiField, AsciiSelect, AsciiStepper } from "./widgets";
 
@@ -72,6 +74,9 @@ export function App() {
   const [mode, setMode] = useState<TransformMode>("translate");
   const [viewStyle, setViewStyle] = useState<ViewStyle>("solid");
   const [busy, setBusy] = useState(false);
+  const [viewportFocus, setViewportFocus] = useState(false);
+  const [scrubbing, setScrubbing] = useState(false);
+  const plateRef = useRef<HTMLDivElement>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState(false);
@@ -554,12 +559,29 @@ export function App() {
     }
   }
 
+  useEffect(() => {
+    const onDown = (event: PointerEvent) => {
+      const plate = plateRef.current;
+      setViewportFocus(Boolean(plate && event.target instanceof Node && plate.contains(event.target)));
+    };
+    const onUp = () => setScrubbing(false);
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
+
+  const startScreen = models.length === 0 && !preview;
+  const fieldLive = startScreen && !busy && !scrubbing && !viewportFocus;
   const minutes = printSeconds == null ? null : Math.max(1, Math.round(printSeconds / 60));
   const marks = instructionMarks(instructions, layerZ, layerHeight);
   const marksHere = instructions.filter((item) => markOf(item, layerZ, layerHeight) === layer);
 
   return (
     <div className="app">
+      <MarginField live={fieldLive} comet={startScreen} plateRef={plateRef} />
       <header className="topbar">
         <div className="brand">
           <img className="brand-mark" src={mark} alt="" />
@@ -960,6 +982,7 @@ export function App() {
         </aside>
 
         <main className="stage">
+          <div className="plate" ref={plateRef}>
           <Viewport
             width={bed.width}
             depth={bed.depth}
@@ -981,12 +1004,9 @@ export function App() {
             onSelect={(id) => setSelectedId(id < 0 ? null : id)}
             onTransform={(id, transform) => void commitTransform(id, transform)}
           />
-          {models.length === 0 && !preview && (
-            <pre className="empty">
-              <span className="stone">{theme.stone}</span>
-              <span className="caption">{"\nno model on the plate\nimport an stl, 3mf, or step"}</span>
-            </pre>
-          )}
+          {startScreen && <PlateField live={fieldLive} />}
+          {startScreen && <p className="caption">no model on the plate. import an stl, 3mf, or step</p>}
+          </div>
           <footer className="scrubber">
             <span>
               view{" "}
@@ -1011,14 +1031,22 @@ export function App() {
                 </AsciiCheck>
                 <div className="ascii-slider">
                   <div className="readout">
-                    layer {String(layer + 1).padStart(3, " ")} / {layerCount}
+                    layer <span className="active">{String(layer + 1).padStart(3, " ")}</span> / {layerCount}
                     {layerZ[layer] != null ? `   z ${layerZ[layer].toFixed(2)}` : ""}
                     {minutes == null ? "" : `   ~${minutes} min`}
                     {marksHere.length > 0 ? `   + ${marksHere.map((item) => item.summary).join(" / ")}` : ""}
                     {"   [ ]"}
                   </div>
                   <div className="glyphs" aria-hidden="true">
-                    {track(layer, Math.max(0, layerCount - 1), 28, marks)}
+                    {Array.from(track(layer, Math.max(0, layerCount - 1), 28, marks)).map((glyph, index) =>
+                      glyph === "●" ? (
+                        <span key={index} className="active">
+                          {glyph}
+                        </span>
+                      ) : (
+                        glyph
+                      ),
+                    )}
                   </div>
                   <input
                     type="range"
@@ -1026,6 +1054,7 @@ export function App() {
                     max={Math.max(0, layerCount - 1)}
                     value={layer}
                     aria-label="Layer"
+                    onPointerDown={() => setScrubbing(true)}
                     onChange={(event) => setLayer(Number(event.target.value))}
                   />
                 </div>

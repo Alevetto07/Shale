@@ -24,9 +24,9 @@ Shale reads those files as data. It does not link Cura, and it does not use Uran
 
 Material profiles come from [fdm_materials](https://github.com/Ultimaker/fdm_materials), dedicated to the public domain under CC0-1.0. The fetch script pins commit `82f433b2cfe0ac36c974443b80c9294f31b79224` and leaves that repository's `LICENSE` beside the XML files in `vendor/fdm_materials/`.
 
-## Space Grotesk (SIL Open Font License 1.1)
+## Fonts (SIL Open Font License 1.1)
 
-The wordmark is set in Space Grotesk, weight 600. Interface text is IBM Plex Mono. Both are SIL Open Font License 1.1. The font files and the OFL texts are in `apps/desktop/src/fonts/` (`OFL.txt` for Space Grotesk, `IBMPlexMono-OFL.txt` for Plex). They are bundled with the app and are not loaded from a font host at runtime.
+The wordmark is Space Grotesk, weight 600. Panels and controls are Geist Mono. Longer text (banners, hints, the empty-plate line) is Inter. Shale does not use Instrument Serif or IBM Plex Mono. All three families are SIL Open Font License 1.1. The font files and the OFL texts are in `apps/desktop/src/fonts/` (`OFL.txt` for Space Grotesk, `GeistMono-OFL.txt`, `Inter-OFL.txt`). They are bundled with the app and are not loaded from a font host at runtime.
 
 ## STEP tessellation (Apache-2.0)
 
