@@ -365,14 +365,30 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 .plate canvas { display: block; }
 .caption {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 1.1rem;
+  left: 1rem;
+  right: 1rem;
+  bottom: 0.8rem;
   margin: 0;
   text-align: center;
   pointer-events: none;
   z-index: 2;
 }
+.credit, .credit-line {
+  margin: 0.15rem 0 0;
+  color: var(--ink-3);
+  font-family: var(--prose);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.4;
+}
+.credit-line { display: block; }
+.credit a {
+  color: var(--ink-2);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.credit a:hover { color: var(--ink); }
 
 .scrubber {
   display: flex;

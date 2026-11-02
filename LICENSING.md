@@ -24,6 +24,14 @@ Shale reads those files as data. It does not link Cura, and it does not use Uran
 
 Material profiles come from [fdm_materials](https://github.com/Ultimaker/fdm_materials), dedicated to the public domain under CC0-1.0. The fetch script pins commit `82f433b2cfe0ac36c974443b80c9294f31b79224` and leaves that repository's `LICENSE` beside the XML files in `vendor/fdm_materials/`.
 
+## Hubble Deep Field (NASA, not subject to copyright in the United States)
+
+The empty plate draws an ASCII rendering of the Hubble Deep Field. Hubble took the exposures from 18 to 28 December 1995 with WFPC2. NASA published the mosaic on 15 January 1996.
+
+The source page is [Hubble Deep Field Image at Full Resolution](https://science.nasa.gov/asset/hubble/hubble-deep-field-image-at-full-resolution/). The file downloaded from that page is `https://assets.science.nasa.gov/content/dam/science/missions/hubble/releases/1996/01/STScI-01EVTAT7291D1ETQJ1BD5H2BRT.tif/jcr:content/renditions/cq5dam.web.1280.1280.jpeg` (1280×1253). Shale bundles only a 360×352 downscale, `apps/desktop/src/field/hubble-deep-field.jpg`.
+
+The page credits **R. Williams (STScI), the Hubble Deep Field Team and NASA**. [NASA’s images and media guidelines](https://www.nasa.gov/nasa-brand-center/images-and-media/) say NASA image content is generally not subject to copyright in the United States, and that NASA should be acknowledged as the source. This is not an ESA/Hubble file, so the CC BY 4.0 credit that applies to many ESA/Hubble images is not the licence here.
+
 ## Fonts (SIL Open Font License 1.1)
 
 The wordmark is Space Grotesk, weight 600. Panels and controls are Geist Mono. Longer text (banners, hints, the empty-plate line) is Inter. Shale does not use Instrument Serif or IBM Plex Mono. All three families are SIL Open Font License 1.1. The font files and the OFL texts are in `apps/desktop/src/fonts/` (`OFL.txt` for Space Grotesk, `GeistMono-OFL.txt`, `Inter-OFL.txt`). They are bundled with the app and are not loaded from a font host at runtime.

@@ -18,6 +18,7 @@ import {
   type VariantInfo,
 } from "./api";
 import mark from "./brand/shale-mark-dark.svg";
+import { hubbleDeepField } from "./field/credit";
 import { MarginField } from "./field/MarginField";
 import { PlateField } from "./field/PlateField";
 import { worldCentre, translationForCentre } from "./coords";
@@ -979,6 +980,16 @@ export function App() {
               [ check engine ]
             </button>
           </Frame>
+
+          <Frame title="credits">
+            <p className="credit">
+              {hubbleDeepField.name}, observed {hubbleDeepField.observed}. {hubbleDeepField.credit}.{" "}
+              {hubbleDeepField.licence}.
+            </p>
+            <p className="credit">
+              <a href={hubbleDeepField.page}>{hubbleDeepField.page}</a>
+            </p>
+          </Frame>
         </aside>
 
         <main className="stage">
@@ -1005,7 +1016,14 @@ export function App() {
             onTransform={(id, transform) => void commitTransform(id, transform)}
           />
           {startScreen && <PlateField live={fieldLive} />}
-          {startScreen && <p className="caption">no model on the plate. import an stl, 3mf, or step</p>}
+          {startScreen && (
+            <p className="caption">
+              no model on the plate. import an stl, 3mf, or step
+              <span className="credit-line">
+                {hubbleDeepField.name}. {hubbleDeepField.credit}. {hubbleDeepField.licence}.
+              </span>
+            </p>
+          )}
           </div>
           <footer className="scrubber">
             <span>
