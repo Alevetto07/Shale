@@ -3,6 +3,7 @@ import { Canvas, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 import type { PreviewPath, SupportOverlay, Transform } from "./api";
+import { localCentre, rotateScale, translationForCentre, worldCentre } from "./coords";
 
 export type TransformMode = "translate" | "rotate" | "scale";
 export type ViewStyle = "solid" | "wire" | "ascii";
@@ -26,6 +27,7 @@ interface ViewportProps {
   showToolpaths: boolean;
   viewStyle: ViewStyle;
   mode: TransformMode;
+  frameToken: number;
   onSelect: (id: number) => void;
   onTransform: (id: number, transform: Transform) => void;
 }
@@ -46,21 +48,29 @@ const KIND_COLOR: Record<string, string> = {
 };
 
 export function Viewport(props: ViewportProps) {
+  const cx = props.centerIsZero ? 0 : props.width / 2;
+  const cy = props.centerIsZero ? 0 : props.depth / 2;
   return (
     <Canvas
       shadows={false}
-      camera={{ position: [180, -240, 160], fov: 32, up: [0, 0, 1], near: 0.1, far: 8000 }}
+      camera={{ position: [cx + 80, cy - 220, 180], fov: 32, up: [0, 0, 1], near: 0.1, far: 8000 }}
       onPointerMissed={() => props.onSelect(-1)}
+      onCreated={({ camera }) => {
+        camera.up.set(0, 0, 1);
+        camera.lookAt(cx, cy, 0);
+      }}
     >
       <color attach="background" args={["#0d0d0d"]} />
       <ambientLight intensity={0.7} />
       <directionalLight position={[120, -80, 220]} intensity={1.15} color="#ffffff" />
       <directionalLight position={[-80, 140, 40]} intensity={0.28} color="#c8c8c8" />
-      <FrameBed
+      <Framer
         width={props.width}
         depth={props.depth}
         height={props.height}
         centerIsZero={props.centerIsZero}
+        models={props.models}
+        frameToken={props.frameToken}
       />
       <Bed
         width={props.width}
@@ -83,16 +93,7 @@ export function Viewport(props: ViewportProps) {
         <SupportVolume key={overlay.id} overlay={overlay} />
       ))}
       {props.showToolpaths && <Toolpaths paths={props.toolpaths} />}
-      <OrbitControls
-        makeDefault
-        enableDamping
-        dampingFactor={0.12}
-        target={[
-          props.centerIsZero ? 0 : props.width / 2,
-          props.centerIsZero ? 0 : props.depth / 2,
-          0,
-        ]}
-      />
+      <OrbitControls makeDefault enableDamping dampingFactor={0.12} />
     </Canvas>
   );
 }
@@ -119,41 +120,86 @@ function SupportVolume({ overlay }: { overlay: SupportOverlay }) {
   );
 }
 
-function FrameBed({
+function modelBox(model: SceneModel): THREE.Box3 {
+  const box = new THREE.Box3();
+  const point = new THREE.Vector3();
+  for (let index = 0; index < model.positions.length; index += 3) {
+    const moved = rotateScale(
+      [model.positions[index], model.positions[index + 1], model.positions[index + 2]],
+      model.transform.rotation_deg,
+      model.transform.scale,
+    );
+    point.set(
+      model.transform.translation[0] + moved[0],
+      model.transform.translation[1] + moved[1],
+      model.transform.translation[2] + moved[2],
+    );
+    box.expandByPoint(point);
+  }
+  if (box.isEmpty()) box.set(new THREE.Vector3(), new THREE.Vector3());
+  return box;
+}
+
+function frameBox(camera: THREE.PerspectiveCamera, controls: { target: THREE.Vector3; update: () => void }, box: THREE.Box3) {
+  const centre = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const aspect = camera.aspect > 0 ? camera.aspect : 1.4;
+  const vFov = (camera.fov * Math.PI) / 180;
+  const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
+  const span = Math.max(size.x, size.y, 30);
+  const dist = Math.max(span / 2 / Math.tan(hFov / 2), size.z / 2 / Math.tan(vFov / 2), 40) * 1.28;
+  camera.up.set(0, 0, 1);
+  camera.position.set(centre.x + dist * 0.28, centre.y - dist * 0.62, centre.z + dist * 0.48);
+  camera.near = Math.max(0.1, dist / 400);
+  camera.far = dist * 30;
+  camera.updateProjectionMatrix();
+  controls.target.copy(centre);
+  controls.update();
+}
+
+function Framer({
   width,
   depth,
   height,
   centerIsZero,
+  models,
+  frameToken,
 }: {
   width: number;
   depth: number;
   height: number;
   centerIsZero: boolean;
+  models: SceneModel[];
+  frameToken: number;
 }) {
-  const camera = useThree((state) => state.camera);
-  const controls = useThree((state) => state.controls) as {
-    target?: THREE.Vector3;
-    update?: () => void;
-  } | null;
+  const camera = useThree((state) => state.camera) as THREE.PerspectiveCamera;
+  const controls = useThree((state) => state.controls) as { target: THREE.Vector3; update: () => void } | null;
+  const modelsRef = useMemo(() => ({ current: models }), []);
+  modelsRef.current = models;
   useEffect(() => {
-    const cx = centerIsZero ? 0 : width / 2;
-    const cy = centerIsZero ? 0 : depth / 2;
-    const span = Math.max(width, depth, 80);
-    const lookZ = height * 0.12;
-    camera.up.set(0, 0, 1);
-    camera.position.set(cx + span * 0.2, cy - span * 1.15, height * 0.55 + span * 0.55);
-    camera.lookAt(cx, cy, lookZ);
-    camera.updateProjectionMatrix();
-    controls?.target?.set(cx, cy, lookZ);
-    controls?.update?.();
-  }, [camera, controls, width, depth, height, centerIsZero]);
+    if (!controls?.target || !controls.update) return;
+    const selected = modelsRef.current.find((model) => model.selected);
+    if (frameToken > 0 && selected && selected.positions.length > 0) {
+      const box = modelBox(selected);
+      const size = box.getSize(new THREE.Vector3());
+      box.expandByScalar(Math.max(24, Math.max(size.x, size.y, size.z) * 0.8));
+      frameBox(camera, controls, box);
+      return;
+    }
+    const x0 = centerIsZero ? -width / 2 : 0;
+    const y0 = centerIsZero ? -depth / 2 : 0;
+    const box = new THREE.Box3(
+      new THREE.Vector3(x0, y0, 0),
+      new THREE.Vector3(x0 + width, y0 + depth, Math.min(48, Math.max(height * 0.15, 20))),
+    );
+    frameBox(camera, controls, box);
+  }, [camera, controls, width, depth, height, centerIsZero, frameToken, modelsRef]);
   return null;
 }
 
 function Bed({
   width,
   depth,
-  height,
   centerIsZero,
 }: {
   width: number;
@@ -164,7 +210,7 @@ function Bed({
   const cx = centerIsZero ? 0 : width / 2;
   const cy = centerIsZero ? 0 : depth / 2;
   const divisions = Math.max(4, Math.round(Math.max(width, depth) / 10));
-  const edges = useMemo(() => new THREE.EdgesGeometry(new THREE.BoxGeometry(width, depth, height)), [width, depth, height]);
+  const outline = useMemo(() => new THREE.EdgesGeometry(new THREE.PlaneGeometry(width, depth)), [width, depth]);
   return (
     <group>
       <mesh position={[cx, cy, -1.2]} receiveShadow>
@@ -176,8 +222,8 @@ function Bed({
         rotation={[Math.PI / 2, 0, 0]}
         position={[cx, cy, 0.04]}
       />
-      <lineSegments geometry={edges} position={[cx, cy, height / 2]}>
-        <lineBasicMaterial color="#3a3a3a" />
+      <lineSegments geometry={outline} position={[cx, cy, 0.08]}>
+        <lineBasicMaterial color="#6a6a6a" />
       </lineSegments>
     </group>
   );
@@ -225,24 +271,29 @@ function PrintModel({
     geo.computeVertexNormals();
     return geo;
   }, [model.positions]);
+  const centre = useMemo(() => localCentre(model.positions), [model.positions]);
   const [node, setNode] = useState<THREE.Group | null>(null);
   const rotation = model.transform.rotation_deg.map((deg) => (deg * Math.PI) / 180) as [
     number,
     number,
     number,
   ];
+  const pivot = worldCentre(model.positions, model.transform);
 
   const publish = () => {
     if (!node) return;
-    onTransform(model.id, {
-      translation: [node.position.x, node.position.y, node.position.z],
-      rotation_deg: [
-        (node.rotation.x * 180) / Math.PI,
-        (node.rotation.y * 180) / Math.PI,
-        (node.rotation.z * 180) / Math.PI,
-      ],
-      scale: [node.scale.x, node.scale.y, node.scale.z],
-    });
+    const rotationDeg: [number, number, number] = [
+      (node.rotation.x * 180) / Math.PI,
+      (node.rotation.y * 180) / Math.PI,
+      (node.rotation.z * 180) / Math.PI,
+    ];
+    const scale: [number, number, number] = [node.scale.x, node.scale.y, node.scale.z];
+    const translation = translationForCentre(
+      model.positions,
+      { translation: [0, 0, 0], rotation_deg: rotationDeg, scale },
+      [node.position.x, node.position.y, node.position.z],
+    );
+    onTransform(model.id, { translation, rotation_deg: rotationDeg, scale });
   };
 
   return (
@@ -250,7 +301,7 @@ function PrintModel({
       {model.selected && node && <TransformControls object={node} mode={mode} onMouseUp={publish} />}
       <group
         ref={setNode}
-        position={model.transform.translation}
+        position={pivot}
         rotation={rotation}
         scale={model.transform.scale}
         onClick={(event) => {
@@ -258,7 +309,7 @@ function PrintModel({
           onSelect(model.id);
         }}
       >
-        <mesh geometry={geometry}>
+        <mesh geometry={geometry} position={[-centre[0], -centre[1], -centre[2]]}>
           {viewStyle === "ascii" ? (
             <shaderMaterial vertexShader={ASCII_VERT} fragmentShader={ASCII_FRAG} side={THREE.DoubleSide} />
           ) : viewStyle === "wire" ? (
