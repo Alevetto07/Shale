@@ -176,17 +176,90 @@ input, select {
   width: 100%;
   background: transparent;
   border: 0;
-  border-bottom: 1px solid var(--line);
   border-radius: 0;
-  padding: 0.2rem 0;
+  padding: 0.15rem 0;
   color: var(--ink);
+  appearance: none;
 }
 
-label.check {
-  grid-template-columns: 1fr;
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+input[type="number"] { -moz-appearance: textfield; }
+
+.ascii-check {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.1rem 0;
+  text-align: left;
   color: var(--ink);
 }
-label.check input { width: auto; }
+.ascii-check span:first-child {
+  flex: none;
+  width: 3ch;
+  color: var(--muted);
+  font-variant-ligatures: none;
+}
+
+.ascii-step, .ascii-field {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  color: var(--muted);
+}
+.ascii-step input, .ascii-field input {
+  width: 8ch;
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  color: var(--ink);
+}
+.ascii-field input { text-align: left; }
+.ascii-step button, .ascii-select-closed {
+  color: var(--muted);
+  padding: 0;
+}
+.ascii-step button:hover, .ascii-select-closed:hover { color: var(--ink); }
+
+.ascii-select { position: relative; min-width: 0; }
+.ascii-select-closed {
+  display: block;
+  width: 100%;
+  text-align: left;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ascii-menu {
+  position: absolute;
+  z-index: 8;
+  left: 0;
+  right: 0;
+  top: calc(100% + 0.15rem);
+  max-height: 16rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+}
+.ascii-menu-edge, .ascii-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  padding: 0.05rem 0;
+  font-size: 13px;
+}
+.ascii-option.cursor, .ascii-option[aria-selected="true"] { color: var(--ink); }
 
 .meta, .hint {
   margin: 0.2rem 0 0;
@@ -203,7 +276,8 @@ label.check input { width: auto; }
   align-items: baseline;
   font-size: 12px;
 }
-.instructions li span::before { content: "+ "; color: var(--muted); }
+.instructions li > span::before { content: "+ "; color: var(--muted); }
+.scrubber .ascii-check { width: auto; flex: none; }
 .instructions button { color: var(--dim); padding: 0; }
 button.model { display: block; width: 100%; text-align: left; padding-left: 0; }
 button.model::before { content: "  "; }

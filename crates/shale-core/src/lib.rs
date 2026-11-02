@@ -15,6 +15,7 @@ pub mod instructions;
 pub mod job;
 mod material;
 pub mod mesh;
+pub mod removal;
 pub mod resolver;
 pub mod session;
 pub mod supports;

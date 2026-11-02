@@ -18,8 +18,10 @@ import {
   type VariantInfo,
 } from "./api";
 import mark from "./brand/shale-mark-dark.svg";
+import { worldCentre, translationForCentre } from "./coords";
 import { Frame, meter, theme, track } from "./theme";
 import { Viewport, type TransformMode, type ViewStyle } from "./Viewport";
+import { AsciiCheck, AsciiField, AsciiSelect, AsciiStepper } from "./widgets";
 
 interface Progress {
   fraction: number;
@@ -90,6 +92,7 @@ export function App() {
   const [supportAngle, setSupportAngle] = useState(50);
   const [bridgeMm, setBridgeMm] = useState(20);
   const [supportBusy, setSupportBusy] = useState(false);
+  const [frameToken, setFrameToken] = useState(0);
 
   useEffect(() => {
     void (async () => {
@@ -204,8 +207,14 @@ export function App() {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      const tag = (event.target as HTMLElement | null)?.tagName;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+      if (target?.closest(".ascii-select, .ascii-menu, .ascii-step")) return;
+      if (event.key === "f") {
+        event.preventDefault();
+        setFrameToken((token) => token + 1);
+      }
       if (event.key === "1") setMode("translate");
       if (event.key === "2") setMode("rotate");
       if (event.key === "3") setMode("scale");
@@ -267,7 +276,7 @@ export function App() {
     }
   }
 
-  function editNumber(axis: 0 | 1 | 2, kind: "translation" | "rotation_deg" | "scale", value: number) {
+  function editNumber(axis: 0 | 1 | 2, kind: "rotation_deg" | "scale", value: number) {
     if (!selected) return;
     const transform: Transform = {
       translation: [...selected.transform.translation],
@@ -276,6 +285,17 @@ export function App() {
     };
     transform[kind][axis] = value;
     void commitTransform(selected.id, transform);
+  }
+
+  function editCentre(axis: 0 | 1 | 2, value: number) {
+    if (!selected) return;
+    const centre = worldCentre(selected.positions, selected.transform);
+    centre[axis] = value;
+    const translation = translationForCentre(selected.positions, selected.transform, centre);
+    void commitTransform(selected.id, {
+      ...selected.transform,
+      translation,
+    });
   }
 
   async function dropSelected() {
@@ -508,52 +528,46 @@ export function App() {
           <Frame title="printer">
             <label>
               filter
-              <input
-                value={printerQuery}
-                onChange={(event) => setPrinterQuery(event.target.value)}
-                placeholder="Ender, Prusa…"
-              />
+              <AsciiField label="filter" value={printerQuery} placeholder="Ender, Prusa…" onChange={setPrinterQuery} />
             </label>
             <label>
               machine
-              <select value={printerId} onChange={(event) => setPrinterId(event.target.value)}>
-                {filteredPrinters.map((printer) => (
-                  <option key={printer.id} value={printer.id}>
-                    {printer.manufacturer ? `${printer.manufacturer} ` : ""}
-                    {printer.name}
-                  </option>
-                ))}
-              </select>
+              <AsciiSelect
+                label="machine"
+                value={printerId}
+                options={filteredPrinters.map((printer) => ({
+                  value: printer.id,
+                  label: `${printer.manufacturer ? `${printer.manufacturer} ` : ""}${printer.name}`,
+                }))}
+                onChange={setPrinterId}
+              />
             </label>
             <label>
               nozzle
-              <select value={variant ?? ""} onChange={(event) => setVariant(event.target.value || null)}>
-                {variants.map((item) => (
-                  <option key={item.name} value={item.name}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
+              <AsciiSelect
+                label="nozzle"
+                value={variant ?? ""}
+                options={variants.map((item) => ({ value: item.name, label: item.name }))}
+                onChange={(next) => setVariant(next || null)}
+              />
             </label>
             <label>
               quality
-              <select value={quality ?? ""} onChange={(event) => setQuality(event.target.value || null)}>
-                {qualities.map((item) => (
-                  <option key={item.quality_type} value={item.quality_type}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
+              <AsciiSelect
+                label="quality"
+                value={quality ?? ""}
+                options={qualities.map((item) => ({ value: item.quality_type, label: item.name }))}
+                onChange={(next) => setQuality(next || null)}
+              />
             </label>
             <label>
               material
-              <select value={material ?? ""} onChange={(event) => setMaterial(event.target.value || null)}>
-                {materials.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+              <AsciiSelect
+                label="material"
+                value={material ?? ""}
+                options={materials.map((item) => ({ value: item.id, label: item.label }))}
+                onChange={(next) => setMaterial(next || null)}
+              />
             </label>
             <p className="meta">
               bed {bed.width.toFixed(0)} x {bed.depth.toFixed(0)} x {bed.height.toFixed(0)} mm
@@ -566,51 +580,22 @@ export function App() {
           <Frame title="slice">
             <label>
               layer mm
-              <input
-                type="number"
-                min={0.05}
-                max={0.8}
-                step={0.01}
-                value={layerHeight}
-                onChange={(event) => setLayerHeight(Number(event.target.value))}
-              />
+              <AsciiStepper label="layer mm" value={layerHeight} min={0.05} max={0.8} step={0.01} digits={2} onChange={setLayerHeight} />
             </label>
             <label>
               infill %
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                value={infill}
-                onChange={(event) => setInfill(Number(event.target.value))}
-              />
+              <AsciiStepper label="infill %" value={infill} min={0} max={100} step={1} digits={0} onChange={setInfill} />
             </label>
-            <label className="check">
-              <input type="checkbox" checked={supports} onChange={(event) => setSupports(event.target.checked)} />
+            <AsciiCheck checked={supports} onChange={setSupports}>
               supports
-            </label>
+            </AsciiCheck>
             <label>
               hotend C
-              <input
-                type="number"
-                min={0}
-                max={400}
-                step={1}
-                value={nozzle}
-                onChange={(event) => setNozzle(Number(event.target.value))}
-              />
+              <AsciiStepper label="hotend C" value={nozzle} min={0} max={400} step={1} digits={0} onChange={setNozzle} />
             </label>
             <label>
               bed C
-              <input
-                type="number"
-                min={0}
-                max={150}
-                step={1}
-                value={bedTemp}
-                onChange={(event) => setBedTemp(Number(event.target.value))}
-              />
+              <AsciiStepper label="bed C" value={bedTemp} min={0} max={150} step={1} digits={0} onChange={setBedTemp} />
             </label>
             <p className="hint">layer height also sets the first layer. changing quality reloads these values.</p>
           </Frame>
@@ -618,25 +603,11 @@ export function App() {
           <Frame title="supports">
             <label>
               angle
-              <input
-                type="number"
-                min={0}
-                max={90}
-                step={1}
-                value={supportAngle}
-                onChange={(event) => setSupportAngle(Number(event.target.value))}
-              />
+              <AsciiStepper label="angle" value={supportAngle} min={0} max={90} step={1} digits={0} onChange={setSupportAngle} />
             </label>
             <label>
               bridge mm
-              <input
-                type="number"
-                min={0}
-                max={80}
-                step={1}
-                value={bridgeMm}
-                onChange={(event) => setBridgeMm(Number(event.target.value))}
-              />
+              <AsciiStepper label="bridge mm" value={bridgeMm} min={0} max={80} step={1} digits={0} onChange={setBridgeMm} />
             </label>
             <div className="row">
               <button type="button" disabled={selectedId == null || supportBusy} onClick={() => void proposeSupports()}>
@@ -653,15 +624,9 @@ export function App() {
             <ul className="instructions">
               {support?.plan.regions.map((region) => (
                 <li key={region.id}>
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      checked={region.enabled}
-                      onChange={() => void toggleSupport(region.id)}
-                    />
-                    {region.role === "block" ? "x " : "+ "}
-                    {region.summary}
-                  </label>
+                  <AsciiCheck checked={region.enabled} onChange={() => void toggleSupport(region.id)}>
+                    {`${region.role === "block" ? "block" : "support"}  ${region.summary}`}
+                  </AsciiCheck>
                 </li>
               ))}
             </ul>
@@ -673,77 +638,75 @@ export function App() {
           <Frame title="instructions">
             <label>
               kind
-              <select value={kind} onChange={(event) => setKind(event.target.value as InstructionKind)}>
-                <option value="pause">pause</option>
-                <option value="temperature">temperature</option>
-                <option value="fan">fan</option>
-                <option value="beep">beep</option>
-                <option value="message">message</option>
-                <option value="park_and_wait">park and wait</option>
-              </select>
+              <AsciiSelect
+                label="kind"
+                value={kind}
+                options={[
+                  { value: "pause", label: "pause" },
+                  { value: "temperature", label: "temperature" },
+                  { value: "fan", label: "fan" },
+                  { value: "beep", label: "beep" },
+                  { value: "message", label: "message" },
+                  { value: "park_and_wait", label: "park and wait" },
+                ]}
+                onChange={(next) => setKind(next as InstructionKind)}
+              />
             </label>
             {kind === "pause" && (
               <label>
                 by
-                <select value={anchor} onChange={(event) => setAnchor(event.target.value as "layer" | "height")}>
-                  <option value="layer">layer</option>
-                  <option value="height">height mm</option>
-                </select>
+                <AsciiSelect
+                  label="by"
+                  value={anchor}
+                  options={[
+                    { value: "layer", label: "layer" },
+                    { value: "height", label: "height mm" },
+                  ]}
+                  onChange={(next) => setAnchor(next as "layer" | "height")}
+                />
               </label>
             )}
             <label>
               {kind === "fan" || (kind === "pause" && anchor === "height") ? "height" : "layer"}
-              <input
-                type="number"
-                min={kind === "fan" || (kind === "pause" && anchor === "height") ? 0 : 0}
-                step={kind === "fan" || (kind === "pause" && anchor === "height") ? 0.1 : 1}
+              <AsciiStepper
+                label={kind === "fan" || (kind === "pause" && anchor === "height") ? "height" : "layer"}
                 value={at}
-                onChange={(event) => setAt(Number(event.target.value))}
+                min={0}
+                step={kind === "fan" || (kind === "pause" && anchor === "height") ? 0.1 : 1}
+                digits={kind === "fan" || (kind === "pause" && anchor === "height") ? 1 : 0}
+                onChange={setAt}
               />
             </label>
             {kind === "fan" && (
               <label>
                 percent
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={fanPercent}
-                  onChange={(event) => setFanPercent(Number(event.target.value))}
-                />
+                <AsciiStepper label="percent" value={fanPercent} min={0} max={100} step={1} digits={0} onChange={setFanPercent} />
               </label>
             )}
             {kind === "temperature" && (
               <>
                 <label>
                   hotend C
-                  <input
-                    type="number"
-                    value={tempNozzle}
-                    onChange={(event) => setTempNozzle(Number(event.target.value))}
-                  />
+                  <AsciiStepper label="hotend C" value={tempNozzle} min={0} max={400} step={1} digits={0} onChange={setTempNozzle} />
                 </label>
                 <label>
                   bed C
-                  <input type="number" value={tempBed} onChange={(event) => setTempBed(Number(event.target.value))} />
+                  <AsciiStepper label="bed C" value={tempBed} min={0} max={150} step={1} digits={0} onChange={setTempBed} />
                 </label>
-                <label className="check">
-                  <input type="checkbox" checked={tempWait} onChange={(event) => setTempWait(event.target.checked)} />
+                <AsciiCheck checked={tempWait} onChange={setTempWait}>
                   wait until reached
-                </label>
+                </AsciiCheck>
               </>
             )}
             {kind === "pause" && (
-              <label className="check">
-                <input type="checkbox" checked={filament} onChange={(event) => setFilament(event.target.checked)} />
+              <AsciiCheck checked={filament} onChange={setFilament}>
                 filament change
-              </label>
+              </AsciiCheck>
             )}
             {(kind === "pause" || kind === "message" || kind === "park_and_wait") && (
               <label>
                 note
-                <input value={note} onChange={(event) => setNote(event.target.value)} />
+                <AsciiField label="note" value={note} onChange={setNote} />
               </label>
             )}
             <button type="button" onClick={() => void addInstruction()}>
@@ -793,29 +756,32 @@ export function App() {
                   ))}
                 </div>
                 <div className="axes">
-                  {(["X", "Y", "Z"] as const).map((axis, index) => (
-                    <label key={axis}>
-                      {mode === "rotate" ? `${axis}°` : axis}
-                      <input
-                        type="number"
-                        step={mode === "scale" ? 0.01 : 1}
-                        value={round3(
-                          mode === "translate"
-                            ? selected.transform.translation[index]
-                            : mode === "rotate"
-                              ? selected.transform.rotation_deg[index]
-                              : selected.transform.scale[index],
-                        )}
-                        onChange={(event) =>
-                          editNumber(
-                            index as 0 | 1 | 2,
-                            mode === "translate" ? "translation" : mode === "rotate" ? "rotation_deg" : "scale",
-                            Number(event.target.value),
-                          )
-                        }
-                      />
-                    </label>
-                  ))}
+                  {(["X", "Y", "Z"] as const).map((axis, index) => {
+                    const axisIndex = index as 0 | 1 | 2;
+                    const centre = worldCentre(selected.positions, selected.transform);
+                    const shown =
+                      mode === "translate"
+                        ? centre[axisIndex]
+                        : mode === "rotate"
+                          ? selected.transform.rotation_deg[axisIndex]
+                          : selected.transform.scale[axisIndex];
+                    return (
+                      <label key={axis}>
+                        {mode === "rotate" ? `${axis}°` : axis}
+                        <AsciiStepper
+                          label={axis}
+                          value={shown}
+                          step={mode === "scale" ? 0.01 : mode === "translate" ? 1 : 1}
+                          digits={mode === "scale" ? 2 : mode === "translate" ? 1 : 1}
+                          onChange={(value) =>
+                            mode === "translate"
+                              ? editCentre(axisIndex, value)
+                              : editNumber(axisIndex, mode === "rotate" ? "rotation_deg" : "scale", value)
+                          }
+                        />
+                      </label>
+                    );
+                  })}
                 </div>
                 <div className="row">
                   <button type="button" onClick={() => void dropSelected()}>
@@ -827,20 +793,21 @@ export function App() {
                 </div>
               </>
             )}
-            <p className="hint">keys  1 move   2 rotate   3 scale</p>
+            <p className="hint">xyz is the part centre.  keys  1 move  2 rotate  3 scale  f frame</p>
           </Frame>
 
           <Frame title="engine">
             <label>
               binary
-              <input value={enginePath} onChange={(event) => setEnginePath(event.target.value)} />
+              <AsciiField label="binary" value={enginePath} onChange={setEnginePath} />
             </label>
             <label>
               libs
-              <input
+              <AsciiField
+                label="libs"
                 value={libDir}
-                placeholder="Only if the binary needs bundled libs"
-                onChange={(event) => setLibDir(event.target.value)}
+                placeholder="bundled libs, if needed"
+                onChange={setLibDir}
               />
             </label>
             <button type="button" onClick={() => void applyEngine()}>
@@ -867,6 +834,7 @@ export function App() {
             showToolpaths={preview}
             viewStyle={viewStyle}
             mode={mode}
+            frameToken={frameToken}
             onSelect={(id) => setSelectedId(id < 0 ? null : id)}
             onTransform={(id, transform) => void commitTransform(id, transform)}
           />
@@ -895,10 +863,9 @@ export function App() {
                 <button type="button" onClick={() => { setPreview(false); setShowModel(true); }}>
                   model
                 </button>
-                <label className="check">
-                  <input type="checkbox" checked={showModel} onChange={(event) => setShowModel(event.target.checked)} />
+                <AsciiCheck checked={showModel} onChange={setShowModel}>
                   ghost
-                </label>
+                </AsciiCheck>
                 <div className="ascii-slider">
                   <div className="readout">
                     layer {String(layer + 1).padStart(3, " ")} / {layerCount}
@@ -921,7 +888,7 @@ export function App() {
                 </div>
               </>
             ) : (
-              <p className="hint">drag to orbit. scroll to zoom. z is up.  1 move  2 rotate  3 scale</p>
+              <p className="hint">drag to orbit. scroll to zoom. z is up.  1 move  2 rotate  3 scale  f frame</p>
             )}
             {progress && (
               <p className="meter" aria-live="polite">

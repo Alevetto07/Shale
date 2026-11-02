@@ -225,6 +225,10 @@ Cura 5.14 stores paint-on-support in a 3MF PNG, with a 2-bit `support` channel i
 
 MCP tools: `analyse_overhangs`, `propose_supports`, `apply_supports`.
 
+## Print removal
+
+Not built. `docs/print-removal.md` is the note for a later camera check (Moonraker or OctoPrint webcam) and a user-written sweep. `shale_core::removal` is a stub: it stays off unless `SHALE_PRINT_REMOVAL=1`, and even then it does not open a camera or send a move. `will_move_printer` is false.
+
 ## Tests
 
 ```bash
