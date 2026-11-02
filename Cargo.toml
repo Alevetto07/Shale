@@ -1,0 +1,3 @@
+[workspace]
+resolver = "2"
+members = ["crates/shale-core", "apps/desktop/src-tauri"]

@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "name": "Demo Extruder",
+  "metadata": { "visible": false, "type": "extruder" },
+  "settings": {
+    "machine_settings": {
+      "children": {
+        "extruder_nr": { "type": "extruder", "default_value": 0 },
+        "machine_nozzle_size": { "type": "float", "default_value": 0.4 }
+      }
+    }
+  }
+}

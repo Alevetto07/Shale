@@ -1,0 +1,12 @@
+/target
+**/target
+/vendor
+node_modules
+dist
+apps/desktop/dist
+.DS_Store
+*.log
+apps/desktop/src-tauri/gen
+.tauri
+*.gcode
+/tmp
