@@ -5,6 +5,7 @@
 //! depends on Tauri or on Cura's Uranium / Qt frontend. CuraEngine itself stays
 //! a separate unmodified process behind [`engine::SlicingEngine`].
 
+pub mod cad;
 pub mod catalog;
 mod definition;
 pub mod engine;
@@ -21,6 +22,7 @@ pub mod session;
 pub mod supports;
 mod value;
 
+pub use cad::{suggest_chord_mm, ImportReport, ImportedMesh, TessellationTolerance};
 pub use catalog::{Catalog, MaterialInfo, PrinterInfo, QualityInfo, ResourcePaths, VariantInfo};
 pub use engine::{
     ArcusEngine, CliEngine, Engine, EngineBackend, EngineProgress, LiveLayer, SlicingEngine,
@@ -29,7 +31,7 @@ pub use error::Error;
 pub use gcode::Toolpath;
 pub use instructions::{CustomInstruction, GcodeFlavour};
 pub use job::{compare_support, slice, PlacedModel, SliceOutcome};
-pub use mesh::{drop_to_bed, load_mesh, place_on_bed, Transform, TriangleMesh};
+pub use mesh::{drop_to_bed, load_mesh, load_mesh_with, place_on_bed, Transform, TriangleMesh};
 pub use resolver::{ProfileSummary, ResolveRequest, ResolvedSettings, UserSettings};
 pub use session::{JobSliceSummary, Session, SettingsPatch, SettingsView, StoredInstruction};
 pub use supports::{

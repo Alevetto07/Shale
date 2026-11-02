@@ -53,6 +53,11 @@ export interface ModelView {
   name: string;
   positions: number[];
   transform: Transform;
+  triangles: number;
+  max_deviation_mm: number | null;
+  max_turning_deg: number | null;
+  import_ms: number;
+  source: string;
 }
 
 export interface Bed {
@@ -174,8 +179,22 @@ export const api = {
   materials: (printerId: string) => invoke<MaterialInfo[]>("list_materials", { printerId }),
   bed: (printerId: string, variantName: string | null, qualityType: string | null, materialId: string | null) =>
     invoke<Bed>("printer_bed", { printerId, variantName, qualityType, materialId }),
-  importModel: (path: string, printerId: string | null, variantName: string | null, qualityType: string | null) =>
-    invoke<ModelView>("import_model", { path, printerId, variantName, qualityType }),
+  importModel: (
+    path: string,
+    printerId: string | null,
+    variantName: string | null,
+    qualityType: string | null,
+    chordalMm: number,
+    angularDeg: number,
+  ) =>
+    invoke<ModelView>("import_model", {
+      path,
+      printerId,
+      variantName,
+      qualityType,
+      chordalMm,
+      angularDeg,
+    }),
   updateTransform: (id: number, transform: Transform) => invoke<void>("update_transform", { id, transform }),
   dropModel: (id: number) => invoke<Transform>("drop_model", { id }),
   removeModel: (id: number) => invoke<void>("remove_model", { id }),

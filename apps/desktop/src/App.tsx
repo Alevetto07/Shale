@@ -99,6 +99,9 @@ export function App() {
   const [bridgeMm, setBridgeMm] = useState(20);
   const [supportBusy, setSupportBusy] = useState(false);
   const [frameToken, setFrameToken] = useState(0);
+  const [chord, setChord] = useState(0.1);
+  const [turn, setTurn] = useState(15);
+  const [chordTied, setChordTied] = useState(true);
 
   useEffect(() => {
     void (async () => {
@@ -246,6 +249,14 @@ export function App() {
   }, [layerCount]);
 
   useEffect(() => {
+    if (!chordTied) return;
+    const layer = layerHeight > 0 ? layerHeight : 0.2;
+    const nozzleMm = bed.nozzle_size > 0 ? bed.nozzle_size : 0.4;
+    const suggested = Math.min(layer * 0.5, nozzleMm * 0.5);
+    setChord(Math.round(Math.min(0.5, Math.max(0.02, suggested)) * 1000) / 1000);
+  }, [chordTied, layerHeight, bed.nozzle_size]);
+
+  useEffect(() => {
     if (!preview || busy) return;
     let cancelled = false;
     void api.previewUntil(layer).then((next) => {
@@ -272,11 +283,11 @@ export function App() {
     setError(null);
     const picked = await open({
       multiple: false,
-      filters: [{ name: "Models", extensions: ["stl", "STL", "3mf", "3MF"] }],
+      filters: [{ name: "Models", extensions: ["stl", "STL", "3mf", "3MF", "step", "stp", "STEP", "STP"] }],
     });
     if (typeof picked !== "string") return;
     try {
-      const model = await api.importModel(picked, printerId || null, variant, quality);
+      const model = await api.importModel(picked, printerId || null, variant, quality, chord, turn);
       setModels((current) => [...current, model]);
       setSelectedId(model.id);
       setPreview(false);
@@ -622,6 +633,40 @@ export function App() {
               <AsciiStepper label="bed C" value={bedTemp} min={0} max={150} step={1} digits={0} onChange={setBedTemp} />
             </label>
             <p className="hint">layer height also sets the first layer. changing quality reloads these values.</p>
+            <label>
+              chord mm
+              <AsciiStepper
+                label="chord mm"
+                value={chord}
+                min={0.02}
+                max={0.5}
+                step={0.01}
+                digits={3}
+                onChange={(value) => {
+                  setChordTied(false);
+                  setChord(value);
+                }}
+              />
+            </label>
+            <label>
+              turn °
+              <AsciiStepper
+                label="turn"
+                value={turn}
+                min={2}
+                max={45}
+                step={1}
+                digits={0}
+                onChange={setTurn}
+              />
+            </label>
+            <button type="button" onClick={() => setChordTied(true)}>
+              [ tie chord to layer ]
+            </button>
+            <p className="hint">
+              step files are tessellated here. chord is half the layer height, and no coarser than half the nozzle.
+              turn is the largest bend between two segments of a curve. stl and 3mf are already meshes.
+            </p>
           </Frame>
 
           <Frame title="supports">
@@ -817,6 +862,16 @@ export function App() {
                 </div>
               </>
             )}
+            {selected && (
+              <p className="hint">
+                {selected.source}  {selected.triangles} tris
+                {selected.max_deviation_mm != null
+                  ? `  ${selected.max_deviation_mm.toFixed(3)} mm off the curve`
+                  : ""}
+                {selected.max_turning_deg != null ? `  turn ${selected.max_turning_deg.toFixed(1)}°` : ""}
+                {`  ${selected.import_ms} ms`}
+              </p>
+            )}
             <p className="hint">xyz is the part centre.  keys  1 move  2 rotate  3 scale  f frame</p>
           </Frame>
 
@@ -884,7 +939,7 @@ export function App() {
           {models.length === 0 && !preview && (
             <pre className="empty">
               <span className="stone">{theme.stone}</span>
-              <span className="caption">{"\nno model on the plate\nimport an stl or 3mf"}</span>
+              <span className="caption">{"\nno model on the plate\nimport an stl, 3mf, or step"}</span>
             </pre>
           )}
           <footer className="scrubber">

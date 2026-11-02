@@ -28,6 +28,12 @@ Material profiles come from [fdm_materials](https://github.com/Ultimaker/fdm_mat
 
 The wordmark is set in Space Grotesk, weight 600. Interface text is IBM Plex Mono. Both are SIL Open Font License 1.1. The font files and the OFL texts are in `apps/desktop/src/fonts/` (`OFL.txt` for Space Grotesk, `IBMPlexMono-OFL.txt` for Plex). They are bundled with the app and are not loaded from a font host at runtime.
 
+## STEP tessellation (Apache-2.0)
+
+Shale tessellates STEP boundary representation itself, instead of asking for an STL. The kernel is [truck](https://github.com/ricosjp/truck): `truck-stepio`, `truck-modeling`, `truck-meshalgo`, and `truck-topology`, all Apache-2.0. The STEP parser underneath (`ruststep`) is Apache-2.0. The constrained Delaunay step uses `spade`, which is MIT OR Apache-2.0. Cargo fetches them. Their source is not copied into this repository. Shale's own code is still unlicensed, as stated at the top of this file.
+
+Open CASCADE (OCCT) was the other candidate. It is LGPL-2.1 with an additional exception. The exception lets a program use an unmodified OCCT under terms other than the LGPL, provided OCCT stays replaceable: if you modify OCCT, those changes must be released under LGPL-2.1 plus the same exception, and a combined binary still has to let a recipient swap in their own OCCT. Shipping Shale linked to OCCT would mean shipping that licence, offering OCCT's source, and keeping the library separable. That is a real distribution obligation, so Shale does not link OCCT. truck covers the STEP files this version tessellates (planes, cylinders, spheres, NURBS shells). Files that only a boolean kernel can rebuild are reported as unsupported rather than sent through OCCT.
+
 ## MCP SDK (Apache-2.0)
 
 `crates/shale-mcp` depends on the [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) crate to speak the Model Context Protocol. That crate is Apache-2.0. Shale does not copy its source; Cargo fetches it as a normal dependency. Shale's own code is still unlicensed, as stated at the top of this file.
@@ -37,3 +43,4 @@ The wordmark is set in Space Grotesk, weight 600. Interface text is IBM Plex Mon
 1. Choose a licence for Shale's own code and replace the note at the top of this file.
 2. Keep the fetch script's pins, and ship or document the Cura `LICENSE` and the fdm_materials `LICENSE` next to the data.
 3. If a CuraEngine binary is bundled, ship it unmodified and comply with the AGPL-3.0 for that binary.
+4. If a later version links OpenCASCADE, add the LGPL-2.1 text and the OCCT exception, and keep that library replaceable. The current tessellator does not.

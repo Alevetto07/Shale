@@ -1,4 +1,7 @@
-//! Triangle meshes from STL and a practical subset of 3MF.
+//! Triangle meshes from STL, 3MF, and tessellated STEP.
+//!
+//! STEP is tessellated in [`crate::cad`] before it becomes one of these meshes.
+//! 3MF is already a mesh; Shale reads the triangles rather than tessellating a solid.
 //!
 //! CuraEngine's command-line loader is given STL. Imported 3MF is converted
 //! before slicing. Transforms match three.js object order: scale, then the
@@ -73,16 +76,30 @@ impl TriangleMesh {
 }
 
 pub fn load_mesh(path: &Path) -> Result<TriangleMesh, Error> {
+    Ok(load_mesh_with(path, &crate::cad::TessellationTolerance::standard())?.mesh)
+}
+
+/// Load a model, tessellating STEP at `tolerance`. STL and 3MF ignore it.
+pub fn load_mesh_with(
+    path: &Path,
+    tolerance: &crate::cad::TessellationTolerance,
+) -> Result<crate::cad::ImportedMesh, Error> {
+    let started = std::time::Instant::now();
     let bytes = fs::read(path)?;
     let extension = path
         .extension()
         .and_then(|ext| ext.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    match extension.as_str() {
-        "3mf" => load_3mf(&bytes),
-        _ => load_stl(&bytes),
+    let mut imported = match extension.as_str() {
+        "3mf" => crate::cad::ImportedMesh::from_mesh(load_3mf(&bytes)?, "3mf"),
+        "step" | "stp" => crate::cad::import_step(&bytes, tolerance)?,
+        _ => crate::cad::ImportedMesh::from_mesh(load_stl(&bytes)?, "stl"),
+    };
+    if imported.report.milliseconds == 0 {
+        imported.report.milliseconds = started.elapsed().as_millis() as u64;
     }
+    Ok(imported)
 }
 
 pub fn load_stl(bytes: &[u8]) -> Result<TriangleMesh, Error> {

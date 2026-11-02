@@ -7,8 +7,10 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use shale_core::{
-    compare_support, drop_to_bed, load_mesh, overlays, place_on_bed, propose, set_enabled, slice,
-    Catalog, CustomInstruction, Engine, EngineBackend, MaterialInfo, PlacedModel, PrinterInfo,
+    compare_support, drop_to_bed, load_mesh_with, overlays, place_on_bed, propose, set_enabled,
+    slice, TessellationTolerance,
+    Catalog, CustomInstruction, Engine, EngineBackend, ImportReport, MaterialInfo, PlacedModel,
+    PrinterInfo,
     QualityInfo, ResourcePaths, StoredInstruction, SupportOverlay, SupportParams, SupportPlan,
     Toolpath, Transform, TriangleMesh, UserSettings, VariantInfo,
 };
@@ -33,6 +35,7 @@ struct LoadedModel {
     name: String,
     mesh: TriangleMesh,
     transform: Transform,
+    report: ImportReport,
 }
 
 struct AppState(Mutex<Inner>);
@@ -54,6 +57,11 @@ struct ModelView {
     name: String,
     positions: Vec<f32>,
     transform: Transform,
+    triangles: usize,
+    max_deviation_mm: Option<f64>,
+    max_turning_deg: Option<f64>,
+    import_ms: u64,
+    source: String,
 }
 
 #[derive(Serialize)]
@@ -237,8 +245,17 @@ fn import_model(
     printer_id: Option<String>,
     variant_name: Option<String>,
     quality_type: Option<String>,
+    chordal_mm: Option<f64>,
+    angular_deg: Option<f64>,
 ) -> Result<ModelView, String> {
-    let mesh = load_mesh(PathBuf::from(&path).as_path()).map_err(|err| err.to_string())?;
+    let tolerance = match (chordal_mm, angular_deg) {
+        (Some(chordal), Some(angular)) => TessellationTolerance::new(chordal, angular),
+        _ => TessellationTolerance::standard(),
+    };
+    let imported = load_mesh_with(PathBuf::from(&path).as_path(), &tolerance)
+        .map_err(|err| err.to_string())?;
+    let mesh = imported.mesh;
+    let report = imported.report;
     let mut inner = lock(&state)?;
     let transform = if let (Some(catalog), Some(printer_id)) = (&inner.catalog, printer_id) {
         match catalog.resolve(&shale_core::ResolveRequest {
@@ -273,12 +290,13 @@ fn import_model(
         .and_then(|name| name.to_str())
         .unwrap_or("model")
         .to_string();
-    let view = view_of(id, &name, &mesh, &transform);
+    let view = view_of(id, &name, &mesh, &transform, &report);
     inner.models.push(LoadedModel {
         id,
         name,
         mesh,
         transform,
+        report,
     });
     Ok(view)
 }
@@ -673,7 +691,7 @@ fn loaded_models(state: State<AppState>) -> Result<Vec<ModelView>, String> {
     Ok(inner
         .models
         .iter()
-        .map(|model| view_of(model.id, &model.name, &model.mesh, &model.transform))
+        .map(|model| view_of(model.id, &model.name, &model.mesh, &model.transform, &model.report))
         .collect())
 }
 
@@ -744,12 +762,23 @@ fn bed_from(resolved: &shale_core::ResolvedSettings) -> Bed {
     }
 }
 
-fn view_of(id: u32, name: &str, mesh: &TriangleMesh, transform: &Transform) -> ModelView {
+fn view_of(
+    id: u32,
+    name: &str,
+    mesh: &TriangleMesh,
+    transform: &Transform,
+    report: &ImportReport,
+) -> ModelView {
     ModelView {
         id,
         name: name.to_string(),
         positions: mesh.preview_positions(80_000),
         transform: transform.clone(),
+        triangles: report.triangles,
+        max_deviation_mm: report.max_deviation_mm,
+        max_turning_deg: report.max_turning_deg,
+        import_ms: report.milliseconds,
+        source: report.source.clone(),
     }
 }
 
@@ -766,9 +795,14 @@ fn preload_demo(
     let Some(path) = std::env::var_os("SHALE_DEMO_MODEL") else {
         return (Vec::new(), Vec::new(), None, None);
     };
-    let Ok(mesh) = load_mesh(std::path::Path::new(&path)) else {
+    let Ok(imported) = load_mesh_with(
+        std::path::Path::new(&path),
+        &TessellationTolerance::standard(),
+    ) else {
         return (Vec::new(), Vec::new(), None, None);
     };
+    let mesh = imported.mesh;
+    let report = imported.report;
     let printer_id = if catalog.printer("creality_ender3").is_some() {
         "creality_ender3".to_string()
     } else if let Some(printer) = catalog.printers().first() {
@@ -850,6 +884,7 @@ fn preload_demo(
             name,
             mesh,
             transform,
+            report,
         }],
         instructions,
         toolpath,
