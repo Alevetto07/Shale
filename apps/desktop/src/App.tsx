@@ -12,6 +12,8 @@ import {
   type QualityInfo,
   type Status,
   type StoredInstruction,
+  type SupportComparison,
+  type SupportView,
   type Transform,
   type VariantInfo,
 } from "./api";
@@ -84,6 +86,10 @@ export function App() {
   const [tempBed, setTempBed] = useState(60);
   const [tempWait, setTempWait] = useState(false);
   const [fanPercent, setFanPercent] = useState(50);
+  const [support, setSupport] = useState<SupportView | null>(null);
+  const [supportAngle, setSupportAngle] = useState(50);
+  const [bridgeMm, setBridgeMm] = useState(20);
+  const [supportBusy, setSupportBusy] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -104,6 +110,7 @@ export function App() {
           }
           const stored = await api.instructions();
           setInstructions(stored);
+          setSupport(await api.supportPlan());
           if (existing && existing.layer_count > 0) {
             const zs = existing.layers.map((item) => item.z);
             setLayerCount(existing.layer_count);
@@ -252,6 +259,7 @@ export function App() {
 
   async function commitTransform(id: number, transform: Transform) {
     setModels((current) => current.map((model) => (model.id === id ? { ...model, transform } : model)));
+    setSupport(null);
     try {
       await api.updateTransform(id, transform);
     } catch (err) {
@@ -390,6 +398,57 @@ export function App() {
       setInstructions(await api.removeInstruction(id));
     } catch (err) {
       setError(messageOf(err));
+    }
+  }
+
+  async function proposeSupports() {
+    if (selectedId == null) {
+      setError("Select a model before proposing supports.");
+      return;
+    }
+    setError(null);
+    setSupportBusy(true);
+    try {
+      setSupport(await api.proposeSupports(selectedId, supportAngle, bridgeMm));
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setSupportBusy(false);
+    }
+  }
+
+  async function toggleSupport(id: number) {
+    if (!support) return;
+    const ids = support.plan.regions
+      .filter((region) => (region.id === id ? !region.enabled : region.enabled))
+      .map((region) => region.id);
+    try {
+      setSupport(await api.applySupports(ids));
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  async function compareSupports() {
+    if (!printerId || !support) return;
+    setError(null);
+    setSupportBusy(true);
+    try {
+      const comparison = await api.compareSupports(printerId, variant, quality, material, {
+        layer_height: layerHeight,
+        infill_sparse_density: infill,
+        support_enable: true,
+        material_print_temperature: nozzle,
+        material_bed_temperature: bedTemp,
+        extra: [],
+      });
+      setSupport((current) =>
+        current ? { ...current, plan: { ...current.plan, comparison } } : current,
+      );
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setSupportBusy(false);
     }
   }
 
@@ -554,6 +613,61 @@ export function App() {
               />
             </label>
             <p className="hint">layer height also sets the first layer. changing quality reloads these values.</p>
+          </Frame>
+
+          <Frame title="supports">
+            <label>
+              angle
+              <input
+                type="number"
+                min={0}
+                max={90}
+                step={1}
+                value={supportAngle}
+                onChange={(event) => setSupportAngle(Number(event.target.value))}
+              />
+            </label>
+            <label>
+              bridge mm
+              <input
+                type="number"
+                min={0}
+                max={80}
+                step={1}
+                value={bridgeMm}
+                onChange={(event) => setBridgeMm(Number(event.target.value))}
+              />
+            </label>
+            <div className="row">
+              <button type="button" disabled={selectedId == null || supportBusy} onClick={() => void proposeSupports()}>
+                [ propose ]
+              </button>
+              <button type="button" disabled={!support || supportBusy} onClick={() => void compareSupports()}>
+                [ compare ]
+              </button>
+            </div>
+            {support && <ComparisonLines comparison={support.plan.comparison} />}
+            {support && support.plan.regions.length === 0 && (
+              <p className="hint">no overhang past the angle.</p>
+            )}
+            <ul className="instructions">
+              {support?.plan.regions.map((region) => (
+                <li key={region.id}>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={region.enabled}
+                      onChange={() => void toggleSupport(region.id)}
+                    />
+                    {region.role === "block" ? "x " : "+ "}
+                    {region.summary}
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <p className="hint">
+              grey columns are support meshes. wire boxes block bridges and cosmetic slopes. the engine is not modified.
+            </p>
           </Frame>
 
           <Frame title="instructions">
@@ -748,6 +862,7 @@ export function App() {
               selected: model.id === selectedId,
             }))}
             toolpaths={paths}
+            overlays={support?.overlays ?? []}
             showModel={showModel}
             showToolpaths={preview}
             viewStyle={viewStyle}
@@ -838,6 +953,22 @@ function instructionMarks(items: StoredInstruction[], layerZ: number[], layerHei
   return items
     .map((item) => markOf(item, layerZ, layerHeight))
     .filter((value): value is number => value != null);
+}
+
+function ComparisonLines({ comparison }: { comparison: SupportComparison }) {
+  const unit = comparison.times_from_engine ? "s sliced" : "s est";
+  return (
+    <p className="meta">
+      smart {comparison.proposed_volume_mm3.toFixed(0)} mm3 {comparison.proposed_contact_mm2.toFixed(0)} mm2{" "}
+      {comparison.proposed_time_seconds.toFixed(0)} {unit}
+      {"\n"}
+      every {comparison.everywhere_volume_mm3.toFixed(0)} mm3 {comparison.everywhere_contact_mm2.toFixed(0)} mm2{" "}
+      {comparison.everywhere_time_seconds.toFixed(0)} {unit}
+      {comparison.proposed_support_metres != null
+        ? `\nfilament smart ${comparison.proposed_support_metres.toFixed(2)} m  every ${(comparison.everywhere_support_metres ?? 0).toFixed(2)} m`
+        : ""}
+    </p>
+  );
 }
 
 function round3(value: number): number {

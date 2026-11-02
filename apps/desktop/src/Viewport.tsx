@@ -2,7 +2,7 @@ import { OrbitControls, TransformControls } from "@react-three/drei";
 import { Canvas, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
-import type { PreviewPath, Transform } from "./api";
+import type { PreviewPath, SupportOverlay, Transform } from "./api";
 
 export type TransformMode = "translate" | "rotate" | "scale";
 export type ViewStyle = "solid" | "wire" | "ascii";
@@ -21,6 +21,7 @@ interface ViewportProps {
   centerIsZero: boolean;
   models: SceneModel[];
   toolpaths: PreviewPath[];
+  overlays: SupportOverlay[];
   showModel: boolean;
   showToolpaths: boolean;
   viewStyle: ViewStyle;
@@ -78,6 +79,9 @@ export function Viewport(props: ViewportProps) {
             onTransform={props.onTransform}
           />
         ))}
+      {props.overlays.map((overlay) => (
+        <SupportVolume key={overlay.id} overlay={overlay} />
+      ))}
       {props.showToolpaths && <Toolpaths paths={props.toolpaths} />}
       <OrbitControls
         makeDefault
@@ -90,6 +94,28 @@ export function Viewport(props: ViewportProps) {
         ]}
       />
     </Canvas>
+  );
+}
+
+function SupportVolume({ overlay }: { overlay: SupportOverlay }) {
+  const geometry = useMemo(() => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(overlay.positions, 3));
+    geometry.computeVertexNormals();
+    return geometry;
+  }, [overlay.positions]);
+  const enforce = overlay.role === "enforce";
+  return (
+    <mesh geometry={geometry}>
+      <meshStandardMaterial
+        color={enforce ? "#cfcfcf" : "#5a5a5a"}
+        wireframe={!enforce}
+        roughness={1}
+        metalness={0}
+        polygonOffset
+        polygonOffsetFactor={1}
+      />
+    </mesh>
   );
 }
 

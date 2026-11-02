@@ -17,6 +17,7 @@ mod material;
 pub mod mesh;
 pub mod resolver;
 pub mod session;
+pub mod supports;
 mod value;
 
 pub use catalog::{Catalog, MaterialInfo, PrinterInfo, QualityInfo, ResourcePaths, VariantInfo};
@@ -24,10 +25,14 @@ pub use engine::{CliEngine, EngineProgress, SlicingEngine};
 pub use error::Error;
 pub use gcode::Toolpath;
 pub use instructions::{CustomInstruction, GcodeFlavour};
-pub use job::{slice, PlacedModel, SliceOutcome};
+pub use job::{compare_support, slice, PlacedModel, SliceOutcome};
 pub use mesh::{drop_to_bed, load_mesh, place_on_bed, Transform, TriangleMesh};
 pub use resolver::{ProfileSummary, ResolveRequest, ResolvedSettings, UserSettings};
 pub use session::{JobSliceSummary, Session, SettingsPatch, SettingsView, StoredInstruction};
+pub use supports::{
+    analyse, overlays, propose, set_enabled, Analysis, FeatureKind, RegionRole, SupportComparison,
+    SupportOverlay, SupportParams, SupportPlan, SupportRegion,
+};
 pub use value::Value;
 
 mod error;

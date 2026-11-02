@@ -16,6 +16,7 @@ use crate::instructions::CustomInstruction;
 use crate::job::{self, PlacedModel, SliceOutcome};
 use crate::mesh::{self, Transform, TriangleMesh};
 use crate::resolver::{ResolveRequest, ResolvedSettings, UserSettings};
+use crate::supports::{self, SupportParams, SupportPlan};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ModelRecord {
@@ -62,6 +63,8 @@ pub struct Session {
     next_model: u32,
     instructions: Vec<(u32, CustomInstruction)>,
     next_instruction: u32,
+    support: Option<SupportPlan>,
+    support_model: Option<u32>,
     last: Option<SliceOutcome>,
 }
 
@@ -101,6 +104,8 @@ impl Session {
             next_model: 1,
             instructions: Vec::new(),
             next_instruction: 1,
+            support: None,
+            support_model: None,
             last: None,
         }
     }
@@ -193,30 +198,39 @@ impl Session {
         rotation_deg: Option<[f64; 3]>,
         scale: Option<[f64; 3]>,
     ) -> Result<Transform, Error> {
-        let model = self.model_mut(id)?;
-        if let Some(value) = translation {
-            model.transform.translation = value;
-        }
-        if let Some(value) = rotation_deg {
-            model.transform.rotation_deg = value;
-        }
-        if let Some(value) = scale {
-            model.transform.scale = value;
-        }
-        Ok(model.transform.clone())
+        let transform = {
+            let model = self.model_mut(id)?;
+            if let Some(value) = translation {
+                model.transform.translation = value;
+            }
+            if let Some(value) = rotation_deg {
+                model.transform.rotation_deg = value;
+            }
+            if let Some(value) = scale {
+                model.transform.scale = value;
+            }
+            model.transform.clone()
+        };
+        self.invalidate_support(id);
+        Ok(transform)
     }
 
     pub fn arrange_model(&mut self, id: u32) -> Result<Transform, Error> {
         let mesh = self.model(id)?.mesh.clone();
         let transform = self.placement(&mesh)?;
         self.model_mut(id)?.transform = transform.clone();
+        self.invalidate_support(id);
         Ok(transform)
     }
 
     pub fn drop_model(&mut self, id: u32) -> Result<Transform, Error> {
-        let model = self.model_mut(id)?;
-        mesh::drop_to_bed(&model.mesh, &mut model.transform);
-        Ok(model.transform.clone())
+        let transform = {
+            let model = self.model_mut(id)?;
+            mesh::drop_to_bed(&model.mesh, &mut model.transform);
+            model.transform.clone()
+        };
+        self.invalidate_support(id);
+        Ok(transform)
     }
 
     pub fn get_settings(&self, keys: &[String]) -> Result<SettingsView, Error> {
@@ -325,6 +339,45 @@ impl Session {
         Ok(())
     }
 
+    pub fn analyse_overhangs(
+        &self,
+        model_id: u32,
+        params: SupportParams,
+    ) -> Result<supports::Analysis, Error> {
+        let model = self.model(model_id)?;
+        let baked = mesh::bake(&model.mesh, &model.transform);
+        Ok(supports::analyse(&baked, &params))
+    }
+
+    pub fn propose_supports(
+        &mut self,
+        model_id: u32,
+        params: SupportParams,
+    ) -> Result<SupportPlan, Error> {
+        let baked = {
+            let model = self.model(model_id)?;
+            mesh::bake(&model.mesh, &model.transform)
+        };
+        let plan = supports::propose(&baked, &params);
+        self.support = Some(plan.clone());
+        self.support_model = Some(model_id);
+        Ok(plan)
+    }
+
+    pub fn support_plan(&self) -> Option<&SupportPlan> {
+        self.support.as_ref()
+    }
+
+    /// `enabled` lists the region ids to keep. `None` keeps every region.
+    pub fn apply_supports(&mut self, enabled: Option<&[u32]>) -> Result<SupportPlan, Error> {
+        let plan = self
+            .support
+            .as_mut()
+            .ok_or_else(|| Error::message("propose supports before applying them"))?;
+        supports::set_enabled(plan, enabled);
+        Ok(plan.clone())
+    }
+
     pub fn slice(
         &mut self,
         on_progress: &mut dyn FnMut(EngineProgress),
@@ -360,6 +413,7 @@ impl Session {
             self.settings.clone(),
             &placed,
             &instructions,
+            self.support.as_ref(),
             output,
             on_progress,
         )?;
@@ -388,6 +442,13 @@ impl Session {
             return Err(Error::message("nothing has been sliced yet"));
         };
         Ok(std::fs::read_to_string(&last.gcode_path)?)
+    }
+
+    fn invalidate_support(&mut self, id: u32) {
+        if self.support_model == Some(id) {
+            self.support = None;
+            self.support_model = None;
+        }
     }
 
     fn placement(&self, mesh: &TriangleMesh) -> Result<Transform, Error> {

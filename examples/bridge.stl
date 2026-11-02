@@ -1,0 +1,254 @@
+solid bridge
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 0
+      vertex 8 8 0
+      vertex 8 0 0
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 0
+      vertex 0 8 0
+      vertex 8 8 0
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 20
+      vertex 8 0 20
+      vertex 8 8 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 20
+      vertex 8 8 20
+      vertex 0 8 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 0
+      vertex 8 0 0
+      vertex 8 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 0
+      vertex 8 0 20
+      vertex 0 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 8 0 0
+      vertex 8 8 0
+      vertex 8 8 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 8 0 0
+      vertex 8 8 20
+      vertex 8 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 8 8 0
+      vertex 0 8 0
+      vertex 0 8 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 8 8 0
+      vertex 0 8 20
+      vertex 8 8 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 8 0
+      vertex 0 0 0
+      vertex 0 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 8 0
+      vertex 0 0 20
+      vertex 0 8 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 24 0 0
+      vertex 32 8 0
+      vertex 32 0 0
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 24 0 0
+      vertex 24 8 0
+      vertex 32 8 0
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 24 0 20
+      vertex 32 0 20
+      vertex 32 8 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 24 0 20
+      vertex 32 8 20
+      vertex 24 8 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 24 0 0
+      vertex 32 0 0
+      vertex 32 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 24 0 0
+      vertex 32 0 20
+      vertex 24 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 32 0 0
+      vertex 32 8 0
+      vertex 32 8 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 32 0 0
+      vertex 32 8 20
+      vertex 32 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 32 8 0
+      vertex 24 8 0
+      vertex 24 8 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 32 8 0
+      vertex 24 8 20
+      vertex 32 8 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 24 8 0
+      vertex 24 0 0
+      vertex 24 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 24 8 0
+      vertex 24 0 20
+      vertex 24 8 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 8 0 20
+      vertex 24 8 20
+      vertex 24 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 8 0 20
+      vertex 8 8 20
+      vertex 24 8 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 8 0 24
+      vertex 24 0 24
+      vertex 24 8 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 8 0 24
+      vertex 24 8 24
+      vertex 8 8 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 8 0 20
+      vertex 24 0 20
+      vertex 24 0 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 8 0 20
+      vertex 24 0 24
+      vertex 8 0 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 24 0 20
+      vertex 24 8 20
+      vertex 24 8 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 24 0 20
+      vertex 24 8 24
+      vertex 24 0 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 24 8 20
+      vertex 8 8 20
+      vertex 8 8 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 24 8 20
+      vertex 8 8 24
+      vertex 24 8 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 8 8 20
+      vertex 8 0 20
+      vertex 8 0 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 8 8 20
+      vertex 8 0 24
+      vertex 8 8 24
+    endloop
+  endfacet
+endsolid bridge

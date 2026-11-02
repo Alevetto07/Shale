@@ -16,7 +16,7 @@ Two more pieces sit on the same core:
 5. An MCP server, so an agent can list printers, load a model, change settings, slice, and export G-code.
 6. Custom instructions (a pause, a temperature change, a beep) stored on the job and compiled into the engine's G-code. You do not edit the file by hand.
 
-Still out of scope: smarter supports, camera-based print removal, and automatic non-planar placement.
+Still out of scope: camera-based print removal, and automatic non-planar placement. The overhang map is shaped so a later non-planar pass can reuse bridge and cantilever spans.
 
 ## Layout
 
@@ -205,6 +205,25 @@ Kinds:
 Layer numbers are Cura's `;LAYER:` index, which starts at 0. A height picks the first layer whose Z reaches it. The block is inserted at the start of that layer, after CuraEngine has finished. The engine binary is not modified, and its plugin slot is not used.
 
 Klipper's `PAUSE` and `M600` only do what the printer's macros say. RepRap gets a comment that a filament change is a plain pause.
+
+## Smarter supports
+
+Shale decides where support is worth printing, then hands CuraEngine ordinary meshes. The engine binary is not modified and its plugin slot is not used.
+
+The analysis rasterises the mesh. A face needs support when its angle from the vertical is past the overhang angle (Cura's `support_angle`: 0 supports every underside, 90 supports none). Spans held at both ends, up to a bridge length, are bridges and are left alone. Spans held at one end are cantilevers. Floating pieces are islands. A large face only just past the angle is treated as cosmetic. `analyse` returns that map; a later non-planar placement can fit a plane to the same samples.
+
+`propose` turns the map into volumes:
+
+* Enforcers (`support_mesh=true`, `support_mesh_drop_down=false`) are columns under cantilevers, islands, and other real overhangs.
+* Blockers (`anti_overhang_mesh=true`) cover bridges and cosmetic slopes.
+
+The 5.13 CLI applies `-s` to the object loaded by the previous `-l`, so each volume is a separate STL with those two settings. Automatic everywhere support is turned off for that slice, otherwise Cura would fill the bridges back in.
+
+The window draws enforcers as flat grey and blockers as wire boxes. Each region can be switched off. The panel compares the proposal with supporting every overhang: volume, contact area, and an estimated time. **Compare** slices both ways and replaces the estimate with the engine's time and support filament.
+
+Cura 5.14 stores paint-on-support in a 3MF PNG, with a 2-bit `support` channel in the image metadata (enforce, block, or automatic). That is the right long-term way to round-trip a painted region, and it wants the Arcus slice path plus a 3MF reader that keeps UV and the paint image. The 5.13 CLI does not read that channel, so this version stays with support meshes and blockers.
+
+MCP tools: `analyse_overhangs`, `propose_supports`, `apply_supports`.
 
 ## Tests
 

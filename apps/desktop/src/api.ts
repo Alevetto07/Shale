@@ -109,6 +109,44 @@ export interface StoredInstruction {
   instruction: CustomInstruction;
 }
 
+export interface SupportRegion {
+  id: number;
+  kind: string;
+  role: "enforce" | "block";
+  enabled: boolean;
+  summary: string;
+  volume_mm3: number;
+  contact_area_mm2: number;
+}
+
+export interface SupportComparison {
+  proposed_volume_mm3: number;
+  proposed_contact_mm2: number;
+  proposed_time_seconds: number;
+  everywhere_volume_mm3: number;
+  everywhere_contact_mm2: number;
+  everywhere_time_seconds: number;
+  times_from_engine: boolean;
+  proposed_support_metres: number | null;
+  everywhere_support_metres: number | null;
+}
+
+export interface SupportPlan {
+  regions: SupportRegion[];
+  comparison: SupportComparison;
+}
+
+export interface SupportOverlay {
+  id: number;
+  role: string;
+  positions: number[];
+}
+
+export interface SupportView {
+  plan: SupportPlan;
+  overlays: SupportOverlay[];
+}
+
 export interface SliceSettings {
   layer_height: number;
   infill_sparse_density: number;
@@ -141,6 +179,28 @@ export const api = {
     settings: SliceSettings,
   ) =>
     invoke<SliceSummary>("slice_model", {
+      printerId,
+      variantName,
+      qualityType,
+      materialId,
+      settings,
+    }),
+  supportPlan: () => invoke<SupportView | null>("current_support"),
+  proposeSupports: (id: number, overhangAngleDeg: number, maxBridgeMm: number) =>
+    invoke<SupportView>("propose_supports", {
+      id,
+      overhangAngleDeg,
+      maxBridgeMm,
+    }),
+  applySupports: (ids: number[]) => invoke<SupportView>("apply_supports", { ids }),
+  compareSupports: (
+    printerId: string,
+    variantName: string | null,
+    qualityType: string | null,
+    materialId: string | null,
+    settings: SliceSettings,
+  ) =>
+    invoke<SupportComparison>("compare_supports", {
       printerId,
       variantName,
       qualityType,

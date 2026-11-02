@@ -7,9 +7,10 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use shale_core::{
-    drop_to_bed, load_mesh, place_on_bed, slice, Catalog, CliEngine, CustomInstruction,
-    MaterialInfo, PlacedModel, PrinterInfo, QualityInfo, ResourcePaths, StoredInstruction,
-    Toolpath, Transform, TriangleMesh, UserSettings, VariantInfo,
+    compare_support, drop_to_bed, load_mesh, overlays, place_on_bed, propose, set_enabled, slice,
+    Catalog, CliEngine, CustomInstruction, MaterialInfo, PlacedModel, PrinterInfo, QualityInfo,
+    ResourcePaths, StoredInstruction, SupportOverlay, SupportParams, SupportPlan, Toolpath,
+    Transform, TriangleMesh, UserSettings, VariantInfo,
 };
 use tauri::{AppHandle, Emitter, State};
 
@@ -20,6 +21,7 @@ struct Inner {
     next_id: u32,
     instructions: Vec<(u32, CustomInstruction)>,
     next_instruction: u32,
+    support: Option<SupportPlan>,
     engine: CliEngine,
     toolpath: Option<Toolpath>,
     gcode_path: Option<PathBuf>,
@@ -270,12 +272,15 @@ fn import_model(
 #[tauri::command]
 fn update_transform(state: State<AppState>, id: u32, transform: Transform) -> Result<(), String> {
     let mut inner = lock(&state)?;
-    let model = inner
-        .models
-        .iter_mut()
-        .find(|model| model.id == id)
-        .ok_or_else(|| "That model is no longer loaded".to_string())?;
-    model.transform = transform;
+    {
+        let model = inner
+            .models
+            .iter_mut()
+            .find(|model| model.id == id)
+            .ok_or_else(|| "That model is no longer loaded".to_string())?;
+        model.transform = transform;
+    }
+    inner.support = None;
     Ok(())
 }
 
@@ -342,6 +347,163 @@ fn stored_instructions(inner: &Inner) -> Vec<StoredInstruction> {
             instruction: instruction.clone(),
         })
         .collect()
+}
+
+#[derive(Serialize)]
+struct SupportView {
+    plan: SupportPlan,
+    overlays: Vec<SupportOverlay>,
+}
+
+fn support_view(plan: &SupportPlan) -> SupportView {
+    let drawn = overlays(plan);
+    let mut plan = plan.clone();
+    for span in &mut plan.spans {
+        span.samples.clear();
+    }
+    SupportView {
+        plan,
+        overlays: drawn,
+    }
+}
+
+fn support_params(angle: Option<f64>, bridge: Option<f64>) -> SupportParams {
+    let mut params = SupportParams::default();
+    if let Some(value) = angle {
+        params.overhang_angle_deg = value;
+    }
+    if let Some(value) = bridge {
+        params.max_bridge_mm = value;
+    }
+    params
+}
+
+#[tauri::command]
+fn analyse_supports(
+    state: State<AppState>,
+    id: u32,
+    overhang_angle_deg: Option<f64>,
+    max_bridge_mm: Option<f64>,
+) -> Result<serde_json::Value, String> {
+    let inner = lock(&state)?;
+    let model = inner
+        .models
+        .iter()
+        .find(|model| model.id == id)
+        .ok_or_else(|| "That model is no longer loaded".to_string())?;
+    let baked = shale_core::mesh::bake(&model.mesh, &model.transform);
+    let analysis = shale_core::analyse(&baked, &support_params(overhang_angle_deg, max_bridge_mm));
+    let spans: Vec<_> = analysis
+        .spans
+        .iter()
+        .map(|span| {
+            serde_json::json!({
+                "kind": span.kind,
+                "length_mm": span.length_mm,
+                "area_mm2": span.area_mm2,
+                "z_mm": span.z_mm,
+                "anchor_ends": span.anchor_ends,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "bridges": analysis.count(shale_core::FeatureKind::Bridge),
+        "cantilevers": analysis.count(shale_core::FeatureKind::Cantilever),
+        "islands": analysis.count(shale_core::FeatureKind::Island),
+        "overhangs": analysis.count(shale_core::FeatureKind::Overhang),
+        "cosmetic": analysis.count(shale_core::FeatureKind::Cosmetic),
+        "spans": spans,
+    }))
+}
+
+#[tauri::command]
+fn propose_supports(
+    state: State<AppState>,
+    id: u32,
+    overhang_angle_deg: Option<f64>,
+    max_bridge_mm: Option<f64>,
+) -> Result<SupportView, String> {
+    let mut inner = lock(&state)?;
+    let baked = {
+        let model = inner
+            .models
+            .iter()
+            .find(|model| model.id == id)
+            .ok_or_else(|| "That model is no longer loaded".to_string())?;
+        shale_core::mesh::bake(&model.mesh, &model.transform)
+    };
+    let plan = propose(&baked, &support_params(overhang_angle_deg, max_bridge_mm));
+    let view = support_view(&plan);
+    inner.support = Some(plan);
+    Ok(view)
+}
+
+#[tauri::command]
+fn apply_supports(state: State<AppState>, ids: Vec<u32>) -> Result<SupportView, String> {
+    let mut inner = lock(&state)?;
+    let plan = inner
+        .support
+        .as_mut()
+        .ok_or_else(|| "Propose supports first".to_string())?;
+    set_enabled(plan, Some(&ids));
+    Ok(support_view(plan))
+}
+
+#[tauri::command]
+fn current_support(state: State<AppState>) -> Result<Option<SupportView>, String> {
+    let inner = lock(&state)?;
+    Ok(inner.support.as_ref().map(support_view))
+}
+
+#[tauri::command]
+fn compare_supports(
+    state: State<AppState>,
+    printer_id: String,
+    variant_name: Option<String>,
+    quality_type: Option<String>,
+    material_id: Option<String>,
+    settings: UserSettings,
+) -> Result<shale_core::SupportComparison, String> {
+    let mut inner = lock(&state)?;
+    if inner.slicing {
+        return Err("A slice is already running".into());
+    }
+    let plan = inner
+        .support
+        .clone()
+        .ok_or_else(|| "Propose supports first".to_string())?;
+    if inner.models.is_empty() {
+        return Err("Import a model first".into());
+    }
+    let placed: Vec<PlacedModel> = inner
+        .models
+        .iter()
+        .map(|model| PlacedModel {
+            name: model.name.clone(),
+            mesh: model.mesh.clone(),
+            transform: model.transform.clone(),
+        })
+        .collect();
+    let comparison = {
+        let catalog = catalog_of(&inner)?;
+        compare_support(
+            catalog,
+            &inner.engine,
+            &printer_id,
+            variant_name,
+            quality_type,
+            material_id,
+            settings,
+            &placed,
+            &plan,
+            &mut |_| {},
+        )
+        .map_err(|err| err.to_string())?
+    };
+    if let Some(stored) = inner.support.as_mut() {
+        stored.comparison = comparison.clone();
+    }
+    Ok(comparison)
 }
 
 #[tauri::command]
@@ -424,6 +586,7 @@ fn slice_model(
             settings,
             &placed,
             &instructions,
+            inner.support.as_ref(),
             output,
             &mut |progress| {
                 let _ = app.emit(
@@ -648,6 +811,7 @@ fn preload_demo(
                 transform: transform.clone(),
             }],
             &[pause],
+            None,
             output,
             &mut |_| {},
         ) {
@@ -684,6 +848,14 @@ pub fn run() {
     };
     let next_id = models.len() as u32 + 1;
     let next_instruction = instructions.iter().map(|(id, _)| *id).max().unwrap_or(0) + 1;
+    let support = if std::env::var("SHALE_DEMO_SUPPORTS").ok().as_deref() == Some("1") {
+        models.first().map(|model| {
+            let baked = shale_core::mesh::bake(&model.mesh, &model.transform);
+            propose(&baked, &SupportParams::default())
+        })
+    } else {
+        None
+    };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState(Mutex::new(Inner {
@@ -693,6 +865,7 @@ pub fn run() {
             next_id,
             instructions,
             next_instruction,
+            support,
             engine,
             toolpath,
             gcode_path,
@@ -713,6 +886,11 @@ pub fn run() {
             list_instructions,
             add_instruction,
             remove_instruction,
+            analyse_supports,
+            propose_supports,
+            apply_supports,
+            current_support,
+            compare_supports,
             slice_model,
             preview_until,
             loaded_models,
