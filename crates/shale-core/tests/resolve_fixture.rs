@@ -393,3 +393,79 @@ endsolid cube
         Err(err) => panic!("{err}"),
     }
 }
+
+#[test]
+fn arcus_slices_the_cube_when_configured() {
+    let Ok(program) = std::env::var("SHALE_CURAENGINE") else {
+        return;
+    };
+    let Ok(cura) = std::env::var("SHALE_CURA_DIR") else {
+        return;
+    };
+    let Ok(materials) = std::env::var("SHALE_MATERIALS_DIR") else {
+        return;
+    };
+    let catalog = Catalog::open(ResourcePaths {
+        cura: cura.into(),
+        materials: materials.into(),
+    })
+    .expect("catalog");
+    let cli = shale_core::CliEngine {
+        program: program.into(),
+        lib_dir: std::env::var("SHALE_CURAENGINE_LIB_DIR")
+            .ok()
+            .map(Into::into),
+    };
+    let engine = shale_core::engine::ArcusEngine::new(&cli);
+    let mesh = shale_core::load_mesh(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/cube.stl"
+    )))
+    .expect("cube");
+    let mut peak = 0.0f32;
+    let mut layers = 0usize;
+    let outcome = shale_core::slice(
+        &catalog,
+        &engine,
+        "creality_ender3",
+        Some("0.4mm Nozzle".into()),
+        Some("draft".into()),
+        Some("generic_pla".into()),
+        UserSettings {
+            layer_height: Some(0.2),
+            infill_sparse_density: Some(15.0),
+            support_enable: Some(false),
+            material_print_temperature: Some(200.0),
+            material_bed_temperature: Some(60.0),
+            extra: Vec::new(),
+        },
+        &[shale_core::PlacedModel {
+            name: "cube".into(),
+            mesh,
+            transform: shale_core::Transform::default(),
+        }],
+        &[],
+        None,
+        std::env::temp_dir().join("shale-arcus-cube.gcode"),
+        &mut |progress| {
+            peak = peak.max(progress.fraction);
+            if progress.layer.is_some() {
+                layers += 1;
+            }
+            eprintln!("{:.0}% {}", progress.fraction * 100.0, progress.message);
+        },
+    );
+    match outcome {
+        Ok(outcome) => {
+            let gcode = std::fs::read_to_string(&outcome.gcode_path).unwrap();
+            assert!(gcode.contains(";LAYER:"), "{}", outcome.log_tail);
+            assert!(peak > 0.2, "progress peaked at {peak}");
+            assert!(layers > 0, "Arcus sent no layer previews");
+            eprintln!(
+                "arcus layers streamed {layers}, print time {:?}",
+                outcome.print_time_seconds
+            );
+        }
+        Err(err) => panic!("{err}"),
+    }
+}

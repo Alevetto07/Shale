@@ -26,6 +26,11 @@ import { AsciiCheck, AsciiField, AsciiSelect, AsciiStepper } from "./widgets";
 interface Progress {
   fraction: number;
   message: string;
+  layer?: {
+    index: number;
+    z: number;
+    paths: PreviewPath[];
+  } | null;
 }
 
 const FALLBACK_BED: Bed = {
@@ -78,6 +83,7 @@ export function App() {
   const [printSeconds, setPrintSeconds] = useState<number | null>(null);
   const [enginePath, setEnginePath] = useState("");
   const [libDir, setLibDir] = useState("");
+  const [backend, setBackend] = useState("cli");
   const [instructions, setInstructions] = useState<StoredInstruction[]>([]);
   const [kind, setKind] = useState<InstructionKind>("pause");
   const [anchor, setAnchor] = useState<"layer" | "height">("layer");
@@ -100,6 +106,8 @@ export function App() {
         const next = await api.status();
         setStatus(next);
         setEnginePath(next.engine_path);
+        setLibDir(next.engine_lib_dir || "");
+        setBackend(next.engine_backend || "cli");
         if (next.resources_ok) {
           const [list, loaded, existing] = await Promise.all([
             api.printers(),
@@ -199,6 +207,18 @@ export function App() {
   useEffect(() => {
     const unlisten = listen<Progress>("slice-progress", (event) => {
       setProgress(event.payload);
+      const live = event.payload.layer;
+      if (live && live.paths.length > 0) {
+        setPreview(true);
+        setPaths(live.paths);
+        setLayer(live.index);
+        setLayerCount((count) => Math.max(count, live.index + 1));
+        setLayerZ((zs) => {
+          const next = zs.slice();
+          next[live.index] = live.z;
+          return next;
+        });
+      }
     });
     return () => {
       void unlisten.then((stop) => stop());
@@ -226,7 +246,7 @@ export function App() {
   }, [layerCount]);
 
   useEffect(() => {
-    if (!preview) return;
+    if (!preview || busy) return;
     let cancelled = false;
     void api.previewUntil(layer).then((next) => {
       if (!cancelled) setPaths(next);
@@ -236,7 +256,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [preview, layer]);
+  }, [preview, layer, busy]);
 
   const filteredPrinters = useMemo(() => {
     const query = printerQuery.trim().toLowerCase();
@@ -474,8 +494,12 @@ export function App() {
 
   async function applyEngine() {
     try {
-      const ok = await api.setEngine(enginePath, libDir);
-      setStatus((current) => (current ? { ...current, engine_ok: ok, engine_path: enginePath } : current));
+      const ok = await api.setEngine(enginePath, libDir, backend);
+      setStatus((current) =>
+        current
+          ? { ...current, engine_ok: ok, engine_path: enginePath, engine_backend: backend }
+          : current,
+      );
       if (!ok) setError("CuraEngine did not respond to `help` at that path.");
     } catch (err) {
       setError(messageOf(err));
@@ -797,6 +821,25 @@ export function App() {
           </Frame>
 
           <Frame title="engine">
+            <label>
+              backend
+              <AsciiSelect
+                label="backend"
+                value={backend}
+                options={[
+                  { value: "cli", label: "cli  log progress" },
+                  { value: "arcus", label: "arcus  live layers" },
+                ]}
+                onChange={(next) => {
+                  setBackend(next);
+                  void api.setEngine(enginePath, libDir, next).then((ok) => {
+                    setStatus((current) =>
+                      current ? { ...current, engine_ok: ok, engine_backend: next } : current,
+                    );
+                  });
+                }}
+              />
+            </label>
             <label>
               binary
               <AsciiField label="binary" value={enginePath} onChange={setEnginePath} />

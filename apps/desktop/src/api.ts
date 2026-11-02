@@ -4,8 +4,16 @@ export interface Status {
   resources_ok: boolean;
   resources_message: string;
   engine_path: string;
+  engine_lib_dir: string;
   engine_ok: boolean;
+  engine_backend: string;
   printer_count: number;
+}
+
+export interface LiveLayer {
+  index: number;
+  z: number;
+  paths: PreviewPath[];
 }
 
 export interface PrinterInfo {
@@ -158,8 +166,8 @@ export interface SliceSettings {
 
 export const api = {
   status: () => invoke<Status>("app_status"),
-  setEngine: (path: string, libDir: string) =>
-    invoke<boolean>("set_engine", { path, libDir: libDir || null }),
+  setEngine: (path: string, libDir: string, backend: string) =>
+    invoke<boolean>("set_engine", { path, libDir: libDir || null, backend }),
   printers: () => invoke<PrinterInfo[]>("list_printers"),
   variants: (printerId: string) => invoke<VariantInfo[]>("list_variants", { printerId }),
   qualities: (printerId: string) => invoke<QualityInfo[]>("list_qualities", { printerId }),

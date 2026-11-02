@@ -20,13 +20,13 @@ impl SlicingEngine for FakeEngine {
         request: &EngineRequest,
         on_progress: &mut dyn FnMut(EngineProgress),
     ) -> Result<EngineOutput, Error> {
-        on_progress(EngineProgress {
-            fraction: 0.4,
-            message: format!(
+        on_progress(EngineProgress::new(
+            0.4,
+            format!(
                 "Processing insets for layer 1 of {}",
                 request.estimated_layers
             ),
-        });
+        ));
         let layers = request.estimated_layers.max(1);
         let mut body = String::from(";TIME:6666\n;Filament used: 0m\n");
         for layer in 0..layers {
@@ -38,10 +38,7 @@ impl SlicingEngine for FakeEngine {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&request.output_gcode, body)?;
-        on_progress(EngineProgress {
-            fraction: 0.93,
-            message: "starting export".into(),
-        });
+        on_progress(EngineProgress::new(0.93, "starting export"));
         Ok(EngineOutput {
             gcode_path: request.output_gcode.clone(),
             log_tail: "Total print time: 120\n".into(),
