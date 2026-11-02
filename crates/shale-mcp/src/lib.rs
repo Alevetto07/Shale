@@ -14,7 +14,7 @@ use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
 use rmcp::ServiceExt;
-use shale_core::{CliEngine, ResourcePaths, Session};
+use shale_core::{Engine, ResourcePaths, Session};
 use tokio_util::sync::CancellationToken;
 
 pub use server::ShaleMcp;
@@ -24,7 +24,7 @@ pub fn session_from_env() -> anyhow::Result<Session> {
         "Cura resources were not found. Run scripts/fetch-resources.sh or set SHALE_CURA_DIR and SHALE_MATERIALS_DIR.",
     )?;
     let catalog = shale_core::Catalog::open(paths)?;
-    let engine = CliEngine::from_env();
+    let engine = Engine::from_env();
     Ok(Session::new(catalog, Box::new(engine)))
 }
 

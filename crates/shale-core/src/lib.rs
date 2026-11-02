@@ -22,7 +22,9 @@ pub mod supports;
 mod value;
 
 pub use catalog::{Catalog, MaterialInfo, PrinterInfo, QualityInfo, ResourcePaths, VariantInfo};
-pub use engine::{CliEngine, EngineProgress, SlicingEngine};
+pub use engine::{
+    ArcusEngine, CliEngine, Engine, EngineBackend, EngineProgress, LiveLayer, SlicingEngine,
+};
 pub use error::Error;
 pub use gcode::Toolpath;
 pub use instructions::{CustomInstruction, GcodeFlavour};

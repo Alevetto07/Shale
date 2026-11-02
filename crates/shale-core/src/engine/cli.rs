@@ -116,10 +116,7 @@ impl SlicingEngine for CliEngine {
         let started = Instant::now();
         let mut fraction = 0.04;
         let mut log: Vec<String> = Vec::new();
-        on_progress(EngineProgress {
-            fraction,
-            message: "CuraEngine started".into(),
-        });
+        on_progress(EngineProgress::new(fraction, "CuraEngine started"));
 
         let push_log = |line: String, log: &mut Vec<String>| {
             if log.len() >= 400 {
@@ -143,7 +140,7 @@ impl SlicingEngine for CliEngine {
                 }
             }
             let message = log.last().cloned().unwrap_or_else(|| "Slicing".to_string());
-            on_progress(EngineProgress { fraction, message });
+            on_progress(EngineProgress::new(fraction, message));
             if let Some(status) = child.try_wait()? {
                 break status;
             }
@@ -187,10 +184,7 @@ impl SlicingEngine for CliEngine {
             )));
         }
         let _ = fs::remove_file(&resolved_path);
-        on_progress(EngineProgress {
-            fraction: 1.0,
-            message: "Slicing finished".into(),
-        });
+        on_progress(EngineProgress::new(1.0, "Slicing finished"));
         Ok(EngineOutput {
             gcode_path: request.output_gcode.clone(),
             print_time_seconds: print_time(&log_tail),
@@ -217,7 +211,7 @@ fn map_to_json(values: &std::collections::BTreeMap<String, String>) -> Json {
     Json::Object(object)
 }
 
-fn apply_lib_dir(command: &mut Command, lib_dir: Option<&Path>) {
+pub(crate) fn apply_lib_dir(command: &mut Command, lib_dir: Option<&Path>) {
     let Some(lib_dir) = lib_dir else {
         return;
     };

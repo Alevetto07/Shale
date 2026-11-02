@@ -51,10 +51,7 @@ pub fn slice(
     if models.is_empty() {
         return Err(Error::message("import a model before slicing"));
     }
-    on_progress(EngineProgress {
-        fraction: 0.02,
-        message: "Resolving printer settings".into(),
-    });
+    on_progress(EngineProgress::new(0.02, "Resolving printer settings"));
     let mut resolved = catalog.resolve(&ResolveRequest {
         printer_id: printer_id.to_string(),
         variant_name,
@@ -70,11 +67,19 @@ pub fn slice(
     let model_dir = output_path.with_extension("models");
     fs::create_dir_all(&model_dir)?;
     for (index, model) in models.iter().enumerate() {
-        let baked = mesh::bake(&model.mesh, &model.transform);
+        let mut baked = mesh::bake(&model.mesh, &model.transform);
         let (_, max) = baked.bounds();
         let (min, _) = baked.bounds();
         let height = (max[2] - min[2]).max(0.0) as f64;
         estimated_layers = estimated_layers.max((height / layer_height).ceil().max(1.0) as u32);
+        // Height is measured in machine space. The engine then wants bed-centre
+        // coordinates, which is a pure XY shift and does not change the height.
+        mesh::to_engine_space(
+            &mut baked,
+            resolved.summary.machine_width,
+            resolved.summary.machine_depth,
+            resolved.summary.machine_center_is_zero,
+        );
         let path = model_dir.join(format!("model-{index}.stl"));
         mesh::write_binary_stl(&path, &baked)?;
         baked_paths.push(path);
@@ -95,7 +100,13 @@ pub fn slice(
             );
         }
         for region in plan.regions.iter().filter(|region| region.enabled) {
-            let mesh = supports::region_mesh(region);
+            let mut mesh = supports::region_mesh(region);
+            mesh::to_engine_space(
+                &mut mesh,
+                resolved.summary.machine_width,
+                resolved.summary.machine_depth,
+                resolved.summary.machine_center_is_zero,
+            );
             let path = model_dir.join(format!("{}-{}.stl", region.role.name(), region.id));
             mesh::write_binary_stl(&path, &mesh)?;
             modifiers.push(EngineMesh {

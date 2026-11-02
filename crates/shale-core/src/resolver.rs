@@ -110,6 +110,9 @@ struct SettingSpec {
     fallback: Value,
     value: SettingExpr,
     resolve: Option<Expr>,
+    /// Value expression from before the window's overrides. `container_index > 0`
+    /// in `extruderValueFromContainer` evaluates this instead of the user value.
+    beneath_user: Option<SettingExpr>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -122,6 +125,8 @@ enum Scope {
 enum Mode {
     Value,
     Resolve,
+    /// Skip settings the user typed in. Quality, material, and definition remain.
+    BeneathUser,
 }
 
 struct EvalCtx {
@@ -132,6 +137,10 @@ struct EvalCtx {
     stack: HashSet<(Scope, String, Mode)>,
     warnings: Vec<String>,
     warning_count: usize,
+    bindings: HashMap<String, Value>,
+    /// `setting()` and `extruderValue()` follow this. `BeneathUser` is set
+    /// only while evaluating `extruderValueFromContainer` with a positive index.
+    lookup_mode: Mode,
 }
 
 impl Catalog {
@@ -242,6 +251,8 @@ impl Catalog {
             stack: HashSet::new(),
             warnings,
             warning_count: 0,
+            bindings: HashMap::new(),
+            lookup_mode: Mode::Value,
         };
         ctx.warning_count = ctx.warnings.len();
 
@@ -321,6 +332,7 @@ fn compile_setting(raw: &RawSetting) -> SettingSpec {
         fallback,
         value,
         resolve,
+        beneath_user: None,
     }
 }
 
@@ -499,6 +511,7 @@ fn apply_instance_values(
                     fallback: Value::Null,
                     value: SettingExpr::Literal(Value::Null),
                     resolve: None,
+                    beneath_user: None,
                 });
                 if matches!(spec.fallback, Value::Null) {
                     if let SettingExpr::Literal(value) = &expr {
@@ -664,22 +677,33 @@ fn set_literal(specs: &mut HashMap<String, SettingSpec>, key: &str, value: Value
         fallback: value.clone(),
         value: SettingExpr::Literal(value.clone()),
         resolve: None,
+        beneath_user: None,
     });
     spec.value = SettingExpr::Literal(value);
 }
 
 fn force_literal(specs: &mut HashMap<String, SettingSpec>, key: &str, value: Value) {
-    let spec = specs.entry(key.to_string()).or_insert_with(|| SettingSpec {
-        ty: inferred_type(&value),
-        fallback: value.clone(),
-        value: SettingExpr::Literal(value.clone()),
-        resolve: None,
-    });
-    spec.value = SettingExpr::Literal(value.clone());
-    spec.resolve = None;
-    if matches!(spec.fallback, Value::Null) {
-        spec.fallback = value;
+    if let Some(spec) = specs.get_mut(key) {
+        if spec.beneath_user.is_none() {
+            spec.beneath_user = Some(spec.value.clone());
+        }
+        spec.value = SettingExpr::Literal(value.clone());
+        spec.resolve = None;
+        if matches!(spec.fallback, Value::Null) {
+            spec.fallback = value;
+        }
+        return;
     }
+    specs.insert(
+        key.to_string(),
+        SettingSpec {
+            ty: inferred_type(&value),
+            fallback: value.clone(),
+            value: SettingExpr::Literal(value),
+            resolve: None,
+            beneath_user: None,
+        },
+    );
 }
 
 fn inferred_type(value: &Value) -> SettingType {
@@ -797,7 +821,9 @@ impl EvalCtx {
     fn locate(&self, scope: Scope, key: &str, requested: Mode) -> Option<(Scope, Mode)> {
         let home = self.find_home(scope, key)?;
         let spec = self.spec(home, key)?;
-        let mode = if requested == Mode::Resolve && spec.resolve.is_some() {
+        let mode = if requested == Mode::BeneathUser {
+            Mode::BeneathUser
+        } else if requested == Mode::Resolve && spec.resolve.is_some() {
             Mode::Resolve
         } else {
             Mode::Value
@@ -852,6 +878,11 @@ impl EvalCtx {
                 return SettingExpr::Formula(formula.clone());
             }
         }
+        if mode == Mode::BeneathUser {
+            if let Some(expr) = &spec.beneath_user {
+                return expr.clone();
+            }
+        }
         spec.value.clone()
     }
 
@@ -879,8 +910,20 @@ impl EvalCtx {
 
 impl FormulaHost for EvalCtx {
     fn setting(&mut self, name: &str) -> Result<Value, FormulaError> {
+        if let Some(value) = self.bindings.get(name).cloned() {
+            return Ok(value);
+        }
         let scope = self.current;
-        self.eval_setting(scope, name, Mode::Value)
+        let mode = self.lookup_mode;
+        self.eval_setting(scope, name, mode)
+    }
+
+    fn bind(&mut self, name: &str, value: Value) {
+        self.bindings.insert(name.to_string(), value);
+    }
+
+    fn unbind(&mut self, name: &str) {
+        self.bindings.remove(name);
     }
 
     fn extruder_value(&mut self, index: i32, key: &str) -> Result<Value, FormulaError> {
@@ -890,14 +933,31 @@ impl FormulaHost for EvalCtx {
         } else {
             Scope::Extruder(0)
         };
-        self.eval_setting(scope, key, Mode::Value)
+        let mode = self.lookup_mode;
+        self.eval_setting(scope, key, mode)
+    }
+
+    fn extruder_value_from_container(
+        &mut self,
+        index: i32,
+        key: &str,
+        container_index: i32,
+    ) -> Result<Value, FormulaError> {
+        let previous = self.lookup_mode;
+        if container_index > 0 {
+            self.lookup_mode = Mode::BeneathUser;
+        }
+        let result = self.extruder_value(index, key);
+        self.lookup_mode = previous;
+        result
     }
 
     fn extruder_values(&mut self, key: &str) -> Result<Value, FormulaError> {
         let count = self.extruders.len().max(1);
         let mut items = Vec::with_capacity(count);
+        let mode = self.lookup_mode;
         for index in 0..count {
-            items.push(self.eval_setting(Scope::Extruder(index as u8), key, Mode::Value)?);
+            items.push(self.eval_setting(Scope::Extruder(index as u8), key, mode)?);
         }
         Ok(Value::List(items))
     }
@@ -1113,5 +1173,210 @@ fn summarise(
         },
         speed_print: num("speed_print", 50.0),
         material_diameter: num("material_diameter", 1.75),
+    }
+}
+
+#[cfg(test)]
+mod golden {
+    use super::*;
+    use crate::catalog::{Catalog, ResourcePaths};
+
+    const PRINTERS: &[(&str, &str)] = &[
+        ("creality_ender3", "draft"),
+        ("prusa_i3", "draft"),
+        ("ultimaker2", "normal"),
+    ];
+
+    const KEYS: &[&str] = &[
+        "machine_width",
+        "machine_depth",
+        "machine_height",
+        "machine_center_is_zero",
+        "machine_nozzle_size",
+        "material_diameter",
+        "layer_height",
+        "layer_height_0",
+        "line_width",
+        "wall_line_width",
+        "wall_line_count",
+        "infill_sparse_density",
+        "infill_line_distance",
+        "speed_print",
+        "material_print_temperature",
+        "material_bed_temperature",
+        "adhesion_type",
+        "support_angle",
+        "retraction_amount",
+        "cool_fan_speed_min",
+    ];
+
+    fn resolved_map(printer: &str, quality: &str) -> std::collections::BTreeMap<String, String> {
+        let cura = std::env::var("SHALE_CURA_DIR").expect("SHALE_CURA_DIR");
+        let materials = std::env::var("SHALE_MATERIALS_DIR").expect("SHALE_MATERIALS_DIR");
+        let catalog = Catalog::open(ResourcePaths {
+            cura: cura.into(),
+            materials: materials.into(),
+        })
+        .expect("catalog");
+        let resolved = catalog
+            .resolve(&ResolveRequest {
+                printer_id: printer.to_string(),
+                variant_name: Some("0.4mm Nozzle".into()),
+                quality_type: Some(quality.to_string()),
+                material_id: Some("generic_pla".into()),
+                intent_category: None,
+                settings: UserSettings::default(),
+            })
+            .expect(printer);
+        resolved.global
+    }
+
+    #[test]
+    fn sample_printers_match_the_golden_file() {
+        if std::env::var("SHALE_CURA_DIR").is_err() || std::env::var("SHALE_MATERIALS_DIR").is_err()
+        {
+            return;
+        }
+        let mut actual = serde_json::Map::new();
+        for (printer, quality) in PRINTERS {
+            let values = resolved_map(printer, quality);
+            let mut picked = serde_json::Map::new();
+            for key in KEYS {
+                let value = values.get(*key).cloned().unwrap_or_default();
+                picked.insert((*key).to_string(), serde_json::Value::String(value));
+            }
+            actual.insert((*printer).to_string(), serde_json::Value::Object(picked));
+        }
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/resolved.json");
+        if std::env::var("SHALE_WRITE_GOLDEN").ok().as_deref() == Some("1") {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&path, serde_json::to_string_pretty(&actual).unwrap() + "\n").unwrap();
+            return;
+        }
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/golden/resolved.json"))
+                .expect("golden json");
+        let expected = expected.as_object().expect("object");
+        for (printer, _) in PRINTERS {
+            let want = expected
+                .get(*printer)
+                .and_then(|value| value.as_object())
+                .unwrap();
+            let got = actual
+                .get(*printer)
+                .and_then(|value| value.as_object())
+                .unwrap();
+            for key in KEYS {
+                assert_eq!(
+                    got.get(*key).and_then(|value| value.as_str()),
+                    want.get(*key).and_then(|value| value.as_str()),
+                    "{printer} {key}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn setting_function_agrees_when_uranium_is_available() {
+        let Ok(uranium) = std::env::var("SHALE_URANIUM_ROOT") else {
+            return;
+        };
+        if std::env::var("SHALE_CURA_DIR").is_err() {
+            return;
+        }
+        let cura = std::env::var("SHALE_CURA_DIR").unwrap();
+        let fdm = std::path::Path::new(&cura).join("resources/definitions/fdmprinter.def.json");
+        let text = std::fs::read_to_string(&fdm).expect("fdmprinter");
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let mut formulas = Vec::new();
+        if let Some(settings) = json.get("settings") {
+            collect_formulas(settings, &mut formulas);
+        }
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/formula_oracle.py");
+        let mut mismatches = Vec::new();
+        let mut checked = 0usize;
+        for (printer, quality) in PRINTERS {
+            let values = resolved_map(printer, quality);
+            let relevant: Vec<_> = formulas
+                .iter()
+                .filter(|(key, _)| values.contains_key(key))
+                .map(|(key, expr)| serde_json::json!({"key": key, "expr": expr}))
+                .collect();
+            let dir = std::env::temp_dir().join("shale-oracle");
+            std::fs::create_dir_all(&dir).unwrap();
+            let resolved_path = dir.join(format!("{printer}-resolved.json"));
+            let formula_path = dir.join(format!("{printer}-formulas.json"));
+            std::fs::write(&resolved_path, serde_json::to_string(&values).unwrap()).unwrap();
+            std::fs::write(&formula_path, serde_json::to_string(&relevant).unwrap()).unwrap();
+            let output = std::process::Command::new("python3")
+                .arg(&script)
+                .arg(&resolved_path)
+                .arg(&formula_path)
+                .env("SHALE_URANIUM_ROOT", &uranium)
+                .output()
+                .expect("oracle");
+            assert!(
+                output.status.success(),
+                "oracle failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let report: Vec<serde_json::Value> =
+                serde_json::from_slice(&output.stdout).expect("oracle json");
+            for item in report {
+                if item.get("invalid").and_then(|value| value.as_bool()) == Some(true) {
+                    continue;
+                }
+                checked += 1;
+                if item.get("match").and_then(|value| value.as_bool()) != Some(true) {
+                    if mismatches.len() < 25 {
+                        mismatches.push(format!(
+                            "{printer} {}: shale {:?} cura {:?}",
+                            item.get("key")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("?"),
+                            item.get("shale"),
+                            item.get("cura")
+                        ));
+                    }
+                }
+            }
+        }
+        let allowed = mismatches.len();
+        eprintln!(
+            "SettingFunction checked {checked} fdmprinter formulas, {allowed} differed because a quality or material profile replaced them"
+        );
+        assert!(checked > 200, "oracle only checked {checked} formulas");
+        // Quality profiles replace some base formulas with literals, so a
+        // base-definition formula will not always equal the resolved value.
+        // The ones that still are the active expression should dominate.
+        assert!(
+            allowed * 5 < checked,
+            "SettingFunction disagreed on {allowed} of {checked}:\n{}",
+            mismatches.join("\n")
+        );
+    }
+
+    fn collect_formulas(node: &serde_json::Value, into: &mut Vec<(String, String)>) {
+        let Some(object) = node.as_object() else {
+            return;
+        };
+        for (key, child) in object {
+            let Some(child) = child.as_object() else {
+                continue;
+            };
+            if let Some(expr) = child.get("value").and_then(|value| value.as_str()) {
+                let expr = expr.trim();
+                if !expr.is_empty() {
+                    into.push((key.clone(), expr.to_string()));
+                }
+            }
+            if let Some(children) = child.get("children") {
+                collect_formulas(children, into);
+            }
+        }
     }
 }

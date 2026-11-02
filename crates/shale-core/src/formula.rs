@@ -8,11 +8,11 @@
 //! `extruderValue`, `extruderValues`, and `resolveOrValue`.
 //!
 //! Not supported, and reported as formula errors so the resolver can fall back
-//! to `default_value`: lambdas, comprehensions, attribute calls (`.index()`),
-//! f-strings, and arbitrary Python. `min`/`max` keyword arguments such as
-//! `key=` are parsed and ignored, which is correct for a single extruder
-//! (`min` of a one-element list is that element) and is a known gap for
-//! multi-extruder adhesion ordering.
+//! to `default_value`: lambdas, list comprehensions (generator expressions
+//! passed to `all()` are supported), f-strings, slices, and arbitrary Python.
+//! `min`/`max` accept `key=some_list.index`, which is how adhesion type is
+//! ordered. `extruderValueFromContainer` reads the value from below the user
+//! overrides when the container index is greater than zero.
 
 use crate::value::Value;
 
@@ -43,6 +43,21 @@ pub trait FormulaHost {
     fn resolve_or_value(&mut self, key: &str) -> Result<Value, FormulaError>;
     fn any_extruder_with_material(&mut self, key: &str) -> Result<Value, FormulaError>;
     fn default_extruder_position(&mut self) -> Result<Value, FormulaError>;
+    /// `extruderValueFromContainer(extruder, key, container_index)`.
+    ///
+    /// The default ignores the container index and behaves as `extruderValue`.
+    /// The profile resolver uses the index to skip user overrides.
+    fn extruder_value_from_container(
+        &mut self,
+        index: i32,
+        key: &str,
+        _container_index: i32,
+    ) -> Result<Value, FormulaError> {
+        self.extruder_value(index, key)
+    }
+    /// Loop variable for `all(x == y for x in ...)`. Default ignores the binding.
+    fn bind(&mut self, _name: &str, _value: Value) {}
+    fn unbind(&mut self, _name: &str) {}
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,10 +81,20 @@ pub enum Expr {
         args: Vec<Expr>,
         keywords: Vec<(String, Expr)>,
     },
-    /// Parsed so `key=('a', 'b').index` is valid syntax. Evaluating it is an error.
+    /// `('raft', 'brim').index` as a value, used as `min(..., key=....index)`.
     Attr {
         base: Box<Expr>,
         name: String,
+    },
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
+    },
+    /// `x == y for x in items`, only as the argument of `all()`.
+    Comprehension {
+        body: Box<Expr>,
+        var: String,
+        iter: Box<Expr>,
     },
 }
 
@@ -142,11 +167,15 @@ pub fn eval(expr: &Expr, host: &mut dyn FormulaHost) -> Result<Value, FormulaErr
         Expr::Call {
             func,
             args,
-            keywords: _,
-        } => eval_call(func, args, host),
+            keywords,
+        } => eval_call(func, args, keywords, host),
         Expr::Attr { name, .. } => Err(FormulaError::new(format!(
-            "attribute '.{name}' is not supported"
+            "attribute '.{name}' is not supported on its own"
         ))),
+        Expr::Index { base, index } => eval_index(base, index, host),
+        Expr::Comprehension { .. } => Err(FormulaError::new(
+            "a comprehension is only supported as the argument of all()",
+        )),
     }
 }
 
@@ -301,7 +330,20 @@ fn describe(value: &Value) -> &'static str {
     }
 }
 
-fn eval_call(func: &str, args: &[Expr], host: &mut dyn FormulaHost) -> Result<Value, FormulaError> {
+fn eval_call(
+    func: &str,
+    args: &[Expr],
+    keywords: &[(String, Expr)],
+    host: &mut dyn FormulaHost,
+) -> Result<Value, FormulaError> {
+    if func == "all" && args.len() == 1 {
+        if let Expr::Comprehension { body, var, iter } = &args[0] {
+            return eval_all_comprehension(body, var, iter, host);
+        }
+    }
+    if func == "min" || func == "max" {
+        return eval_extreme(func, args, keywords, host);
+    }
     if func == "map" {
         return eval_map(args, host);
     }
@@ -309,6 +351,12 @@ fn eval_call(func: &str, args: &[Expr], host: &mut dyn FormulaHost) -> Result<Va
         let index = number(&eval(nth(args, 0, func)?, host)?)?;
         let key = expect_str(&eval(nth(args, 1, func)?, host)?)?;
         return host.extruder_value(index as i32, &key);
+    }
+    if func == "extruderValueFromContainer" {
+        let index = number(&eval(nth(args, 0, func)?, host)?)?;
+        let key = expect_str(&eval(nth(args, 1, func)?, host)?)?;
+        let container = number(&eval(nth(args, 2, func)?, host)?)?;
+        return host.extruder_value_from_container(index as i32, &key, container as i32);
     }
     if func == "extruderValues" {
         let key = expect_str(&eval(nth(args, 0, func)?, host)?)?;
@@ -331,6 +379,130 @@ fn eval_call(func: &str, args: &[Expr], host: &mut dyn FormulaHost) -> Result<Va
         values.push(eval(arg, host)?);
     }
     apply_fn(func, &values)
+}
+
+fn eval_extreme(
+    func: &str,
+    args: &[Expr],
+    keywords: &[(String, Expr)],
+    host: &mut dyn FormulaHost,
+) -> Result<Value, FormulaError> {
+    let mut items = Vec::new();
+    if args.len() == 1 {
+        match eval(&args[0], host)? {
+            Value::List(list) => items = list,
+            other => items.push(other),
+        }
+    } else {
+        for arg in args {
+            items.push(eval(arg, host)?);
+        }
+    }
+    if let Some((_, key)) = keywords.iter().find(|(name, _)| name == "key") {
+        let order = index_key(key, host)?;
+        return extreme_by_index(&items, &order, func == "min");
+    }
+    if !keywords.is_empty() {
+        return Err(FormulaError::new(format!(
+            "{func}() only supports the key= keyword, and only as .index"
+        )));
+    }
+    extreme(&items, func == "min")
+}
+
+fn index_key(expr: &Expr, host: &mut dyn FormulaHost) -> Result<Vec<Value>, FormulaError> {
+    let Expr::Attr { base, name } = expr else {
+        return Err(FormulaError::new(
+            "key= expects something.index, as in key=('raft', 'brim').index",
+        ));
+    };
+    if name != "index" {
+        return Err(FormulaError::new(format!(
+            "key= only supports .index, not .{name}"
+        )));
+    }
+    match eval(base, host)? {
+        Value::List(items) => Ok(items),
+        Value::Str(text) => Ok(text.chars().map(|ch| Value::Str(ch.to_string())).collect()),
+        _ => Err(FormulaError::new(".index expects a list or a string")),
+    }
+}
+
+fn extreme_by_index(
+    items: &[Value],
+    order: &[Value],
+    minimum: bool,
+) -> Result<Value, FormulaError> {
+    let rank = |item: &Value| {
+        order
+            .iter()
+            .position(|candidate| candidate.py_eq(item))
+            .unwrap_or(usize::MAX)
+    };
+    let chosen = items.iter().min_by_key(|item| {
+        let rank = rank(item);
+        if minimum {
+            rank
+        } else {
+            usize::MAX - rank
+        }
+    });
+    chosen
+        .cloned()
+        .ok_or_else(|| FormulaError::new("min()/max() of an empty list"))
+}
+
+fn eval_all_comprehension(
+    body: &Expr,
+    var: &str,
+    iter: &Expr,
+    host: &mut dyn FormulaHost,
+) -> Result<Value, FormulaError> {
+    let Value::List(items) = eval(iter, host)? else {
+        return Err(FormulaError::new(
+            "all(... for x in ...) expects a list after in",
+        ));
+    };
+    for item in items {
+        host.bind(var, item);
+        let ok = eval(body, host)?.truthy();
+        host.unbind(var);
+        if !ok {
+            return Ok(Value::Bool(false));
+        }
+    }
+    Ok(Value::Bool(true))
+}
+
+fn eval_index(
+    base: &Expr,
+    index: &Expr,
+    host: &mut dyn FormulaHost,
+) -> Result<Value, FormulaError> {
+    let collection = eval(base, host)?;
+    let mut index = number(&eval(index, host)?)? as isize;
+    match collection {
+        Value::List(items) => {
+            if index < 0 {
+                index += items.len() as isize;
+            }
+            items
+                .get(index as usize)
+                .cloned()
+                .ok_or_else(|| FormulaError::new("list index out of range"))
+        }
+        Value::Str(text) => {
+            let chars: Vec<char> = text.chars().collect();
+            if index < 0 {
+                index += chars.len() as isize;
+            }
+            chars
+                .get(index as usize)
+                .map(|ch| Value::Str(ch.to_string()))
+                .ok_or_else(|| FormulaError::new("string index out of range"))
+        }
+        _ => Err(FormulaError::new("only lists and strings can be indexed")),
+    }
 }
 
 fn eval_map(args: &[Expr], host: &mut dyn FormulaHost) -> Result<Value, FormulaError> {
@@ -408,6 +580,19 @@ fn apply_fn(func: &str, args: &[Value]) -> Result<Value, FormulaError> {
         }
         "math.radians" => Ok(Value::Num(number(first(args, func)?)?.to_radians())),
         "math.degrees" => Ok(Value::Num(number(first(args, func)?)?.to_degrees())),
+        "math.log" => {
+            let value = number(first(args, func)?)?;
+            let base = match args.get(1) {
+                Some(base) => number(base)?,
+                None => std::f64::consts::E,
+            };
+            if value <= 0.0 || base <= 0.0 || base == 1.0 {
+                return Err(FormulaError::new("math.log() domain error"));
+            }
+            Ok(Value::Num(value.log(base)))
+        }
+        "math.log10" => Ok(Value::Num(number(first(args, func)?)?.log10())),
+        "bool" => Ok(Value::Bool(first(args, func)?.truthy())),
         "len" => len_of(first(args, func)?),
         "sum" => {
             let mut total = 0.0;
@@ -934,6 +1119,16 @@ impl<'a> Parser<'a> {
                     base: Box::new(expr),
                     name,
                 };
+            } else if matches!(self.peek(), Tok::LBrack) {
+                self.bump();
+                let index = self.parse_if()?;
+                if !matches!(self.bump(), Some(Tok::RBrack)) {
+                    return Err(self.error("expected ']'"));
+                }
+                expr = Expr::Index {
+                    base: Box::new(expr),
+                    index: Box::new(index),
+                };
             } else {
                 break;
             }
@@ -1030,6 +1225,26 @@ impl<'a> Parser<'a> {
                     return Err(self.error("positional argument follows a keyword argument"));
                 }
                 positional.push(self.parse_if()?);
+                if positional.len() == 1 && self.eat_word("for") {
+                    let var = self.expect_ident()?;
+                    if !matches!(self.peek(), Tok::In) {
+                        return Err(self.error("expected 'in' in a comprehension"));
+                    }
+                    self.bump();
+                    let iter = self.parse_if()?;
+                    if !matches!(self.bump(), Some(Tok::RParen)) {
+                        return Err(self.error("expected ')'"));
+                    }
+                    let body = positional.pop().unwrap();
+                    return Ok((
+                        vec![Expr::Comprehension {
+                            body: Box::new(body),
+                            var,
+                            iter: Box::new(iter),
+                        }],
+                        Vec::new(),
+                    ));
+                }
             }
             if self.eat_comma() {
                 if matches!(self.peek(), Tok::RParen) {
@@ -1142,6 +1357,16 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn eat_word(&mut self, word: &str) -> bool {
+        if let Tok::Ident(name) = self.peek() {
+            if name == word {
+                self.index += 1;
+                return true;
+            }
+        }
+        false
+    }
+
     fn expect_ident(&mut self) -> Result<String, FormulaError> {
         match self.peek() {
             Tok::Ident(name) => {
@@ -1165,14 +1390,26 @@ mod tests {
 
     struct MapHost {
         values: HashMap<String, Value>,
+        bindings: HashMap<String, Value>,
     }
 
     impl FormulaHost for MapHost {
         fn setting(&mut self, name: &str) -> Result<Value, FormulaError> {
+            if let Some(value) = self.bindings.get(name).cloned() {
+                return Ok(value);
+            }
             self.values
                 .get(name)
                 .cloned()
                 .ok_or_else(|| FormulaError::new(format!("unknown setting {name}")))
+        }
+
+        fn bind(&mut self, name: &str, value: Value) {
+            self.bindings.insert(name.to_string(), value);
+        }
+
+        fn unbind(&mut self, name: &str) {
+            self.bindings.remove(name);
         }
         fn extruder_value(&mut self, _: i32, key: &str) -> Result<Value, FormulaError> {
             self.setting(key)
@@ -1197,6 +1434,7 @@ mod tests {
                 .iter()
                 .map(|(key, value)| ((*key).to_string(), value.clone()))
                 .collect(),
+            bindings: HashMap::new(),
         };
         eval_str(source, &mut host).unwrap_or_else(|err| panic!("{source}: {err}"))
     }
@@ -1271,5 +1509,182 @@ mod tests {
         );
         assert_eq!(eval_with("round(1.2345, 2)", &values), Value::Num(1.23));
         assert_eq!(eval_with("not False and True", &values), Value::Bool(true));
+    }
+
+    #[test]
+    fn log_index_keyed_min_and_all_comprehension() {
+        assert_eq!(eval_with("math.log(8) / math.log(2)", &[]), Value::Num(3.0));
+        assert_eq!(
+            eval_with(
+                "min(['skirt', 'raft'], key=('raft', 'brim', 'skirt', 'none').index)",
+                &[]
+            ),
+            Value::Str("raft".into())
+        );
+        assert_eq!(
+            eval_with("['pla', 'petg'][0]", &[]),
+            Value::Str("pla".into())
+        );
+        assert_eq!(
+            eval_with(
+                "all(mode == 'interleaved' for mode in ['interleaved', 'interleaved'])",
+                &[]
+            ),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval_with(
+                "all(mode == 'interleaved' for mode in ['interleaved', 'normal'])",
+                &[]
+            ),
+            Value::Bool(false)
+        );
+        assert_eq!(eval_with("bool(0)", &[]), Value::Bool(false));
+        assert_eq!(eval_with("bool('x')", &[]), Value::Bool(true));
+        assert_eq!(
+            eval_with(
+                "extruderValueFromContainer(0, 'bottom_layers', 2)",
+                &[("bottom_layers", Value::Num(4.0))]
+            ),
+            Value::Num(4.0)
+        );
+        assert_eq!(eval_with("math.pi > 3", &[]), Value::Bool(true));
+        parse(
+            "'interleaved' if all(mode == 'interleaved' for mode in extruderValues('prime_tower_mode')) else 'interleaved' if (all(material_type_var == extruderValues('material_type')[0] for material_type_var in extruderValues('material_type')) and all(material_brand_var == extruderValues('material_brand')[0] for material_brand_var in extruderValues('material_brand'))) else 'normal'",
+        )
+        .expect("prime_tower_mode resolve");
+        parse("all(p != 'surface' for p in extruderValues('magic_mesh_surface_mode'))")
+            .expect("surface-mode comprehension");
+        parse("2 if extruderValueFromContainer(top_bottom_extruder_nr, 'bottom_layers', 2) == bottom_layers else bottom_layers")
+            .expect("s8 initial_bottom_layers");
+    }
+
+    #[test]
+    fn every_definition_formula_parses_when_resources_are_present() {
+        let Ok(root) = std::env::var("SHALE_CURA_DIR") else {
+            return;
+        };
+        let resources = std::path::Path::new(&root).join("resources");
+        let root = if resources.is_dir() {
+            resources
+        } else {
+            std::path::PathBuf::from(root)
+        };
+        let mut failures = Vec::new();
+        let mut parsed = 0usize;
+        walk_formulas(&root, &mut |origin, source| {
+            parsed += 1;
+            if let Err(err) = parse(source) {
+                if failures.len() < 30 {
+                    failures.push(format!(
+                        "{origin}: {err} :: {}",
+                        source.chars().take(160).collect::<String>()
+                    ));
+                }
+            }
+        });
+        assert!(
+            parsed > 1000,
+            "only parsed {parsed} formulas under {}",
+            root.display()
+        );
+        assert!(
+            failures.is_empty(),
+            "formula parse failures ({parsed} checked):\n{}",
+            failures.join("\n")
+        );
+    }
+}
+
+#[cfg(test)]
+fn walk_formulas(dir: &std::path::Path, visit: &mut dyn FnMut(&str, &str)) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_formulas(&path, visit);
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if name.ends_with(".def.json") {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                    collect_json_formulas(&json, &path.display().to_string(), visit);
+                }
+            }
+        } else if name.ends_with(".inst.cfg") {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                collect_cfg_formulas(&text, &path.display().to_string(), visit);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn collect_json_formulas(
+    json: &serde_json::Value,
+    origin: &str,
+    visit: &mut dyn FnMut(&str, &str),
+) {
+    let Some(object) = json.as_object() else {
+        if let Some(items) = json.as_array() {
+            for item in items {
+                collect_json_formulas(item, origin, visit);
+            }
+        }
+        return;
+    };
+    const KEYS: &[&str] = &[
+        "value",
+        "resolve",
+        "minimum_value",
+        "maximum_value",
+        "minimum_value_warning",
+        "maximum_value_warning",
+        "enabled",
+    ];
+    for key in KEYS {
+        if let Some(source) = object.get(*key).and_then(|value| value.as_str()) {
+            let source = source.trim();
+            if !source.is_empty() {
+                visit(origin, source);
+            }
+        }
+    }
+    for (key, value) in object {
+        if KEYS.contains(&key.as_str()) {
+            continue;
+        }
+        collect_json_formulas(value, origin, visit);
+    }
+}
+
+#[cfg(test)]
+fn collect_cfg_formulas(text: &str, origin: &str, visit: &mut dyn FnMut(&str, &str)) {
+    let mut in_values = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_values = line == "[values]";
+            continue;
+        }
+        if !in_values || line.is_empty() || line.starts_with('#') || !line.contains('=') {
+            continue;
+        }
+        let Some((_, raw)) = line.split_once('=') else {
+            continue;
+        };
+        let raw = raw.trim();
+        let Some(formula) = raw.strip_prefix('=') else {
+            continue;
+        };
+        let formula = formula.trim();
+        if !formula.is_empty() {
+            visit(origin, formula);
+        }
     }
 }

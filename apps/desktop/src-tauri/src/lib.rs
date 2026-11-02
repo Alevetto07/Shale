@@ -8,9 +8,9 @@ use std::sync::Mutex;
 use serde::Serialize;
 use shale_core::{
     compare_support, drop_to_bed, load_mesh, overlays, place_on_bed, propose, set_enabled, slice,
-    Catalog, CliEngine, CustomInstruction, MaterialInfo, PlacedModel, PrinterInfo, QualityInfo,
-    ResourcePaths, StoredInstruction, SupportOverlay, SupportParams, SupportPlan, Toolpath,
-    Transform, TriangleMesh, UserSettings, VariantInfo,
+    Catalog, CustomInstruction, Engine, EngineBackend, MaterialInfo, PlacedModel, PrinterInfo,
+    QualityInfo, ResourcePaths, StoredInstruction, SupportOverlay, SupportParams, SupportPlan,
+    Toolpath, Transform, TriangleMesh, UserSettings, VariantInfo,
 };
 use tauri::{AppHandle, Emitter, State};
 
@@ -22,7 +22,7 @@ struct Inner {
     instructions: Vec<(u32, CustomInstruction)>,
     next_instruction: u32,
     support: Option<SupportPlan>,
-    engine: CliEngine,
+    engine: Engine,
     toolpath: Option<Toolpath>,
     gcode_path: Option<PathBuf>,
     slicing: bool,
@@ -42,7 +42,9 @@ struct Status {
     resources_ok: bool,
     resources_message: String,
     engine_path: String,
+    engine_lib_dir: String,
     engine_ok: bool,
+    engine_backend: String,
     printer_count: usize,
 }
 
@@ -110,8 +112,16 @@ fn app_status(state: State<AppState>) -> Result<Status, String> {
             .catalog_error
             .clone()
             .unwrap_or_else(|| "Cura resources are loaded.".into()),
-        engine_path: inner.engine.program.display().to_string(),
+        engine_path: inner.engine.cli.program.display().to_string(),
+        engine_lib_dir: inner
+            .engine
+            .cli
+            .lib_dir
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
         engine_ok,
+        engine_backend: inner.engine.backend.as_str().to_string(),
         printer_count: inner
             .catalog
             .as_ref()
@@ -125,10 +135,14 @@ fn set_engine(
     state: State<AppState>,
     path: String,
     lib_dir: Option<String>,
+    backend: Option<String>,
 ) -> Result<bool, String> {
     let mut inner = lock(&state)?;
-    inner.engine.program = PathBuf::from(path);
-    inner.engine.lib_dir = lib_dir.filter(|value| !value.is_empty()).map(PathBuf::from);
+    inner.engine.cli.program = PathBuf::from(path);
+    inner.engine.cli.lib_dir = lib_dir.filter(|value| !value.is_empty()).map(PathBuf::from);
+    if let Some(backend) = backend {
+        inner.engine.backend = EngineBackend::parse(&backend);
+    }
     Ok(inner.engine.available())
 }
 
@@ -589,11 +603,22 @@ fn slice_model(
             inner.support.as_ref(),
             output,
             &mut |progress| {
+                let layer = progress.layer.as_ref().map(|layer| {
+                    serde_json::json!({
+                        "index": layer.index,
+                        "z": layer.z,
+                        "paths": layer.paths.iter().map(|path| serde_json::json!({
+                            "kind": path.kind,
+                            "points": path.points,
+                        })).collect::<Vec<_>>(),
+                    })
+                });
                 let _ = app.emit(
                     "slice-progress",
                     serde_json::json!({
                         "fraction": progress.fraction,
                         "message": progress.message,
+                        "layer": layer,
                     }),
                 );
             },
@@ -731,7 +756,7 @@ fn view_of(id: u32, name: &str, mesh: &TriangleMesh, transform: &Transform) -> M
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 fn preload_demo(
     catalog: &Catalog,
-    engine: &CliEngine,
+    engine: &Engine,
 ) -> (
     Vec<LoadedModel>,
     Vec<(u32, CustomInstruction)>,
@@ -840,7 +865,7 @@ pub fn run() {
         },
         Err(err) => (None, Some(err.to_string())),
     };
-    let engine = CliEngine::from_env();
+    let engine = Engine::from_env();
     let (models, instructions, toolpath, gcode_path) = if let Some(catalog) = &catalog {
         preload_demo(catalog, &engine)
     } else {

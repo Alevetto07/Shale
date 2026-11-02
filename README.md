@@ -36,26 +36,33 @@ UI  ↘
 MCP ↗            ↘  Cura resources + fdm_materials (data files)
 ```
 
-### Why the command-line engine, not Arcus, for now
+### CLI and Arcus
 
-Cura's own frontend speaks [Arcus](https://github.com/Ultimaker/libArcus): protobuf messages from `Cura.proto`, framed as `uint32` header, `uint32` size, `uint32` type id, then the protobuf bytes. The type id is libArcus's private hash of the message's `GetTypeName()`, so both sides have to register the same messages or nothing decodes. CuraEngine is the client (`CuraEngine connect host:port`); the frontend listens, sends one `Slice` (settings plus raw meshes), and reads `Progress`, layer polygons, and `GCodeLayer` until `SlicingFinished`.
+Cura's own frontend speaks [Arcus](https://github.com/Ultimaker/libArcus): protobuf messages from `Cura.proto`, framed as a big-endian `uint32` header (`0x2BAD0100`), `uint32` size, `uint32` type id, then the protobuf bytes. The type id is FNV-1a of protobuf's `GetTypeName()` (`cura.proto.Slice`, `cura.proto.Progress`, and the rest). A `uint32` of zero is a keepalive. CuraEngine is the client (`CuraEngine connect host:port`); Shale listens, sends one `Slice` (settings plus a triangle soup, with `extruder_nr` on each mesh), and reads `Progress`, layer polygons, and `GCodeLayer` until `SlicingFinished`.
 
-That is the right long-term path, and `shale_core::engine::SlicingEngine` is the seam for it. `ArcusEngine` is a stub that returns a clear error. The MVP uses `CliEngine` instead:
+CuraEngine treats the bed centre as the origin and, when `machine_center_is_zero` is false, adds half the bed size itself. Shale's scene uses the front-left origin, so the mesh written for the engine is shifted back by half the bed. The G-code that comes back is in machine coordinates and lines up with the part.
 
-* CuraEngine 5.13's command-line `sendProgress` is empty, and `-p` is a leftover no-op, so the CLI cannot stream real percentages. Shale estimates progress from the engine's log (`layer N of M` during insets, skin, and infill, then `starting export`) and from `;LAYER:` lines as they are flushed, and reads `;TIME_ELAPSED:` from the finished file. Arcus `Progress` messages are the proper stream. The engine is not forked to get that.
-* A CLI-only binary is the practical one to build and to point Shale at. The AGPL boundary stays obvious: we never link the engine.
-* The layer preview the MVP needs is already in the G-code CuraEngine writes (`;LAYER:` and `;TYPE:`). Arcus polygons can replace that parser later without a UI change.
+`shale_core::engine::Engine` picks the backend at runtime:
+
+* `SHALE_ENGINE=arcus` (or the Engine panel's `arcus` choice) uses that socket. Progress percentages come from `Progress` messages. Each layer's polygons are drawn in the viewport as they arrive.
+* `SHALE_ENGINE=cli`, and the default when the variable is unset, runs `CuraEngine slice`. CuraEngine 5.13's command-line `sendProgress` is empty, and `-p` is a leftover no-op, so the CLI estimates progress from the log (`layer N of M`, then `starting export`) and from `;LAYER:` lines. The layer preview is parsed from the finished G-code.
+
+Both backends are the same unmodified binary. Shale does not link libArcus. See [LICENSING.md](LICENSING.md).
 
 The engine only reads `default_value` from definition JSON. Cura's `value` formulas are Python, evaluated by Uranium in the official app and then sent across as literals. Shale resolves the stack itself and passes a `-r` JSON file (`global`, `extruder.0`, …). `{setting}` placeholders in start and end G-code are filled in first, because the engine writes those strings through unchanged.
 
 ## Setting resolution
 
-Shale does not depend on Uranium. The resolver walks definition inheritance (`fdmprinter` → `creality_base` → `creality_ender3`, and the extruder train), then applies the nozzle variant, a matching material from fdm_materials, the quality profile, an optional intent, and the handful of values from the window. Formulas are a Rust subset of the expression language: arithmetic, comparisons, `and` / `or` / `not`, `a if c else b`, lists, `min` / `max` / `round` / `math.*`, and the Cura helpers `extruderValue`, `extruderValues`, `resolveOrValue`, and `anyExtruderWithMaterial`.
+Shale does not depend on Uranium. The resolver walks definition inheritance (`fdmprinter` → `creality_base` → `creality_ender3`, and the extruder train), then applies the nozzle variant, a matching material from fdm_materials, the quality profile, an optional intent, and the handful of values from the window. Formulas cover the expression language that actually appears in the 5.13 definitions: arithmetic, comparisons, `and` / `or` / `not`, `a if c else b`, lists and subscripts, `min` / `max` (including `key=some_list.index`), `round`, `math.*` (including `math.log` and `math.pi`), `all(x for x in ...)`, and the Cura helpers `extruderValue`, `extruderValues`, `extruderValueFromContainer`, `resolveOrValue`, and `anyExtruderWithMaterial`.
 
-A formula that fails falls back to `default_value` and is counted as a warning. On Cura 5.13 the Creality Ender-3 and the Prusa i3 resolve the settings a normal slice needs (bed size, line width, infill spacing, temperatures, speeds, adhesion, start G-code) with no warnings for those keys. Known gaps, left as TODOs in `crates/shale-core/src/formula.rs`:
+Every `value`, `resolve`, limit, and `[values]` formula in the fetched 5.13 tree parses. A formula that fails at evaluation falls back to `default_value` and is counted as a warning.
 
-* `min` / `max` ignore the `key=` argument. With one extruder the list has one element, so the result is that element. Multi-extruder adhesion ordering is wrong until `key=` is implemented.
-* No lambdas, comprehensions, or attribute calls such as `('raft', 'brim').index`.
+`scripts/formula_oracle.py` loads Uranium's `SettingFunction` from an extracted Cura AppImage (`SHALE_URANIUM_ROOT`) without importing the `UM` package, because that import pulls in PyQt6 and aborts. It is a test harness only. Uranium is not shipped. On the three sample printers the oracle agrees with Shale on the fdmprinter formulas that the quality profile did not replace. `crates/shale-core/tests/golden/resolved.json` locks the resolved values for the Creality Ender-3 (draft), the Prusa i3 (draft), and the Ultimaker 2 (normal), with a 0.4 mm nozzle and `generic_pla`, and with no window overrides.
+
+Still rough:
+
+* No lambdas, list comprehensions, f-strings, or slices. None of those are used as formulas in the 5.13 definitions; generator expressions are only the `all(... for ... in ...)` form, which is supported.
+* `extruderValueFromContainer` skips the window's overrides when the container index is above zero. Shale does not model Cura's quality-changes container, so index 2 and index 1 are the same here. One Ultimaker S8 setting uses it.
 * Intents are loaded and can be passed on `ResolveRequest.intent_category`. The window does not expose them yet.
 * Quality matching is by definition ancestry, quality type, variant name, and material id. It is not a full copy of Cura's quality-node tree.
 
@@ -93,7 +100,7 @@ cmake --build --preset conan-release
 export SHALE_CURAENGINE="$PWD/build/Release/CuraEngine"
 ```
 
-A release build links libArcus even though Shale's MVP does not open the socket. That is upstream's build; leave the binary unmodified.
+A release build links libArcus. That is upstream's build; leave the binary unmodified. Shale talks to it over the socket or the command line and does not link that library itself.
 
 On Linux you can also unpack the official AppImage and point at the `CuraEngine` inside it. The AppImage's dynamic linker path is relative, so the extracted binary often needs `patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2` and `SHALE_CURAENGINE_LIB_DIR` set to the extracted directory. Building from source is the cleaner route.
 
@@ -235,7 +242,7 @@ Not built. `docs/print-removal.md` is the note for a later camera check (Moonrak
 cargo test --workspace
 ```
 
-The resolver tests use a small fixture printer and, when `SHALE_CURA_DIR` / `SHALE_MATERIALS_DIR` are set, the real Ender-3 and Prusa i3 profiles. A slice test runs only when `SHALE_CURAENGINE` is set as well, so CI does not need the engine binary.
+The resolver tests use a small fixture printer and, when `SHALE_CURA_DIR` / `SHALE_MATERIALS_DIR` are set, the real Ender-3 and Prusa i3 profiles, plus a parse of every formula in the 5.13 tree. `tests/golden/resolved.json` is the committed comparison for three printers. `SHALE_URANIUM_ROOT` (an extracted Cura AppImage, not a copy in this repo) also runs those formulas through Uranium's `SettingFunction`. A slice test, including the Arcus socket, runs only when `SHALE_CURAENGINE` is set, so CI does not need the engine binary.
 
 GitHub Actions builds the frontend and runs `cargo test --workspace` on Ubuntu, including the Tauri shell.
 

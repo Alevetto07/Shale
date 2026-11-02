@@ -281,6 +281,25 @@ pub fn bake(mesh: &TriangleMesh, transform: &Transform) -> TriangleMesh {
     }
 }
 
+/// Shift a mesh from Shale's machine coordinates into the space CuraEngine expects.
+///
+/// `MeshGroup::finalize` adds half the bed when `machine_center_is_zero` is
+/// false, because the frontend it was written for treats the bed centre as
+/// the origin. Shale's scene uses the front-left origin in that case. The
+/// copy written for the engine is moved back by half the bed so the G-code
+/// lands on the part. A centre-origin machine is left unchanged.
+pub fn to_engine_space(mesh: &mut TriangleMesh, width: f64, depth: f64, center_is_zero: bool) {
+    if center_is_zero {
+        return;
+    }
+    let dx = (width * 0.5) as f32;
+    let dy = (depth * 0.5) as f32;
+    for vertex in &mut mesh.vertices {
+        vertex[0] -= dx;
+        vertex[1] -= dy;
+    }
+}
+
 /// Centre the mesh on the bed and sit it on Z = 0. Rotation and scale are reset.
 pub fn place_on_bed(
     mesh: &TriangleMesh,

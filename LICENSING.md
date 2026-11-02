@@ -8,7 +8,9 @@ The pieces Shale runs *with* keep their own licences. They are not relicensed by
 
 [CuraEngine](https://github.com/Ultimaker/CuraEngine) is the slicer. It is published under the GNU Affero General Public License, version 3.
 
-Shale does not link CuraEngine, does not copy its source, and does not modify it. The desktop app starts whatever `CuraEngine` binary you point it at, as a separate process, and talks to it with the engine's own command-line interface (`CuraEngine slice …`). A future Arcus backend would still be a separate process speaking the engine's existing socket protocol. No CuraEngine binary is committed to this repository.
+Shale does not link CuraEngine, does not copy its source, and does not modify it. The desktop app starts whatever `CuraEngine` binary you point it at, as a separate process. The CLI backend uses `CuraEngine slice`. The Arcus backend uses `CuraEngine connect` and speaks the engine's existing socket protocol. No CuraEngine binary is committed to this repository.
+
+The Arcus framing (header `0x2BAD0100`, a protobuf size, an FNV-1a type id of `GetTypeName()`, then the protobuf bytes, with a zero word as keepalive) is reimplemented in Rust from the published protocol. libArcus 4.10, which Cura 5.13 ships, is LGPL-3.0. Later libArcus releases are AGPL-3.0. Shale does not link either library and does not copy its source. `Cura.proto` is not vendored; the field numbers Shale uses are the ones from the 5.13.0 tag.
 
 If you distribute Shale together with a CuraEngine binary, that binary remains under the AGPL-3.0 and you still have to comply with it (including offering its source). That obligation is about CuraEngine, not about Shale's own code.
 
