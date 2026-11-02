@@ -7,12 +7,14 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::catalog::Catalog;
+use crate::engine::EngineMesh;
 use crate::engine::{EngineProgress, EngineRequest, SlicingEngine};
 use crate::error::Error;
 use crate::gcode::{self, Toolpath};
 use crate::instructions::{self, CustomInstruction, GcodeFlavour};
 use crate::mesh::{self, Transform, TriangleMesh};
 use crate::resolver::{ResolveRequest, ResolvedSettings, UserSettings};
+use crate::supports::{self, SupportPlan};
 
 #[derive(Clone, Debug)]
 pub struct PlacedModel {
@@ -42,6 +44,7 @@ pub fn slice(
     settings: UserSettings,
     models: &[PlacedModel],
     instructions: &[CustomInstruction],
+    support: Option<&SupportPlan>,
     output_path: PathBuf,
     on_progress: &mut dyn FnMut(EngineProgress),
 ) -> Result<SliceOutcome, Error> {
@@ -52,7 +55,7 @@ pub fn slice(
         fraction: 0.02,
         message: "Resolving printer settings".into(),
     });
-    let resolved = catalog.resolve(&ResolveRequest {
+    let mut resolved = catalog.resolve(&ResolveRequest {
         printer_id: printer_id.to_string(),
         variant_name,
         quality_type,
@@ -77,11 +80,37 @@ pub fn slice(
         baked_paths.push(path);
     }
 
+    let mut modifiers = Vec::new();
+    if let Some(plan) = support {
+        let enforced = plan
+            .regions
+            .iter()
+            .any(|region| region.enabled && region.role == supports::RegionRole::Enforce);
+        if enforced || plan.regions.iter().any(|region| region.enabled) {
+            force_setting(&mut resolved, "support_enable", "false");
+            force_setting(
+                &mut resolved,
+                "support_meshes_present",
+                if enforced { "true" } else { "false" },
+            );
+        }
+        for region in plan.regions.iter().filter(|region| region.enabled) {
+            let mesh = supports::region_mesh(region);
+            let path = model_dir.join(format!("{}-{}.stl", region.role.name(), region.id));
+            mesh::write_binary_stl(&path, &mesh)?;
+            modifiers.push(EngineMesh {
+                path,
+                settings: supports::modifier_settings(region.role),
+            });
+        }
+    }
+
     let output = engine.slice(
         &EngineRequest {
             global: resolved.global.clone(),
             extruders: resolved.extruders.clone(),
             models: baked_paths,
+            modifiers,
             output_gcode: output_path.clone(),
             estimated_layers,
         },
@@ -110,4 +139,75 @@ pub fn slice(
         flavour,
         log_tail: output.log_tail,
     })
+}
+
+/// Slice the same job twice: once with the proposed meshes, once with
+/// Cura's everywhere supports and no meshes. Volumes stay geometric.
+/// Times and support filament come from the engine.
+pub fn compare_support(
+    catalog: &Catalog,
+    engine: &dyn SlicingEngine,
+    printer_id: &str,
+    variant_name: Option<String>,
+    quality_type: Option<String>,
+    material_id: Option<String>,
+    settings: UserSettings,
+    models: &[PlacedModel],
+    plan: &SupportPlan,
+    on_progress: &mut dyn FnMut(EngineProgress),
+) -> Result<crate::supports::SupportComparison, Error> {
+    let dir = std::env::temp_dir().join("shale");
+    fs::create_dir_all(&dir)?;
+    let mut smart_settings = settings.clone();
+    smart_settings.support_enable = Some(false);
+    let smart = slice(
+        catalog,
+        engine,
+        printer_id,
+        variant_name.clone(),
+        quality_type.clone(),
+        material_id.clone(),
+        smart_settings,
+        models,
+        &[],
+        Some(plan),
+        dir.join("support-smart.gcode"),
+        on_progress,
+    )?;
+    let mut everywhere_settings = settings;
+    everywhere_settings.support_enable = Some(true);
+    let everywhere = slice(
+        catalog,
+        engine,
+        printer_id,
+        variant_name,
+        quality_type,
+        material_id,
+        everywhere_settings,
+        models,
+        &[],
+        None,
+        dir.join("support-everywhere.gcode"),
+        on_progress,
+    )?;
+    let smart_gcode = fs::read_to_string(&smart.gcode_path).unwrap_or_default();
+    let everywhere_gcode = fs::read_to_string(&everywhere.gcode_path).unwrap_or_default();
+    let mut comparison = plan.comparison.clone();
+    if let Some(seconds) = smart.print_time_seconds {
+        comparison.proposed_time_seconds = seconds;
+    }
+    if let Some(seconds) = everywhere.print_time_seconds {
+        comparison.everywhere_time_seconds = seconds;
+    }
+    comparison.times_from_engine = true;
+    comparison.proposed_support_metres = Some(gcode::support_filament_metres(&smart_gcode));
+    comparison.everywhere_support_metres = Some(gcode::support_filament_metres(&everywhere_gcode));
+    Ok(comparison)
+}
+
+fn force_setting(resolved: &mut ResolvedSettings, key: &str, value: &str) {
+    resolved.global.insert(key.to_string(), value.to_string());
+    for extruder in &mut resolved.extruders {
+        extruder.insert(key.to_string(), value.to_string());
+    }
 }

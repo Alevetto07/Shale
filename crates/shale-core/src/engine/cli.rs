@@ -76,6 +76,14 @@ impl SlicingEngine for CliEngine {
         for model in &request.models {
             command.arg("-l").arg(model);
         }
+        // `-s` applies to the object just loaded. Support enforcers and
+        // blockers are extra meshes, not a second slicer.
+        for modifier in &request.modifiers {
+            command.arg("-l").arg(&modifier.path);
+            for (key, value) in &modifier.settings {
+                command.arg("-s").arg(format!("{key}={value}"));
+            }
+        }
         apply_lib_dir(&mut command, self.lib_dir.as_deref());
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
 

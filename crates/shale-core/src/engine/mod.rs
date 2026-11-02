@@ -16,11 +16,20 @@ use std::path::PathBuf;
 
 use crate::error::Error;
 
+/// A mesh that is not the part. `settings` are applied to this object only,
+/// which is how the 5.13 CLI marks a support enforcer or a blocker.
+#[derive(Clone, Debug)]
+pub struct EngineMesh {
+    pub path: PathBuf,
+    pub settings: Vec<(String, String)>,
+}
+
 #[derive(Clone, Debug)]
 pub struct EngineRequest {
     pub global: BTreeMap<String, String>,
     pub extruders: Vec<BTreeMap<String, String>>,
     pub models: Vec<PathBuf>,
+    pub modifiers: Vec<EngineMesh>,
     pub output_gcode: PathBuf,
     /// Used by the CLI backend to turn `;LAYER:` lines in the output file
     /// into a progress fraction. Arcus will ignore it and use `Progress` messages.

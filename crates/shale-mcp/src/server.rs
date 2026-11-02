@@ -12,7 +12,9 @@ use rmcp::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use shale_core::{CustomInstruction, EngineProgress, Session, SettingsPatch};
+use shale_core::{
+    CustomInstruction, EngineProgress, Session, SettingsPatch, SupportParams, SupportPlan,
+};
 
 #[derive(Clone)]
 pub struct ShaleMcp {
@@ -181,6 +183,40 @@ impl InstructionArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SupportQuery {
+    id: u32,
+    /// Cura's overhang angle, from the vertical. 50 is the usual default.
+    overhang_angle_deg: Option<f64>,
+    /// Spans up to this length, held at both ends, are bridges and are not supported.
+    max_bridge_mm: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ApplySupportArgs {
+    /// Region ids to keep. Omit to enable every proposed region.
+    ids: Option<Vec<u32>>,
+}
+
+fn support_params(query: &SupportQuery) -> SupportParams {
+    let mut params = SupportParams::default();
+    if let Some(value) = query.overhang_angle_deg {
+        params.overhang_angle_deg = value;
+    }
+    if let Some(value) = query.max_bridge_mm {
+        params.max_bridge_mm = value;
+    }
+    params
+}
+
+fn plan_for_tool(plan: &SupportPlan) -> SupportPlan {
+    let mut plan = plan.clone();
+    for span in &mut plan.spans {
+        span.samples.clear();
+    }
+    plan
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct SlicePromptArgs {
     /// What the part is, in a few words.
     part: String,
@@ -280,6 +316,69 @@ impl ShaleMcp {
         let mut session = self.lock()?;
         session.set_settings(patch.into()).map_err(fail)?;
         ok_json(session.get_settings(&[]).map_err(fail)?)
+    }
+
+    #[tool(
+        description = "Analyse one loaded model for overhangs, bridges, cantilevers, and islands. This does not change the job. Bridge and cantilever spans are the same map a later non-planar placement can use."
+    )]
+    fn analyse_overhangs(
+        &self,
+        Parameters(query): Parameters<SupportQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let session = self.lock()?;
+        let analysis = session
+            .analyse_overhangs(query.id, support_params(&query))
+            .map_err(fail)?;
+        let spans: Vec<_> = analysis
+            .spans
+            .iter()
+            .map(|span| {
+                json!({
+                    "kind": span.kind,
+                    "length_mm": span.length_mm,
+                    "width_mm": span.width_mm,
+                    "area_mm2": span.area_mm2,
+                    "z_mm": span.z_mm,
+                    "angle_from_vertical_deg": span.angle_from_vertical_deg,
+                    "anchor_ends": span.anchor_ends,
+                    "samples": span.samples.len(),
+                })
+            })
+            .collect();
+        ok_json(json!({
+            "bridges": analysis.count(shale_core::FeatureKind::Bridge),
+            "cantilevers": analysis.count(shale_core::FeatureKind::Cantilever),
+            "islands": analysis.count(shale_core::FeatureKind::Island),
+            "overhangs": analysis.count(shale_core::FeatureKind::Overhang),
+            "cosmetic": analysis.count(shale_core::FeatureKind::Cosmetic),
+            "spans": spans,
+        }))
+    }
+
+    #[tool(
+        description = "Propose support only where the analysis says it is needed. Bridges and cosmetic slopes become blockers. Cantilevers, islands, and other overhangs become support-mesh columns. Times are a bead estimate; volume and contact area are geometric, compared with supporting every overhang."
+    )]
+    fn propose_supports(
+        &self,
+        Parameters(query): Parameters<SupportQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut session = self.lock()?;
+        let plan = session
+            .propose_supports(query.id, support_params(&query))
+            .map_err(fail)?;
+        ok_json(plan_for_tool(&plan))
+    }
+
+    #[tool(
+        description = "Enable a subset of the proposed support regions. Omit ids to enable them all. The next slice sends the enabled columns and blockers to CuraEngine as support_mesh and anti_overhang_mesh objects."
+    )]
+    fn apply_supports(
+        &self,
+        Parameters(ApplySupportArgs { ids }): Parameters<ApplySupportArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut session = self.lock()?;
+        let plan = session.apply_supports(ids.as_deref()).map_err(fail)?;
+        ok_json(plan_for_tool(&plan))
     }
 
     #[tool(
@@ -417,6 +516,7 @@ impl ServerHandler for ShaleMcp {
         let body = json!({
             "models": session.models(),
             "instructions": session.instructions(),
+            "support": session.support_plan().map(plan_for_tool),
             "summary": session.summary(),
         });
         Ok(ReadResourceResult::new(vec![ResourceContents::text(

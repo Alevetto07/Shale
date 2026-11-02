@@ -366,6 +366,7 @@ endsolid cube
             filament_change: true,
             message: Some("swap".into()),
         }],
+        None,
         dir.join("cube.gcode"),
         &mut |progress| eprintln!("{:.0}% {}", progress.fraction * 100.0, progress.message),
     );

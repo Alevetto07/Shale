@@ -1,0 +1,170 @@
+solid t-wing
+  facet normal 0 0 0
+    outer loop
+      vertex 15 0 0
+      vertex 25 10 0
+      vertex 25 0 0
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 15 0 0
+      vertex 15 10 0
+      vertex 25 10 0
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 15 0 20
+      vertex 25 0 20
+      vertex 25 10 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 15 0 20
+      vertex 25 10 20
+      vertex 15 10 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 15 0 0
+      vertex 25 0 0
+      vertex 25 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 15 0 0
+      vertex 25 0 20
+      vertex 15 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 25 0 0
+      vertex 25 10 0
+      vertex 25 10 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 25 0 0
+      vertex 25 10 20
+      vertex 25 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 25 10 0
+      vertex 15 10 0
+      vertex 15 10 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 25 10 0
+      vertex 15 10 20
+      vertex 25 10 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 15 10 0
+      vertex 15 0 0
+      vertex 15 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 15 10 0
+      vertex 15 0 20
+      vertex 15 10 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 20
+      vertex 40 10 20
+      vertex 40 0 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 20
+      vertex 0 10 20
+      vertex 40 10 20
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 24
+      vertex 40 0 24
+      vertex 40 10 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 24
+      vertex 40 10 24
+      vertex 0 10 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 20
+      vertex 40 0 20
+      vertex 40 0 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 20
+      vertex 40 0 24
+      vertex 0 0 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 40 0 20
+      vertex 40 10 20
+      vertex 40 10 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 40 0 20
+      vertex 40 10 24
+      vertex 40 0 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 40 10 20
+      vertex 0 10 20
+      vertex 0 10 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 40 10 20
+      vertex 0 10 24
+      vertex 40 10 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 10 20
+      vertex 0 0 20
+      vertex 0 0 24
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 10 20
+      vertex 0 0 24
+      vertex 0 10 24
+    endloop
+  endfacet
+endsolid t-wing

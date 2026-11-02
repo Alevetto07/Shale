@@ -59,6 +59,58 @@ fn elapsed_seconds(gcode: &str) -> Option<f64> {
         .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
 }
 
+/// Filament used while the current `;TYPE:` is support or support interface.
+/// Extrusion position is tracked through the whole file, so a later support
+/// move is not charged for the walls that came before it.
+pub fn support_filament_metres(gcode: &str) -> f64 {
+    let mut kind = String::new();
+    let mut absolute = true;
+    let mut position = 0.0f64;
+    let mut total = 0.0f64;
+    for raw in gcode.lines() {
+        let line = raw.trim();
+        if let Some(rest) = line.strip_prefix(";TYPE:") {
+            kind = rest.trim().to_ascii_uppercase();
+            continue;
+        }
+        if line.starts_with(';') {
+            continue;
+        }
+        if line.starts_with("M82") {
+            absolute = true;
+            continue;
+        }
+        if line.starts_with("M83") {
+            absolute = false;
+            continue;
+        }
+        if line.starts_with("G92") {
+            if let Some(value) = word(line, 'E') {
+                position = value as f64;
+            }
+            continue;
+        }
+        if line.starts_with("G0") || line.starts_with("G1") {
+            if let Some(value) = word(line, 'E') {
+                let value = value as f64;
+                let delta = if absolute {
+                    let delta = (value - position).max(0.0);
+                    position = value;
+                    delta
+                } else if value > 0.0 {
+                    value
+                } else {
+                    0.0
+                };
+                if kind.starts_with("SUPPORT") {
+                    total += delta;
+                }
+            }
+        }
+    }
+    total / 1000.0
+}
+
 pub fn filament_length_metres(gcode: &str) -> f64 {
     let mut absolute = true;
     let mut position = 0.0f64;
