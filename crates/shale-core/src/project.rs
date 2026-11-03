@@ -438,8 +438,10 @@ mod tests {
         let path = dir.join("bracket.shale");
         let stl = triangle();
         let step = include_bytes!("../../../examples/block-20.step").to_vec();
+        let signature = b"ISO-10303-21";
         assert!(
-            step.windows(13).any(|window| window == b"ISO-10303-21"),
+            step.windows(signature.len())
+                .any(|window| window == signature),
             "the sample STEP file should be a STEP exchange"
         );
         let saved = ProjectData {
