@@ -24,9 +24,17 @@ Shale reads those files as data. It does not link Cura, and it does not use Uran
 
 Material profiles come from [fdm_materials](https://github.com/Ultimaker/fdm_materials), dedicated to the public domain under CC0-1.0. The fetch script pins commit `82f433b2cfe0ac36c974443b80c9294f31b79224` and leaves that repository's `LICENSE` beside the XML files in `vendor/fdm_materials/`.
 
-## Space Grotesk (SIL Open Font License 1.1)
+## Andromeda Galaxy (NASA, not subject to copyright in the United States)
 
-The wordmark is set in Space Grotesk, weight 600. Interface text is IBM Plex Mono. Both are SIL Open Font License 1.1. The font files and the OFL texts are in `apps/desktop/src/fonts/` (`OFL.txt` for Space Grotesk, `IBMPlexMono-OFL.txt` for Plex). They are bundled with the app and are not loaded from a font host at runtime.
+The start screen draws an ASCII rendering of the Andromeda Galaxy, M31. The photograph is the ultraviolet portrait from NASA's Galaxy Evolution Explorer (GALEX), showing the whole galaxy. NASA's record lists the credit as NASA/JPL-Caltech and a creation date of 16 May 2012.
+
+The source page is [Andromeda (PIA15416) on images.nasa.gov](https://images.nasa.gov/details/PIA15416). The file downloaded from NASA's asset API is `http://images-assets.nasa.gov/image/PIA15416/PIA15416~medium.jpg` (1280×953). Shale bundles only a 640×477 downscale, `apps/desktop/src/field/andromeda.jpg`.
+
+[NASA’s images and media guidelines](https://www.nasa.gov/nasa-brand-center/images-and-media/) say NASA image content is generally not subject to copyright in the United States, and that NASA should be acknowledged as the source. This file is the NASA/JPL-Caltech release, not a third-party astrophotograph and not an ESA/Hubble file, so the CC BY 4.0 credit that applies to many ESA/Hubble images is not the licence here.
+
+## Fonts (SIL Open Font License 1.1)
+
+The wordmark is Space Grotesk, weight 600. Panels and controls are Geist Mono. Longer text (banners, hints, the empty-plate line) is Inter. Shale does not use Instrument Serif or IBM Plex Mono. All three families are SIL Open Font License 1.1. The font files and the OFL texts are in `apps/desktop/src/fonts/` (`OFL.txt` for Space Grotesk, `GeistMono-OFL.txt`, `Inter-OFL.txt`). They are bundled with the app and are not loaded from a font host at runtime.
 
 ## STEP tessellation (Apache-2.0)
 

@@ -33,18 +33,18 @@ interface ViewportProps {
 }
 
 const KIND_COLOR: Record<string, string> = {
-  "wall-outer": "#f2f2f2",
-  "wall-inner": "#b8b8b8",
-  skin: "#8c8c8c",
-  infill: "#6a6a6a",
-  support: "#5c5c5c",
-  "support-interface": "#9a9a9a",
-  skirt: "#d4d4d4",
-  brim: "#e4e4e4",
-  raft: "#4a4a4a",
-  "prime-tower": "#3a3a3a",
-  travel: "#3e3e3e",
-  extrusion: "#f2f2f2",
+  "wall-outer": "#c9c6dc",
+  "wall-inner": "#8e8ba4",
+  skin: "#6e6b80",
+  infill: "#4e6570",
+  support: "#6a5e54",
+  "support-interface": "#7d7266",
+  skirt: "#9692a8",
+  brim: "#a8a3ba",
+  raft: "#3a3834",
+  "prime-tower": "#34323c",
+  travel: "#2a2c34",
+  extrusion: "#c9c6dc",
 };
 
 export function Viewport(props: ViewportProps) {
@@ -52,6 +52,7 @@ export function Viewport(props: ViewportProps) {
   const cy = props.centerIsZero ? 0 : props.depth / 2;
   return (
     <Canvas
+      frameloop="demand"
       shadows={false}
       camera={{ position: [cx + 80, cy - 220, 180], fov: 32, up: [0, 0, 1], near: 0.1, far: 8000 }}
       onPointerMissed={() => props.onSelect(-1)}
@@ -60,10 +61,10 @@ export function Viewport(props: ViewportProps) {
         camera.lookAt(cx, cy, 0);
       }}
     >
-      <color attach="background" args={["#0d0d0d"]} />
-      <ambientLight intensity={0.7} />
-      <directionalLight position={[120, -80, 220]} intensity={1.15} color="#ffffff" />
-      <directionalLight position={[-80, 140, 40]} intensity={0.28} color="#c8c8c8" />
+      <color attach="background" args={["#06070b"]} />
+      <ambientLight intensity={0.55} />
+      <directionalLight position={[120, -80, 220]} intensity={0.9} color="#e9e8f2" />
+      <directionalLight position={[-80, 140, 40]} intensity={0.18} color="#8a8798" />
       <Framer
         width={props.width}
         depth={props.depth}
@@ -109,7 +110,7 @@ function SupportVolume({ overlay }: { overlay: SupportOverlay }) {
   return (
     <mesh geometry={geometry}>
       <meshStandardMaterial
-        color={enforce ? "#cfcfcf" : "#5a5a5a"}
+        color={enforce ? "#8d8a9c" : "#3a3844"}
         wireframe={!enforce}
         roughness={1}
         metalness={0}
@@ -173,6 +174,7 @@ function Framer({
   frameToken: number;
 }) {
   const camera = useThree((state) => state.camera) as THREE.PerspectiveCamera;
+  const invalidate = useThree((state) => state.invalidate);
   const controls = useThree((state) => state.controls) as { target: THREE.Vector3; update: () => void } | null;
   const modelsRef = useMemo(() => ({ current: models }), []);
   modelsRef.current = models;
@@ -184,6 +186,7 @@ function Framer({
       const size = box.getSize(new THREE.Vector3());
       box.expandByScalar(Math.max(24, Math.max(size.x, size.y, size.z) * 0.8));
       frameBox(camera, controls, box);
+      invalidate();
       return;
     }
     const x0 = centerIsZero ? -width / 2 : 0;
@@ -193,7 +196,8 @@ function Framer({
       new THREE.Vector3(x0 + width, y0 + depth, Math.min(48, Math.max(height * 0.15, 20))),
     );
     frameBox(camera, controls, box);
-  }, [camera, controls, width, depth, height, centerIsZero, frameToken, modelsRef]);
+    invalidate();
+  }, [camera, controls, width, depth, height, centerIsZero, frameToken, modelsRef, invalidate]);
   return null;
 }
 
@@ -215,16 +219,17 @@ function Bed({
     <group>
       <mesh position={[cx, cy, -1.2]} receiveShadow>
         <boxGeometry args={[width, depth, 2.4]} />
-        <meshStandardMaterial color="#161616" metalness={0.2} roughness={0.72} />
+        <meshStandardMaterial color="#0b0d14" metalness={0} roughness={1} />
       </mesh>
       <gridHelper
-        args={[Math.max(width, depth), divisions, "#4a4a4a", "#2a2a2a"]}
+        args={[Math.max(width, depth), divisions, "#34343e", "#1e1f28"]}
         rotation={[Math.PI / 2, 0, 0]}
         position={[cx, cy, 0.04]}
       />
       <lineSegments geometry={outline} position={[cx, cy, 0.08]}>
-        <lineBasicMaterial color="#6a6a6a" />
+        <lineBasicMaterial color="#4a4856" />
       </lineSegments>
+      <Axes width={width} depth={depth} cx={cx} cy={cy} />
     </group>
   );
 }
@@ -246,11 +251,38 @@ void main() {
   float plus = (abs(cell.x - 0.5) < 0.08 || abs(cell.y - 0.5) < 0.08) ? 1.0 : 0.0;
   float hash = max(plus, (abs(cell.x - cell.y) < 0.07 || abs(cell.x + cell.y - 1.0) < 0.07) ? 1.0 : 0.0);
   float dotg = distance(cell, vec2(0.5)) < 0.14 ? 1.0 : 0.0;
-  float ink = light > 0.66 ? hash : light > 0.36 ? plus : light > 0.14 ? dotg : 0.0;
-  if (ink < 0.5) discard;
-  gl_FragColor = vec4(vec3(0.78 + light * 0.22), 1.0);
+  float mask = light > 0.66 ? hash : light > 0.36 ? plus : light > 0.14 ? dotg : 0.0;
+  if (mask < 0.5) discard;
+  vec3 colour = vec3(0.914, 0.910, 0.949) * (0.55 + light * 0.45);
+  gl_FragColor = vec4(colour, 1.0);
 }
 `;
+
+function Axes({ width, depth, cx, cy }: { width: number; depth: number; cx: number; cy: number }) {
+  const length = Math.max(12, Math.min(width, depth) * 0.08);
+  const origin = [cx - width / 2, cy - depth / 2, 0.35] as const;
+  const geometry = useMemo(() => {
+    const positions = [
+      origin[0], origin[1], origin[2], origin[0] + length, origin[1], origin[2],
+      origin[0], origin[1], origin[2], origin[0], origin[1] + length, origin[2],
+      origin[0], origin[1], origin[2], origin[0], origin[1], origin[2] + length,
+    ];
+    const colors = [
+      0.62, 0.6, 0.68, 0.62, 0.6, 0.68,
+      0.48, 0.47, 0.54, 0.48, 0.47, 0.54,
+      0.72, 0.7, 0.78, 0.72, 0.7, 0.78,
+    ];
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    return geo;
+  }, [origin, length]);
+  return (
+    <lineSegments geometry={geometry}>
+      <lineBasicMaterial vertexColors />
+    </lineSegments>
+  );
+}
 
 function PrintModel({
   model,
@@ -313,10 +345,10 @@ function PrintModel({
           {viewStyle === "ascii" ? (
             <shaderMaterial vertexShader={ASCII_VERT} fragmentShader={ASCII_FRAG} side={THREE.DoubleSide} />
           ) : viewStyle === "wire" ? (
-            <meshBasicMaterial color={model.selected ? "#f2f2f2" : "#bdbdbd"} wireframe />
+            <meshBasicMaterial color={model.selected ? "#b9b3ff" : "#a39fb4"} wireframe />
           ) : (
             <meshStandardMaterial
-              color={model.selected ? "#f2f2f2" : "#c8c8c8"}
+              color={model.selected ? "#b9b3ff" : "#a39fb4"}
               roughness={0.62}
               metalness={0.02}
               flatShading
@@ -334,7 +366,7 @@ function Toolpaths({ paths }: { paths: PreviewPath[] }) {
     const colors: number[] = [];
     const color = new THREE.Color();
     for (const path of paths) {
-      color.set(KIND_COLOR[path.kind] ?? "#f2d3a2");
+      color.set(KIND_COLOR[path.kind] ?? "#9c9aab");
       for (let index = 1; index < path.points.length; index += 1) {
         const from = path.points[index - 1];
         const to = path.points[index];

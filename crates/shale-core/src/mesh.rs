@@ -17,7 +17,7 @@ use zip::ZipArchive;
 
 use crate::error::Error;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Transform {
     pub translation: [f64; 3],
     pub rotation_deg: [f64; 3],
@@ -131,6 +131,50 @@ pub fn load_mesh_reporting(
     if cancel.load(Ordering::Relaxed) {
         return Err(Error::Mesh("Import cancelled".into()));
     }
+    if imported.report.milliseconds == 0 {
+        imported.report.milliseconds = started.elapsed().as_millis() as u64;
+    }
+    progress(1.0, "import finished");
+    Ok(imported)
+}
+
+/// Load model bytes already in memory. `file_name` supplies the extension.
+///
+/// STEP bytes are tessellated here and are not rewritten as a mesh, so a
+/// project can store the original exchange file.
+pub fn load_named_bytes(
+    file_name: &str,
+    bytes: &[u8],
+    tolerance: &crate::cad::TessellationTolerance,
+    progress: &mut dyn FnMut(f32, &str),
+    cancel: &AtomicBool,
+) -> Result<crate::cad::ImportedMesh, Error> {
+    let started = std::time::Instant::now();
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Error::Mesh("Import cancelled".into()));
+    }
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mut imported = match extension.as_str() {
+        "3mf" => {
+            progress(0.2, "reading 3MF");
+            crate::cad::ImportedMesh::from_mesh(load_3mf(bytes)?, "3mf")
+        }
+        "step" | "stp" => {
+            progress(0.2, "tessellating STEP");
+            if cancel.load(Ordering::Relaxed) {
+                return Err(Error::Mesh("Import cancelled".into()));
+            }
+            crate::cad::import_step(bytes, tolerance)?
+        }
+        _ => {
+            progress(0.2, "reading STL");
+            crate::cad::ImportedMesh::from_mesh(load_stl(bytes)?, "stl")
+        }
+    };
     if imported.report.milliseconds == 0 {
         imported.report.milliseconds = started.elapsed().as_millis() as u64;
     }

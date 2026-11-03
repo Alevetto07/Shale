@@ -245,4 +245,48 @@ export const api = {
   exportGcode: (destination: string) => invoke<string>("export_gcode", { destination }),
   loadedModels: () => invoke<ModelView[]>("loaded_models"),
   existingSlice: () => invoke<SliceSummary | null>("existing_slice"),
+  saveProject: (project: SaveProject) => invoke<RecentProject[]>("save_project", { project }),
+  openProject: (path: string) => invoke<OpenedProject>("open_project", { path }),
+  clearJob: () => invoke<void>("clear_job"),
+  recents: () => invoke<RecentProject[]>("list_recents"),
+  forgetRecent: (path: string) => invoke<RecentProject[]>("forget_recent", { path }),
 };
+
+export interface RecentProject {
+  path: string;
+  name: string;
+  saved_at_ms: number;
+  printer: string;
+  missing: boolean;
+}
+
+export interface SaveProject {
+  path: string;
+  name: string;
+  printer_id: string;
+  printer_label: string;
+  variant_name: string | null;
+  quality_type: string | null;
+  material_id: string | null;
+  settings: SliceSettings;
+  chord_mm: number;
+  turn_deg: number;
+  thumbnail: number[];
+}
+
+export interface OpenedProject {
+  path: string;
+  name: string;
+  printer_id: string;
+  printer_label: string;
+  variant_name: string | null;
+  quality_type: string | null;
+  material_id: string | null;
+  settings: SliceSettings;
+  chord_mm: number;
+  turn_deg: number;
+  models: ModelView[];
+  instructions: StoredInstruction[];
+  support: SupportView | null;
+  warnings: string[];
+}

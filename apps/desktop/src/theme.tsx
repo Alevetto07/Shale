@@ -1,18 +1,20 @@
 import type { ReactNode } from "react";
 
-/** Visual language for the Shale window. Dark, greyscale, monospace. */
+/** Deep Field. Dark only. One accent, used sparingly. */
 export const theme = {
   color: {
-    bg: "#0d0d0d",
-    panel: "#111111",
-    ink: "#f2f2f2",
-    muted: "#8a8a8a",
-    dim: "#3a3a3a",
-    line: "#2a2a2a",
+    bg: "#06070b",
+    panel: "#0b0d14",
+    ink: "#e9e8f2",
+    muted: "rgba(233, 232, 242, 0.72)",
+    dim: "rgba(233, 232, 242, 0.58)",
+    line: "rgba(233, 232, 242, 0.12)",
+    accent: "#b9b3ff",
   },
   font: {
     wordmark: '"Space Grotesk", system-ui, sans-serif',
-    mono: '"IBM Plex Mono", ui-monospace, monospace',
+    mono: '"Geist Mono", ui-monospace, monospace',
+    prose: '"Inter", system-ui, sans-serif',
   },
   box: {
     tl: "┌",
@@ -22,14 +24,6 @@ export const theme = {
     h: "─",
     v: "│",
   },
-  stone: [
-    "        /\\",
-    "       /  \\",
-    "      / /\\ \\",
-    "     / /  \\ \\",
-    "    / /    \\ \\",
-    "   /_/      \\_\\",
-  ].join("\n"),
 } as const;
 
 export function meter(fraction: number, width = 24): string {

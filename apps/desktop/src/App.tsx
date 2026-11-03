@@ -1,15 +1,18 @@
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   type Bed,
   type CustomInstruction,
   type MaterialInfo,
   type ModelView,
+  type OpenedProject,
   type PreviewPath,
   type PrinterInfo,
   type QualityInfo,
+  type RecentProject,
   type Status,
   type StoredInstruction,
   type SupportComparison,
@@ -19,7 +22,10 @@ import {
 } from "./api";
 import mark from "./brand/shale-mark-dark.svg";
 import { worldCentre, translationForCentre } from "./coords";
-import { Frame, meter, theme, track } from "./theme";
+import { andromeda } from "./field/credit";
+import { StartScreen } from "./StartScreen";
+import { thumbnailJpeg } from "./thumbnail";
+import { Frame, meter, track } from "./theme";
 import { Viewport, type TransformMode, type ViewStyle } from "./Viewport";
 import { AsciiCheck, AsciiField, AsciiSelect, AsciiStepper } from "./widgets";
 
@@ -72,6 +78,15 @@ export function App() {
   const [mode, setMode] = useState<TransformMode>("translate");
   const [viewStyle, setViewStyle] = useState<ViewStyle>("solid");
   const [busy, setBusy] = useState(false);
+  const [screen, setScreen] = useState<"start" | "slicer">("start");
+  const [workspace, setWorkspace] = useState(false);
+  const [projectPath, setProjectPath] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState("Untitled");
+  const [recents, setRecents] = useState<RecentProject[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
+  const restore = useRef<Restore | null>(null);
+  const saveRef = useRef<(asNew: boolean) => void>(() => {});
+  const openRef = useRef<(path?: string) => void>(() => {});
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState(false);
@@ -148,9 +163,14 @@ export function App() {
             list.find((printer) => printer.id === "prusa_i3") ??
             list[0];
           if (preferred) setPrinterId(preferred.id);
+          if (loaded.length > 0 || next.demo_model) {
+            setScreen("slicer");
+            setWorkspace(true);
+          }
           if (next.demo_model && loaded.length === 0) {
             void importFromPath(next.demo_model);
           }
+          setRecents(await api.recents().catch(() => []));
         }
       } catch (err) {
         setError(messageOf(err));
@@ -172,6 +192,13 @@ export function App() {
         setVariants(nextVariants);
         setQualities(nextQualities);
         setMaterials(nextMaterials);
+        const pending = restore.current;
+        if (pending) {
+          setVariant(pending.variant);
+          setQuality(pending.quality);
+          setMaterial(pending.material);
+          return;
+        }
         const printer = printers.find((item) => item.id === printerId);
         const nextVariant = nextVariants.some((item) => item.name === printer?.preferred_variant)
           ? printer?.preferred_variant ?? nextVariants[0]?.name ?? null
@@ -204,6 +231,16 @@ export function App() {
         const next = await api.bed(printerId, variant, quality, material);
         if (cancelled) return;
         setBed(next);
+        const pending = restore.current;
+        if (pending) {
+          setLayerHeight(pending.layerHeight);
+          setInfill(pending.infill);
+          setSupports(pending.supports);
+          setNozzle(pending.nozzle);
+          setBedTemp(pending.bedTemp);
+          restore.current = null;
+          return;
+        }
         setLayerHeight(round3(next.layer_height));
         setInfill(round3(next.infill_sparse_density));
         setSupports(next.support_enable);
@@ -244,11 +281,28 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "s") {
+        event.preventDefault();
+        saveRef.current(event.shiftKey);
+      } else if (key === "o") {
+        event.preventDefault();
+        void openRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
     function onKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
-      if (target?.closest(".ascii-select, .ascii-menu, .ascii-step")) return;
+      if (target?.closest(".ascii-select, .ascii-menu, .ascii-step, .start")) return;
+      if (screen !== "slicer") return;
       if (event.key === "f") {
         event.preventDefault();
         setFrameToken((token) => token + 1);
@@ -261,7 +315,7 @@ export function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [layerCount]);
+  }, [layerCount, screen]);
 
   useEffect(() => {
     if (!chordTied) return;
@@ -295,6 +349,7 @@ export function App() {
   const selected = models.find((model) => model.id === selectedId) ?? null;
 
   async function importFromPath(picked: string) {
+    enterSlicer();
     setError(null);
     setImporting(true);
     setImportProgress({ fraction: 0.01, message: "Reading model" });
@@ -554,9 +609,206 @@ export function App() {
     }
   }
 
+  function enterSlicer() {
+    setWorkspace(true);
+    setScreen("slicer");
+  }
+
+  function currentSettings() {
+    return {
+      layer_height: layerHeight,
+      infill_sparse_density: infill,
+      support_enable: supports,
+      material_print_temperature: nozzle,
+      material_bed_temperature: bedTemp,
+      extra: [] as [string, string][],
+    };
+  }
+
+  function printerLabel() {
+    const printer = printers.find((item) => item.id === printerId);
+    if (!printer) return printerId || "No printer";
+    return `${printer.manufacturer ? `${printer.manufacturer} ` : ""}${printer.name}`;
+  }
+
+  async function saveProject(asNew: boolean) {
+    setError(null);
+    let path = asNew ? null : projectPath;
+    const name = projectName.trim() || "Untitled";
+    if (!path) {
+      const picked = await save({
+        defaultPath: `${name}.shale`,
+        filters: [{ name: "Shale project", extensions: ["shale"] }],
+      });
+      if (typeof picked !== "string") return;
+      path = picked.toLowerCase().endsWith(".shale") ? picked : `${picked}.shale`;
+    }
+    const fileName = path.split(/[/\\]/).pop()?.replace(/\.shale$/i, "") || name;
+    try {
+      const listed = await api.saveProject({
+        path,
+        name: fileName,
+        printer_id: printerId,
+        printer_label: printerLabel(),
+        variant_name: variant,
+        quality_type: quality,
+        material_id: material,
+        settings: currentSettings(),
+        chord_mm: chord,
+        turn_deg: turn,
+        thumbnail: thumbnailJpeg(models),
+      });
+      setProjectPath(path);
+      setProjectName(fileName);
+      setRecents(listed);
+      setNotice(`Saved ${fileName}.shale`);
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  function applyOpened(opened: OpenedProject) {
+    restore.current = {
+      variant: opened.variant_name,
+      quality: opened.quality_type,
+      material: opened.material_id,
+      layerHeight: opened.settings.layer_height ?? layerHeight,
+      infill: opened.settings.infill_sparse_density ?? infill,
+      supports: opened.settings.support_enable ?? supports,
+      nozzle: opened.settings.material_print_temperature ?? nozzle,
+      bedTemp: opened.settings.material_bed_temperature ?? bedTemp,
+    };
+    setProjectPath(opened.path);
+    setProjectName(opened.name || "Untitled");
+    setPrinterId(opened.printer_id);
+    setVariant(opened.variant_name);
+    setQuality(opened.quality_type);
+    setMaterial(opened.material_id);
+    if (opened.settings.layer_height != null) setLayerHeight(opened.settings.layer_height);
+    if (opened.settings.infill_sparse_density != null) setInfill(opened.settings.infill_sparse_density);
+    if (opened.settings.support_enable != null) setSupports(opened.settings.support_enable);
+    if (opened.settings.material_print_temperature != null) setNozzle(opened.settings.material_print_temperature);
+    if (opened.settings.material_bed_temperature != null) setBedTemp(opened.settings.material_bed_temperature);
+    if (opened.chord_mm > 0) {
+      setChord(opened.chord_mm);
+      setChordTied(false);
+    }
+    if (opened.turn_deg > 0) setTurn(opened.turn_deg);
+    setModels(opened.models);
+    setSelectedId(opened.models[0]?.id ?? null);
+    setInstructions(opened.instructions);
+    setSupport(opened.support);
+    setPreview(false);
+    setShowModel(true);
+    setPaths([]);
+    setLayerCount(0);
+    setLayer(0);
+    setPrintSeconds(null);
+    setProgress(null);
+    if (opened.warnings.length > 0) setNotice(opened.warnings.join("\n"));
+    enterSlicer();
+  }
+
+  async function openProject(path?: string) {
+    setError(null);
+    let picked = path ?? null;
+    if (!picked) {
+      const chosen = await open({
+        multiple: false,
+        filters: [{ name: "Shale project", extensions: ["shale"] }],
+      });
+      if (typeof chosen !== "string") return;
+      picked = chosen;
+    }
+    try {
+      const opened = await api.openProject(picked);
+      applyOpened(opened);
+      setRecents(await api.recents().catch(() => []));
+    } catch (err) {
+      setError(messageOf(err));
+      setRecents(await api.recents().catch(() => []));
+    }
+  }
+
+  async function newProject() {
+    setError(null);
+    try {
+      await api.clearJob();
+    } catch (err) {
+      setError(messageOf(err));
+      return;
+    }
+    setModels([]);
+    setSelectedId(null);
+    setInstructions([]);
+    setSupport(null);
+    setPreview(false);
+    setShowModel(true);
+    setPaths([]);
+    setLayerCount(0);
+    setLayer(0);
+    setPrintSeconds(null);
+    setProgress(null);
+    setProjectPath(null);
+    setProjectName("Untitled");
+    enterSlicer();
+  }
+
+  async function quit() {
+    try {
+      await getCurrentWindow().close();
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+  saveRef.current = (asNew) => {
+    void saveProject(asNew);
+  };
+  openRef.current = (path) => {
+    void openProject(path);
+  };
+
   const minutes = printSeconds == null ? null : Math.max(1, Math.round(printSeconds / 60));
   const marks = instructionMarks(instructions, layerZ, layerHeight);
   const marksHere = instructions.filter((item) => markOf(item, layerZ, layerHeight) === layer);
+
+  if (screen === "start") {
+    return (
+      <div className="app">
+        <StartScreen
+          live={!busy && !importing}
+          canReturn={workspace}
+          recents={recents}
+          printers={printers}
+          printerId={printerId}
+          enginePath={enginePath}
+          libDir={libDir}
+          backend={backend}
+          onReturn={() => setScreen("slicer")}
+          onNew={() => void newProject()}
+          onOpen={() => void openProject()}
+          onImport={() => void importModel()}
+          onOpenRecent={(path) => void openProject(path)}
+          onChoosePrinter={setPrinterId}
+          onEnginePath={setEnginePath}
+          onLibDir={setLibDir}
+          onBackend={setBackend}
+          onApplyEngine={() => void applyEngine()}
+          onQuit={() => void quit()}
+        />
+        {error && (
+          <p className="banner error floating" role="alert">
+            {error}
+          </p>
+        )}
+        {notice && (
+          <p className="banner floating" role="status">
+            {notice}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="app">
@@ -564,13 +816,26 @@ export function App() {
         <div className="brand">
           <img className="brand-mark" src={mark} alt="" />
           <p className="wordmark">Shale</p>
+          {projectPath && <p className="project-name">{projectName}</p>}
         </div>
         <div className="top-actions">
+          <button type="button" onClick={() => setScreen("start")}>
+            Start
+          </button>
+          <button type="button" onClick={() => void saveProject(false)}>
+            Save
+          </button>
+          <button type="button" onClick={() => void saveProject(true)}>
+            Save as
+          </button>
+          <button type="button" onClick={() => void openProject()}>
+            Open
+          </button>
           <button type="button" onClick={() => void importModel()}>
             Import model
           </button>
           <button type="button" className="primary" disabled={busy || models.length === 0} onClick={() => void slice()}>
-            {busy ? "Slicing…" : "Slice"}
+            {busy ? "Slicing..." : "Slice"}
           </button>
           <button type="button" disabled={layerCount === 0} onClick={() => void exportGcode()}>
             Export G-code
@@ -600,6 +865,11 @@ export function App() {
       {error && (
         <p className="banner error" role="alert">
           {error}
+        </p>
+      )}
+      {notice && (
+        <p className="banner" role="status">
+          {notice}
         </p>
       )}
 
@@ -957,9 +1227,20 @@ export function App() {
               [ check engine ]
             </button>
           </Frame>
+
+          <Frame title="credits">
+            <p className="credit">
+              {andromeda.name} ({andromeda.object}), {andromeda.credit}. Released {andromeda.release}.{" "}
+              {andromeda.licence}.
+            </p>
+            <p className="credit">
+              <a href={andromeda.page}>{andromeda.page}</a>
+            </p>
+          </Frame>
         </aside>
 
         <main className="stage">
+          <div className="plate">
           <Viewport
             width={bed.width}
             depth={bed.depth}
@@ -982,11 +1263,9 @@ export function App() {
             onTransform={(id, transform) => void commitTransform(id, transform)}
           />
           {models.length === 0 && !preview && (
-            <pre className="empty">
-              <span className="stone">{theme.stone}</span>
-              <span className="caption">{"\nno model on the plate\nimport an stl, 3mf, or step"}</span>
-            </pre>
+            <p className="caption">no model on the plate. import an stl, 3mf, or step</p>
           )}
+          </div>
           <footer className="scrubber">
             <span>
               view{" "}
@@ -1011,14 +1290,22 @@ export function App() {
                 </AsciiCheck>
                 <div className="ascii-slider">
                   <div className="readout">
-                    layer {String(layer + 1).padStart(3, " ")} / {layerCount}
+                    layer <span className="active">{String(layer + 1).padStart(3, " ")}</span> / {layerCount}
                     {layerZ[layer] != null ? `   z ${layerZ[layer].toFixed(2)}` : ""}
                     {minutes == null ? "" : `   ~${minutes} min`}
                     {marksHere.length > 0 ? `   + ${marksHere.map((item) => item.summary).join(" / ")}` : ""}
                     {"   [ ]"}
                   </div>
                   <div className="glyphs" aria-hidden="true">
-                    {track(layer, Math.max(0, layerCount - 1), 28, marks)}
+                    {Array.from(track(layer, Math.max(0, layerCount - 1), 28, marks)).map((glyph, index) =>
+                      glyph === "●" ? (
+                        <span key={index} className="active">
+                          {glyph}
+                        </span>
+                      ) : (
+                        glyph
+                      ),
+                    )}
                   </div>
                   <input
                     type="range"
@@ -1079,6 +1366,17 @@ function ComparisonLines({ comparison }: { comparison: SupportComparison }) {
         : ""}
     </p>
   );
+}
+
+interface Restore {
+  variant: string | null;
+  quality: string | null;
+  material: string | null;
+  layerHeight: number;
+  infill: number;
+  supports: boolean;
+  nozzle: number;
+  bedTemp: number;
 }
 
 function round3(value: number): number {

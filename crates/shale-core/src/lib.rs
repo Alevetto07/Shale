@@ -16,6 +16,7 @@ pub mod instructions;
 pub mod job;
 mod material;
 pub mod mesh;
+pub mod project;
 pub mod removal;
 pub mod resolver;
 pub mod session;
@@ -32,8 +33,12 @@ pub use gcode::Toolpath;
 pub use instructions::{CustomInstruction, GcodeFlavour};
 pub use job::{compare_support, slice, PlacedModel, SliceOutcome};
 pub use mesh::{
-    drop_to_bed, load_mesh, load_mesh_reporting, load_mesh_with, place_on_bed, Transform,
-    TriangleMesh,
+    drop_to_bed, load_mesh, load_mesh_reporting, load_mesh_with, load_named_bytes, place_on_bed,
+    Transform, TriangleMesh,
+};
+pub use project::{
+    forget_recent, load_recents, now_ms, read_project, remember_recent, LoadedProject, ProjectData,
+    ProjectModel, RecentEntry,
 };
 pub use resolver::{ProfileSummary, ResolveRequest, ResolvedSettings, UserSettings};
 pub use session::{JobSliceSummary, Session, SettingsPatch, SettingsView, StoredInstruction};
