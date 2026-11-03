@@ -8,7 +8,7 @@
 
 export const RAMP = " .:-=+*#%@";
 export const CELL = 11;
-const LENS = 120;
+const LENS = 96;
 const BG = [6, 7, 11] as const;
 
 export interface FieldPainter {
@@ -46,10 +46,12 @@ export function createField(
   let baseB = new Uint8Array(0);
   let offsetX = new Float32Array(0);
   let offsetY = new Float32Array(0);
-  let lastShiftX = Number.NaN;
-  let lastShiftY = Number.NaN;
-  let driftX = 0;
-  let driftY = 0;
+  let twinkleOn = new Uint8Array(0);
+  let twinkleRate = new Float32Array(0);
+  let twinklePhase = new Float32Array(0);
+  let twinkleAmp = new Uint8Array(0);
+  let twinkleList: number[] = [];
+  let lastTwinkleTick = 0;
   let fitted = { originX: 0, originY: 0, drawW: 1, drawH: 1 };
   const sparks: { x: number; y: number; born: number; glyph: number }[] = [];
   let lastSparkX = Number.NaN;
@@ -82,15 +84,26 @@ export function createField(
       originX: (width - iw * fit) / 2,
       originY: (height - ih * fit) / 2,
     };
-    // The image covers the canvas, so the only slack is on the axis whose
-    // aspect ratio does not match. Drift roams inside that slack; sampling
-    // never wraps, so the image is not tiled onto itself.
-    const slackX = Math.max(0, fitted.drawW - width) / 2;
-    const slackY = Math.max(0, fitted.drawH - height) / 2;
-    driftX = slackX * 0.9;
-    driftY = slackY * 0.9;
-    lastShiftX = Number.NaN;
-    lastShiftY = Number.NaN;
+    // The picture is fixed. Only a sparse, deterministic set of cells pulses,
+    // each on its own period, so the field reads as a still frame with a few
+    // stars breathing rather than a scrolling background.
+    twinkleOn = new Uint8Array(count);
+    twinkleRate = new Float32Array(count);
+    twinklePhase = new Float32Array(count);
+    twinkleAmp = new Uint8Array(count);
+    twinkleList = [];
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const hash = ((col * 73856093) ^ (row * 19349663)) >>> 0;
+        if (hash % 97 !== 0) continue;
+        const index = row * cols + col;
+        twinkleList.push(index);
+        const wobble = (hash >>> 8) % 1000;
+        twinkleRate[index] = 0.0009 + (wobble / 1000) * 0.0022;
+        twinklePhase[index] = ((hash >>> 3) % 628) / 100;
+        twinkleAmp[index] = wobble % 3 === 0 ? 2 : 1;
+      }
+    }
     fillBackground(buffer, width, height);
     return true;
   };
@@ -124,15 +137,18 @@ export function createField(
     const resized = ensure();
     if (!buffer) return;
     const animate = time > 0;
-    const stepX = Math.max(1, fitted.drawW / iw);
-    const stepY = Math.max(1, fitted.drawH / ih);
-    const shiftX = animate ? Math.round((Math.sin(time * 0.000045) * driftX) / stepX) * stepX : 0;
-    const shiftY = animate ? Math.round((Math.cos(time * 0.000029) * driftY) / stepY) * stepY : 0;
-    const drift = shiftX !== lastShiftX || shiftY !== lastShiftY || resized;
-    if (drift) {
-      rebuildBase(shiftX, shiftY);
-      lastShiftX = shiftX;
-      lastShiftY = shiftY;
+    if (resized) rebuildBase(0, 0);
+
+    let twinkleDirty = false;
+    if (animate && twinkleList.length && time - lastTwinkleTick >= 125) {
+      lastTwinkleTick = time;
+      for (let i = 0; i < twinkleList.length; i += 1) {
+        const index = twinkleList[i];
+        const on = Math.sin(time * twinkleRate[index] + twinklePhase[index]) > 0.74 ? 1 : 0;
+        if (on === twinkleOn[index]) continue;
+        twinkleOn[index] = on;
+        twinkleDirty = true;
+      }
     }
 
     let sprung = false;
@@ -146,8 +162,8 @@ export function createField(
       const dy = cy - pointerY;
       const dist = Math.hypot(dx, dy);
       const influence = animate && dist < LENS ? (1 - dist / LENS) ** 2 : 0;
-      const desiredX = dist > 0 ? (dx / dist) * influence * 14 : 0;
-      const desiredY = dist > 0 ? (dy / dist) * influence * 14 : 0;
+      const desiredX = dist > 0 ? (dx / dist) * influence * 6 : 0;
+      const desiredY = dist > 0 ? (dy / dist) * influence * 6 : 0;
       const beforeX = offsetX[index];
       const beforeY = offsetY[index];
       if (animate) {
@@ -202,13 +218,14 @@ export function createField(
       if (animate && time - sparks[index].born >= 700) sparks.splice(index, 1);
     }
 
-    if (!drift && !resized && !sprung && sparks.length === 0 && sparkMarks.length === 0) return;
+    const full = resized || twinkleDirty;
+    if (!full && !sprung && sparks.length === 0 && sparkMarks.length === 0) return;
 
     let x0 = 0;
     let y0 = 0;
     let x1 = width;
     let y1 = height;
-    if (!drift && !resized) {
+    if (!full) {
       x0 = width;
       y0 = height;
       x1 = 0;
@@ -244,21 +261,23 @@ export function createField(
       for (let col = c0; col <= c1; col += 1) {
         const index = row * cols + col;
         let step = baseGlyph[index];
-        if (step <= 0 && offsetX[index] === 0 && offsetY[index] === 0) continue;
+        const lit = twinkleOn[index] === 1;
+        if (step <= 0 && !lit && offsetX[index] === 0 && offsetY[index] === 0) continue;
         const cx = col * CELL + CELL / 2;
         const cy = row * CELL + CELL / 2;
         const dx = cx - pointerX;
         const dy = cy - pointerY;
         const dist = Math.hypot(dx, dy);
         const influence = animate && dist < LENS ? (1 - dist / LENS) ** 2 : 0;
-        step = Math.min(RAMP.length - 1, step + Math.round(influence * 5));
+        step = Math.min(RAMP.length - 1, step + Math.round(influence * 2.4));
+        if (lit) step = Math.min(RAMP.length - 1, step + twinkleAmp[index]);
         if (step <= 0) continue;
-        const gain = 1 + influence * 1.35;
+        const gain = (1 + influence * 0.7) * (lit ? 1.3 : 1);
         let red = Math.min(255, baseR[index] * gain);
         let green = Math.min(255, baseG[index] * gain);
         let blue = Math.min(255, baseB[index] * gain);
         if (red + green + blue < 24) {
-          const ink = 0.22 + influence * 0.5;
+          const ink = 0.22 + influence * 0.5 + (lit ? 0.3 : 0);
           red = 233 * ink;
           green = 232 * ink;
           blue = 242 * ink;
@@ -284,7 +303,7 @@ export function createField(
     }
 
     if (!frame) return;
-    if (drift || resized) {
+    if (full) {
       context.putImageData(frame, 0, 0);
     } else {
       context.putImageData(frame, 0, 0, x0, y0, x1 - x0, y1 - y0);
