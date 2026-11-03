@@ -46,7 +46,10 @@ export function createField(
   let baseB = new Uint8Array(0);
   let offsetX = new Float32Array(0);
   let offsetY = new Float32Array(0);
-  let lastShift = Number.NaN;
+  let lastShiftX = Number.NaN;
+  let lastShiftY = Number.NaN;
+  let driftX = 0;
+  let driftY = 0;
   let fitted = { originX: 0, originY: 0, drawW: 1, drawH: 1 };
   const sparks: { x: number; y: number; born: number; glyph: number }[] = [];
   let lastSparkX = Number.NaN;
@@ -72,31 +75,35 @@ export function createField(
     baseB = new Uint8Array(count);
     offsetX = new Float32Array(count);
     offsetY = new Float32Array(count);
-    const fit = Math.min(width / iw, height / ih) * 0.72;
+    const fit = Math.max(width / iw, height / ih) * 1.03;
     fitted = {
       drawW: iw * fit,
       drawH: ih * fit,
       originX: (width - iw * fit) / 2,
       originY: (height - ih * fit) / 2,
     };
-    lastShift = Number.NaN;
+    // The image covers the canvas, so the only slack is on the axis whose
+    // aspect ratio does not match. Drift roams inside that slack; sampling
+    // never wraps, so the image is not tiled onto itself.
+    const slackX = Math.max(0, fitted.drawW - width) / 2;
+    const slackY = Math.max(0, fitted.drawH - height) / 2;
+    driftX = slackX * 0.9;
+    driftY = slackY * 0.9;
+    lastShiftX = Number.NaN;
+    lastShiftY = Number.NaN;
     fillBackground(buffer, width, height);
     return true;
   };
 
-  const rebuildBase = (shift: number) => {
+  const rebuildBase = (shiftX: number, shiftY: number) => {
     const { originX, originY, drawW, drawH } = fitted;
     for (let row = 0; row < rows; row += 1) {
       for (let col = 0; col < cols; col += 1) {
         const index = row * cols + col;
         const cx = col * CELL + CELL / 2;
         const cy = row * CELL + CELL / 2;
-        const localX = cx - originX;
-        const localY = ((cy - originY + shift) % drawH + drawH) % drawH;
-        if (localX < 0 || localX >= drawW || cy < originY || cy >= originY + drawH) {
-          baseGlyph[index] = 0;
-          continue;
-        }
+        const localX = Math.min(drawW - 0.001, Math.max(0, cx - originX + shiftX));
+        const localY = Math.min(drawH - 0.001, Math.max(0, cy - originY + shiftY));
         const sx = Math.min(iw - 1, Math.floor((localX / drawW) * iw));
         const sy = Math.min(ih - 1, Math.floor((localY / drawH) * ih));
         const pixel = (sy * iw + sx) * 4;
@@ -117,12 +124,15 @@ export function createField(
     const resized = ensure();
     if (!buffer) return;
     const animate = time > 0;
-    const stepPx = Math.max(1, fitted.drawH / ih);
-    const shift = animate ? Math.floor((time * 0.004) / stepPx) * stepPx : 0;
-    const drift = shift !== lastShift || resized;
+    const stepX = Math.max(1, fitted.drawW / iw);
+    const stepY = Math.max(1, fitted.drawH / ih);
+    const shiftX = animate ? Math.round((Math.sin(time * 0.000045) * driftX) / stepX) * stepX : 0;
+    const shiftY = animate ? Math.round((Math.cos(time * 0.000029) * driftY) / stepY) * stepY : 0;
+    const drift = shiftX !== lastShiftX || shiftY !== lastShiftY || resized;
     if (drift) {
-      rebuildBase(shift);
-      lastShift = shift;
+      rebuildBase(shiftX, shiftY);
+      lastShiftX = shiftX;
+      lastShiftY = shiftY;
     }
 
     let sprung = false;

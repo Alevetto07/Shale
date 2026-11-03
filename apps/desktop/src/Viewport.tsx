@@ -33,18 +33,18 @@ interface ViewportProps {
 }
 
 const KIND_COLOR: Record<string, string> = {
-  "wall-outer": "#c9c6dc",
+  "wall-outer": "#e2dff0",
   "wall-inner": "#8e8ba4",
   skin: "#6e6b80",
   infill: "#4e6570",
-  support: "#6a5e54",
-  "support-interface": "#7d7266",
-  skirt: "#9692a8",
+  support: "#7b5a3f",
+  "support-interface": "#a9865c",
+  skirt: "#7d8fa6",
   brim: "#a8a3ba",
   raft: "#3a3834",
   "prime-tower": "#34323c",
   travel: "#2a2c34",
-  extrusion: "#c9c6dc",
+  extrusion: "#a39fb4",
 };
 
 export function Viewport(props: ViewportProps) {

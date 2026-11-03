@@ -494,14 +494,20 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   font-family: var(--prose);
   font-size: 13px;
   color: var(--ink);
+  min-width: 0;
+  max-width: 100%;
 }
 .start-list button.recent.dim { color: var(--ink-3); }
 .start-detail {
-  color: var(--ink-3);
+  color: var(--ink-2);
   font-family: var(--prose);
   font-size: 12px;
   letter-spacing: 0;
   text-transform: none;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .start-scroll { max-height: 240px; overflow: auto; }
 .start-panel label { grid-template-columns: 8ch 1fr; }

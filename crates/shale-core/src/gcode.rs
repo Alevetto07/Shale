@@ -149,6 +149,10 @@ pub fn parse_toolpaths(gcode: &str) -> Toolpath {
     let mut state = MotionState::default();
     let mut layers: Vec<LayerPaths> = Vec::new();
     let mut layer_index: Option<i32> = None;
+    // The print plane of a layer comes from its first extrusion, not from the
+    // last Z seen: Cura lifts Z before the `;LAYER:` comment that ends a layer,
+    // and the end G-code moves Z in relative mode after the last layer.
+    let mut z_taken = false;
 
     for raw in gcode.lines() {
         let line = raw.trim();
@@ -161,6 +165,7 @@ pub fn parse_toolpaths(gcode: &str) -> Toolpath {
                 state.flush_into(&mut layers);
                 let index = value.trim().parse::<i32>().unwrap_or(0);
                 layer_index = Some(index);
+                z_taken = false;
                 layers.push(LayerPaths {
                     index,
                     z: state.z,
@@ -174,10 +179,12 @@ pub fn parse_toolpaths(gcode: &str) -> Toolpath {
         }
         let recording = layer_index.is_some();
         state.apply(line, recording);
-        if let Some(index) = layer_index {
-            if let Some(layer) = layers.iter_mut().find(|layer| layer.index == index) {
-                if state.z > 0.0 {
+        let extruded = state.last_extruded;
+        if extruded && !z_taken {
+            if let Some(index) = layer_index {
+                if let Some(layer) = layers.iter_mut().find(|layer| layer.index == index) {
                     layer.z = state.z;
+                    z_taken = true;
                 }
             }
         }
@@ -221,6 +228,7 @@ struct MotionState {
     kind: String,
     current: Option<Polyline>,
     pending: Vec<Polyline>,
+    last_extruded: bool,
 }
 
 impl Default for MotionState {
@@ -236,6 +244,7 @@ impl Default for MotionState {
             kind: "extrusion".to_string(),
             current: None,
             pending: Vec::new(),
+            last_extruded: false,
         }
     }
 }
@@ -243,6 +252,7 @@ impl Default for MotionState {
 impl MotionState {
     fn apply(&mut self, line: &str, recording: bool) {
         let code = line.split_whitespace().next().unwrap_or("");
+        self.last_extruded = false;
         match code {
             "G90" => self.absolute_xyz = true,
             "G91" => self.absolute_xyz = false,
@@ -311,6 +321,7 @@ impl MotionState {
                     "travel".to_string()
                 };
                 self.push(previous, next, &kind);
+                self.last_extruded = extruding;
             }
             _ => {}
         }
@@ -418,5 +429,36 @@ G1 X5 Y5 E3.0
             .polylines
             .iter()
             .any(|path| path.kind == "wall-outer"));
+    }
+
+    #[test]
+    fn layer_z_comes_from_the_first_extrusion_not_the_end_gcode() {
+        // Shape of a Cura 5.13 file: the lift to the next layer is written at
+        // the end of the previous layer's block, and the end G-code moves Z in
+        // relative mode after the last `;LAYER:`.
+        let gcode = "\
+;LAYER:0
+;TYPE:WALL-OUTER
+G0 X0 Y0 Z0.2
+G1 X10 Y0 E1.0
+G1 X10 Y10 E2.0
+G0 F300 Z0.4
+;LAYER:1
+;TYPE:WALL-OUTER
+G1 X0 Y0 E3.0
+G1 X10 Y0 E4.0
+;TIME_ELAPSED:10.0
+G1 F2700 E-1.0
+G91
+G1 E-2 F2700
+G1 E-2 Z0.2 F2400
+G1 Z10
+G90
+M84
+";
+        let toolpath = parse_toolpaths(gcode);
+        assert_eq!(toolpath.layers.len(), 2);
+        assert_eq!(toolpath.layers[0].z, 0.2);
+        assert_eq!(toolpath.layers[1].z, 0.4);
     }
 }
