@@ -57,21 +57,37 @@ impl TriangleMesh {
         (min, max)
     }
 
-    /// Triangle soup for the viewport. Large meshes keep every nth triangle so
-    /// the preview stays responsive; slicing still uses the full mesh.
+    /// Triangle soup for the viewport. Large meshes keep contiguous runs of
+    /// triangles so the preview stays responsive; slicing uses the full mesh.
     pub fn preview_positions(&self, max_triangles: usize) -> Vec<f32> {
-        let step = if self.triangles.len() > max_triangles {
-            self.triangles.len().div_ceil(max_triangles)
-        } else {
-            1
-        };
-        let mut positions = Vec::with_capacity(self.triangles.len().div_ceil(step) * 9);
-        for triangle in self.triangles.iter().step_by(step) {
+        let total = self.triangles.len();
+        let budget = max_triangles.max(1);
+        let mut positions = Vec::with_capacity(total.min(budget) * 9);
+        let mut push = |triangle: &[u32; 3], positions: &mut Vec<f32>| {
             for index in triangle {
                 if let Some(vertex) = self.vertices.get(*index as usize) {
                     positions.extend_from_slice(vertex);
                 }
             }
+        };
+        if total <= budget {
+            for triangle in &self.triangles {
+                push(triangle, &mut positions);
+            }
+            return positions;
+        }
+        // Keep contiguous runs: sampling single triangles leaves a sprinkle of
+        // lone facets that reads as broken geometry on any real model.
+        let runs = 96usize;
+        let run = (budget / runs).max(1);
+        let stride = total.div_ceil(runs);
+        let mut start = 0;
+        while start < total && positions.len() / 9 < budget {
+            let end = (start + run).min(total);
+            for triangle in &self.triangles[start..end] {
+                push(triangle, &mut positions);
+            }
+            start += stride;
         }
         positions
     }
@@ -851,35 +867,41 @@ fn flatten_object(
 }
 
 fn apply_affine(vertex: [f32; 3], matrix: &[f64; 12]) -> [f32; 3] {
+    // 3MF writes a 4x3 matrix in row-major order, so the twelve numbers are
+    // m00 m01 m02 | m10 m11 m12 | m20 m21 m22 | m30 m31 m32 and the last three
+    // are the translation. Reading it as 3x4 puts a translation into a
+    // rotation slot, which threw Bambu projects hundreds of metres off plate.
     let x = vertex[0] as f64;
     let y = vertex[1] as f64;
     let z = vertex[2] as f64;
     [
-        (matrix[0] * x + matrix[1] * y + matrix[2] * z + matrix[3]) as f32,
-        (matrix[4] * x + matrix[5] * y + matrix[6] * z + matrix[7]) as f32,
-        (matrix[8] * x + matrix[9] * y + matrix[10] * z + matrix[11]) as f32,
+        (matrix[0] * x + matrix[3] * y + matrix[6] * z + matrix[9]) as f32,
+        (matrix[1] * x + matrix[4] * y + matrix[7] * z + matrix[10]) as f32,
+        (matrix[2] * x + matrix[5] * y + matrix[8] * z + matrix[11]) as f32,
     ]
 }
 
 fn compose(parent: [f64; 12], child: [f64; 12]) -> [f64; 12] {
     let mut out = [0.0; 12];
     for row in 0..3 {
-        for col in 0..4 {
+        for col in 0..3 {
             let mut sum = 0.0;
             for k in 0..3 {
-                sum += parent[row * 4 + k] * child[k * 4 + col];
+                sum += parent[row * 3 + k] * child[k * 3 + col];
             }
-            if col == 3 {
-                sum += parent[row * 4 + 3];
-            }
-            out[row * 4 + col] = sum;
+            out[row * 3 + col] = sum;
         }
+        let mut translate = parent[row * 3 + 3];
+        for k in 0..3 {
+            translate += parent[row * 3 + k] * child[k * 3 + 3];
+        }
+        out[row * 3 + 3] = translate;
     }
     out
 }
 
 fn identity_transform() -> [f64; 12] {
-    [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+    [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
 }
 
 fn parse_transform(raw: Option<&str>) -> [f64; 12] {
@@ -928,8 +950,8 @@ mod tests {
   <resources>
     <object id="2" type="model">
       <components>
-        <component objectid="1" p:path="/3D/Objects/object_1.model" transform="1 0 0 5 0 1 0 0 0 0 1 0"/>
-        <component objectid="3" p:path="/3D/Objects/object_1.model" transform="1 0 0 15 0 1 0 0 0 0 1 0"/>
+        <component objectid="1" p:path="/3D/Objects/object_1.model" transform="1 0 0 0 1 0 0 0 1 5 0 0"/>
+        <component objectid="3" p:path="/3D/Objects/object_1.model" transform="1 0 0 0 1 0 0 0 1 15 0 0"/>
       </components>
     </object>
   </resources>
@@ -998,6 +1020,71 @@ mod tests {
     }
 
     #[test]
+    fn a_capped_preview_keeps_contiguous_runs() {
+        // Lone sampled triangles read as broken geometry, so a capped preview
+        // must keep neighbouring facets together.
+        let mut vertices = Vec::new();
+        for step in 0..9_600u32 {
+            vertices.push([step as f32, 0.0, 0.0]);
+        }
+        let triangles = (0..9_600u32)
+            .map(|step| [step, step + 1, step + 2])
+            .collect::<Vec<_>>();
+        let mesh = TriangleMesh {
+            vertices,
+            triangles,
+        };
+        let preview = mesh.preview_positions(960);
+        assert_eq!(preview.len() / 9, 960, "preview kept the whole budget");
+        // The first run is contiguous: triangle 0 then triangle 1.
+        assert!((preview[0] - 0.0).abs() < 1e-6);
+        assert!((preview[9] - 1.0).abs() < 1e-6, "second kept triangle follows the first");
+        assert!((preview[18] - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn applies_a_build_item_transform_in_the_3mf_layout() {
+        // 90 degrees about Z then a (10, 20, 30) offset. 3MF writes the matrix
+        // as four rows of three, so the offset is the last three numbers; a
+        // 3x4 reading would place (-1) in the x translation instead.
+        let xml = r#"<?xml version="1.0"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources>
+    <object id="1" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="1" y="0" z="0"/>
+          <vertex x="0" y="1" z="0"/>
+          <vertex x="0" y="0" z="1"/>
+        </vertices>
+        <triangles>
+          <triangle v1="0" v2="1" v3="2"/>
+        </triangles>
+      </mesh>
+    </object>
+  </resources>
+  <build>
+    <item objectid="1" transform="0 1 0 -1 0 0 0 0 1 10 20 30"/>
+  </build>
+</model>"#;
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut buffer);
+            writer
+                .start_file("3D/3dmodel.model", SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(xml.as_bytes()).unwrap();
+            writer.finish().unwrap();
+        }
+        let mesh = load_3mf(&buffer.into_inner()).unwrap();
+        assert_eq!(mesh.triangles.len(), 1);
+        let rotated = mesh.vertices[0];
+        assert!((rotated[0] - 10.0).abs() < 1e-3, "x was {}", rotated[0]);
+        assert!((rotated[1] - 21.0).abs() < 1e-3, "y was {}", rotated[1]);
+        assert!((rotated[2] - 30.0).abs() < 1e-3, "z was {}", rotated[2]);
+    }
+
+    #[test]
     fn reads_a_minimal_3mf() {
         let xml = r#"<?xml version="1.0"?>
 <model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
@@ -1016,7 +1103,7 @@ mod tests {
     </object>
   </resources>
   <build>
-    <item objectid="1" transform="1 0 0 10 0 1 0 0 0 0 1 0"/>
+    <item objectid="1" transform="1 0 0 0 1 0 0 0 1 10 0 0"/>
   </build>
 </model>"#;
         let mut cursor = std::io::Cursor::new(Vec::new());

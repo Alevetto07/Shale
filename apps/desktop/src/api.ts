@@ -50,10 +50,12 @@ export interface Transform {
   scale: [number, number, number];
 }
 
+export type Positions = Float32Array | number[];
+
 export interface ModelView {
   id: number;
   name: string;
-  positions: number[];
+  positions: Positions;
   transform: Transform;
   triangles: number;
   max_deviation_mm: number | null;
@@ -246,6 +248,20 @@ export const api = {
   loadedModels: () => invoke<ModelView[]>("loaded_models"),
   existingSlice: () => invoke<SliceSummary | null>("existing_slice"),
   saveProject: (project: SaveProject) => invoke<RecentProject[]>("save_project", { project }),
+  geometry: async (id: number, maxTriangles?: number): Promise<Float32Array> => {
+    const raw = await invoke<ArrayBuffer | Uint8Array>("model_geometry", {
+      id,
+      maxTriangles: maxTriangles ?? null,
+    });
+    // A 4-byte little-endian count precedes the floats so the view can be a
+    // window on the same buffer instead of another copy.
+    const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+    const length = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(
+      0,
+      true,
+    );
+    return new Float32Array(bytes.buffer, bytes.byteOffset + 4, length);
+  },
   openProject: (path: string) => invoke<OpenedProject>("open_project", { path }),
   clearJob: () => invoke<void>("clear_job"),
   recents: () => invoke<RecentProject[]>("list_recents"),

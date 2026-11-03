@@ -357,6 +357,31 @@ async fn import_model(
 }
 
 #[tauri::command]
+fn model_geometry(
+    state: State<AppState>,
+    id: u32,
+    max_triangles: Option<usize>,
+) -> Result<tauri::ipc::Response, String> {
+    let inner = lock(&state)?;
+    let model = inner
+        .models
+        .iter()
+        .find(|model| model.id == id)
+        .ok_or_else(|| "That model is no longer loaded".to_string())?;
+    let budget = max_triangles.unwrap_or(2_000_000);
+    let positions = model.mesh.preview_positions(budget);
+    let mut bytes = Vec::with_capacity(4 + positions.len() * 4);
+    bytes.extend_from_slice(&(positions.len() as u32).to_le_bytes());
+    for value in positions {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    // Geometry goes over the IPC as bytes: a million triangles is 36 MB of
+    // floats, which as JSON costs a long stringify, a long parse, and a
+    // truncated payload on the largest parts.
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
 fn update_transform(state: State<AppState>, id: u32, transform: Transform) -> Result<(), String> {
     let mut inner = lock(&state)?;
     {
@@ -842,7 +867,7 @@ fn view_of(
     ModelView {
         id,
         name: name.to_string(),
-        positions: mesh.preview_positions(48_000),
+        positions: Vec::new(),
         transform: transform.clone(),
         triangles: report.triangles,
         max_deviation_mm: report.max_deviation_mm,
@@ -1265,6 +1290,7 @@ pub fn run() {
             list_materials,
             printer_bed,
             import_model,
+            model_geometry,
             update_transform,
             drop_model,
             remove_model,

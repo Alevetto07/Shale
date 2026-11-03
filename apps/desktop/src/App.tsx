@@ -346,6 +346,38 @@ export function App() {
     );
   }, [printerQuery, printers]);
 
+  // Geometry travels outside the model list (it belongs in bytes, not JSON), so
+  // whatever arrives without it — a fresh import, an opened project, a restored
+  // session — is filled in here, once, wherever the model came from.
+  useEffect(() => {
+    const missing = models.filter((model) => model.positions.length === 0);
+    if (missing.length === 0) return;
+    let cancelled = false;
+    void Promise.all(
+      missing.map(async (model) => {
+        try {
+          return { id: model.id, positions: await api.geometry(model.id) };
+        } catch {
+          return null;
+        }
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      const filled = new Map(
+        results.filter((item) => item !== null).map((item) => [item!.id, item!.positions]),
+      );
+      if (filled.size === 0) return;
+      setModels((current) =>
+        current.map((model) =>
+          filled.has(model.id) ? { ...model, positions: filled.get(model.id)! } : model,
+        ),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [models]);
+
   const selected = models.find((model) => model.id === selectedId) ?? null;
 
   async function importFromPath(picked: string) {

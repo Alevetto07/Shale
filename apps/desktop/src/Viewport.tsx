@@ -10,7 +10,7 @@ export type ViewStyle = "solid" | "wire" | "ascii";
 
 interface SceneModel {
   id: number;
-  positions: number[];
+  positions: import("./api").Positions;
   transform: Transform;
   selected: boolean;
 }
