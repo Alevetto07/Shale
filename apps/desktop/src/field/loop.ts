@@ -35,8 +35,12 @@ function bindPointer() {
   });
 }
 
+let lastTick = 0;
+
 function tick(time: number) {
   handle = requestAnimationFrame(tick);
+  if (time - lastTick < 33) return;
+  lastTick = time;
   for (const listener of listeners) listener(time);
 }
 

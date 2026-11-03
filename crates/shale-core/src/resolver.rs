@@ -17,7 +17,7 @@ use crate::definition::RawSetting;
 use crate::formula::{self, Expr, FormulaError, FormulaHost};
 use crate::value::Value;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct UserSettings {
     pub layer_height: Option<f64>,
     pub infill_sparse_density: Option<f64>,

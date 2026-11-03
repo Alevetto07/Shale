@@ -427,3 +427,122 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 @media (max-width: 900px) {
   .workspace { grid-template-columns: 1fr; }
 }
+
+.app { position: relative; }
+
+.start {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+}
+.start .plate-field { z-index: 0; }
+.start-menu {
+  position: absolute;
+  z-index: 2;
+  left: 28px;
+  bottom: 28px;
+  width: min(320px, calc(100% - 56px));
+  max-height: calc(100% - 72px);
+  overflow: auto;
+  padding: 14px 16px 12px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.start .brand-mark { height: 32px; }
+.start .wordmark { font-size: 22px; }
+.start-list, .start-panel, .start-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.start-list button, .start-scroll button, .start-back, .start-panel > button {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.8rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.18rem 0.1rem;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.start-list button[aria-current="true"],
+.start-scroll button.selected,
+.start-list button:focus-visible,
+.start-scroll button:focus-visible,
+.start-back:focus-visible {
+  color: var(--accent);
+}
+.start-hint, .start-label, .start-empty {
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.start-label, .start-empty { margin: 0.45rem 0 0.1rem; }
+.start-list button.recent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.05rem;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--prose);
+  font-size: 13px;
+  color: var(--ink);
+}
+.start-list button.recent.dim { color: var(--ink-3); }
+.start-detail {
+  color: var(--ink-3);
+  font-family: var(--prose);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.start-scroll { max-height: 240px; overflow: auto; }
+.start-panel label { grid-template-columns: 8ch 1fr; }
+.start-credit {
+  position: absolute;
+  z-index: 2;
+  left: 28px;
+  right: 28px;
+  top: 16px;
+  margin: 0;
+  text-align: right;
+  pointer-events: none;
+  color: var(--ink-3);
+  font-family: var(--prose);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+.project-name {
+  margin: 0 0 0 0.8rem;
+  color: var(--ink-3);
+  font-family: var(--prose);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.top-actions { flex-wrap: wrap; justify-content: flex-end; }
+.banner.floating {
+  position: absolute;
+  z-index: 5;
+  left: 28px;
+  right: 28px;
+  bottom: 36px;
+  margin: 0;
+  background: var(--panel);
+  padding: 0.45rem 0.6rem;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(233, 232, 242, 0.28) var(--panel);
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; background: var(--panel); }
+*::-webkit-scrollbar-thumb { background: rgba(233, 232, 242, 0.28); }
+*::-webkit-scrollbar-corner { background: var(--panel); }

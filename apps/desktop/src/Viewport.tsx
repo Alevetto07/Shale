@@ -33,18 +33,18 @@ interface ViewportProps {
 }
 
 const KIND_COLOR: Record<string, string> = {
-  "wall-outer": "#d8d6e6",
-  "wall-inner": "#9d9bb0",
-  skin: "#7c7a90",
-  infill: "#5d6c78",
-  support: "#6e6458",
-  "support-interface": "#8a7d6e",
-  skirt: "#a8a6b8",
-  brim: "#b7b5c6",
-  raft: "#4a4840",
-  "prime-tower": "#3e3c48",
-  travel: "#3a3c46",
-  extrusion: "#d8d6e6",
+  "wall-outer": "#c9c6dc",
+  "wall-inner": "#8e8ba4",
+  skin: "#6e6b80",
+  infill: "#4e6570",
+  support: "#6a5e54",
+  "support-interface": "#7d7266",
+  skirt: "#9692a8",
+  brim: "#a8a3ba",
+  raft: "#3a3834",
+  "prime-tower": "#34323c",
+  travel: "#2a2c34",
+  extrusion: "#c9c6dc",
 };
 
 export function Viewport(props: ViewportProps) {
@@ -110,7 +110,7 @@ function SupportVolume({ overlay }: { overlay: SupportOverlay }) {
   return (
     <mesh geometry={geometry}>
       <meshStandardMaterial
-        color={enforce ? "#b7b5c6" : "#3e3c48"}
+        color={enforce ? "#8d8a9c" : "#3a3844"}
         wireframe={!enforce}
         roughness={1}
         metalness={0}
@@ -222,13 +222,14 @@ function Bed({
         <meshStandardMaterial color="#0b0d14" metalness={0} roughness={1} />
       </mesh>
       <gridHelper
-        args={[Math.max(width, depth), divisions, "#3a3c48", "#22242c"]}
+        args={[Math.max(width, depth), divisions, "#34343e", "#1e1f28"]}
         rotation={[Math.PI / 2, 0, 0]}
         position={[cx, cy, 0.04]}
       />
       <lineSegments geometry={outline} position={[cx, cy, 0.08]}>
-        <lineBasicMaterial color="#5c596c" />
+        <lineBasicMaterial color="#4a4856" />
       </lineSegments>
+      <Axes width={width} depth={depth} cx={cx} cy={cy} />
     </group>
   );
 }
@@ -250,12 +251,38 @@ void main() {
   float plus = (abs(cell.x - 0.5) < 0.08 || abs(cell.y - 0.5) < 0.08) ? 1.0 : 0.0;
   float hash = max(plus, (abs(cell.x - cell.y) < 0.07 || abs(cell.x + cell.y - 1.0) < 0.07) ? 1.0 : 0.0);
   float dotg = distance(cell, vec2(0.5)) < 0.14 ? 1.0 : 0.0;
-  float ink = light > 0.66 ? hash : light > 0.36 ? plus : light > 0.14 ? dotg : 0.0;
-  if (ink < 0.5) discard;
-  vec3 ink = vec3(0.914, 0.910, 0.949) * (0.55 + light * 0.45);
-  gl_FragColor = vec4(ink, 1.0);
+  float mask = light > 0.66 ? hash : light > 0.36 ? plus : light > 0.14 ? dotg : 0.0;
+  if (mask < 0.5) discard;
+  vec3 colour = vec3(0.914, 0.910, 0.949) * (0.55 + light * 0.45);
+  gl_FragColor = vec4(colour, 1.0);
 }
 `;
+
+function Axes({ width, depth, cx, cy }: { width: number; depth: number; cx: number; cy: number }) {
+  const length = Math.max(12, Math.min(width, depth) * 0.08);
+  const origin = [cx - width / 2, cy - depth / 2, 0.35] as const;
+  const geometry = useMemo(() => {
+    const positions = [
+      origin[0], origin[1], origin[2], origin[0] + length, origin[1], origin[2],
+      origin[0], origin[1], origin[2], origin[0], origin[1] + length, origin[2],
+      origin[0], origin[1], origin[2], origin[0], origin[1], origin[2] + length,
+    ];
+    const colors = [
+      0.62, 0.6, 0.68, 0.62, 0.6, 0.68,
+      0.48, 0.47, 0.54, 0.48, 0.47, 0.54,
+      0.72, 0.7, 0.78, 0.72, 0.7, 0.78,
+    ];
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    return geo;
+  }, [origin, length]);
+  return (
+    <lineSegments geometry={geometry}>
+      <lineBasicMaterial vertexColors />
+    </lineSegments>
+  );
+}
 
 function PrintModel({
   model,
@@ -318,10 +345,10 @@ function PrintModel({
           {viewStyle === "ascii" ? (
             <shaderMaterial vertexShader={ASCII_VERT} fragmentShader={ASCII_FRAG} side={THREE.DoubleSide} />
           ) : viewStyle === "wire" ? (
-            <meshBasicMaterial color={model.selected ? "#b9b3ff" : "#9c9aab"} wireframe />
+            <meshBasicMaterial color={model.selected ? "#b9b3ff" : "#a39fb4"} wireframe />
           ) : (
             <meshStandardMaterial
-              color={model.selected ? "#b9b3ff" : "#9c9aab"}
+              color={model.selected ? "#b9b3ff" : "#a39fb4"}
               roughness={0.62}
               metalness={0.02}
               flatShading

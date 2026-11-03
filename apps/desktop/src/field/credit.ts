@@ -1,10 +1,11 @@
-/** The 1995 Hubble Deep Field, as published by NASA. */
-export const hubbleDeepField = {
-  name: "Hubble Deep Field",
-  observed: "18–28 December 1995",
-  credit: "R. Williams (STScI), the Hubble Deep Field Team and NASA",
-  page: "https://science.nasa.gov/asset/hubble/hubble-deep-field-image-at-full-resolution/",
-  file: "https://assets.science.nasa.gov/content/dam/science/missions/hubble/releases/1996/01/STScI-01EVTAT7291D1ETQJ1BD5H2BRT.tif/jcr:content/renditions/cq5dam.web.1280.1280.jpeg",
+/** GALEX ultraviolet portrait of M31, as published by NASA. */
+export const andromeda = {
+  name: "Andromeda Galaxy",
+  object: "M31",
+  credit: "NASA/JPL-Caltech",
+  release: "16 May 2012",
+  page: "https://images.nasa.gov/details/PIA15416",
+  file: "http://images-assets.nasa.gov/image/PIA15416/PIA15416~medium.jpg",
   licence: "Not subject to copyright in the United States",
   guidelines: "https://www.nasa.gov/nasa-brand-center/images-and-media/",
 } as const;

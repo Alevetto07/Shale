@@ -6,17 +6,16 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use shale_core::{
-    compare_support, drop_to_bed, load_mesh_reporting, load_mesh_with, overlays, place_on_bed,
-    propose, set_enabled,
-    slice, TessellationTolerance,
-    Catalog, CustomInstruction, Engine, EngineBackend, ImportReport, MaterialInfo, PlacedModel,
-    PrinterInfo,
-    QualityInfo, ResourcePaths, StoredInstruction, SupportOverlay, SupportParams, SupportPlan,
-    Toolpath, Transform, TriangleMesh, UserSettings, VariantInfo,
+    compare_support, drop_to_bed, forget_recent, load_mesh_reporting, load_mesh_with,
+    load_named_bytes, load_recents, now_ms, overlays, place_on_bed, propose, read_project,
+    remember_recent, set_enabled, slice, Catalog, CustomInstruction, Engine, EngineBackend,
+    ImportReport, MaterialInfo, PlacedModel, PrinterInfo, ProjectData, ProjectModel, QualityInfo,
+    RecentEntry, ResourcePaths, StoredInstruction, SupportOverlay, SupportParams, SupportPlan,
+    TessellationTolerance, Toolpath, Transform, TriangleMesh, UserSettings, VariantInfo,
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 struct Inner {
     catalog: Option<Catalog>,
@@ -26,6 +25,7 @@ struct Inner {
     instructions: Vec<(u32, CustomInstruction)>,
     next_instruction: u32,
     support: Option<SupportPlan>,
+    support_model_id: Option<u32>,
     engine: Engine,
     toolpath: Option<Toolpath>,
     gcode_path: Option<PathBuf>,
@@ -40,6 +40,7 @@ struct LoadedModel {
     mesh: TriangleMesh,
     transform: Transform,
     report: ImportReport,
+    source_bytes: Vec<u8>,
 }
 
 struct AppState(Mutex<Inner>);
@@ -289,7 +290,8 @@ async fn import_model(
     let load_path = file.clone();
     let app_progress = app.clone();
     let imported = tauri::async_runtime::spawn_blocking(move || {
-        load_mesh_reporting(
+        let source_bytes = fs::read(&load_path)?;
+        let imported = load_mesh_reporting(
             &load_path,
             &tolerance,
             &mut |fraction, message| {
@@ -299,11 +301,13 @@ async fn import_model(
                 );
             },
             &cancel,
-        )
+        )?;
+        Ok::<_, shale_core::Error>((source_bytes, imported))
     })
     .await
     .map_err(|err| format!("import task failed: {err}"))?
     .map_err(|err| err.to_string())?;
+    let (source_bytes, imported) = imported;
     let mesh = imported.mesh;
     let report = imported.report;
     let mut inner = lock(&state)?;
@@ -347,6 +351,7 @@ async fn import_model(
         mesh,
         transform,
         report,
+        source_bytes,
     });
     Ok(view)
 }
@@ -363,6 +368,7 @@ fn update_transform(state: State<AppState>, id: u32, transform: Transform) -> Re
         model.transform = transform;
     }
     inner.support = None;
+    inner.support_model_id = None;
     Ok(())
 }
 
@@ -382,6 +388,10 @@ fn drop_model(state: State<AppState>, id: u32) -> Result<Transform, String> {
 fn remove_model(state: State<AppState>, id: u32) -> Result<(), String> {
     let mut inner = lock(&state)?;
     inner.models.retain(|model| model.id != id);
+    if inner.support_model_id == Some(id) {
+        inner.support = None;
+        inner.support_model_id = None;
+    }
     Ok(())
 }
 
@@ -517,6 +527,7 @@ fn propose_supports(
     let plan = propose(&baked, &support_params(overhang_angle_deg, max_bridge_mm));
     let view = support_view(&plan);
     inner.support = Some(plan);
+    inner.support_model_id = Some(id);
     Ok(view)
 }
 
@@ -951,11 +962,249 @@ fn preload_demo(
             mesh,
             transform,
             report,
+            source_bytes: fs::read(std::path::Path::new(&path)).unwrap_or_default(),
         }],
         instructions,
         toolpath,
         gcode_path,
     )
+}
+
+#[derive(Deserialize)]
+struct SaveRequest {
+    path: String,
+    name: String,
+    printer_id: String,
+    printer_label: String,
+    variant_name: Option<String>,
+    quality_type: Option<String>,
+    material_id: Option<String>,
+    settings: UserSettings,
+    chord_mm: f64,
+    turn_deg: f64,
+    thumbnail: Vec<u8>,
+}
+
+#[derive(Serialize)]
+struct OpenedJob {
+    path: String,
+    name: String,
+    printer_id: String,
+    printer_label: String,
+    variant_name: Option<String>,
+    quality_type: Option<String>,
+    material_id: Option<String>,
+    settings: UserSettings,
+    chord_mm: f64,
+    turn_deg: f64,
+    models: Vec<ModelView>,
+    instructions: Vec<StoredInstruction>,
+    support: Option<SupportView>,
+    warnings: Vec<String>,
+}
+
+fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|err| err.to_string())?;
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    Ok(dir)
+}
+
+fn remember(app: &AppHandle, path: &str, name: &str, printer: &str) -> Result<Vec<RecentEntry>, String> {
+    let dir = config_dir(app)?;
+    remember_recent(
+        &dir,
+        &RecentEntry {
+            path: path.to_string(),
+            name: name.to_string(),
+            saved_at_ms: now_ms(),
+            printer: printer.to_string(),
+            missing: false,
+        },
+    )
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn list_recents(app: AppHandle) -> Result<Vec<RecentEntry>, String> {
+    let dir = config_dir(&app)?;
+    load_recents(&dir).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn forget_recent_project(app: AppHandle, path: String) -> Result<Vec<RecentEntry>, String> {
+    let dir = config_dir(&app)?;
+    forget_recent(&dir, &path).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn clear_job(state: State<AppState>) -> Result<(), String> {
+    let mut inner = lock(&state)?;
+    inner.models.clear();
+    inner.next_id = 1;
+    inner.instructions.clear();
+    inner.next_instruction = 1;
+    inner.support = None;
+    inner.support_model_id = None;
+    inner.toolpath = None;
+    inner.gcode_path = None;
+    Ok(())
+}
+
+#[tauri::command]
+fn save_project(
+    app: AppHandle,
+    state: State<AppState>,
+    project: SaveRequest,
+) -> Result<Vec<RecentEntry>, String> {
+    let inner = lock(&state)?;
+    let support_model = inner.support_model_id.and_then(|id| {
+        inner
+            .models
+            .iter()
+            .position(|model| model.id == id)
+    });
+    let mut support = inner.support.clone();
+    if support_model.is_none() {
+        support = None;
+    }
+    let models = inner
+        .models
+        .iter()
+        .map(|model| {
+            if model.source_bytes.is_empty() {
+                return Err(format!(
+                    "Cannot save {}: the original file is missing.",
+                    model.name
+                ));
+            }
+            Ok(ProjectModel {
+                name: model.name.clone(),
+                bytes: model.source_bytes.clone(),
+                transform: model.transform.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let data = ProjectData {
+        name: project.name.clone(),
+        printer_id: project.printer_id,
+        printer_label: project.printer_label.clone(),
+        variant_name: project.variant_name,
+        quality_type: project.quality_type,
+        material_id: project.material_id,
+        settings: project.settings,
+        chord_mm: project.chord_mm,
+        turn_deg: project.turn_deg,
+        models,
+        instructions: inner
+            .instructions
+            .iter()
+            .map(|(_, instruction)| instruction.clone())
+            .collect(),
+        support,
+        support_model,
+        thumbnail: project.thumbnail,
+    };
+    drop(inner);
+    let path = PathBuf::from(&project.path);
+    shale_core::project::write_project(&path, &data).map_err(|err| err.to_string())?;
+    remember(&app, &project.path, &project.name, &project.printer_label)
+}
+
+#[tauri::command]
+async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<OpenedJob, String> {
+    let file = PathBuf::from(&path);
+    let loaded = tauri::async_runtime::spawn_blocking(move || {
+        let project = read_project(&file).map_err(|err| err.to_string())?;
+        let tolerance = TessellationTolerance::new(
+            if project.data.chord_mm > 0.0 { project.data.chord_mm } else { 0.1 },
+            if project.data.turn_deg > 0.0 { project.data.turn_deg } else { 15.0 },
+        );
+        let mut built = Vec::new();
+        for model in &project.data.models {
+            let imported = load_named_bytes(
+                &model.name,
+                &model.bytes,
+                &tolerance,
+                &mut |_, _| {},
+                &AtomicBool::new(false),
+            )
+            .map_err(|err| format!("Could not read {}: {err}", model.name))?;
+            built.push((
+                model.name.clone(),
+                model.bytes.clone(),
+                model.transform.clone(),
+                imported,
+            ));
+        }
+        Ok::<_, String>((project, built))
+    })
+    .await
+    .map_err(|err| format!("open task failed: {err}"))??;
+    let (project, built) = loaded;
+    let mut inner = lock(&state)?;
+    inner.models.clear();
+    inner.instructions.clear();
+    inner.support = None;
+    inner.support_model_id = None;
+    inner.toolpath = None;
+    inner.gcode_path = None;
+    inner.next_id = 1;
+    inner.next_instruction = 1;
+    let mut views = Vec::new();
+    for (name, bytes, transform, imported) in built {
+        let id = inner.next_id;
+        inner.next_id += 1;
+        let view = view_of(id, &name, &imported.mesh, &transform, &imported.report);
+        inner.models.push(LoadedModel {
+            id,
+            name,
+            mesh: imported.mesh,
+            transform,
+            report: imported.report,
+            source_bytes: bytes,
+        });
+        views.push(view);
+    }
+    for instruction in project.data.instructions.clone() {
+        let id = inner.next_instruction;
+        inner.next_instruction += 1;
+        inner.instructions.push((id, instruction));
+    }
+    if let Some(index) = project.data.support_model {
+        if let Some(model) = inner.models.get(index) {
+            inner.support_model_id = Some(model.id);
+            inner.support = project.data.support.clone();
+        }
+    }
+    let instructions = stored_instructions(&inner);
+    let support = inner.support.as_ref().map(support_view);
+    drop(inner);
+    let printer = if project.data.printer_label.is_empty() {
+        project.data.printer_id.clone()
+    } else {
+        project.data.printer_label.clone()
+    };
+    let recents_error = remember(&app, &path, &project.data.name, &printer).err();
+    let mut warnings = project.warnings;
+    if let Some(err) = recents_error {
+        warnings.push(format!("Could not update the recent list: {err}"));
+    }
+    Ok(OpenedJob {
+        path,
+        name: project.data.name,
+        printer_id: project.data.printer_id,
+        printer_label: project.data.printer_label,
+        variant_name: project.data.variant_name,
+        quality_type: project.data.quality_type,
+        material_id: project.data.material_id,
+        settings: project.data.settings,
+        chord_mm: project.data.chord_mm,
+        turn_deg: project.data.turn_deg,
+        models: views,
+        instructions,
+        support,
+        warnings,
+    })
 }
 
 pub fn run() {
@@ -987,6 +1236,7 @@ pub fn run() {
     } else {
         None
     };
+    let support_model_id = if support.is_some() { Some(1) } else { None };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState(Mutex::new(Inner {
@@ -997,6 +1247,7 @@ pub fn run() {
             instructions,
             next_instruction,
             support,
+            support_model_id,
             engine,
             toolpath,
             gcode_path,
@@ -1029,7 +1280,12 @@ pub fn run() {
             preview_until,
             loaded_models,
             existing_slice,
-            export_gcode
+            export_gcode,
+            save_project,
+            open_project,
+            clear_job,
+            list_recents,
+            forget_recent_project
         ])
         .run(tauri::generate_context!())
         .expect("Shale failed to start");
