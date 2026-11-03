@@ -362,9 +362,15 @@ export function App() {
       setImportProgress({ fraction: 1, message: `${model.triangles} triangles` });
     } catch (err) {
       const message = messageOf(err);
-      if (!message.toLowerCase().includes("cancel")) setError(message);
-      setImportProgress(null);
+      // Only a deliberate cancel stays quiet; any other failure is shown.
+      const cancelled = message.trim().toLowerCase() === "import cancelled";
+      if (!cancelled) setError(message);
+      // The slicer is entered before the read starts so progress has somewhere
+      // to appear. On failure with nothing else loaded, go back rather than
+      // leaving an empty slicer on screen.
+      if (models.length === 0) setScreen("start");
     } finally {
+      setImportProgress(null);
       setImporting(false);
     }
   }

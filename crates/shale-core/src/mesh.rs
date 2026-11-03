@@ -7,6 +7,7 @@
 //! before slicing. Transforms match three.js object order: scale, then the
 //! XYZ Euler rotation used by TransformControls, then translation. Z is up.
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
@@ -486,33 +487,168 @@ pub fn drop_to_bed(mesh: &TriangleMesh, transform: &mut Transform) {
 fn load_3mf(bytes: &[u8]) -> Result<TriangleMesh, Error> {
     let mut archive = ZipArchive::new(Cursor::new(bytes))
         .map_err(|err| Error::Mesh(format!("3MF is not a zip archive: {err}")))?;
-    let mut model_xml = None;
-    for index in 0..archive.len() {
-        let mut file = archive
-            .by_index(index)
-            .map_err(|err| Error::Mesh(format!("3MF entry: {err}")))?;
-        let name = file.name().to_string();
-        if name.ends_with(".model") {
-            let mut text = String::new();
-            file.read_to_string(&mut text)
-                .map_err(|err| Error::Mesh(format!("3MF model: {err}")))?;
-            model_xml = Some(text);
-            break;
+    let root_path = threemf_root_part(&mut archive)?;
+    let mut parts: HashMap<String, ModelPart> = HashMap::new();
+    let mut pending = vec![(root_path.clone(), 0usize)];
+    while let Some((path, depth)) = pending.pop() {
+        if parts.contains_key(&path) {
+            continue;
+        }
+        let xml = read_zip_text(&mut archive, &path)?;
+        let part = parse_3mf_part(&xml)?;
+        for (_, object) in &part.objects {
+            for component in &object.components {
+                let Some(child) = component.path.as_deref() else {
+                    continue;
+                };
+                let child = normalise_part_path(child);
+                if !parts.contains_key(&child) && depth < THREEMF_MAX_PART_DEPTH {
+                    pending.push((child, depth + 1));
+                }
+            }
+        }
+        parts.insert(path, part);
+    }
+    let root = parts
+        .get(&root_path)
+        .ok_or_else(|| Error::Mesh("3MF archive has no root model part".into()))?;
+    let scale = unit_scale(&root.unit);
+    let items = if root.build.is_empty() {
+        root.objects
+            .iter()
+            .filter(|(_, object)| !object.triangles.is_empty() || !object.components.is_empty())
+            .map(|(id, _)| (*id, identity_transform()))
+            .take(1)
+            .collect::<Vec<_>>()
+    } else {
+        root.build.clone()
+    };
+    if items.is_empty() {
+        return Err(Error::Mesh(
+            "3MF model has no mesh. Component-only files without a build item are not supported yet.".into(),
+        ));
+    }
+    let mut vertices = Vec::new();
+    let mut triangles = Vec::new();
+    for (id, transform) in items {
+        flatten_object(id, transform, root, &parts, &mut vertices, &mut triangles, 0)?;
+    }
+    if scale != 1.0 {
+        for vertex in &mut vertices {
+            vertex[0] *= scale as f32;
+            vertex[1] *= scale as f32;
+            vertex[2] *= scale as f32;
         }
     }
-    let Some(xml) = model_xml else {
-        return Err(Error::Mesh("3MF archive has no .model part".into()));
-    };
-    parse_3mf_model(&xml)
+    if triangles.is_empty() {
+        return Err(Error::Mesh(
+            "3MF model did not contain any triangles".into(),
+        ));
+    }
+    Ok(TriangleMesh {
+        vertices,
+        triangles,
+    })
+}
+
+/// A 3MF package can hold several `.model` parts. Bambu Studio, Orca and
+/// PrusaSlicer keep each object in `3D/Objects/*.model` and place it from a
+/// component that carries a `p:path`, so reading a single XML document fails
+/// on most files these slicers export. Parts are read on demand, bounded by
+/// [`THREEMF_MAX_PART_DEPTH`].
+const THREEMF_MAX_PART_DEPTH: usize = 4;
+
+fn threemf_root_part(archive: &mut ZipArchive<Cursor<&[u8]>>) -> Result<String, Error> {
+    let rels = read_zip_text(archive, "_rels/.rels").unwrap_or_default();
+    for relationship in rels.split("<Relationship").skip(1) {
+        if !relationship.contains("3dmodel") {
+            continue;
+        }
+        let Some(target) = relationship
+            .split("Target=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+        else {
+            continue;
+        };
+        let path = normalise_part_path(target);
+        if resolve_zip_name(archive, &path).is_some() {
+            return Ok(path);
+        }
+    }
+    if resolve_zip_name(archive, "3D/3dmodel.model").is_some() {
+        return Ok("3D/3dmodel.model".to_string());
+    }
+    for index in 0..archive.len() {
+        let file = archive
+            .by_index(index)
+            .map_err(|err| Error::Mesh(format!("3MF entry: {err}")))?;
+        if file.name().to_ascii_lowercase().ends_with(".model") {
+            return Ok(file.name().to_string());
+        }
+    }
+    Err(Error::Mesh("3MF archive has no .model part".into()))
+}
+
+fn normalise_part_path(path: &str) -> String {
+    path.trim_start_matches('/').replace('\\', "/")
+}
+
+/// Zip entry names are case sensitive, but packages written on Windows often
+/// disagree with their own relationship targets about `3D/` against `3d/`.
+fn resolve_zip_name(archive: &ZipArchive<Cursor<&[u8]>>, path: &str) -> Option<String> {
+    if let Some(name) = archive.file_names().find(|name| *name == path) {
+        return Some(name.to_string());
+    }
+    let wanted = path.to_ascii_lowercase();
+    archive
+        .file_names()
+        .find(|name| name.to_ascii_lowercase() == wanted)
+        .map(str::to_string)
+}
+
+fn read_zip_text(archive: &mut ZipArchive<Cursor<&[u8]>>, path: &str) -> Result<String, Error> {
+    let name = resolve_zip_name(archive, path)
+        .ok_or_else(|| Error::Mesh(format!("3MF part {path} is missing")))?;
+    let mut file = archive
+        .by_name(&name)
+        .map_err(|err| Error::Mesh(format!("3MF part {path}: {err}")))?;
+    let mut text = String::new();
+    file.read_to_string(&mut text)
+        .map_err(|err| Error::Mesh(format!("3MF part {path}: {err}")))?;
+    Ok(text)
+}
+
+fn unit_scale(unit: &str) -> f64 {
+    match unit {
+        "inch" => 25.4,
+        "meter" => 1000.0,
+        "micron" => 0.001,
+        _ => 1.0,
+    }
 }
 
 struct RawObject {
     vertices: Vec<[f32; 3]>,
     triangles: Vec<[u32; 3]>,
-    components: Vec<(u32, [f64; 12])>,
+    components: Vec<RawComponent>,
 }
 
-fn parse_3mf_model(xml: &str) -> Result<TriangleMesh, Error> {
+struct RawComponent {
+    id: u32,
+    transform: [f64; 12],
+    /// `p:path` of the part that holds this component, when it is not the
+    /// part the component itself was declared in.
+    path: Option<String>,
+}
+
+struct ModelPart {
+    unit: String,
+    objects: Vec<(u32, RawObject)>,
+    build: Vec<(u32, [f64; 12])>,
+}
+
+fn parse_3mf_part(xml: &str) -> Result<ModelPart, Error> {
     use quick_xml::events::Event;
     use quick_xml::Reader;
 
@@ -573,47 +709,10 @@ fn parse_3mf_model(xml: &str) -> Result<TriangleMesh, Error> {
     }
     let _ = (in_vertices, in_triangles, in_components);
 
-    let scale = match unit.as_str() {
-        "inch" => 25.4,
-        "meter" => 1000.0,
-        "micron" => 0.001,
-        _ => 1.0,
-    };
-    let items = if build.is_empty() {
-        objects
-            .iter()
-            .filter(|(_, object)| !object.triangles.is_empty())
-            .map(|(id, _)| (*id, identity_transform()))
-            .take(1)
-            .collect::<Vec<_>>()
-    } else {
-        build
-    };
-    if items.is_empty() {
-        return Err(Error::Mesh(
-            "3MF model has no mesh. Component-only files without a build item are not supported yet.".into(),
-        ));
-    }
-    let mut vertices = Vec::new();
-    let mut triangles = Vec::new();
-    for (id, transform) in items {
-        flatten_object(id, transform, &objects, &mut vertices, &mut triangles, 0)?;
-    }
-    if scale != 1.0 {
-        for vertex in &mut vertices {
-            vertex[0] *= scale as f32;
-            vertex[1] *= scale as f32;
-            vertex[2] *= scale as f32;
-        }
-    }
-    if triangles.is_empty() {
-        return Err(Error::Mesh(
-            "3MF model did not contain any triangles".into(),
-        ));
-    }
-    Ok(TriangleMesh {
-        vertices,
-        triangles,
+    Ok(ModelPart {
+        unit,
+        objects,
+        build,
     })
 }
 
@@ -684,9 +783,11 @@ fn note_3mf_start(
                 let id = xml_attr(event, "objectid")
                     .and_then(|value| value.parse().ok())
                     .unwrap_or(0);
-                object
-                    .components
-                    .push((id, parse_transform(xml_attr(event, "transform").as_deref())));
+                object.components.push(RawComponent {
+                    id,
+                    transform: parse_transform(xml_attr(event, "transform").as_deref()),
+                    path: xml_attr(event, "path"),
+                });
             }
         }
         "item" => {
@@ -702,7 +803,8 @@ fn note_3mf_start(
 fn flatten_object(
     id: u32,
     transform: [f64; 12],
-    objects: &[(u32, RawObject)],
+    part: &ModelPart,
+    parts: &HashMap<String, ModelPart>,
     vertices: &mut Vec<[f32; 3]>,
     triangles: &mut Vec<[u32; 3]>,
     depth: u8,
@@ -710,7 +812,7 @@ fn flatten_object(
     if depth > 6 {
         return Err(Error::Mesh("3MF component nesting is too deep".into()));
     }
-    let Some((_, object)) = objects.iter().find(|(object_id, _)| *object_id == id) else {
+    let Some((_, object)) = part.objects.iter().find(|(object_id, _)| *object_id == id) else {
         return Err(Error::Mesh(format!("3MF object {id} is missing")));
     };
     let base = vertices.len() as u32;
@@ -720,12 +822,26 @@ fn flatten_object(
     for triangle in &object.triangles {
         triangles.push([base + triangle[0], base + triangle[1], base + triangle[2]]);
     }
-    let components = object.components.clone();
-    for (child, child_transform) in components {
+    let components: Vec<(u32, [f64; 12], Option<String>)> = object
+        .components
+        .iter()
+        .map(|component| (component.id, component.transform, component.path.clone()))
+        .collect();
+    for (child, child_transform, child_path) in components {
+        let child_part = match child_path.as_deref() {
+            Some(path) => {
+                let path = normalise_part_path(path);
+                parts
+                    .get(&path)
+                    .ok_or_else(|| Error::Mesh(format!("3MF part {path} is missing")))?
+            }
+            None => part,
+        };
         flatten_object(
             child,
             compose(transform, child_transform),
-            objects,
+            child_part,
+            parts,
             vertices,
             triangles,
             depth + 1,
@@ -804,6 +920,82 @@ mod tests {
     use super::*;
     use std::io::Write;
     use zip::write::SimpleFileOptions;
+
+    #[test]
+    fn reads_components_that_live_in_separate_parts() {
+        let root = r#"<?xml version="1.0"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources>
+    <object id="2" type="model">
+      <components>
+        <component objectid="1" p:path="/3D/Objects/object_1.model" transform="1 0 0 5 0 1 0 0 0 0 1 0"/>
+        <component objectid="3" p:path="/3D/Objects/object_1.model" transform="1 0 0 15 0 1 0 0 0 0 1 0"/>
+      </components>
+    </object>
+  </resources>
+  <build>
+    <item objectid="2"/>
+  </build>
+</model>"#;
+        let part = r#"<?xml version="1.0"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources>
+    <object id="1" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="0" y="0" z="0"/>
+          <vertex x="1" y="0" z="0"/>
+          <vertex x="0" y="1" z="0"/>
+        </vertices>
+        <triangles>
+          <triangle v1="0" v2="1" v3="2"/>
+        </triangles>
+      </mesh>
+    </object>
+    <object id="3" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="0" y="0" z="0"/>
+          <vertex x="2" y="0" z="0"/>
+          <vertex x="0" y="2" z="0"/>
+        </vertices>
+        <triangles>
+          <triangle v1="0" v2="1" v3="2"/>
+        </triangles>
+      </mesh>
+    </object>
+  </resources>
+</model>"#;
+        let rels = r#"<?xml version="1.0"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
+</Relationships>"#;
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut cursor);
+            for (name, body) in [
+                ("_rels/.rels", rels),
+                ("3D/3dmodel.model", root),
+                ("3D/Objects/object_1.model", part),
+            ] {
+                writer
+                    .start_file(name, SimpleFileOptions::default())
+                    .unwrap();
+                writer.write_all(body.as_bytes()).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        let mesh = load_3mf(&cursor.into_inner()).unwrap();
+        assert_eq!(mesh.triangles.len(), 2);
+        // Both components resolve object ids inside the same part, 5 mm and
+        // 15 mm along X, so the widest vertex sits at 15 + 2.
+        let max_x = mesh
+            .vertices
+            .iter()
+            .map(|v| v[0])
+            .fold(f32::MIN, f32::max);
+        assert!((max_x - 17.0).abs() < 1e-3, "max x was {max_x}");
+    }
 
     #[test]
     fn reads_a_minimal_3mf() {

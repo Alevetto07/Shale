@@ -124,22 +124,50 @@ pub fn import_step(bytes: &[u8], tolerance: &TessellationTolerance) -> Result<Im
     let mut any = false;
     let mut failures = Vec::new();
     for shell in table.shell.values() {
-        match table.to_compressed_shell(shell) {
-            Ok(shape) => {
-                let (mesh, deviation, turning) = tessellate_shell(&shape, tolerance)?;
-                let base = vertices.len() as u32;
-                vertices.extend(mesh.vertices);
-                triangles.extend(
-                    mesh.triangles
-                        .into_iter()
-                        .map(|tri| [tri[0] + base, tri[1] + base, tri[2] + base]),
-                );
-                max_deviation = max_deviation.max(deviation);
-                max_turning = max_turning.max(turning);
-                any = true;
+        let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            table.to_compressed_shell(shell)
+        }));
+        let shape = match built {
+            Ok(Ok(shape)) => shape,
+            Ok(Err(err)) => {
+                failures.push(err.to_string());
+                continue;
             }
-            Err(err) => failures.push(err.to_string()),
-        }
+            // truck fills in a zero radius when it cannot deserialize a
+            // surface, and `Torus::new` panics on it. Rhino and SolidWorks
+            // both write tori that trigger this, so the panic becomes a
+            // reported failure instead of a dead import task.
+            Err(payload) => {
+                failures.push(format!(
+                    "a surface could not be evaluated ({})",
+                    panic_text(payload.as_ref())
+                ));
+                continue;
+            }
+        };
+        let (mesh, deviation, turning) = match tessellate_shell(&shape, tolerance) {
+            Ok(result) => result,
+            Err(err) => {
+                failures.push(err.to_string());
+                continue;
+            }
+        };
+        let base = vertices.len() as u32;
+        vertices.extend(mesh.vertices);
+        triangles.extend(
+            mesh.triangles
+                .into_iter()
+                .map(|tri| [tri[0] + base, tri[1] + base, tri[2] + base]),
+        );
+        max_deviation = max_deviation.max(deviation);
+        max_turning = max_turning.max(turning);
+        any = true;
+    }
+    if !failures.is_empty() {
+        return Err(Error::Mesh(format!(
+            "STEP file could not be read in full: {}. Re-export the part as STL or 3MF.",
+            failures.join("; ")
+        )));
     }
     if !any {
         return Err(Error::Mesh(format!(
@@ -176,6 +204,16 @@ pub fn import_step(bytes: &[u8], tolerance: &TessellationTolerance) -> Result<Im
         },
         mesh,
     })
+}
+
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(text) = payload.downcast_ref::<&str>() {
+        return (*text).to_string();
+    }
+    if let Some(text) = payload.downcast_ref::<String>() {
+        return text.clone();
+    }
+    "unknown failure".to_string()
 }
 
 fn tessellate_shell(
@@ -408,6 +446,14 @@ mod tests {
             tolerance.chordal_mm,
         );
         imported
+    }
+
+    #[test]
+    fn panic_payload_text_is_extracted() {
+        let text = std::panic::catch_unwind(|| panic!("radius must be larger than 0")).unwrap_err();
+        assert_eq!(panic_text(text.as_ref()), "radius must be larger than 0");
+        let owned = std::panic::catch_unwind(|| std::panic::panic_any(String::from("boom"))).unwrap_err();
+        assert_eq!(panic_text(owned.as_ref()), "boom");
     }
 
     #[test]
