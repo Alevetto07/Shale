@@ -289,6 +289,72 @@ export function App() {
     };
   }, []);
 
+  // Undo is a stack of plate snapshots. Deleting a part only hides it in the
+  // backend, so a snapshot is a list of ids and transforms: no geometry is
+  // copied, and undoing a delete does not re-read a file.
+  const past = useRef<{ models: ModelView[]; selected: number | null }[]>([]);
+  const future = useRef<{ models: ModelView[]; selected: number | null }[]>([]);
+  const modelsRef = useRef<ModelView[]>(models);
+  const lastEdit = useRef<{ key: string; at: number } | null>(null);
+  const [historyDepth, setHistoryDepth] = useState({ past: 0, future: 0 });
+
+  const syncHistory = () =>
+    setHistoryDepth({ past: past.current.length, future: future.current.length });
+
+  useEffect(() => {
+    modelsRef.current = models;
+  }, [models]);
+
+  /** Remember the plate as it is now, before it changes. */
+  function remember(key = "") {
+    const now = Date.now();
+    if (key && lastEdit.current && lastEdit.current.key === key && now - lastEdit.current.at < 1200) {
+      lastEdit.current.at = now;
+      return;
+    }
+    lastEdit.current = key ? { key, at: now } : null;
+    past.current.push({ models: modelsRef.current, selected: selectedId });
+    if (past.current.length > 80) past.current.shift();
+    future.current = [];
+    syncHistory();
+  }
+
+  async function restoreSnapshot(snapshot: { models: ModelView[]; selected: number | null }) {
+    try {
+      const views = await api.restoreModels(
+        snapshot.models.map((model) => ({ id: model.id, transform: model.transform })),
+      );
+      const shown = new Map(views.map((view) => [view.id, view]));
+      setModels(
+        snapshot.models.map((model) => {
+          const view = shown.get(model.id);
+          return view ? { ...model, transform: view.transform } : model;
+        }),
+      );
+      setSelectedId(snapshot.selected && shown.has(snapshot.selected) ? snapshot.selected : null);
+      setSupport(null);
+    } catch (err) {
+      setError(messageOf(err));
+    }
+    syncHistory();
+  }
+
+  async function undo() {
+    const snapshot = past.current.pop();
+    if (!snapshot) return;
+    future.current.push({ models: modelsRef.current, selected: selectedId });
+    syncHistory();
+    await restoreSnapshot(snapshot);
+  }
+
+  async function redo() {
+    const snapshot = future.current.pop();
+    if (!snapshot) return;
+    past.current.push({ models: modelsRef.current, selected: selectedId });
+    syncHistory();
+    await restoreSnapshot(snapshot);
+  }
+
   // The keyboard effect is installed once, so it reaches the current handlers
   // through a ref instead of capturing the first render's closures.
   const actions = useRef({
@@ -297,6 +363,8 @@ export function App() {
     exportGcode: async () => {},
     duplicateSelected: async () => {},
     arrangeAll: async () => {},
+    undo: async () => {},
+    redo: async () => {},
   });
 
   useEffect(() => {
@@ -324,6 +392,16 @@ export function App() {
       } else if (key === "a" && event.shiftKey) {
         event.preventDefault();
         void actions.current.arrangeAll();
+      } else if (key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          void actions.current.redo();
+        } else {
+          void actions.current.undo();
+        }
+      } else if (key === "y") {
+        event.preventDefault();
+        void actions.current.redo();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -458,6 +536,7 @@ export function App() {
     setImportProgress({ fraction: 0.01, message: "Reading model" });
     try {
       const model = await api.importModel(picked, printerId || null, variant, quality, chord, turn);
+      remember();
       setModels((current) => [...current, model]);
       setSelectedId(model.id);
       setPreview(false);
@@ -496,6 +575,7 @@ export function App() {
   }
 
   async function commitTransform(id: number, transform: Transform) {
+    remember(`transform:${id}`);
     setModels((current) => current.map((model) => (model.id === id ? { ...model, transform } : model)));
     setSupport(null);
     try {
@@ -531,6 +611,7 @@ export function App() {
     if (!selected) return;
     try {
       const transform = await api.dropModel(selected.id);
+      remember();
       setModels((current) => current.map((model) => (model.id === selected.id ? { ...model, transform } : model)));
     } catch (err) {
       setError(messageOf(err));
@@ -543,6 +624,7 @@ export function App() {
     setError(null);
     try {
       const placed = await api.arrange(printerId, variant, quality);
+      remember();
       setModels((current) =>
         current.map((model) => {
           const moved = placed.find((entry) => entry.id === model.id);
@@ -558,6 +640,7 @@ export function App() {
     if (!selected) return;
     try {
       const copy = await api.duplicateModel(selected.id);
+      remember();
       setModels((current) => [...current, copy]);
       setSelectedId(copy.id);
     } catch (err) {
@@ -568,6 +651,7 @@ export function App() {
   async function removeSelected() {
     if (!selected) return;
     try {
+      remember();
       await api.removeModel(selected.id);
       setModels((current) => current.filter((model) => model.id !== selected.id));
       setSelectedId(null);
@@ -835,6 +919,7 @@ export function App() {
       setChordTied(false);
     }
     if (opened.turn_deg > 0) setTurn(opened.turn_deg);
+    remember();
     setModels(opened.models);
     setSelectedId(opened.models[0]?.id ?? null);
     setInstructions(opened.instructions);
@@ -879,6 +964,9 @@ export function App() {
       setError(messageOf(err));
       return;
     }
+    past.current = [];
+    future.current = [];
+    syncHistory();
     setModels([]);
     setSelectedId(null);
     setInstructions([]);
@@ -908,6 +996,8 @@ export function App() {
     exportGcode,
     duplicateSelected,
     arrangeAll,
+    undo,
+    redo,
   };
   saveRef.current = (asNew) => {
     void saveProject(asNew);
@@ -986,6 +1076,10 @@ export function App() {
           onDelete={() => void removeSelected()}
           onDrop={() => void dropSelected()}
           onArrange={() => void arrangeAll()}
+          onUndo={() => void undo()}
+          onRedo={() => void redo()}
+          canUndo={historyDepth.past > 0}
+          canRedo={historyDepth.future > 0}
           modelCount={models.length}
           viewStyle={viewStyle}
           onViewStyle={setViewStyle}

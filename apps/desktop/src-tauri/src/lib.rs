@@ -46,6 +46,9 @@ struct LoadedModel {
     transform: Transform,
     report: ImportReport,
     source_bytes: Vec<u8>,
+    /// Deleted from the plate, but kept so that undo can bring it back without
+    /// re-reading the file. Hidden models are never sliced, saved or exported.
+    visible: bool,
 }
 
 struct AppState(Mutex<Inner>);
@@ -389,6 +392,7 @@ async fn import_model(
         transform,
         report,
         source_bytes,
+        visible: true,
     });
     Ok(view)
 }
@@ -443,6 +447,7 @@ fn duplicate_model(state: State<AppState>, id: u32) -> Result<ModelView, String>
         transform,
         report: inner.models[index].report.clone(),
         source_bytes: inner.models[index].source_bytes.clone(),
+        visible: true,
     };
     inner.models.push(model);
     Ok(view)
@@ -527,7 +532,7 @@ fn arrange_models(
             None => (220.0, 220.0, false),
         }
     };
-    if inner.models.is_empty() {
+    if !inner.models.iter().any(|model| model.visible) {
         return Ok(Vec::new());
     }
 
@@ -536,6 +541,7 @@ fn arrange_models(
     let sizes: Vec<(f64, f64)> = inner
         .models
         .iter()
+        .filter(|model| model.visible)
         .map(|model| {
             let (min, max) = footprint(&model.mesh, &model.transform);
             (max[0] - min[0], max[1] - min[1])
@@ -555,6 +561,48 @@ fn arrange_models(
     Ok(inner
         .models
         .iter()
+        .filter(|model| model.visible)
+        .map(|model| view_of(model.id, &model.name, &model.transform, &model.report))
+        .collect())
+}
+
+/// One part's place in the scene, as the undo stack remembers it.
+#[derive(serde::Deserialize)]
+struct ModelState {
+    id: u32,
+    transform: Transform,
+}
+
+/// Put the plate back the way it was: show these parts where they stood and
+/// hide everything else. Deleting only hides a part, so undo never has to
+/// re-read a file, and a part that was deleted and brought back keeps its
+/// geometry, its name and its import report.
+#[tauri::command]
+fn restore_models(
+    state: State<AppState>,
+    models: Vec<ModelState>,
+) -> Result<Vec<ModelView>, String> {
+    let mut inner = lock(&state)?;
+    let mut wanted: std::collections::HashMap<u32, Transform> =
+        std::collections::HashMap::with_capacity(models.len());
+    for model in &models {
+        wanted.insert(model.id, model.transform.clone());
+    }
+    for model in &mut inner.models {
+        match wanted.get(&model.id) {
+            Some(transform) => {
+                model.transform = transform.clone();
+                model.visible = true;
+            }
+            None => model.visible = false,
+        }
+    }
+    inner.support = None;
+    inner.support_model_id = None;
+    Ok(inner
+        .models
+        .iter()
+        .filter(|model| model.visible)
         .map(|model| view_of(model.id, &model.name, &model.transform, &model.report))
         .collect())
 }
@@ -562,7 +610,12 @@ fn arrange_models(
 #[tauri::command]
 fn remove_model(state: State<AppState>, id: u32) -> Result<(), String> {
     let mut inner = lock(&state)?;
-    inner.models.retain(|model| model.id != id);
+    let model = inner
+        .models
+        .iter_mut()
+        .find(|model| model.id == id)
+        .ok_or_else(|| "That model is no longer loaded".to_string())?;
+    model.visible = false;
     if inner.support_model_id == Some(id) {
         inner.support = None;
         inner.support_model_id = None;
@@ -790,7 +843,7 @@ async fn slice_model(
         if inner.slicing {
             return Err("A slice is already running".into());
         }
-        if inner.models.is_empty() {
+        if !inner.models.iter().any(|model| model.visible) {
             return Err("Import a model first".into());
         }
         // Wait for the catalogue, then drop the lock: the engine runs outside.
@@ -799,6 +852,7 @@ async fn slice_model(
         let placed: Vec<PlacedModel> = inner
             .models
             .iter()
+            .filter(|model| model.visible)
             .map(|model| PlacedModel {
                 name: model.name.clone(),
                 mesh: model.mesh.clone(),
@@ -930,6 +984,7 @@ fn loaded_models(state: State<AppState>) -> Result<Vec<ModelView>, String> {
     Ok(inner
         .models
         .iter()
+        .filter(|model| model.visible)
         .map(|model| view_of(model.id, &model.name, &model.transform, &model.report))
         .collect())
 }
@@ -1122,6 +1177,7 @@ fn preload_demo(
             transform,
             report,
             source_bytes: fs::read(std::path::Path::new(&path)).unwrap_or_default(),
+            visible: true,
         }],
         instructions,
         toolpath,
@@ -1229,6 +1285,7 @@ fn save_project(
     let models = inner
         .models
         .iter()
+        .filter(|model| model.visible)
         .map(|model| {
             if model.source_bytes.is_empty() {
                 return Err(format!(
@@ -1321,6 +1378,7 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
             transform,
             report: imported.report,
             source_bytes: bytes,
+            visible: true,
         });
         views.push(view);
     }
@@ -1465,6 +1523,7 @@ pub fn run() {
             update_transform,
             drop_model,
             arrange_models,
+            restore_models,
             remove_model,
             list_instructions,
             add_instruction,

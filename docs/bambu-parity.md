@@ -66,7 +66,7 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Slice and preview toolpaths | yes | yes | layer slider, G-code parsed back into paths |
 | Move / rotate / scale / mirror | yes | yes | typed and dragged |
 | Duplicate | yes | yes | `Ctrl+D` |
-| Undo / redo | yes | **no** | no history stack at all |
+| Undo / redo | yes | yes | Ctrl+Z / Ctrl+Shift+Z over a stack of plate snapshots; delete only hides a part, so undo never re-reads a file |
 | Auto-arrange | yes | yes | `Edit → Arrange on plate` (Ctrl+Shift+A): biggest footprint first, shelf by shelf, 4 mm apart |
 | Auto-orient | yes | **no** | parts keep the orientation they were loaded with |
 | Cut / split / boolean | yes | **no** | |

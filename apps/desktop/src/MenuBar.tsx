@@ -37,6 +37,10 @@ export interface MenuBarProps {
   onDuplicate: () => void;
   onDelete: () => void;
   onArrange: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
   modelCount: number;
   onDrop: () => void;
 
@@ -259,6 +263,15 @@ export function MenuBar(props: MenuBarProps) {
         </button>
         {open === "edit" && (
           <div className="menu-sheet" role="menu">
+            <button type="button" disabled={!props.canUndo} onClick={pick(props.onUndo)}>
+              <span>Undo</span>
+              <kbd>Ctrl Z</kbd>
+            </button>
+            <button type="button" disabled={!props.canRedo} onClick={pick(props.onRedo)}>
+              <span>Redo</span>
+              <kbd>Ctrl ⇧ Z</kbd>
+            </button>
+            <hr />
             <button type="button" disabled={!props.hasSelection} onClick={pick(props.onDuplicate)}>
               <span>Duplicate</span>
               <kbd>Ctrl D</kbd>

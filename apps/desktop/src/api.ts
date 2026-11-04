@@ -206,6 +206,8 @@ export const api = {
   dropModel: (id: number) => invoke<Transform>("drop_model", { id }),
   duplicateModel: (id: number) => invoke<ModelView>("duplicate_model", { id }),
   removeModel: (id: number) => invoke<void>("remove_model", { id }),
+  restoreModels: (models: { id: number; transform: Transform }[]) =>
+    invoke<ModelView[]>("restore_models", { models }),
   arrange: (printerId: string | null, variant: string | null, quality: string | null) =>
     invoke<ModelView[]>("arrange_models", {
       printerId,
