@@ -681,6 +681,18 @@ export function App() {
     }
   }
 
+  /** Stand the part on whichever face needs the least support. */
+  async function autoOrient() {
+    if (!selected) return;
+    try {
+      const transform = await api.autoOrient(selected.id);
+      remember();
+      setModels((current) => current.map((model) => (model.id === selected.id ? { ...model, transform } : model)));
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
   async function dropSelected() {
     if (!selected) return;
     try {
@@ -1600,6 +1612,9 @@ export function App() {
                 <div className="row">
                   <button type="button" onClick={() => void dropSelected()}>
                     Drop to plate
+                  </button>
+                  <button type="button" title="Stand the part on the face that needs least support" onClick={() => void autoOrient()}>
+                    Auto orient
                   </button>
                   <button type="button" onClick={() => void resetTransform()}>
                     Upright

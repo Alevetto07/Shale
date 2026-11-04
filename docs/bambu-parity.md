@@ -68,7 +68,7 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Duplicate | yes | yes | `Ctrl+D` |
 | Undo / redo | yes | yes | Ctrl+Z / Ctrl+Shift+Z over a stack of plate snapshots; delete only hides a part, so undo never re-reads a file |
 | Auto-arrange | yes | yes | `Edit → Arrange on plate` (Ctrl+Shift+A): biggest footprint first, shelf by shelf, 4 mm apart |
-| Auto-orient | yes | **no** | parts keep the orientation they were loaded with |
+| Auto-orient | yes | yes | *Auto orient* in the model frame tries all 64 quarter-turn combinations and keeps the one whose downward facing area is smallest, then the shortest, then the steadiest. It scores geometry rather than slicing, so it is instant — but it only considers face-down orientations, not the finer angles a search over the sphere would find |
 | Cut / split / boolean | yes | **no** | |
 | Per-object settings | yes | yes | Slice settings → *Applies to*: pick a part and the sheet writes that part's overrides; they ride beside its mesh to the engine and survive save/open |
 | Variable layer height | yes | yes | Quality → *Variable layer height*; the engine re-plans the whole plate (0.10–0.28 mm gaps on the A1) — it is not painted per object the way Bambu's height-range modifier is |

@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::mesh::TriangleMesh;
 
+/// Cura's `support_angle` default, in degrees from vertical.
+pub const DEFAULT_SUPPORT_ANGLE: f64 = 50.0;
+
 /// Cura's overhang angle is measured from the vertical. `0` supports every
 /// underside, `90` supports none. The default of 50 matches `support_angle`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -34,7 +37,7 @@ pub struct SupportParams {
 }
 
 fn default_angle() -> f64 {
-    50.0
+    DEFAULT_SUPPORT_ANGLE
 }
 fn default_bridge() -> f64 {
     20.0

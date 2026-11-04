@@ -19,6 +19,7 @@ mod material;
 pub mod exchange;
 pub mod layout;
 pub mod mesh;
+pub mod orient;
 pub mod project;
 pub mod removal;
 pub mod resolver;

@@ -13,7 +13,7 @@ This is the first MVP:
 
 The window has a menu bar: **File** (new, open, import, save, export), **Edit** (duplicate, drop to plate, arrange on plate, delete), **View** (solid, wireframe, ASCII, toolpaths, frame), **Printer** (machine, nozzle, process, filament), and **Slice settings** — ten tabs (quality, strength, support, build plate, speed, cooling, retraction, ironing, special modes, material) covering 76 engine settings; anything you leave alone comes from the profile. The sheet's **Applies to** menu points those settings at one part instead of the whole plate.
 
-The model frame has **mirror X / Y / Z**, **turn 90°**, and **Upright**. Turns and mirrors happen about the part's centre, and a mirror reverses the triangle winding as it bakes, because a negative scale otherwise turns the solid inside out and the engine drops its walls. The scoreboard against Bambu Studio, including what is still missing, is [docs/bambu-parity.md](docs/bambu-parity.md). New, open, import, save, export, duplicate, arrange, undo and redo are on
+The model frame has **mirror X / Y / Z**, **turn 90°**, **Auto orient**, and **Upright**. Turns and mirrors happen about the part's centre, and a mirror reverses the triangle winding as it bakes, because a negative scale otherwise turns the solid inside out and the engine drops its walls. The scoreboard against Bambu Studio, including what is still missing, is [docs/bambu-parity.md](docs/bambu-parity.md). New, open, import, save, export, duplicate, arrange, undo and redo are on
 Ctrl+N / O / I / S / E / D / Shift+A / Z / Shift+Z; the rest of the bar is a menu away. Each menu edits the same job the side panel does.
 
 Two more pieces sit on the same core:

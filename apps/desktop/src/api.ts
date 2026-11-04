@@ -207,6 +207,7 @@ export const api = {
       angularDeg,
     }),
   updateTransform: (id: number, transform: Transform) => invoke<void>("update_transform", { id, transform }),
+  autoOrient: (id: number) => invoke<Transform>("auto_orient", { id }),
   dropModel: (id: number) => invoke<Transform>("drop_model", { id }),
   duplicateModel: (id: number) => invoke<ModelView>("duplicate_model", { id }),
   setModelSettings: (id: number, settings: Record<string, string>) =>

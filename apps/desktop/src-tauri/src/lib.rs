@@ -471,6 +471,29 @@ fn update_transform(state: State<AppState>, id: u32, transform: Transform) -> Re
     Ok(())
 }
 
+/// Stand the part on whichever face needs the least support, in the place it
+/// already occupies. The scoring lives in `shale_core::orient`; this only moves
+/// the result onto the model and clears the stale slice.
+#[tauri::command]
+fn auto_orient(state: State<AppState>, id: u32) -> Result<Transform, String> {
+    let mut inner = lock(&state)?;
+    // Cura's `support_angle` default: a face steeper than this from vertical
+    // is what the slicer would hold up, so it is what the search scores.
+    let angle = shale_core::supports::DEFAULT_SUPPORT_ANGLE;
+    {
+        let model = inner
+            .models
+            .iter_mut()
+            .find(|model| model.id == id)
+            .ok_or_else(|| "That model is no longer loaded".to_string())?;
+        model.transform = shale_core::orient::orient(&model.mesh, &model.transform, angle);
+        let transform = model.transform.clone();
+        inner.support = None;
+        inner.support_model_id = None;
+        return Ok(transform);
+    }
+}
+
 #[tauri::command]
 fn drop_model(state: State<AppState>, id: u32) -> Result<Transform, String> {
     let mut inner = lock(&state)?;
@@ -1669,6 +1692,7 @@ pub fn run() {
             model_geometry,
             duplicate_model,
             update_transform,
+            auto_orient,
             drop_model,
             arrange_models,
             restore_models,
