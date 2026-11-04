@@ -255,6 +255,8 @@ export const api = {
     invoke<StoredInstruction>("add_instruction", { instruction }),
   removeInstruction: (id: number) => invoke<StoredInstruction[]>("remove_instruction", { id }),
   previewUntil: (layer: number) => invoke<PreviewPath[]>("preview_until", { layer }),
+  exportPlate: (destination: string, format: "stl" | "3mf") =>
+    invoke<number>("export_plate", { destination, format }),
   exportGcode: (destination: string) => invoke<string>("export_gcode", { destination }),
   loadedModels: () => invoke<ModelView[]>("loaded_models"),
   existingSlice: () => invoke<SliceSummary | null>("existing_slice"),

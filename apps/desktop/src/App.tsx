@@ -708,6 +708,26 @@ export function App() {
     }
   }
 
+  async function exportGeometry(format: "stl" | "3mf") {
+    setError(null);
+    setNotice(null);
+    const destination = await save({
+      defaultPath: `shale-plate.${format}`,
+      filters: [
+        format === "stl"
+          ? { name: "STL mesh", extensions: ["stl"] }
+          : { name: "3MF model", extensions: ["3mf"] },
+      ],
+    });
+    if (typeof destination !== "string") return;
+    try {
+      const triangles = await api.exportPlate(destination, format);
+      setNotice(`Wrote ${triangles.toLocaleString("en-US")} triangles to ${destination}`);
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
   async function addInstruction() {
     setError(null);
     const text = note.trim();
@@ -1071,6 +1091,7 @@ export function App() {
           onSave={() => void saveProject(false)}
           onSaveAs={() => void saveProject(true)}
           onExport={() => void exportGcode()}
+          onExportGeometry={(format) => void exportGeometry(format)}
           onQuit={() => void quit()}
           onDuplicate={() => void duplicateSelected()}
           onDelete={() => void removeSelected()}

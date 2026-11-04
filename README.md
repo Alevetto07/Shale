@@ -9,7 +9,7 @@ This is the first MVP:
 1. Import an STL, a STEP part, or a 3MF package — including the multi-part packages Bambu Studio and Orca write — and show it on the build plate. Move, rotate, scale, and drop it onto the plate.
 2. Pick a printer from Cura's definitions or from an installed Bambu Studio profile library, then set the machine, nozzle, process, and filament from the menu bar.
 3. Slice with CuraEngine, follow progress, then scrub a layer-by-layer toolpath preview.
-4. Export the G-code.
+4. Export the G-code — or the plate itself, as STL or 3MF.
 
 The window has a menu bar: **File** (new, open, import, save, export), **Edit** (duplicate, drop to plate, arrange on plate, delete), **View** (solid, wireframe, ASCII, toolpaths, frame), **Printer** (machine, nozzle, process, filament), and **Slice settings** — ten tabs (quality, strength, support, build plate, speed, cooling, retraction, ironing, special modes, material) covering 72 engine settings; anything you leave alone comes from the profile. The scoreboard against Bambu Studio, including what is still missing, is [docs/bambu-parity.md](docs/bambu-parity.md). New, open, import, save, export, duplicate, arrange, undo and redo are on
 Ctrl+N / O / I / S / E / D / Shift+A / Z / Shift+Z; the rest of the bar is a menu away. Each menu edits the same job the side panel does.

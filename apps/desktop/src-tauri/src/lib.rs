@@ -1014,6 +1014,50 @@ fn existing_slice(state: State<AppState>) -> Result<Option<SliceSummary>, String
     }))
 }
 
+/// Write the plate out as geometry rather than G-code. STL merges the visible
+/// parts into one blob, the way every slicer exports a plate; 3MF keeps them as
+/// separate named objects. Both bake the model transforms, so the file holds the
+/// plate as it looks.
+#[tauri::command]
+fn export_plate(
+    state: State<AppState>,
+    destination: String,
+    format: String,
+) -> Result<usize, String> {
+    let inner = lock(&state)?;
+    let visible: Vec<(&str, TriangleMesh)> = inner
+        .models
+        .iter()
+        .filter(|model| model.visible)
+        .map(|model| (model.name.as_str(), shale_core::mesh::bake(&model.mesh, &model.transform)))
+        .collect();
+    if visible.is_empty() {
+        return Err("Nothing on the plate to export".into());
+    }
+    let triangles: usize = visible.iter().map(|(_, mesh)| mesh.triangles.len()).sum();
+    if let Some(parent) = PathBuf::from(&destination).parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    match format.as_str() {
+        "stl" => {
+            let meshes: Vec<TriangleMesh> = visible.into_iter().map(|(_, mesh)| mesh).collect();
+            let merged = shale_core::exchange::merge(&meshes);
+            fs::write(&destination, shale_core::exchange::to_stl(&merged))
+                .map_err(|err| err.to_string())?;
+        }
+        "3mf" => {
+            let parts: Vec<(&str, &TriangleMesh)> = visible
+                .iter()
+                .map(|(name, mesh)| (*name, mesh))
+                .collect();
+            let bytes = shale_core::exchange::to_3mf(&parts)?;
+            fs::write(&destination, bytes).map_err(|err| err.to_string())?;
+        }
+        other => return Err(format!("Unknown export format {other}")),
+    }
+    Ok(triangles)
+}
+
 #[tauri::command]
 fn export_gcode(state: State<AppState>, destination: String) -> Result<String, String> {
     let inner = lock(&state)?;
@@ -1538,6 +1582,7 @@ pub fn run() {
             loaded_models,
             existing_slice,
             export_gcode,
+            export_plate,
             save_project,
             open_project,
             clear_job,

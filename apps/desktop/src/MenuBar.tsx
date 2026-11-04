@@ -32,6 +32,7 @@ export interface MenuBarProps {
   onSave: () => void;
   onSaveAs: () => void;
   onExport: () => void;
+  onExportGeometry: (format: "stl" | "3mf") => void;
   onQuit: () => void;
 
   onDuplicate: () => void;
@@ -236,6 +237,13 @@ export function MenuBar(props: MenuBarProps) {
             <button type="button" onClick={pick(props.onSaveAs)}>
               <span>Save as…</span>
               <kbd>Ctrl ⇧ S</kbd>
+            </button>
+            <hr />
+            <button type="button" disabled={!props.modelCount} onClick={() => pick(() => props.onExportGeometry("stl"))}>
+              <span>Export plate as STL…</span>
+            </button>
+            <button type="button" disabled={!props.modelCount} onClick={() => pick(() => props.onExportGeometry("3mf"))}>
+              <span>Export plate as 3MF…</span>
             </button>
             <hr />
             <button type="button" disabled={!props.sliced} onClick={pick(props.onExport)}>

@@ -16,6 +16,7 @@ mod instance;
 pub mod instructions;
 pub mod job;
 mod material;
+pub mod exchange;
 pub mod layout;
 pub mod mesh;
 pub mod project;
@@ -35,8 +36,8 @@ pub use gcode::Toolpath;
 pub use instructions::{CustomInstruction, GcodeFlavour};
 pub use job::{compare_support, slice, PlacedModel, SliceOutcome};
 pub use mesh::{
-    apply_transform, drop_to_bed, load_mesh, load_mesh_reporting, load_mesh_with, load_named_bytes,
-    place_on_bed, Transform, TriangleMesh,
+    apply_transform, bake, drop_to_bed, load_mesh, load_mesh_reporting, load_mesh_with,
+    load_named_bytes, place_on_bed, Transform, TriangleMesh,
 };
 pub use project::{
     forget_recent, load_recents, now_ms, read_project, remember_recent, LoadedProject, ProjectData,

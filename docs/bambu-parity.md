@@ -79,7 +79,8 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Calibration utilities | yes | **no** | |
 | Timelapse | yes | **no** | |
 | Project save | 3MF | `.shale` zip | round-trips models and settings |
-| 3MF / STL export | yes | **no** | only G-code comes out |
+| STL export | yes | yes | `File → Export plate as STL…` merges the visible parts, world transforms baked |
+| 3MF export | yes | yes | `File → Export plate as 3MF…` keeps one named object per part |
 | Measuring tool | yes | **no** | |
 | G-code flavour | Bambu/Marlin | Marlin | see the caveat in README |
 
