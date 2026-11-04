@@ -32,7 +32,7 @@ pub struct EngineMesh {
 pub struct EngineRequest {
     pub global: BTreeMap<String, String>,
     pub extruders: Vec<BTreeMap<String, String>>,
-    pub models: Vec<PathBuf>,
+    pub models: Vec<EngineMesh>,
     pub modifiers: Vec<EngineMesh>,
     pub output_gcode: PathBuf,
     /// Used by the CLI backend to turn `;LAYER:` lines in the output file

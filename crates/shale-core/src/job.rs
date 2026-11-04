@@ -21,6 +21,9 @@ pub struct PlacedModel {
     pub name: String,
     pub mesh: TriangleMesh,
     pub transform: Transform,
+    /// Per-part overrides. The engine reads these per object, so one part can
+    /// print with six walls while its neighbour keeps two.
+    pub settings: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -82,7 +85,10 @@ pub fn slice(
         );
         let path = model_dir.join(format!("model-{index}.stl"));
         mesh::write_binary_stl(&path, &baked)?;
-        baked_paths.push(path);
+        baked_paths.push(EngineMesh {
+            path,
+            settings: model.settings.clone(),
+        });
     }
 
     let mut modifiers = Vec::new();

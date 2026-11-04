@@ -71,6 +71,10 @@ export interface MenuBarProps {
   /** Cura settings the user has changed; anything absent comes from the profile. */
   overrides: Record<string, string>;
   onOverride: (key: string, value: string) => void;
+  /// Which part the settings sheet writes to: "all" for the plate, or a part id.
+  scope: string;
+  parts: { id: number; name: string }[];
+  onScope: (scope: string) => void;
   onResetOverrides: () => void;
   onSlice: () => void;
 }
@@ -450,6 +454,26 @@ export function MenuBar(props: MenuBarProps) {
         </button>
         {open === "settings" && (
           <div className="menu-sheet wide settings-sheet" role="menu">
+            <div className="settings-scope">
+              <span>Applies to</span>
+              <select
+                value={props.scope}
+                onChange={(event) => props.onScope(event.currentTarget.value)}
+              >
+                <option value="all">Every part</option>
+                {props.parts.map((part) => (
+                  <option key={part.id} value={String(part.id)}>
+                    {part.name}
+                  </option>
+                ))}
+              </select>
+              {props.scope !== "all" && (
+                <span className="settings-scope-note">
+                  {Object.keys(props.overrides).length} override
+                  {Object.keys(props.overrides).length === 1 ? "" : "s"} for this part
+                </span>
+              )}
+            </div>
             <div className="settings-tabs">
               {SETTING_GROUPS.map((entry) => (
                 <button

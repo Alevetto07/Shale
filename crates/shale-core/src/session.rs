@@ -73,6 +73,7 @@ struct Loaded {
     name: String,
     mesh: TriangleMesh,
     transform: Transform,
+    settings: Vec<(String, String)>,
 }
 
 impl Session {
@@ -176,6 +177,7 @@ impl Session {
             name,
             mesh,
             transform,
+            settings: Vec::new(),
         });
         Ok(record)
     }
@@ -393,6 +395,7 @@ impl Session {
                 name: model.name.clone(),
                 mesh: model.mesh.clone(),
                 transform: model.transform.clone(),
+                settings: model.settings.clone(),
             })
             .collect();
         let instructions: Vec<CustomInstruction> = self

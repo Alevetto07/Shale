@@ -64,6 +64,8 @@ export interface ModelView {
   max_turning_deg: number | null;
   import_ms: number;
   source: string;
+  /// Per-part overrides; empty means the part follows the plate settings.
+  settings: Record<string, string>;
 }
 
 export interface Bed {
@@ -205,6 +207,8 @@ export const api = {
   updateTransform: (id: number, transform: Transform) => invoke<void>("update_transform", { id, transform }),
   dropModel: (id: number) => invoke<Transform>("drop_model", { id }),
   duplicateModel: (id: number) => invoke<ModelView>("duplicate_model", { id }),
+  setModelSettings: (id: number, settings: Record<string, string>) =>
+    invoke<ModelView>("set_model_settings", { id, settings }),
   removeModel: (id: number) => invoke<void>("remove_model", { id }),
   restoreModels: (models: { id: number; transform: Transform }[]) =>
     invoke<ModelView[]>("restore_models", { models }),

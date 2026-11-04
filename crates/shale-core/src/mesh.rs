@@ -175,6 +175,13 @@ pub fn load_named_bytes(
         .and_then(|ext| ext.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+    // A named part can lose its extension on the way through a project archive
+    // or a duplicate. The bytes still say what they are, so trust them when the
+    // name is unhelpful.
+    let extension = match extension.as_str() {
+        "3mf" | "step" | "stp" | "stl" => extension,
+        _ => sniff_format(bytes).to_string(),
+    };
     let mut imported = match extension.as_str() {
         "3mf" => {
             progress(0.2, "reading 3MF");
@@ -197,6 +204,19 @@ pub fn load_named_bytes(
     }
     progress(1.0, "import finished");
     Ok(imported)
+}
+
+/// Guess a mesh format from the first bytes: zips are 3MF, STEP starts with a
+/// readable header, and everything else is treated as STL.
+fn sniff_format(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"PK\x05\x06") {
+        return "3mf";
+    }
+    let head = &bytes[..bytes.len().min(32)];
+    if head.starts_with(b"ISO-10303") {
+        return "step";
+    }
+    "stl"
 }
 
 fn load_stl_path(
@@ -942,6 +962,26 @@ mod tests {
     use super::*;
     use std::io::Write;
     use zip::write::SimpleFileOptions;
+
+    #[test]
+    fn a_three_mf_imports_even_when_its_name_has_no_extension() {
+        let mesh = TriangleMesh {
+            vertices: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0]],
+            triangles: vec![[0, 1, 2]],
+        };
+        let bytes = crate::exchange::to_3mf(&[("part", &mesh)]).unwrap();
+        let tolerance = crate::cad::TessellationTolerance::standard();
+        let imported = load_named_bytes(
+            "Arm.3mf copy",
+            &bytes,
+            &tolerance,
+            &mut |_, _| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(imported.mesh.triangles.len(), 1);
+        assert_eq!(imported.report.source, "3mf");
+    }
 
     #[test]
     fn reads_components_that_live_in_separate_parts() {

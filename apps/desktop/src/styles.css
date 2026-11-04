@@ -766,6 +766,25 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   padding: 0.75rem;
 }
 
+.settings-scope {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.settings-scope select {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-scope-note {
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
 .settings-tabs {
   display: flex;
   flex-direction: column;

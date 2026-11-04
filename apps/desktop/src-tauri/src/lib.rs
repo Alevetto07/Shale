@@ -49,6 +49,9 @@ struct LoadedModel {
     /// Deleted from the plate, but kept so that undo can bring it back without
     /// re-reading the file. Hidden models are never sliced, saved or exported.
     visible: bool,
+    /// Per-part overrides, sent to the engine beside that part's mesh. Empty
+    /// means the part follows the global settings.
+    settings: std::collections::BTreeMap<String, String>,
 }
 
 struct AppState(Mutex<Inner>);
@@ -77,6 +80,7 @@ struct ModelView {
     max_turning_deg: Option<f64>,
     import_ms: u64,
     source: String,
+    settings: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -384,7 +388,8 @@ async fn import_model(
         .and_then(|name| name.to_str())
         .unwrap_or("model")
         .to_string();
-    let view = view_of(id, &name, &transform, &report);
+    let settings = std::collections::BTreeMap::new();
+    let view = view_of(id, &name, &transform, &report, &settings);
     inner.models.push(LoadedModel {
         id,
         name,
@@ -393,6 +398,7 @@ async fn import_model(
         report,
         source_bytes,
         visible: true,
+        settings: std::collections::BTreeMap::new(),
     });
     Ok(view)
 }
@@ -439,7 +445,13 @@ fn duplicate_model(state: State<AppState>, id: u32) -> Result<ModelView, String>
     transform.translation[0] += 20.0;
     transform.translation[2] = tall;
     let name = format!("{} copy", inner.models[index].name);
-    let view = view_of(new_id, &name, &transform, &inner.models[index].report);
+    let view = view_of(
+        new_id,
+        &name,
+        &transform,
+        &inner.models[index].report,
+        &inner.models[index].settings,
+    );
     let model = LoadedModel {
         id: new_id,
         name,
@@ -448,6 +460,7 @@ fn duplicate_model(state: State<AppState>, id: u32) -> Result<ModelView, String>
         report: inner.models[index].report.clone(),
         source_bytes: inner.models[index].source_bytes.clone(),
         visible: true,
+        settings: inner.models[index].settings.clone(),
     };
     inner.models.push(model);
     Ok(view)
@@ -562,7 +575,15 @@ fn arrange_models(
         .models
         .iter()
         .filter(|model| model.visible)
-        .map(|model| view_of(model.id, &model.name, &model.transform, &model.report))
+        .map(|model| {
+            view_of(
+                model.id,
+                &model.name,
+                &model.transform,
+                &model.report,
+                &model.settings,
+            )
+        })
         .collect())
 }
 
@@ -603,7 +624,15 @@ fn restore_models(
         .models
         .iter()
         .filter(|model| model.visible)
-        .map(|model| view_of(model.id, &model.name, &model.transform, &model.report))
+        .map(|model| {
+            view_of(
+                model.id,
+                &model.name,
+                &model.transform,
+                &model.report,
+                &model.settings,
+            )
+        })
         .collect())
 }
 
@@ -803,6 +832,11 @@ fn compare_supports(
             name: model.name.clone(),
             mesh: model.mesh.clone(),
             transform: model.transform.clone(),
+            settings: model
+                .settings
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
         })
         .collect();
     let comparison = {
@@ -857,6 +891,11 @@ async fn slice_model(
                 name: model.name.clone(),
                 mesh: model.mesh.clone(),
                 transform: model.transform.clone(),
+                settings: model
+                    .settings
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect(),
             })
             .collect();
         let output = std::env::temp_dir().join("shale").join("slice.gcode");
@@ -985,7 +1024,15 @@ fn loaded_models(state: State<AppState>) -> Result<Vec<ModelView>, String> {
         .models
         .iter()
         .filter(|model| model.visible)
-        .map(|model| view_of(model.id, &model.name, &model.transform, &model.report))
+        .map(|model| {
+            view_of(
+                model.id,
+                &model.name,
+                &model.transform,
+                &model.report,
+                &model.settings,
+            )
+        })
         .collect())
 }
 
@@ -1018,6 +1065,37 @@ fn existing_slice(state: State<AppState>) -> Result<Option<SliceSummary>, String
 /// parts into one blob, the way every slicer exports a plate; 3MF keeps them as
 /// separate named objects. Both bake the model transforms, so the file holds the
 /// plate as it looks.
+/// Replace one part's overrides. The engine receives them beside that part's
+/// mesh, so a single plate can carry different walls, infill or speed per part.
+#[tauri::command]
+fn set_model_settings(
+    state: State<AppState>,
+    id: u32,
+    settings: std::collections::BTreeMap<String, String>,
+) -> Result<ModelView, String> {
+    let mut inner = lock(&state)?;
+    let index = inner
+        .models
+        .iter()
+        .position(|model| model.id == id)
+        .ok_or_else(|| format!("no part {id}"))?;
+    inner.models[index].settings = settings
+        .into_iter()
+        .filter(|(key, value)| !key.trim().is_empty() && !value.trim().is_empty())
+        .collect();
+    // The plate changed, so any existing G-code is stale.
+    inner.toolpath = None;
+    inner.gcode_path = None;
+    let model = &inner.models[index];
+    Ok(view_of(
+        model.id,
+        &model.name,
+        &model.transform,
+        &model.report,
+        &model.settings,
+    ))
+}
+
 #[tauri::command]
 fn export_plate(
     state: State<AppState>,
@@ -1096,6 +1174,7 @@ fn view_of(
     name: &str,
     transform: &Transform,
     report: &ImportReport,
+    settings: &std::collections::BTreeMap<String, String>,
 ) -> ModelView {
     ModelView {
         id,
@@ -1107,6 +1186,7 @@ fn view_of(
         max_turning_deg: report.max_turning_deg,
         import_ms: report.milliseconds,
         source: report.source.clone(),
+        settings: settings.clone(),
     }
 }
 
@@ -1203,6 +1283,7 @@ fn preload_demo(
                 name: name.clone(),
                 mesh: mesh.clone(),
                 transform: transform.clone(),
+                settings: Vec::new(),
             }],
             &[pause],
             None,
@@ -1222,6 +1303,7 @@ fn preload_demo(
             report,
             source_bytes: fs::read(std::path::Path::new(&path)).unwrap_or_default(),
             visible: true,
+            settings: std::collections::BTreeMap::new(),
         }],
         instructions,
         toolpath,
@@ -1341,6 +1423,7 @@ fn save_project(
                 name: model.name.clone(),
                 bytes: model.source_bytes.clone(),
                 transform: model.transform.clone(),
+                settings: model.settings.clone(),
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -1394,6 +1477,7 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
                 model.bytes.clone(),
                 model.transform.clone(),
                 imported,
+                model.settings.clone(),
             ));
         }
         Ok::<_, String>((project, built))
@@ -1411,10 +1495,10 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
     inner.next_id = 1;
     inner.next_instruction = 1;
     let mut views = Vec::new();
-    for (name, bytes, transform, imported) in built {
+    for (name, bytes, transform, imported, settings) in built {
         let id = inner.next_id;
         inner.next_id += 1;
-        let view = view_of(id, &name, &transform, &imported.report);
+        let view = view_of(id, &name, &transform, &imported.report, &settings);
         inner.models.push(LoadedModel {
             id,
             name,
@@ -1423,6 +1507,7 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
             report: imported.report,
             source_bytes: bytes,
             visible: true,
+            settings,
         });
         views.push(view);
     }
@@ -1583,6 +1668,7 @@ pub fn run() {
             existing_slice,
             export_gcode,
             export_plate,
+            set_model_settings,
             save_project,
             open_project,
             clear_job,

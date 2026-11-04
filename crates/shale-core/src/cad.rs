@@ -630,6 +630,7 @@ mod tests {
                 name: "cylinder".into(),
                 mesh: imported.mesh,
                 transform,
+                settings: Vec::new(),
             }],
             &[],
             None,

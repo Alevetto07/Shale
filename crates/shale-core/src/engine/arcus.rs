@@ -218,8 +218,8 @@ impl SlicingEngine for ArcusEngine {
 
 fn objects_from_request(request: &EngineRequest) -> Result<Vec<ObjectMesh>, Error> {
     let mut objects = Vec::new();
-    for path in &request.models {
-        objects.push(mesh_from_path(path, Vec::new())?);
+    for model in &request.models {
+        objects.push(mesh_from_path(&model.path, model.settings.clone())?);
     }
     for modifier in &request.modifiers {
         objects.push(mesh_from_path(&modifier.path, modifier.settings.clone())?);

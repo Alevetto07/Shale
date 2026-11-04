@@ -1093,6 +1093,7 @@ mod tests {
             name: "bridge".into(),
             mesh,
             transform: crate::Transform::default(),
+            settings: Vec::new(),
         }];
         let comparison = crate::compare_support(
             &catalog,

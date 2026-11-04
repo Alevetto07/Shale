@@ -80,6 +80,8 @@ export function App() {
   const [nozzle, setNozzle] = useState(200);
   const [bedTemp, setBedTemp] = useState(60);
   const [models, setModels] = useState<ModelView[]>([]);
+  /// Which part the settings sheet writes to: "all" for the plate, or a part id.
+  const [scope, setScope] = useState<string>("all");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [mode, setMode] = useState<TransformMode>("translate");
   const [viewStyle, setViewStyle] = useState<ViewStyle>("solid");
@@ -708,6 +710,57 @@ export function App() {
     }
   }
 
+  const scopedPart =
+    scope === "all" ? null : models.find((model) => model.id === Number(scope)) ?? null;
+
+  async function setScopedOverride(key: string, value: string) {
+    if (!scopedPart) {
+      setOverrides((prev) => {
+        const next = { ...prev };
+        if (value === "") delete next[key];
+        else next[key] = value;
+        return next;
+      });
+      return;
+    }
+    const next = { ...scopedPart.settings };
+    if (value === "") delete next[key];
+    else next[key] = value;
+    setModels((current) =>
+      current.map((model) => (model.id === scopedPart.id ? { ...model, settings: next } : model)),
+    );
+    try {
+      const updated = await api.setModelSettings(scopedPart.id, next);
+      setModels((current) => current.map((model) => (model.id === updated.id ? updated : model)));
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  async function resetScopedOverrides() {
+    if (!scopedPart) {
+      setOverrides({});
+      return;
+    }
+    setModels((current) =>
+      current.map((model) => (model.id === scopedPart.id ? { ...model, settings: {} } : model)),
+    );
+    try {
+      const updated = await api.setModelSettings(scopedPart.id, {});
+      setModels((current) => current.map((model) => (model.id === updated.id ? updated : model)));
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  // A part that gets deleted while its settings are on screen hands the sheet
+  // back to the whole plate.
+  useEffect(() => {
+    if (scope !== "all" && !models.some((model) => model.id === Number(scope))) {
+      setScope("all");
+    }
+  }, [models, scope]);
+
   async function exportGeometry(format: "stl" | "3mf") {
     setError(null);
     setNotice(null);
@@ -1123,16 +1176,12 @@ export function App() {
           onMaterial={setMaterial}
           settings={sliceSettings}
           onSettings={applySliceSettings}
-          overrides={overrides}
-          onOverride={(key, value) =>
-            setOverrides((prev) => {
-              const next = { ...prev };
-              if (value === "") delete next[key];
-              else next[key] = value;
-              return next;
-            })
-          }
-          onResetOverrides={() => setOverrides({})}
+          overrides={scope === "all" ? overrides : (models.find((m) => m.id === Number(scope))?.settings ?? {})}
+          onOverride={(key, value) => void setScopedOverride(key, value)}
+          onResetOverrides={() => void resetScopedOverrides()}
+          scope={scope}
+          parts={models.map((model) => ({ id: model.id, name: model.name }))}
+          onScope={setScope}
           onSlice={() => void slice()}
         />
       </header>

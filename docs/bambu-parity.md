@@ -70,7 +70,7 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Auto-arrange | yes | yes | `Edit → Arrange on plate` (Ctrl+Shift+A): biggest footprint first, shelf by shelf, 4 mm apart |
 | Auto-orient | yes | **no** | parts keep the orientation they were loaded with |
 | Cut / split / boolean | yes | **no** | |
-| Per-object settings | yes | **no** | one settings set for the plate |
+| Per-object settings | yes | yes | Slice settings → *Applies to*: pick a part and the sheet writes that part's overrides; they ride beside its mesh to the engine and survive save/open |
 | Variable layer height | yes | **no** | adaptive layers exist as one engine setting, not per object |
 | Support painting / seam painting | yes | **no** | needs a triangle-level brush, a large subsystem |
 | AMS / multi-material | yes | **no** | single extruder path end to end |

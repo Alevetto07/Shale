@@ -28,6 +28,9 @@ pub struct ProjectModel {
     pub name: String,
     pub bytes: Vec<u8>,
     pub transform: Transform,
+    /// Per-part overrides, kept so a saved plate slices the same way twice.
+    #[serde(default)]
+    pub settings: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -88,6 +91,8 @@ struct DocumentModel {
     file: String,
     name: String,
     transform: Transform,
+    #[serde(default)]
+    settings: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -133,6 +138,7 @@ pub fn write_project(path: &Path, data: &ProjectData) -> Result<(), Error> {
             file,
             name: model.name.clone(),
             transform: model.transform.clone(),
+            settings: model.settings.clone(),
         });
     }
     if let Some(index) = data.support_model {
@@ -238,6 +244,7 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
             name: entry.name.clone(),
             bytes,
             transform: entry.transform.clone(),
+            settings: entry.settings.clone(),
         });
     }
     let thumbnail = match read_zip(&mut zip, "thumbnail.jpg") {
@@ -470,11 +477,13 @@ mod tests {
                         rotation_deg: [0.0, 90.0, 0.0],
                         scale: [1.0, 1.0, 2.0],
                     },
+                    settings: Default::default(),
                 },
                 ProjectModel {
                     name: "block-20.step".into(),
                     bytes: step.clone(),
                     transform: Transform::default(),
+                    settings: Default::default(),
                 },
             ],
             instructions: vec![CustomInstruction::Beep { layer: 4 }],

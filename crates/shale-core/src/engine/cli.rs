@@ -160,8 +160,13 @@ impl SlicingEngine for CliEngine {
             .arg(&request.output_gcode)
             .arg("-r")
             .arg(&resolved_path);
+        // `-s` applies to the object just loaded, so per-part overrides go
+        // after each `-l`, exactly like the support modifiers below.
         for model in &request.models {
-            command.arg("-l").arg(model);
+            command.arg("-l").arg(&model.path);
+            for (key, value) in &model.settings {
+                command.arg("-s").arg(format!("{key}={value}"));
+            }
         }
         // `-s` applies to the object just loaded. Support enforcers and
         // blockers are extra meshes, not a second slicer.

@@ -359,6 +359,7 @@ endsolid cube
             name: "cube".into(),
             mesh,
             transform: shale_core::Transform::default(),
+            settings: Vec::new(),
         }],
         &[shale_core::CustomInstruction::Pause {
             layer: Some(10),
@@ -443,6 +444,7 @@ fn arcus_slices_the_cube_when_configured() {
             name: "cube".into(),
             mesh,
             transform: shale_core::Transform::default(),
+            settings: Vec::new(),
         }],
         &[],
         None,
