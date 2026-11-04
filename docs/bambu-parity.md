@@ -13,7 +13,7 @@ numbers move when the schema does.
 ## Slicing settings
 
 Bambu Studio's BBL process profiles carry **188 distinct setting keys**. Shale's
-settings menu exposes **72 fields**, of which **63** stand in for a Bambu key by
+settings menu exposes **76 fields**, of which **63** stand in for a Bambu key by
 name. The rest are Cura settings with no Bambu equivalent (wall widths, combing,
 ironing inset) that the engine needs to be told anything at all.
 
@@ -62,7 +62,7 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Printer library | yes | yes | 655 machines: Cura's 642 plus 13 Bambu, with real beds |
 | Filament library | yes | yes | Bambu's per-machine compatible filaments, plus Cura materials |
 | Process/quality picker | yes | yes | per-printer processes |
-| Menu-bar slicing settings | yes | yes | File / Edit / View / Printer / Slice settings, 72 fields |
+| Menu-bar slicing settings | yes | yes | File / Edit / View / Printer / Slice settings, 76 fields |
 | Slice and preview toolpaths | yes | yes | layer slider, G-code parsed back into paths |
 | Move / rotate / scale / mirror | yes | yes | typed and dragged |
 | Duplicate | yes | yes | `Ctrl+D` |
@@ -71,7 +71,7 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Auto-orient | yes | **no** | parts keep the orientation they were loaded with |
 | Cut / split / boolean | yes | **no** | |
 | Per-object settings | yes | yes | Slice settings → *Applies to*: pick a part and the sheet writes that part's overrides; they ride beside its mesh to the engine and survive save/open |
-| Variable layer height | yes | **no** | adaptive layers exist as one engine setting, not per object |
+| Variable layer height | yes | yes | Quality → *Variable layer height*; the engine re-plans the whole plate (0.10–0.28 mm gaps on the A1) — it is not painted per object the way Bambu's height-range modifier is |
 | Support painting / seam painting | yes | **no** | needs a triangle-level brush, a large subsystem |
 | AMS / multi-material | yes | **no** | single extruder path end to end |
 | Send to printer / network | yes | **no** | deliberate: Shale does not talk to a printer |

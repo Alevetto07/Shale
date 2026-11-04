@@ -168,7 +168,7 @@ export function MenuBar(props: MenuBarProps) {
             <input
               type="checkbox"
               checked={on}
-              onChange={(event) => send(event.target.checked ? "True" : "")}
+              onChange={(event) => send(event.target.checked ? "True" : "False")}
             />
             <em>{value === "" ? "profile" : on ? "on" : "off"}</em>
           </label>

@@ -42,6 +42,10 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: "infill_line_width", label: "Sparse infill width", kind: "number", bambu: "sparse_infill_line_width", min: 0.1, max: 2, step: 0.01, unit: "mm" },
       { key: "skin_line_width", label: "Skin width", kind: "number", bambu: "internal_solid_infill_line_width", min: 0.1, max: 2, step: 0.01, unit: "mm" },
       { key: "support_line_width", label: "Support width", kind: "number", bambu: "support_line_width", min: 0.1, max: 2, step: 0.01, unit: "mm" },
+      { key: "adaptive_layer_height_enabled", label: "Variable layer height", kind: "toggle", bambu: "adaptive_layer_height" },
+      { key: "adaptive_layer_height_variation", label: "Layer variation", kind: "number", bambu: "", min: 0, max: 1, step: 0.01, unit: "mm" },
+      { key: "adaptive_layer_height_variation_step", label: "Variation step", kind: "number", bambu: "", min: 0, max: 0.2, step: 0.005, unit: "mm" },
+      { key: "adaptive_layer_height_threshold", label: "Topography size", kind: "number", bambu: "", min: 0.01, max: 2, step: 0.01, unit: "mm" },
     ],
   },
   {
