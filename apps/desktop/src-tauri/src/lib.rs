@@ -476,6 +476,89 @@ fn drop_model(state: State<AppState>, id: u32) -> Result<Transform, String> {
     Ok(model.transform.clone())
 }
 
+/// The footprint a model covers on the plate, in world millimetres.
+fn footprint(mesh: &TriangleMesh, transform: &Transform) -> ([f64; 2], [f64; 2]) {
+    let mut min = [f64::INFINITY; 2];
+    let mut max = [f64::NEG_INFINITY; 2];
+    for vertex in &mesh.vertices {
+        let point = shale_core::apply_transform(
+            [vertex[0] as f64, vertex[1] as f64, vertex[2] as f64],
+            transform,
+        );
+        min[0] = min[0].min(point[0]);
+        min[1] = min[1].min(point[1]);
+        max[0] = max[0].max(point[0]);
+        max[1] = max[1].max(point[1]);
+    }
+    (min, max)
+}
+
+/// Lay the models out on the plate: biggest footprint first, a shelf at a time,
+/// a few millimetres apart. This is the auto-arrange every other slicer has;
+/// before it, imported parts landed on top of each other in the middle.
+#[tauri::command]
+fn arrange_models(
+    state: State<AppState>,
+    printer_id: Option<String>,
+    variant_name: Option<String>,
+    quality_type: Option<String>,
+) -> Result<Vec<ModelView>, String> {
+    let mut inner = lock(&state)?;
+    let (width, depth, centre_is_zero) = {
+        let resolved = printer_id.and_then(|printer_id| {
+            catalog(&mut inner)
+                .ok()?
+                .resolve(&shale_core::ResolveRequest {
+                    printer_id,
+                    variant_name,
+                    quality_type,
+                    material_id: None,
+                    intent_category: None,
+                    settings: UserSettings::default(),
+                })
+                .ok()
+        });
+        match resolved {
+            Some(resolved) => (
+                resolved.summary.machine_width,
+                resolved.summary.machine_depth,
+                resolved.summary.machine_center_is_zero,
+            ),
+            None => (220.0, 220.0, false),
+        }
+    };
+    if inner.models.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let origin_x = if centre_is_zero { -width * 0.5 } else { 0.0 };
+    let origin_y = if centre_is_zero { -depth * 0.5 } else { 0.0 };
+    let sizes: Vec<(f64, f64)> = inner
+        .models
+        .iter()
+        .map(|model| {
+            let (min, max) = footprint(&model.mesh, &model.transform);
+            (max[0] - min[0], max[1] - min[1])
+        })
+        .collect();
+    let slots = shale_core::layout::shelves(&sizes, width, depth, 4.0);
+
+    for (model, slot) in inner.models.iter_mut().zip(slots.iter()) {
+        let (min, max) = footprint(&model.mesh, &model.transform);
+        let centre = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
+        let target = [slot[0] + origin_x, slot[1] + origin_y];
+        model.transform.translation[0] += target[0] - centre[0];
+        model.transform.translation[1] += target[1] - centre[1];
+        drop_to_bed(&model.mesh, &mut model.transform);
+    }
+
+    Ok(inner
+        .models
+        .iter()
+        .map(|model| view_of(model.id, &model.name, &model.transform, &model.report))
+        .collect())
+}
+
 #[tauri::command]
 fn remove_model(state: State<AppState>, id: u32) -> Result<(), String> {
     let mut inner = lock(&state)?;
@@ -1381,6 +1464,7 @@ pub fn run() {
             duplicate_model,
             update_transform,
             drop_model,
+            arrange_models,
             remove_model,
             list_instructions,
             add_instruction,

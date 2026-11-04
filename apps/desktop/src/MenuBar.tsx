@@ -36,6 +36,8 @@ export interface MenuBarProps {
 
   onDuplicate: () => void;
   onDelete: () => void;
+  onArrange: () => void;
+  modelCount: number;
   onDrop: () => void;
 
   viewStyle: ViewStyle;
@@ -264,6 +266,14 @@ export function MenuBar(props: MenuBarProps) {
             <button type="button" disabled={!props.hasSelection} onClick={pick(props.onDrop)}>
               <span>Drop to plate</span>
               <kbd>D</kbd>
+            </button>
+            <button
+              type="button"
+              disabled={props.modelCount < 2}
+              onClick={pick(props.onArrange)}
+            >
+              <span>Arrange on plate</span>
+              <kbd>Ctrl ⇧ A</kbd>
             </button>
             <hr />
             <button type="button" disabled={!props.hasSelection} onClick={pick(props.onDelete)}>

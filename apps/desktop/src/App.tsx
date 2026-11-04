@@ -296,6 +296,7 @@ export function App() {
     importModel: async () => {},
     exportGcode: async () => {},
     duplicateSelected: async () => {},
+    arrangeAll: async () => {},
   });
 
   useEffect(() => {
@@ -320,6 +321,9 @@ export function App() {
       } else if (key === "d") {
         event.preventDefault();
         void actions.current.duplicateSelected();
+      } else if (key === "a" && event.shiftKey) {
+        event.preventDefault();
+        void actions.current.arrangeAll();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -528,6 +532,23 @@ export function App() {
     try {
       const transform = await api.dropModel(selected.id);
       setModels((current) => current.map((model) => (model.id === selected.id ? { ...model, transform } : model)));
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  /** Lay every model out on the plate, biggest first. */
+  async function arrangeAll() {
+    if (models.length < 2) return;
+    setError(null);
+    try {
+      const placed = await api.arrange(printerId, variant, quality);
+      setModels((current) =>
+        current.map((model) => {
+          const moved = placed.find((entry) => entry.id === model.id);
+          return moved ? { ...model, transform: moved.transform } : model;
+        }),
+      );
     } catch (err) {
       setError(messageOf(err));
     }
@@ -886,6 +907,7 @@ export function App() {
     importModel,
     exportGcode,
     duplicateSelected,
+    arrangeAll,
   };
   saveRef.current = (asNew) => {
     void saveProject(asNew);
@@ -963,6 +985,8 @@ export function App() {
           onDuplicate={() => void duplicateSelected()}
           onDelete={() => void removeSelected()}
           onDrop={() => void dropSelected()}
+          onArrange={() => void arrangeAll()}
+          modelCount={models.length}
           viewStyle={viewStyle}
           onViewStyle={setViewStyle}
           preview={preview}

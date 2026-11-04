@@ -67,7 +67,8 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Move / rotate / scale / mirror | yes | yes | typed and dragged |
 | Duplicate | yes | yes | `Ctrl+D` |
 | Undo / redo | yes | **no** | no history stack at all |
-| Auto-arrange / auto-orient | yes | **no** | parts are placed on the bed, not packed |
+| Auto-arrange | yes | yes | `Edit → Arrange on plate` (Ctrl+Shift+A): biggest footprint first, shelf by shelf, 4 mm apart |
+| Auto-orient | yes | **no** | parts keep the orientation they were loaded with |
 | Cut / split / boolean | yes | **no** | |
 | Per-object settings | yes | **no** | one settings set for the plate |
 | Variable layer height | yes | **no** | adaptive layers exist as one engine setting, not per object |
