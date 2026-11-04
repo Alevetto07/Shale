@@ -21,10 +21,10 @@ struct Inner {
     catalog: Option<Catalog>,
     catalog_error: Option<String>,
     /// The profile library is read on a worker thread while the window comes
-    /// up. Commands that need it wait here once, then keep the result. Reading
-    /// it up front cost two and a half seconds of blank window on a machine
-    /// with both Cura and Bambu Studio installed.
-    catalog_rx: Option<std::sync::mpsc::Receiver<Result<Catalog, String>>>,
+    /// up, and the reader stores it here when it is done. Commands never wait
+    /// for it: on a cold disk the read has taken over a minute, and a command
+    /// that parked under this lock turned that into a frozen window.
+    catalog_loading: bool,
     models: Vec<LoadedModel>,
     next_id: u32,
     instructions: Vec<(u32, CustomInstruction)>,
@@ -67,6 +67,9 @@ struct Status {
     engine_backend: String,
     printer_count: usize,
     demo_model: Option<String>,
+    /// True while the profile library is still being read. The window is up
+    /// and usable; the printer list arrives when this goes false.
+    catalog_loading: bool,
 }
 
 #[derive(Serialize)]
@@ -132,26 +135,11 @@ fn lock(state: &AppState) -> Result<std::sync::MutexGuard<'_, Inner>, String> {
 /// Lend out the catalogue, waiting for the background read the first time a
 /// command asks for it.
 fn catalog(inner: &mut Inner) -> Result<&Catalog, String> {
-    if inner.catalog.is_none() {
-        if let Some(rx) = inner.catalog_rx.take() {
-            match rx.recv() {
-                Ok(Ok(catalog)) => {
-                    inner.catalog = Some(catalog);
-                    inner.catalog_error = None;
-                }
-                Ok(Err(err)) => inner.catalog_error = Some(err),
-                Err(_) => {
-                    inner.catalog_error =
-                        Some("the profile library reader stopped before answering".into());
-                }
-            }
-        }
-    }
     inner.catalog.as_ref().ok_or_else(|| {
         inner
             .catalog_error
             .clone()
-            .unwrap_or_else(|| "Resources are not loaded".into())
+            .unwrap_or_else(|| "reading the printer and material profiles".into())
     })
 }
 
@@ -181,6 +169,7 @@ fn app_status(state: State<AppState>) -> Result<Status, String> {
         engine_backend: inner.engine.backend.as_str().to_string(),
         printer_count,
         demo_model: std::env::var("SHALE_DEMO_MODEL").ok(),
+        catalog_loading: inner.catalog.is_none() && inner.catalog_error.is_none(),
     })
 }
 
@@ -1591,6 +1580,7 @@ pub fn run() {
     } else {
         (None, None, Some(rx), false)
     };
+    let catalog_loading = catalog.is_none() && catalog_error.is_none();
     trace("catalog", &started);
     let engine_message = match engine.cli.probe() {
         Ok(()) => format!("CuraEngine answered at {}", engine.cli.program.display()),
@@ -1623,7 +1613,7 @@ pub fn run() {
         .manage(AppState(Mutex::new(Inner {
             catalog,
             catalog_error,
-            catalog_rx,
+            catalog_loading,
             models,
             next_id,
             instructions,
@@ -1637,6 +1627,35 @@ pub fn run() {
             cancel_import: import_cancel,
             engine_message,
         })))
+        // The profile library reader hands its result back here rather than to a
+        // command, so no command ever blocks on the disk. When it lands, the
+        // window is told and asks for the printer list again.
+        .setup(move |app| {
+            let Some(rx) = catalog_rx else {
+                return Ok(());
+            };
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let read = match rx.recv() {
+                    Ok(read) => read,
+                    Err(_) => Err("the profile library reader stopped before answering".into()),
+                };
+                let state = handle.state::<AppState>();
+                if let Ok(mut inner) = state.0.lock() {
+                    match read {
+                        Ok(catalog) => {
+                            inner.catalog = Some(catalog);
+                            inner.catalog_error = None;
+                        }
+                        Err(err) => inner.catalog_error = Some(err),
+                    }
+                    inner.catalog_loading = false;
+                }
+                drop(state);
+                let _ = handle.emit("catalogue", ());
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_status,
             set_engine,

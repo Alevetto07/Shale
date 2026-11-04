@@ -10,6 +10,8 @@ export interface Status {
   engine_backend: string;
   printer_count: number;
   demo_model?: string | null;
+  /** The profile library is still being read; the window is usable meanwhile. */
+  catalog_loading?: boolean;
 }
 
 export interface LiveLayer {

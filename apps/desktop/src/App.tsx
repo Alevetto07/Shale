@@ -132,13 +132,24 @@ export function App() {
   const [importProgress, setImportProgress] = useState<Progress | null>(null);
 
   useEffect(() => {
-    void (async () => {
+    let stopped = false;
+    let retry: number | undefined;
+    /** The window opens before the profile library is read, so the first few
+     * attempts legitimately come back empty. Ask again rather than showing an
+     * error for a disk that is simply slow. */
+    const boot = async () => {
       try {
         const next = await api.status();
+        if (stopped) return;
         setStatus(next);
         setEnginePath(next.engine_path);
         setLibDir(next.engine_lib_dir || "");
         setBackend(next.engine_backend || "cli");
+        if (!next.resources_ok && next.catalog_loading) {
+          window.clearTimeout(retry);
+          retry = window.setTimeout(() => void boot(), 700);
+          return;
+        }
         if (!next.resources_ok) {
           setError(next.resources_message);
         }
@@ -184,9 +195,19 @@ export function App() {
           setRecents(await api.recents().catch(() => []));
         }
       } catch (err) {
-        setError(messageOf(err));
+        if (!stopped) setError(messageOf(err));
       }
-    })();
+    };
+    void boot();
+    const unlisten = listen("catalogue", () => {
+      window.clearTimeout(retry);
+      void boot();
+    });
+    return () => {
+      stopped = true;
+      window.clearTimeout(retry);
+      void unlisten.then((off) => off());
+    };
   }, []);
 
   useEffect(() => {
