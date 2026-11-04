@@ -347,6 +347,22 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 .cut-row select,
 .cut-row input[type="number"] { width: auto; flex: 1 1 4.5rem; min-width: 0; }
 .cut-row button { flex: 0 0 auto; }
+
+/* The ruler's number, floating at the middle of the line it describes. */
+.measure-label {
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: rgba(6, 7, 11, 0.88);
+  color: var(--ink);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.measure-readout { font-size: 11px; color: var(--muted); align-self: center; }
+.measure-row button[aria-pressed="true"] { border-color: var(--ink); color: var(--ink); }
+.measure-deltas { font-variant-numeric: tabular-nums; }
 .axes label { grid-template-columns: 3ch 1fr; flex: 1; min-width: 5rem; }
 
 .stage {

@@ -7,6 +7,7 @@ import {
   type Bed,
   type CustomInstruction,
   type MaterialInfo,
+  type MeasureSpan,
   type ModelView,
   type OpenedProject,
   type PreviewPath,
@@ -89,6 +90,11 @@ export function App() {
   const [cutAxis, setCutAxis] = useState(2);
   const [cutOffset, setCutOffset] = useState("0");
   const [cutKeep, setCutKeep] = useState("both");
+  /// The ruler: while measuring, a click on a part drops a point instead of
+  /// selecting it. Two points make a span, the number comes from the core.
+  const [measuring, setMeasuring] = useState(false);
+  const [measureMarks, setMeasureMarks] = useState<Array<[number, number, number]>>([]);
+  const [measureSpan, setMeasureSpan] = useState<MeasureSpan | null>(null);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("solid");
   const [busy, setBusy] = useState(false);
   const [screen, setScreen] = useState<"start" | "slicer">("start");
@@ -447,6 +453,10 @@ export function App() {
         event.preventDefault();
         setFrameToken((token) => token + 1);
       }
+      if (event.key === "Escape") {
+        setMeasuring(false);
+        clearMeasure();
+      }
       if (event.key === "1") setMode("translate");
       if (event.key === "2") setMode("rotate");
       if (event.key === "3") setMode("scale");
@@ -726,6 +736,38 @@ export function App() {
       setError(messageOf(err));
     }
   }
+
+  /** Drop a point on a part, snapped onto the nearest vertex when there is one. */
+  async function addMeasurePoint(id: number, point: [number, number, number]) {
+    try {
+      const snapped = (await api.snapMeasure(id, point)) ?? point;
+      setMeasureMarks((current) => (current.length === 1 ? [current[0], snapped] : [snapped]));
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  function clearMeasure() {
+    setMeasureMarks([]);
+    setMeasureSpan(null);
+  }
+
+  useEffect(() => {
+    if (measureMarks.length !== 2) {
+      setMeasureSpan(null);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .measureSpan(measureMarks[0], measureMarks[1])
+      .then((measured) => {
+        if (!cancelled) setMeasureSpan(measured);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [measureMarks]);
 
   /** Split the selected part with a plane, the way Bambu's Cut does. */
   async function cutSelected() {
@@ -1666,6 +1708,36 @@ export function App() {
                 </div>
               </>
             )}
+            <div className="row measure-row">
+              <button
+                type="button"
+                aria-pressed={measuring}
+                title="Click two points on a part to measure between them"
+                onClick={() => {
+                  setMeasuring((current) => !current);
+                  clearMeasure();
+                }}
+              >
+                {measuring ? "measuring…" : "Measure"}
+              </button>
+              <button type="button" onClick={clearMeasure} disabled={measureMarks.length === 0}>
+                Clear
+              </button>
+              <span className="measure-readout">
+                {measureSpan
+                  ? `${measureSpan.distance_mm.toFixed(2)} mm`
+                  : measureMarks.length === 1
+                    ? "click a second point"
+                    : measuring
+                      ? "click a point"
+                      : "two points, one distance"}
+              </span>
+            </div>
+            {measureSpan && (
+              <p className="hint measure-deltas">
+                {`Δx ${measureSpan.delta_mm[0].toFixed(2)}  Δy ${measureSpan.delta_mm[1].toFixed(2)}  Δz ${measureSpan.delta_mm[2].toFixed(2)} mm`}
+              </p>
+            )}
             {selected && (
               <p className="hint">
                 {selected.source}  {selected.triangles} tris
@@ -1748,6 +1820,10 @@ export function App() {
             viewStyle={viewStyle}
             mode={mode}
             frameToken={frameToken}
+            measuring={measuring}
+            marks={measureMarks}
+            measureLabel={measureSpan ? `${measureSpan.distance_mm.toFixed(2)} mm` : null}
+            onMeasure={(id, point) => void addMeasurePoint(id, point)}
             onSelect={(id) => setSelectedId(id < 0 ? null : id)}
             onTransform={(id, transform) => void commitTransform(id, transform)}
           />

@@ -494,6 +494,33 @@ fn auto_orient(state: State<AppState>, id: u32) -> Result<Transform, String> {
     }
 }
 
+/// Where a click on a part should land once it is pulled onto the nearest
+/// vertex. `None` means the click was in the middle of a face and is better
+/// left where the ray put it.
+#[tauri::command]
+fn snap_measure(state: State<AppState>, id: u32, point: [f64; 3]) -> Result<Option<[f64; 3]>, String> {
+    let inner = lock(&state)?;
+    let model = inner
+        .models
+        .iter()
+        .find(|model| model.id == id)
+        .ok_or_else(|| "That model is no longer loaded".to_string())?;
+    Ok(shale_core::measure::snap(
+        &model.mesh,
+        &model.transform,
+        point,
+        shale_core::measure::SNAP_MM,
+    ))
+}
+
+/// The number the ruler shows: the distance between two picked points and how
+/// much of it lies along each axis. The frontend could do this arithmetic, but
+/// then the number on screen would not be the number the tests check.
+#[tauri::command]
+fn measure_span(a: [f64; 3], b: [f64; 3]) -> shale_core::measure::Span {
+    shale_core::measure::span(a, b)
+}
+
 /// Split a part with a plane through it, the way Bambu's *Cut* tool does.
 ///
 /// `axis` is the plane's normal (0 = X, 1 = Y, 2 = Z) and `offset` slides the
@@ -1776,6 +1803,8 @@ pub fn run() {
             duplicate_model,
             update_transform,
             auto_orient,
+            snap_measure,
+            measure_span,
             cut_model,
             drop_model,
             arrange_models,

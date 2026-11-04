@@ -1,4 +1,4 @@
-import { OrbitControls, TransformControls } from "@react-three/drei";
+import { Html, OrbitControls, TransformControls } from "@react-three/drei";
 import { Canvas, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
@@ -28,6 +28,11 @@ interface ViewportProps {
   viewStyle: ViewStyle;
   mode: TransformMode;
   frameToken: number;
+  /// Measuring is a mode of its own: clicks pick points instead of selecting.
+  measuring: boolean;
+  marks: Array<[number, number, number]>;
+  measureLabel: string | null;
+  onMeasure: (id: number, point: [number, number, number]) => void;
   onSelect: (id: number) => void;
   onTransform: (id: number, transform: Transform) => void;
 }
@@ -86,6 +91,8 @@ export function Viewport(props: ViewportProps) {
             model={model}
             viewStyle={props.viewStyle}
             mode={props.mode}
+            measuring={props.measuring}
+            onMeasure={props.onMeasure}
             onSelect={props.onSelect}
             onTransform={props.onTransform}
           />
@@ -94,6 +101,7 @@ export function Viewport(props: ViewportProps) {
         <SupportVolume key={overlay.id} overlay={overlay} />
       ))}
       {props.showToolpaths && <Toolpaths paths={props.toolpaths} />}
+      <MeasureMarks marks={props.marks} label={props.measureLabel} />
       <OrbitControls makeDefault enableDamping dampingFactor={0.12} />
     </Canvas>
   );
@@ -288,12 +296,16 @@ function PrintModel({
   model,
   mode,
   viewStyle,
+  measuring,
+  onMeasure,
   onSelect,
   onTransform,
 }: {
   model: SceneModel;
   mode: TransformMode;
   viewStyle: ViewStyle;
+  measuring: boolean;
+  onMeasure: (id: number, point: [number, number, number]) => void;
   onSelect: (id: number) => void;
   onTransform: (id: number, transform: Transform) => void;
 }) {
@@ -330,18 +342,33 @@ function PrintModel({
 
   return (
     <>
-      {model.selected && node && <TransformControls object={node} mode={mode} onMouseUp={publish} />}
+      {model.selected && node && !measuring && (
+        <TransformControls object={node} mode={mode} onMouseUp={publish} />
+      )}
       <group
         ref={setNode}
         position={pivot}
         rotation={rotation}
         scale={model.transform.scale}
         onClick={(event) => {
+          // While measuring, a click is a point on the part, not a selection.
+          if (measuring) return;
           event.stopPropagation();
           onSelect(model.id);
         }}
       >
-        <mesh geometry={geometry} position={[-centre[0], -centre[1], -centre[2]]}>
+        <mesh
+          geometry={geometry}
+          position={[-centre[0], -centre[1], -centre[2]]}
+          onPointerDown={
+            measuring
+              ? (event) => {
+                  event.stopPropagation();
+                  onMeasure(model.id, [event.point.x, event.point.y, event.point.z]);
+                }
+              : undefined
+          }
+        >
           {viewStyle === "ascii" ? (
             <shaderMaterial vertexShader={ASCII_VERT} fragmentShader={ASCII_FRAG} side={THREE.DoubleSide} />
           ) : viewStyle === "wire" ? (
@@ -384,5 +411,52 @@ function Toolpaths({ paths }: { paths: PreviewPath[] }) {
     <lineSegments geometry={geometry}>
       <lineBasicMaterial vertexColors />
     </lineSegments>
+  );
+}
+
+/** The picked points, and once there are two, the dimension line between them. */
+function MeasureMarks({
+  marks,
+  label,
+}: {
+  marks: Array<[number, number, number]>;
+  label: string | null;
+}) {
+  const line = useMemo(() => {
+    if (marks.length < 2) return null;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute([...marks[0], ...marks[1]], 3),
+    );
+    return geometry;
+  }, [marks]);
+  const middle = useMemo<[number, number, number] | null>(() => {
+    if (marks.length < 2) return null;
+    return [
+      (marks[0][0] + marks[1][0]) / 2,
+      (marks[0][1] + marks[1][1]) / 2,
+      (marks[0][2] + marks[1][2]) / 2,
+    ];
+  }, [marks]);
+  return (
+    <group>
+      {marks.map((mark, index) => (
+        <mesh key={index} position={mark}>
+          <sphereGeometry args={[0.9, 14, 14]} />
+          <meshBasicMaterial color="#f4ef9a" />
+        </mesh>
+      ))}
+      {line && (
+        <lineSegments geometry={line}>
+          <lineBasicMaterial color="#f4ef9a" depthTest={false} transparent opacity={0.9} />
+        </lineSegments>
+      )}
+      {middle && label && (
+        <Html position={middle} center style={{ pointerEvents: "none" }}>
+          <div className="measure-label">{label}</div>
+        </Html>
+      )}
+    </group>
   );
 }

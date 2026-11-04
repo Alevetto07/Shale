@@ -70,6 +70,12 @@ export interface ModelView {
   settings: Record<string, string>;
 }
 
+/** A measured distance: the line, and how much of it lies on each axis. */
+export interface MeasureSpan {
+  distance_mm: number;
+  delta_mm: [number, number, number];
+}
+
 export interface Bed {
   width: number;
   depth: number;
@@ -210,6 +216,10 @@ export const api = {
   autoOrient: (id: number) => invoke<Transform>("auto_orient", { id }),
   cut: (id: number, axis: number, offset: number, keep: string) =>
     invoke<ModelView[]>("cut_model", { id, axis, offset, keep }),
+  snapMeasure: (id: number, point: [number, number, number]) =>
+    invoke<[number, number, number] | null>("snap_measure", { id, point }),
+  measureSpan: (a: [number, number, number], b: [number, number, number]) =>
+    invoke<MeasureSpan>("measure_span", { a, b }),
   dropModel: (id: number) => invoke<Transform>("drop_model", { id }),
   duplicateModel: (id: number) => invoke<ModelView>("duplicate_model", { id }),
   setModelSettings: (id: number, settings: Record<string, string>) =>

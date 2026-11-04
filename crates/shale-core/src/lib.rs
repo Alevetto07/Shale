@@ -19,6 +19,7 @@ pub mod job;
 mod material;
 pub mod exchange;
 pub mod layout;
+pub mod measure;
 pub mod mesh;
 pub mod orient;
 pub mod project;
