@@ -26,6 +26,7 @@ import { andromeda } from "./field/credit";
 import { StartScreen } from "./StartScreen";
 import { thumbnailJpeg } from "./thumbnail";
 import { Frame, meter, track } from "./theme";
+import { MenuBar, type SliceSettings } from "./MenuBar";
 import { Viewport, type TransformMode, type ViewStyle } from "./Viewport";
 import { AsciiCheck, AsciiField, AsciiSelect, AsciiStepper } from "./widgets";
 
@@ -71,6 +72,9 @@ export function App() {
   const [layerHeight, setLayerHeight] = useState(0.2);
   const [infill, setInfill] = useState(20);
   const [supports, setSupports] = useState(false);
+  const [walls, setWalls] = useState(2);
+  const [pattern, setPattern] = useState("grid");
+  const [speed, setSpeed] = useState(50);
   const [nozzle, setNozzle] = useState(200);
   const [bedTemp, setBedTemp] = useState(60);
   const [models, setModels] = useState<ModelView[]>([]);
@@ -90,7 +94,10 @@ export function App() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState(false);
-  const [showModel, setShowModel] = useState(true);
+  // The toolpath is what you came to look at; the ghosted model is one click
+  // away. Starting with both on made the first preview after a slice read as a
+  // wash of grey.
+  const [showModel, setShowModel] = useState(false);
   const [layer, setLayer] = useState(0);
   const [layerCount, setLayerCount] = useState(0);
   const [layerZ, setLayerZ] = useState<number[]>([]);
@@ -280,6 +287,15 @@ export function App() {
     };
   }, []);
 
+  // The keyboard effect is installed once, so it reaches the current handlers
+  // through a ref instead of capturing the first render's closures.
+  const actions = useRef({
+    newProject: async () => {},
+    importModel: async () => {},
+    exportGcode: async () => {},
+    duplicateSelected: async () => {},
+  });
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
@@ -290,6 +306,18 @@ export function App() {
       } else if (key === "o") {
         event.preventDefault();
         void openRef.current();
+      } else if (key === "n") {
+        event.preventDefault();
+        void actions.current.newProject();
+      } else if (key === "i") {
+        event.preventDefault();
+        void actions.current.importModel();
+      } else if (key === "e") {
+        event.preventDefault();
+        void actions.current.exportGcode();
+      } else if (key === "d") {
+        event.preventDefault();
+        void actions.current.duplicateSelected();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -380,6 +408,28 @@ export function App() {
 
   const selected = models.find((model) => model.id === selectedId) ?? null;
 
+  const sliceSettings: SliceSettings = {
+    layerHeight,
+    walls,
+    infill,
+    pattern,
+    supports,
+    nozzle,
+    bed: bedTemp,
+    speed,
+  };
+
+  function applySliceSettings(patch: Partial<SliceSettings>) {
+    if (patch.layerHeight !== undefined) setLayerHeight(patch.layerHeight);
+    if (patch.walls !== undefined) setWalls(patch.walls);
+    if (patch.infill !== undefined) setInfill(patch.infill);
+    if (patch.pattern !== undefined) setPattern(patch.pattern);
+    if (patch.supports !== undefined) setSupports(patch.supports);
+    if (patch.nozzle !== undefined) setNozzle(patch.nozzle);
+    if (patch.bed !== undefined) setBedTemp(patch.bed);
+    if (patch.speed !== undefined) setSpeed(patch.speed);
+  }
+
   async function importFromPath(picked: string) {
     enterSlicer();
     setError(null);
@@ -466,6 +516,17 @@ export function App() {
     }
   }
 
+  async function duplicateSelected() {
+    if (!selected) return;
+    try {
+      const copy = await api.duplicateModel(selected.id);
+      setModels((current) => [...current, copy]);
+      setSelectedId(copy.id);
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
   async function removeSelected() {
     if (!selected) return;
     try {
@@ -492,7 +553,13 @@ export function App() {
         support_enable: supports,
         material_print_temperature: nozzle,
         material_bed_temperature: bedTemp,
-        extra: [],
+        // The menu bar edits these directly; an empty list used to mean the
+        // selected profile decided and there was no way to change your mind.
+        extra: [
+          ["wall_line_count", String(walls)],
+          ["infill_pattern", pattern],
+          ["speed_print", String(speed)],
+        ],
       });
       setLayerCount(summary.layer_count);
       setLayerZ(summary.layers.map((item) => item.z));
@@ -618,7 +685,13 @@ export function App() {
         support_enable: true,
         material_print_temperature: nozzle,
         material_bed_temperature: bedTemp,
-        extra: [],
+        // The menu bar edits these directly; an empty list used to mean the
+        // selected profile decided and there was no way to change your mind.
+        extra: [
+          ["wall_line_count", String(walls)],
+          ["infill_pattern", pattern],
+          ["speed_print", String(speed)],
+        ],
       });
       setSupport((current) =>
         current ? { ...current, plan: { ...current.plan, comparison } } : current,
@@ -799,6 +872,12 @@ export function App() {
       setError(messageOf(err));
     }
   }
+  actions.current = {
+    newProject,
+    importModel,
+    exportGcode,
+    duplicateSelected,
+  };
   saveRef.current = (asNew) => {
     void saveProject(asNew);
   };
@@ -856,29 +935,48 @@ export function App() {
           <p className="wordmark">Shale</p>
           {projectPath && <p className="project-name">{projectName}</p>}
         </div>
-        <div className="top-actions">
-          <button type="button" onClick={() => setScreen("start")}>
-            Start
-          </button>
-          <button type="button" onClick={() => void saveProject(false)}>
-            Save
-          </button>
-          <button type="button" onClick={() => void saveProject(true)}>
-            Save as
-          </button>
-          <button type="button" onClick={() => void openProject()}>
-            Open
-          </button>
-          <button type="button" onClick={() => void importModel()}>
-            Import model
-          </button>
-          <button type="button" className="primary" disabled={busy || models.length === 0} onClick={() => void slice()}>
-            {busy ? "Slicing..." : "Slice"}
-          </button>
-          <button type="button" disabled={layerCount === 0} onClick={() => void exportGcode()}>
-            Export G-code
-          </button>
-        </div>
+        <MenuBar
+          screen={screen}
+          projectName={projectName}
+          busy={busy}
+          sliced={layerCount > 0}
+          hasModels={models.length > 0}
+          hasSelection={selectedId !== null}
+          importing={importing}
+          onStart={() => setScreen("start")}
+          onNew={() => void newProject()}
+          onOpen={() => void openProject()}
+          onImport={() => void importModel()}
+          onSave={() => void saveProject(false)}
+          onSaveAs={() => void saveProject(true)}
+          onExport={() => void exportGcode()}
+          onQuit={() => void quit()}
+          onDuplicate={() => void duplicateSelected()}
+          onDelete={() => void removeSelected()}
+          onDrop={() => void dropSelected()}
+          viewStyle={viewStyle}
+          onViewStyle={setViewStyle}
+          preview={preview}
+          onPreview={setPreview}
+          showModel={showModel}
+          onShowModel={setShowModel}
+          onFrame={() => setFrameToken((token) => token + 1)}
+          printers={printers}
+          printerId={printerId}
+          onPrinter={setPrinterId}
+          variants={variants}
+          variant={variant}
+          onVariant={setVariant}
+          qualities={qualities}
+          quality={quality}
+          onQuality={setQuality}
+          materials={materials}
+          material={material}
+          onMaterial={setMaterial}
+          settings={sliceSettings}
+          onSettings={applySliceSettings}
+          onSlice={() => void slice()}
+        />
       </header>
 
       {status && !status.resources_ok && (

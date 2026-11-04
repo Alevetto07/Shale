@@ -25,6 +25,8 @@ export interface PrinterInfo {
   preferred_quality_type: string;
   preferred_variant: string;
   preferred_material: string;
+  /** `cura` for the UltiMaker resource tree, `bambu` for Bambu Studio's own. */
+  source: string;
 }
 
 export interface VariantInfo {
@@ -202,6 +204,7 @@ export const api = {
     }),
   updateTransform: (id: number, transform: Transform) => invoke<void>("update_transform", { id, transform }),
   dropModel: (id: number) => invoke<Transform>("drop_model", { id }),
+  duplicateModel: (id: number) => invoke<ModelView>("duplicate_model", { id }),
   removeModel: (id: number) => invoke<void>("remove_model", { id }),
   slice: (
     printerId: string,

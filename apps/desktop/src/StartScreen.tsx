@@ -303,7 +303,9 @@ function menuItems({
       .slice(0, 40)
       .map((printer) => ({
         id: `printer-${printer.id}`,
-        label: `${printer.manufacturer ? `${printer.manufacturer} ` : ""}${printer.name}`,
+        label: `${printer.manufacturer ? `${printer.manufacturer} ` : ""}${printer.name}${
+          printer.source === "bambu" ? " · Bambu" : ""
+        }`,
         hint: "",
         run: () => {
           onChoosePrinter(printer.id);

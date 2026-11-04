@@ -63,7 +63,7 @@ impl TriangleMesh {
         let total = self.triangles.len();
         let budget = max_triangles.max(1);
         let mut positions = Vec::with_capacity(total.min(budget) * 9);
-        let mut push = |triangle: &[u32; 3], positions: &mut Vec<f32>| {
+        let push = |triangle: &[u32; 3], positions: &mut Vec<f32>| {
             for index in triangle {
                 if let Some(vertex) = self.vertices.get(*index as usize) {
                     positions.extend_from_slice(vertex);

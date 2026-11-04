@@ -5,6 +5,7 @@
 //! depends on Tauri or on Cura's Uranium / Qt frontend. CuraEngine itself stays
 //! a separate unmodified process behind [`engine::SlicingEngine`].
 
+pub mod bambu;
 pub mod cad;
 pub mod catalog;
 mod definition;

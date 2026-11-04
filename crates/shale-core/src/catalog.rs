@@ -230,6 +230,11 @@ pub struct Catalog {
     pub(crate) definitions: HashMap<String, Definition>,
     pub(crate) instances: Vec<InstanceFile>,
     pub(crate) materials: Vec<Material>,
+    /// Printer ids that came from an Orca-family library rather than Cura.
+    pub(crate) external: std::collections::HashSet<String>,
+    /// Material ids from the same library, so a filament list can tell the two
+    /// sources apart without guessing from the brand string.
+    pub(crate) external_materials: std::collections::HashSet<String>,
     pub load_warnings: Vec<String>,
 }
 
@@ -241,6 +246,9 @@ pub struct PrinterInfo {
     pub preferred_quality_type: String,
     pub preferred_variant: String,
     pub preferred_material: String,
+    /// `"cura"` for the Cura resource tree, `"bambu"` for an Orca-family
+    /// profile library. The desktop app groups and badges on this.
+    pub source: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -292,12 +300,48 @@ impl Catalog {
         }
         let mut materials = Vec::new();
         load_materials(&paths.materials, &mut materials, &mut warnings);
+        // Bambu Studio's own tree is a second, independent profile library. Its
+        // entries are converted into the same shapes Cura's resources produce,
+        // so variants, qualities, materials and the resolver need no special
+        // case; only the `source` tag differs.
+        let library = crate::bambu::Library::load();
+        let mut external = std::collections::HashSet::new();
+        for definition in library.definitions {
+            external.insert(definition.id.clone());
+            definitions.entry(definition.id.clone()).or_insert(definition);
+        }
+        // Bambu's extruder profiles are self-contained, but CuraEngine asks for
+        // base extruder values by name (nozzle offsets, cooling fan number, ...)
+        // that Cura's `fdmextruder` supplies. Copy them over rather than hand
+        // listing keys here, so the next one is not a mystery.
+        if let Some(base) = definitions.get("fdmextruder").map(|d| d.settings.clone()) {
+            for definition in definitions
+                .values_mut()
+                .filter(|d| d.is_extruder && external.contains(&d.id))
+            {
+                for (key, setting) in &base {
+                    definition
+                        .settings
+                        .entry(key.clone())
+                        .or_insert_with(|| setting.clone());
+                }
+            }
+        }
+        instances.extend(library.instances);
+        let external_materials: std::collections::HashSet<String> = library
+            .materials
+            .iter()
+            .map(|material| material.id.clone())
+            .collect();
+        materials.extend(library.materials);
         inherit_metadata(&mut definitions);
         Ok(Self {
             paths,
             definitions,
             instances,
             materials,
+            external,
+            external_materials,
             load_warnings: warnings,
         })
     }
@@ -328,6 +372,11 @@ impl Catalog {
                     .preferred_material
                     .clone()
                     .unwrap_or_else(|| "generic_pla".to_string()),
+                source: if self.external.contains(&definition.id) {
+                    "bambu".to_string()
+                } else {
+                    "cura".to_string()
+                },
             })
             .collect();
         printers.sort_by(|a, b| {
@@ -440,6 +489,45 @@ impl Catalog {
             })
             .collect();
         materials.sort_by(|a, b| a.label.cmp(&b.label));
+        materials
+    }
+
+    /// Materials that belong on this machine.
+    ///
+    /// Cura's library is shared across the whole catalogue and the UI has always
+    /// offered it as one list. An Orca-family library is different: every
+    /// filament names the printers it was tuned for, and there are well over a
+    /// thousand of them, so they are filtered per machine instead of pooled.
+    pub fn materials_for_printer(&self, printer_id: &str, diameter: f64) -> Vec<MaterialInfo> {
+        let external_printer = self.external.contains(printer_id);
+        let materials: Vec<MaterialInfo> = self
+            .materials
+            .iter()
+            .filter(|material| (material.diameter - diameter).abs() < 0.4)
+            .filter(|material| {
+                let from_library = self.external_materials.contains(&material.id);
+                if !external_printer {
+                    return !from_library;
+                }
+                if !from_library {
+                    return false;
+                }
+                material.machines.iter().any(|machine| {
+                    machine
+                        .products
+                        .iter()
+                        .any(|product| product == printer_id || product == "*")
+                })
+            })
+            .map(|material| MaterialInfo {
+                id: material.id.clone(),
+                label: material.name.clone(),
+                color: material.color.clone(),
+                diameter: material.diameter,
+            })
+            .collect();
+        // The library already orders these (PLA first, then the rest) and that
+        // order is more useful here than an alphabetical one.
         materials
     }
 

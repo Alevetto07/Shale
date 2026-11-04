@@ -105,6 +105,12 @@ impl ImportedMesh {
     }
 }
 
+/// Faces above this are tessellated with a coarser chord and fewer refinement
+/// passes: a 6 500-face assembly otherwise spends an hour chasing 0.1 mm.
+const HEAVY_FACE_COUNT: usize = 3_000;
+const HEAVY_CHORDAL_MM: f64 = 0.35;
+const HEAVY_ANGULAR_DEG: f64 = 25.0;
+
 pub fn import_step(bytes: &[u8], tolerance: &TessellationTolerance) -> Result<ImportedMesh, Error> {
     let started = Instant::now();
     let text = std::str::from_utf8(bytes)
@@ -117,6 +123,21 @@ pub fn import_step(bytes: &[u8], tolerance: &TessellationTolerance) -> Result<Im
             "STEP file has no shell Shale can tessellate. Solids from a boolean, or a format truck-stepio 0.3 does not read, are the usual cause.".into(),
         ));
     }
+    // A part with thousands of faces costs minutes at a 0.1 mm chord, and the
+    // refinement loop multiplies that by five. For those parts a coarser first
+    // pass is the difference between an import that lands and one that appears
+    // to hang, so the tolerance is relaxed and the loop shortened.
+    let faces = text.matches("ADVANCED_FACE").count();
+    let heavy = faces > HEAVY_FACE_COUNT;
+    let working = if heavy {
+        TessellationTolerance {
+            chordal_mm: tolerance.chordal_mm.max(HEAVY_CHORDAL_MM),
+            angular_deg: tolerance.angular_deg.max(HEAVY_ANGULAR_DEG),
+        }
+    } else {
+        tolerance.clone()
+    };
+    let passes = if heavy { 2 } else { 5 };
     let mut vertices = Vec::new();
     let mut triangles = Vec::new();
     let mut max_deviation = 0.0_f64;
@@ -145,7 +166,7 @@ pub fn import_step(bytes: &[u8], tolerance: &TessellationTolerance) -> Result<Im
                 continue;
             }
         };
-        let (mesh, deviation, turning) = match tessellate_shell(&shape, tolerance) {
+        let (mesh, deviation, turning) = match tessellate_shell(&shape, &working, passes) {
             Ok(result) => result,
             Err(err) => {
                 failures.push(err.to_string());
@@ -219,10 +240,11 @@ fn panic_text(payload: &(dyn std::any::Any + Send)) -> String {
 fn tessellate_shell(
     shell: &CompressedShell<Point3, Curve3D, Surface>,
     tolerance: &TessellationTolerance,
+    passes: usize,
 ) -> Result<(TriangleMesh, f64, f64), Error> {
     let mut tol = tolerance.chordal_mm.clamp(1.0e-4, 2.0);
     let mut best: Option<(TriangleMesh, f64, f64)> = None;
-    for _ in 0..5 {
+    for _ in 0..passes.max(1) {
         let meshed = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             shell.robust_triangulation(tol)
         })) {

@@ -20,6 +20,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 struct Inner {
     catalog: Option<Catalog>,
     catalog_error: Option<String>,
+    /// The profile library is read on a worker thread while the window comes
+    /// up. Commands that need it wait here once, then keep the result. Reading
+    /// it up front cost two and a half seconds of blank window on a machine
+    /// with both Cura and Bambu Studio installed.
+    catalog_rx: Option<std::sync::mpsc::Receiver<Result<Catalog, String>>>,
     models: Vec<LoadedModel>,
     next_id: u32,
     instructions: Vec<(u32, CustomInstruction)>,
@@ -117,16 +122,45 @@ fn lock(state: &AppState) -> Result<std::sync::MutexGuard<'_, Inner>, String> {
         .map_err(|_| "Shale state was poisoned".to_string())
 }
 
-#[tauri::command]
-fn app_status(state: State<AppState>) -> Result<Status, String> {
-    let inner = lock(&state)?;
-    let engine_ok = inner.engine.available();
-    Ok(Status {
-        resources_ok: inner.catalog.is_some(),
-        resources_message: inner
+/// Lend out the catalogue, waiting for the background read the first time a
+/// command asks for it.
+fn catalog(inner: &mut Inner) -> Result<&Catalog, String> {
+    if inner.catalog.is_none() {
+        if let Some(rx) = inner.catalog_rx.take() {
+            match rx.recv() {
+                Ok(Ok(catalog)) => {
+                    inner.catalog = Some(catalog);
+                    inner.catalog_error = None;
+                }
+                Ok(Err(err)) => inner.catalog_error = Some(err),
+                Err(_) => {
+                    inner.catalog_error =
+                        Some("the profile library reader stopped before answering".into());
+                }
+            }
+        }
+    }
+    inner.catalog.as_ref().ok_or_else(|| {
+        inner
             .catalog_error
             .clone()
-            .unwrap_or_else(|| "Cura resources are loaded.".into()),
+            .unwrap_or_else(|| "Resources are not loaded".into())
+    })
+}
+
+#[tauri::command]
+fn app_status(state: State<AppState>) -> Result<Status, String> {
+    let mut inner = lock(&state)?;
+    let loaded = catalog(&mut inner).is_ok();
+    let resources_message = inner
+        .catalog_error
+        .clone()
+        .unwrap_or_else(|| "Printer resources are loaded.".into());
+    let printer_count = inner.catalog.as_ref().map(|c| c.printers().len()).unwrap_or(0);
+    let engine_ok = inner.engine.available();
+    Ok(Status {
+        resources_ok: loaded,
+        resources_message,
         engine_path: inner.engine.cli.program.display().to_string(),
         engine_lib_dir: inner
             .engine
@@ -138,11 +172,7 @@ fn app_status(state: State<AppState>) -> Result<Status, String> {
         engine_ok,
         engine_message: inner.engine_message.clone(),
         engine_backend: inner.engine.backend.as_str().to_string(),
-        printer_count: inner
-            .catalog
-            .as_ref()
-            .map(|c| c.printers().len())
-            .unwrap_or(0),
+        printer_count,
         demo_model: std::env::var("SHALE_DEMO_MODEL").ok(),
     })
 }
@@ -184,34 +214,28 @@ fn cancel_import(state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn list_printers(state: State<AppState>) -> Result<Vec<PrinterInfo>, String> {
-    let inner = lock(&state)?;
-    let catalog = inner.catalog.as_ref().ok_or_else(|| {
-        inner
-            .catalog_error
-            .clone()
-            .unwrap_or_else(|| "Resources are not loaded".into())
-    })?;
-    Ok(catalog.printers())
+    let mut inner = lock(&state)?;
+    Ok(catalog(&mut inner)?.printers())
 }
 
 #[tauri::command]
 fn list_variants(state: State<AppState>, printer_id: String) -> Result<Vec<VariantInfo>, String> {
-    let inner = lock(&state)?;
-    let catalog = catalog_of(&inner)?;
+    let mut inner = lock(&state)?;
+    let catalog = catalog(&mut inner)?;
     Ok(catalog.variants_for(&printer_id))
 }
 
 #[tauri::command]
 fn list_qualities(state: State<AppState>, printer_id: String) -> Result<Vec<QualityInfo>, String> {
-    let inner = lock(&state)?;
-    let catalog = catalog_of(&inner)?;
+    let mut inner = lock(&state)?;
+    let catalog = catalog(&mut inner)?;
     Ok(catalog.qualities_for(&printer_id))
 }
 
 #[tauri::command]
 fn list_materials(state: State<AppState>, printer_id: String) -> Result<Vec<MaterialInfo>, String> {
-    let inner = lock(&state)?;
-    let catalog = catalog_of(&inner)?;
+    let mut inner = lock(&state)?;
+    let catalog = catalog(&mut inner)?;
     let diameter = catalog
         .printer(&printer_id)
         .and_then(|_| {
@@ -228,6 +252,15 @@ fn list_materials(state: State<AppState>, printer_id: String) -> Result<Vec<Mate
         })
         .map(|resolved| resolved.summary.material_diameter)
         .unwrap_or(1.75);
+    // Bambu printers get their own tuned filaments, already narrowed to the
+    // machine; Cura printers keep the short generic-first list they had.
+    if catalog
+        .printers()
+        .iter()
+        .any(|printer| printer.id == printer_id && printer.source == "bambu")
+    {
+        return Ok(catalog.materials_for_printer(&printer_id, diameter));
+    }
     let mut materials: Vec<MaterialInfo> = catalog
         .materials_for(diameter)
         .into_iter()
@@ -237,8 +270,12 @@ fn list_materials(state: State<AppState>, printer_id: String) -> Result<Vec<Mate
                     && material.id.chars().filter(|ch| *ch == '_').count() <= 2
         })
         .collect();
-    // Prefer the short generic profiles at the top of a long library.
-    materials.sort_by(|a, b| a.id.cmp(&b.id));
+    // Prefer the short generic profiles at the top of a long library; Cura
+    // ships hundreds of brand filaments whose names sort before `generic_pla`.
+    materials.sort_by(|a, b| {
+        let generic = a.id.starts_with("generic_").cmp(&b.id.starts_with("generic_"));
+        generic.reverse().then_with(|| a.id.cmp(&b.id))
+    });
     materials.truncate(40);
     Ok(materials)
 }
@@ -251,8 +288,8 @@ fn printer_bed(
     quality_type: Option<String>,
     material_id: Option<String>,
 ) -> Result<Bed, String> {
-    let inner = lock(&state)?;
-    let catalog = catalog_of(&inner)?;
+    let mut inner = lock(&state)?;
+    let catalog = catalog(&mut inner)?;
     let resolved = catalog
         .resolve(&shale_core::ResolveRequest {
             printer_id,
@@ -311,31 +348,31 @@ async fn import_model(
     let mesh = imported.mesh;
     let report = imported.report;
     let mut inner = lock(&state)?;
-    let transform = if let (Some(catalog), Some(printer_id)) = (&inner.catalog, printer_id) {
-        match catalog.resolve(&shale_core::ResolveRequest {
-            printer_id,
-            variant_name,
-            quality_type,
-            material_id: None,
-            intent_category: None,
-            settings: UserSettings::default(),
-        }) {
-            Ok(resolved) => place_on_bed(
-                &mesh,
-                resolved.summary.machine_width,
-                resolved.summary.machine_depth,
-                resolved.summary.machine_center_is_zero,
-            ),
-            Err(_) => {
-                let mut transform = Transform::default();
-                drop_to_bed(&mesh, &mut transform);
-                transform
-            }
+    let placed = printer_id.and_then(|printer_id| {
+        catalog(&mut inner)
+            .ok()?
+            .resolve(&shale_core::ResolveRequest {
+                printer_id,
+                variant_name,
+                quality_type,
+                material_id: None,
+                intent_category: None,
+                settings: UserSettings::default(),
+            })
+            .ok()
+    });
+    let transform = match placed {
+        Some(resolved) => place_on_bed(
+            &mesh,
+            resolved.summary.machine_width,
+            resolved.summary.machine_depth,
+            resolved.summary.machine_center_is_zero,
+        ),
+        None => {
+            let mut transform = Transform::default();
+            drop_to_bed(&mesh, &mut transform);
+            transform
         }
-    } else {
-        let mut transform = Transform::default();
-        drop_to_bed(&mesh, &mut transform);
-        transform
     };
     let id = inner.next_id;
     inner.next_id += 1;
@@ -344,7 +381,7 @@ async fn import_model(
         .and_then(|name| name.to_str())
         .unwrap_or("model")
         .to_string();
-    let view = view_of(id, &name, &mesh, &transform, &report);
+    let view = view_of(id, &name, &transform, &report);
     inner.models.push(LoadedModel {
         id,
         name,
@@ -379,6 +416,36 @@ fn model_geometry(
     // floats, which as JSON costs a long stringify, a long parse, and a
     // truncated payload on the largest parts.
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+fn duplicate_model(state: State<AppState>, id: u32) -> Result<ModelView, String> {
+    let mut inner = lock(&state)?;
+    let index = inner
+        .models
+        .iter()
+        .position(|model| model.id == id)
+        .ok_or_else(|| "That model is no longer loaded".to_string())?;
+    let new_id = inner.next_id;
+    inner.next_id += 1;
+    let mut transform = inner.models[index].transform.clone();
+    // Offset the copy along the bed's X axis so it does not sit inside the
+    // original, then put it back on the plate where the original stands.
+    let tall = inner.models[index].transform.translation[2];
+    transform.translation[0] += 20.0;
+    transform.translation[2] = tall;
+    let name = format!("{} copy", inner.models[index].name);
+    let view = view_of(new_id, &name, &transform, &inner.models[index].report);
+    let model = LoadedModel {
+        id: new_id,
+        name,
+        mesh: inner.models[index].mesh.clone(),
+        transform,
+        report: inner.models[index].report.clone(),
+        source_bytes: inner.models[index].source_bytes.clone(),
+    };
+    inner.models.push(model);
+    Ok(view)
 }
 
 #[tauri::command]
@@ -603,10 +670,11 @@ fn compare_supports(
         })
         .collect();
     let comparison = {
-        let catalog = catalog_of(&inner)?;
+        let engine = inner.engine.clone();
+        let catalog = catalog(&mut inner)?;
         compare_support(
             catalog,
-            &inner.engine,
+            &engine,
             &printer_id,
             variant_name,
             quality_type,
@@ -642,15 +710,8 @@ async fn slice_model(
         if inner.models.is_empty() {
             return Err("Import a model first".into());
         }
-        let Some(catalog) = inner.catalog.as_ref() else {
-            return Err(inner
-                .catalog_error
-                .clone()
-                .unwrap_or_else(|| "Resources are not loaded".into()));
-        };
-        // Catalog is not cloned; resolve inside the lock would block the UI
-        // for a few milliseconds, then the engine runs after we release it.
-        let _ = catalog;
+        // Wait for the catalogue, then drop the lock: the engine runs outside.
+        let _ = catalog(&mut inner)?;
         inner.slicing = true;
         let placed: Vec<PlacedModel> = inner
             .models
@@ -663,7 +724,7 @@ async fn slice_model(
             .collect();
         let output = std::env::temp_dir().join("shale").join("slice.gcode");
         (
-            inner.catalog.as_ref().map(|c| c.paths.clone()),
+            catalog(&mut inner).ok().map(|c| c.paths.clone()),
             inner.engine.clone(),
             placed,
             output,
@@ -683,10 +744,10 @@ async fn slice_model(
     // Resolve and slice under a short lock for the resolve, then release for
     // the engine by splitting the work: resolve now, slice after.
     let (catalog, instructions, support) = {
-        let inner = lock(&state)?;
+        let mut inner = lock(&state)?;
         let _ = paths;
         (
-            catalog_of(&inner)?.clone(),
+            catalog(&mut inner)?.clone(),
             inner
                 .instructions
                 .iter()
@@ -786,7 +847,7 @@ fn loaded_models(state: State<AppState>) -> Result<Vec<ModelView>, String> {
     Ok(inner
         .models
         .iter()
-        .map(|model| view_of(model.id, &model.name, &model.mesh, &model.transform, &model.report))
+        .map(|model| view_of(model.id, &model.name, &model.transform, &model.report))
         .collect())
 }
 
@@ -828,15 +889,6 @@ fn export_gcode(state: State<AppState>, destination: String) -> Result<String, S
     Ok(destination)
 }
 
-fn catalog_of(inner: &Inner) -> Result<&Catalog, String> {
-    inner.catalog.as_ref().ok_or_else(|| {
-        inner
-            .catalog_error
-            .clone()
-            .unwrap_or_else(|| "Resources are not loaded".into())
-    })
-}
-
 fn bed_from(resolved: &shale_core::ResolvedSettings) -> Bed {
     let summary = &resolved.summary;
     Bed {
@@ -860,7 +912,6 @@ fn bed_from(resolved: &shale_core::ResolvedSettings) -> Bed {
 fn view_of(
     id: u32,
     name: &str,
-    mesh: &TriangleMesh,
     transform: &Transform,
     report: &ImportReport,
 ) -> ModelView {
@@ -1179,7 +1230,7 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
     for (name, bytes, transform, imported) in built {
         let id = inner.next_id;
         inner.next_id += 1;
-        let view = view_of(id, &name, &imported.mesh, &transform, &imported.report);
+        let view = view_of(id, &name, &transform, &imported.report);
         inner.models.push(LoadedModel {
             id,
             name,
@@ -1232,25 +1283,60 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
     })
 }
 
+/// Print how long each startup step took. The window is created only after
+/// these finish, so a slow one is the difference between an app that opens and
+/// an app that looks dead; `SHALE_TRACE=1` turns it on.
+fn trace(step: &str, started: &std::time::Instant) {
+    if std::env::var_os("SHALE_TRACE").is_some() {
+        eprintln!("[shale] {step}: {:?}", started.elapsed());
+    }
+}
+
 pub fn run() {
-    let (catalog, catalog_error) = match ResourcePaths::discover() {
-        Ok(paths) => match Catalog::open(paths) {
-            Ok(catalog) => (Some(catalog), None),
-            Err(err) => (None, Some(err.to_string())),
-        },
-        Err(err) => (None, Some(err.to_string())),
-    };
+    let started = std::time::Instant::now();
     let engine = Engine::from_env();
+    // The profile library is read on a worker thread: two and a half seconds of
+    // blank window on a machine with Cura and Bambu Studio installed is not a
+    // good first impression, and a slow or broken library should never stop the
+    // window from opening. Commands wait for it through `catalog()`.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let read = match ResourcePaths::discover() {
+            Ok(paths) => match Catalog::open(paths) {
+                Ok(catalog) => Ok(catalog),
+                Err(err) => Err(err.to_string()),
+            },
+            Err(err) => Err(err.to_string()),
+        };
+        let _ = tx.send(read);
+    });
+    // The demo state is dev-only and slices at startup, so it waits here.
+    let demo_wanted = std::env::var_os("SHALE_DEMO_MODEL").is_some();
+    let (catalog, catalog_error, catalog_rx, demo_catalog) = if demo_wanted {
+        match rx.recv() {
+            Ok(Ok(catalog)) => (Some(catalog), None, None, true),
+            Ok(Err(err)) => (None, Some(err), None, false),
+            Err(_) => (None, Some("the profile library reader stopped".into()), None, false),
+        }
+    } else {
+        (None, None, Some(rx), false)
+    };
+    trace("catalog", &started);
     let engine_message = match engine.cli.probe() {
         Ok(()) => format!("CuraEngine answered at {}", engine.cli.program.display()),
         Err(err) => err,
     };
+    trace("engine", &started);
     let import_cancel = Arc::new(AtomicBool::new(false));
-    let (models, instructions, toolpath, gcode_path) = if let Some(catalog) = &catalog {
-        preload_demo(catalog, &engine)
+    let (models, instructions, toolpath, gcode_path) = if demo_catalog {
+        match &catalog {
+            Some(catalog) => preload_demo(catalog, &engine),
+            None => (Vec::new(), Vec::new(), None, None),
+        }
     } else {
         (Vec::new(), Vec::new(), None, None)
     };
+    trace("demo", &started);
     let next_id = models.len() as u32 + 1;
     let next_instruction = instructions.iter().map(|(id, _)| *id).max().unwrap_or(0) + 1;
     let support = if std::env::var("SHALE_DEMO_SUPPORTS").ok().as_deref() == Some("1") {
@@ -1267,6 +1353,7 @@ pub fn run() {
         .manage(AppState(Mutex::new(Inner {
             catalog,
             catalog_error,
+            catalog_rx,
             models,
             next_id,
             instructions,
@@ -1291,6 +1378,7 @@ pub fn run() {
             printer_bed,
             import_model,
             model_geometry,
+            duplicate_model,
             update_transform,
             drop_model,
             remove_model,

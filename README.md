@@ -2,14 +2,16 @@
   <img src="docs/shale-lockup-dark.png" alt="Shale" width="284" />
 </p>
 
-Shale is a desktop 3D-printing slicer with its own interface: a dark, monospace window, box-drawing chrome, and a WebGL plate. Slicing is done by an unmodified [CuraEngine](https://github.com/Ultimaker/CuraEngine) process. Printer definitions, quality profiles, and materials are Cura's, read as data.
+Shale is a desktop 3D-printing slicer with its own interface: a dark, monospace window, box-drawing chrome, and a WebGL plate. Slicing is done by an unmodified [CuraEngine](https://github.com/Ultimaker/CuraEngine) process. Printer definitions, quality profiles, and materials come from an installed Cura or Bambu Studio, read as data.
 
 This is the first MVP:
 
-1. Import an STL or a straightforward 3MF and show it on the build plate. Move, rotate, scale, and drop it onto the plate.
-2. Pick a printer from Cura's definitions, plus layer height, infill density, supports, and nozzle / bed temperature.
+1. Import an STL, a STEP part, or a 3MF package — including the multi-part packages Bambu Studio and Orca write — and show it on the build plate. Move, rotate, scale, and drop it onto the plate.
+2. Pick a printer from Cura's definitions or from an installed Bambu Studio profile library, then set the machine, nozzle, process, and filament from the menu bar.
 3. Slice with CuraEngine, follow progress, then scrub a layer-by-layer toolpath preview.
 4. Export the G-code.
+
+The window has a menu bar: **File** (new, open, import, save, export), **Edit** (duplicate, drop to plate, delete), **View** (solid, wireframe, ASCII, toolpaths, frame), **Printer** (machine, nozzle, process, filament), and **Slice settings** (layer height, walls, infill and pattern, supports, temperatures, speed). New, open, import, save, export and duplicate are on Ctrl+N / O / I / S / E / D; the rest of the bar is a menu away. Each menu edits the same job the side panel does.
 
 Two more pieces sit on the same core:
 
@@ -96,6 +98,28 @@ chmod +x scripts/fetch-resources.sh
 ```
 
 That creates `vendor/Cura` and `vendor/fdm_materials`. Override the location with `SHALE_CURA_DIR` and `SHALE_MATERIALS_DIR` if you already have a checkout. See [LICENSING.md](LICENSING.md).
+
+## Profiles from Bambu Studio
+
+Bambu Lab printers, processes, and filaments are read from an installed Bambu
+Studio resource tree, exactly as Cura's are:
+
+```
+<Bambu Studio>/resources/profiles/<VENDOR>/{machine,filament,process}/*.json
+```
+
+`SHALE_ORCA_DIR` points at a different tree. Every vendor directory that ships
+with Bambu Studio is read (BBL, Creality, Anycubic, Elegoo, Anker); a machine
+file becomes an entry in the printer list, its `inherits` chain is resolved
+before conversion, and the window marks it `Bambu`. The library is read once
+per launch and takes well under a second.
+
+These files are data, like Cura's: Shale converts them into its own
+definition, instance, and material values and does not link or ship Bambu
+Studio. G-code is still CuraEngine's Marlin flavour, so a Bambu machine's own
+start and end sequences and AMS mapping are not reproduced. Treat the entries
+as machines and materials Shale can reason about, not as a Bambu Studio
+replacement.
 
 ## Build CuraEngine
 
