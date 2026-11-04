@@ -84,6 +84,11 @@ export function App() {
   const [scope, setScope] = useState<string>("all");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [mode, setMode] = useState<TransformMode>("translate");
+  /// The cut plane: which axis it faces, how far from the part's centre, and
+  /// whether to keep both halves or one.
+  const [cutAxis, setCutAxis] = useState(2);
+  const [cutOffset, setCutOffset] = useState("0");
+  const [cutKeep, setCutKeep] = useState("both");
   const [viewStyle, setViewStyle] = useState<ViewStyle>("solid");
   const [busy, setBusy] = useState(false);
   const [screen, setScreen] = useState<"start" | "slicer">("start");
@@ -717,6 +722,20 @@ export function App() {
           return moved ? { ...model, transform: moved.transform } : model;
         }),
       );
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  /** Split the selected part with a plane, the way Bambu's Cut does. */
+  async function cutSelected() {
+    if (!selected) return;
+    try {
+      const halves = await api.cut(selected.id, cutAxis, Number(cutOffset) || 0, cutKeep);
+      remember();
+      setModels((current) => [...current.filter((model) => model.id !== selected.id), ...halves]);
+      setSelectedId(halves[0]?.id ?? null);
+      setPreview(false);
     } catch (err) {
       setError(messageOf(err));
     }
@@ -1621,6 +1640,28 @@ export function App() {
                   </button>
                   <button type="button" onClick={() => void removeSelected()}>
                     Remove
+                  </button>
+                </div>
+                <div className="row cut-row">
+                  <select aria-label="Cut plane axis" value={cutAxis} onChange={(event) => setCutAxis(Number(event.target.value))}>
+                    <option value={0}>cut X</option>
+                    <option value={1}>cut Y</option>
+                    <option value={2}>cut Z</option>
+                  </select>
+                  <input
+                    aria-label="Cut plane offset"
+                    type="number"
+                    step={1}
+                    value={cutOffset}
+                    onChange={(event) => setCutOffset(event.target.value)}
+                  />
+                  <select aria-label="Keep after cutting" value={cutKeep} onChange={(event) => setCutKeep(event.target.value)}>
+                    <option value="both">both halves</option>
+                    <option value="above">upper only</option>
+                    <option value="below">lower only</option>
+                  </select>
+                  <button type="button" title="Split the part with a plane through its centre" onClick={() => void cutSelected()}>
+                    Cut
                   </button>
                 </div>
               </>

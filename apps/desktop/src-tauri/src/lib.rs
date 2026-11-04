@@ -494,6 +494,89 @@ fn auto_orient(state: State<AppState>, id: u32) -> Result<Transform, String> {
     }
 }
 
+/// Split a part with a plane through it, the way Bambu's *Cut* tool does.
+///
+/// `axis` is the plane's normal (0 = X, 1 = Y, 2 = Z) and `offset` slides the
+/// plane from the part's own centre. Both halves arrive in world space with an
+/// identity transform, because cutting is geometry: nothing is left to rotate.
+#[tauri::command]
+fn cut_model(state: State<AppState>, id: u32, axis: u8, offset: f64, keep: Option<String>) -> Result<Vec<ModelView>, String> {
+    let mut inner = lock(&state)?;
+    let index = inner
+        .models
+        .iter()
+        .position(|model| model.id == id)
+        .ok_or_else(|| "That model is no longer loaded".to_string())?;
+    if axis > 2 {
+        return Err("A cut plane has three axes".to_string());
+    }
+    let model = &inner.models[index];
+    let world = shale_core::mesh::bake(&model.mesh, &model.transform);
+    let (min, max) = shale_core::mesh::bounds(&world);
+    let axis = axis as usize;
+    let middle = (min[axis] + max[axis]) * 0.5 + offset;
+    if middle <= min[axis] + 0.05 || middle >= max[axis] - 0.05 {
+        return Err("That plane is outside the part".to_string());
+    }
+    let mut normal = [0.0, 0.0, 0.0];
+    normal[axis] = 1.0;
+    let mut point = [0.0, 0.0, 0.0];
+    point[axis] = middle;
+    let halves = shale_core::cut::cut(&world, &shale_core::cut::Plane::new(point, normal));
+    let keep = keep.unwrap_or_else(|| "both".to_string());
+    let mut pieces: Vec<(&str, TriangleMesh)> = Vec::new();
+    if keep != "above" && !halves.below.triangles.is_empty() {
+        pieces.push(("lower", halves.below));
+    }
+    if keep != "below" && !halves.above.triangles.is_empty() {
+        pieces.push(("upper", halves.above));
+    }
+    if pieces.is_empty() {
+        return Err("The cut left nothing behind".to_string());
+    }
+    let name = model.name.clone();
+    let report = model.report.clone();
+    let settings = model.settings.clone();
+    let source_bytes = model.source_bytes.clone();
+    // The original is replaced rather than added beside, so the plate does not
+    // end up with a stale copy of what was just cut.
+    inner.models.remove(index);
+    let mut views = Vec::new();
+    for (suffix, mesh) in pieces {
+        let new_id = inner.next_id;
+        inner.next_id += 1;
+        let name = format!("{name} ({suffix})");
+        // The panel reads its triangle count from the report, which still
+        // describes the part before it was cut.
+        let report = ImportReport {
+            triangles: mesh.triangles.len(),
+            ..report.clone()
+        };
+        // Each half keeps its place in plan and is set down on the plate: the
+        // upper piece of a horizontal cut would otherwise float above the bed.
+        let (low, _) = shale_core::mesh::bounds(&mesh);
+        let transform = Transform {
+            translation: [0.0, 0.0, -low[2]],
+            rotation_deg: [0.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
+        };
+        views.push(view_of(new_id, &name, &transform, &report, &settings));
+        inner.models.push(LoadedModel {
+            id: new_id,
+            name,
+            mesh,
+            transform,
+            report: report.clone(),
+            source_bytes: source_bytes.clone(),
+            visible: true,
+            settings: settings.clone(),
+        });
+    }
+    inner.toolpath = None;
+    inner.gcode_path = None;
+    Ok(views)
+}
+
 #[tauri::command]
 fn drop_model(state: State<AppState>, id: u32) -> Result<Transform, String> {
     let mut inner = lock(&state)?;
@@ -1693,6 +1776,7 @@ pub fn run() {
             duplicate_model,
             update_transform,
             auto_orient,
+            cut_model,
             drop_model,
             arrange_models,
             restore_models,

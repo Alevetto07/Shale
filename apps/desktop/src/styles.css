@@ -341,6 +341,12 @@ button.model.selected { color: var(--accent); }
 button.model.selected::before { content: "> "; color: var(--accent); }
 
 .modes, .row, .axes { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+
+/* The cut row carries four controls; without this each asks for the full width
+   and they stack into four lines. */
+.cut-row select,
+.cut-row input[type="number"] { width: auto; flex: 1 1 4.5rem; min-width: 0; }
+.cut-row button { flex: 0 0 auto; }
 .axes label { grid-template-columns: 3ch 1fr; flex: 1; min-width: 5rem; }
 
 .stage {

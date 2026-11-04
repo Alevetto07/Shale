@@ -447,6 +447,24 @@ pub fn apply_transform(vertex: [f64; 3], transform: &Transform) -> [f64; 3] {
     ]
 }
 
+/// Axis-aligned extent of a mesh: `(min, max)`.
+pub fn bounds(mesh: &TriangleMesh) -> ([f64; 3], [f64; 3]) {
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    for vertex in &mesh.vertices {
+        for axis in 0..3 {
+            let value = vertex[axis] as f64;
+            min[axis] = min[axis].min(value);
+            max[axis] = max[axis].max(value);
+        }
+    }
+    if mesh.vertices.is_empty() {
+        ([0.0; 3], [0.0; 3])
+    } else {
+        (min, max)
+    }
+}
+
 pub fn bake(mesh: &TriangleMesh, transform: &Transform) -> TriangleMesh {
     let vertices = mesh
         .vertices
