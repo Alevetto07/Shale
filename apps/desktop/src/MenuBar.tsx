@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { MaterialInfo, PrinterInfo, QualityInfo, VariantInfo } from "./api";
+import { SETTING_GROUPS } from "./settings";
 import type { ViewStyle } from "./Viewport";
 
 /** Slicing settings that live in the menu bar rather than a side panel. */
@@ -60,6 +61,10 @@ export interface MenuBarProps {
 
   settings: SliceSettings;
   onSettings: (patch: Partial<SliceSettings>) => void;
+  /** Cura settings the user has changed; anything absent comes from the profile. */
+  overrides: Record<string, string>;
+  onOverride: (key: string, value: string) => void;
+  onResetOverrides: () => void;
   onSlice: () => void;
 }
 
@@ -78,8 +83,11 @@ const INFILL_PATTERNS = [
 
 type Menu = "file" | "edit" | "view" | "printer" | "settings";
 
+const FIRST_GROUP = SETTING_GROUPS[0]?.id ?? "";
+
 export function MenuBar(props: MenuBarProps) {
   const [open, setOpen] = useState<Menu | null>(null);
+  const [group, setGroup] = useState(FIRST_GROUP);
   const bar = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -133,6 +141,62 @@ export function MenuBar(props: MenuBarProps) {
       {suffix && <em>{suffix}</em>}
     </span>
   );
+
+  const changed = Object.keys(props.overrides).length;
+  const active = SETTING_GROUPS.find((entry) => entry.id === group) ?? SETTING_GROUPS[0];
+
+  const field = (item: (typeof SETTING_GROUPS)[number]["fields"][number]) => {
+    const value = props.overrides[item.key] ?? "";
+    const send = (next: string) => props.onOverride(item.key, next);
+    if (item.kind === "toggle") {
+      const on = value === "True";
+      return (
+        <div className="menu-row" key={item.key}>
+          <span>{item.label}</span>
+          <label className="menu-toggle">
+            <input
+              type="checkbox"
+              checked={on}
+              onChange={(event) => send(event.target.checked ? "True" : "")}
+            />
+            <em>{value === "" ? "profile" : on ? "on" : "off"}</em>
+          </label>
+        </div>
+      );
+    }
+    if (item.kind === "choice") {
+      return (
+        <div className="menu-row" key={item.key}>
+          <span>{item.label}</span>
+          <select value={value} onChange={(event) => send(event.target.value)}>
+            <option value="">profile</option>
+            {(item.options ?? []).map((option) => (
+              <option key={option} value={option}>
+                {option.replace(/_/g, " ")}
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+    return (
+      <div className="menu-row" key={item.key}>
+        <span>{item.label}</span>
+        <span className="menu-field">
+          <input
+            type="number"
+            value={value}
+            placeholder="auto"
+            min={item.min}
+            max={item.max}
+            step={item.step}
+            onChange={(event) => send(event.target.value)}
+          />
+          {item.unit && <em>{item.unit}</em>}
+        </span>
+      </div>
+    );
+  };
 
   return (
     <div className="menubar" ref={bar}>
@@ -354,61 +418,83 @@ export function MenuBar(props: MenuBarProps) {
           Slice settings
         </button>
         {open === "settings" && (
-          <div className="menu-sheet wide" role="menu">
-            <div className="menu-row">
-              <span>Layer height</span>
-              {number("layerHeight", 0.05, 0.05, 1, "mm")}
+          <div className="menu-sheet wide settings-sheet" role="menu">
+            <div className="settings-tabs">
+              {SETTING_GROUPS.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  className={entry.id === active.id ? "selected" : ""}
+                  onClick={() => setGroup(entry.id)}
+                >
+                  {entry.label}
+                  {entry.fields.some((item) => item.key in props.overrides) ? " •" : ""}
+                </button>
+              ))}
             </div>
-            <div className="menu-row">
-              <span>Walls</span>
-              {number("walls", 1, 0, 12)}
+            <div className="settings-body">
+              <div className="menu-row">
+                <span>Layer height</span>
+                {number("layerHeight", 0.02, 0.05, 1, "mm")}
+              </div>
+              <div className="menu-row">
+                <span>Walls</span>
+                {number("walls", 1, 0, 12)}
+              </div>
+              <div className="menu-row">
+                <span>Infill</span>
+                {number("infill", 5, 0, 100, "%")}
+              </div>
+              <div className="menu-row">
+                <span>Pattern</span>
+                <select
+                  value={settings.pattern}
+                  onChange={(event) => props.onSettings({ pattern: event.target.value })}
+                >
+                  {INFILL_PATTERNS.map((pattern) => (
+                    <option key={pattern} value={pattern}>
+                      {pattern}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="menu-row">
+                <span>Supports</span>
+                <label className="menu-toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings.supports}
+                    onChange={(event) => props.onSettings({ supports: event.target.checked })}
+                  />
+                  <em>{settings.supports ? "on" : "off"}</em>
+                </label>
+              </div>
+              <div className="menu-row">
+                <span>Nozzle</span>
+                {number("nozzle", 5, 150, 320, "°C")}
+              </div>
+              <div className="menu-row">
+                <span>Bed</span>
+                {number("bed", 5, 0, 120, "°C")}
+              </div>
+              <div className="menu-row">
+                <span>Speed</span>
+                {number("speed", 5, 10, 500, "mm/s")}
+              </div>
+              <hr />
+              <h4 className="settings-heading">{active.label}</h4>
+              {active.fields.map(field)}
+              {changed > 0 && (
+                <button type="button" className="settings-reset" onClick={props.onResetOverrides}>
+                  reset {changed} changed {changed === 1 ? "setting" : "settings"}
+                </button>
+              )}
+              <p className="menu-note">
+                {bambu
+                  ? "Bambu Studio profiles are read as data; the engine is still CuraEngine."
+                  : "Anything left alone comes from the selected profile."}
+              </p>
             </div>
-            <div className="menu-row">
-              <span>Infill</span>
-              {number("infill", 5, 0, 100, "%")}
-            </div>
-            <div className="menu-row">
-              <span>Pattern</span>
-              <select
-                value={settings.pattern}
-                onChange={(event) => props.onSettings({ pattern: event.target.value })}
-              >
-                {INFILL_PATTERNS.map((pattern) => (
-                  <option key={pattern} value={pattern}>
-                    {pattern}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="menu-row">
-              <span>Supports</span>
-              <label className="menu-toggle">
-                <input
-                  type="checkbox"
-                  checked={settings.supports}
-                  onChange={(event) => props.onSettings({ supports: event.target.checked })}
-                />
-                <em>{settings.supports ? "on" : "off"}</em>
-              </label>
-            </div>
-            <hr />
-            <div className="menu-row">
-              <span>Nozzle</span>
-              {number("nozzle", 5, 150, 320, "°C")}
-            </div>
-            <div className="menu-row">
-              <span>Bed</span>
-              {number("bed", 5, 0, 120, "°C")}
-            </div>
-            <div className="menu-row">
-              <span>Speed</span>
-              {number("speed", 5, 10, 500, "mm/s")}
-            </div>
-            <p className="menu-note">
-              {bambu
-                ? "Bambu Studio profiles are read as data; the engine is still CuraEngine."
-                : "Values override the selected Cura profile for this slice."}
-            </p>
           </div>
         )}
       </div>

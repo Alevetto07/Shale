@@ -75,6 +75,8 @@ export function App() {
   const [walls, setWalls] = useState(2);
   const [pattern, setPattern] = useState("grid");
   const [speed, setSpeed] = useState(50);
+  // Cura settings the user changed in the menu; anything absent is the profile's.
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [nozzle, setNozzle] = useState(200);
   const [bedTemp, setBedTemp] = useState(60);
   const [models, setModels] = useState<ModelView[]>([]);
@@ -408,6 +410,21 @@ export function App() {
 
   const selected = models.find((model) => model.id === selectedId) ?? null;
 
+  /**
+   * Everything that goes to the engine as an `extra` override: the quick fields
+   * the side panel mirrors, then whatever the settings menu has been told.
+   * Empty strings are dropped so an untouched field stays the profile's.
+   */
+  function overridesFor(): [string, string][] {
+    const merged: Record<string, string> = {
+      wall_line_count: String(walls),
+      infill_pattern: pattern,
+      speed_print: String(speed),
+      ...overrides,
+    };
+    return Object.entries(merged).filter(([, value]) => value !== "");
+  }
+
   const sliceSettings: SliceSettings = {
     layerHeight,
     walls,
@@ -555,11 +572,7 @@ export function App() {
         material_bed_temperature: bedTemp,
         // The menu bar edits these directly; an empty list used to mean the
         // selected profile decided and there was no way to change your mind.
-        extra: [
-          ["wall_line_count", String(walls)],
-          ["infill_pattern", pattern],
-          ["speed_print", String(speed)],
-        ],
+        extra: overridesFor(),
       });
       setLayerCount(summary.layer_count);
       setLayerZ(summary.layers.map((item) => item.z));
@@ -687,11 +700,7 @@ export function App() {
         material_bed_temperature: bedTemp,
         // The menu bar edits these directly; an empty list used to mean the
         // selected profile decided and there was no way to change your mind.
-        extra: [
-          ["wall_line_count", String(walls)],
-          ["infill_pattern", pattern],
-          ["speed_print", String(speed)],
-        ],
+        extra: overridesFor(),
       });
       setSupport((current) =>
         current ? { ...current, plan: { ...current.plan, comparison } } : current,
@@ -975,6 +984,16 @@ export function App() {
           onMaterial={setMaterial}
           settings={sliceSettings}
           onSettings={applySliceSettings}
+          overrides={overrides}
+          onOverride={(key, value) =>
+            setOverrides((prev) => {
+              const next = { ...prev };
+              if (value === "") delete next[key];
+              else next[key] = value;
+              return next;
+            })
+          }
+          onResetOverrides={() => setOverrides({})}
           onSlice={() => void slice()}
         />
       </header>
