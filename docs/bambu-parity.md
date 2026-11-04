@@ -64,7 +64,7 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Process/quality picker | yes | yes | per-printer processes |
 | Menu-bar slicing settings | yes | yes | File / Edit / View / Printer / Slice settings, 76 fields |
 | Slice and preview toolpaths | yes | yes | layer slider, G-code parsed back into paths |
-| Move / rotate / scale / mirror | yes | yes | typed and dragged |
+| Move / rotate / scale / mirror | yes | yes | typed, dragged, and one-click: *mirror X/Y/Z*, *turn 90°*, *Upright*. Every one of them turns about the part's centre, and a mirror flips the triangle winding when it bakes, so the solid does not come out inside out |
 | Duplicate | yes | yes | `Ctrl+D` |
 | Undo / redo | yes | yes | Ctrl+Z / Ctrl+Shift+Z over a stack of plate snapshots; delete only hides a part, so undo never re-reads a file |
 | Auto-arrange | yes | yes | `Edit → Arrange on plate` (Ctrl+Shift+A): biggest footprint first, shelf by shelf, 4 mm apart |

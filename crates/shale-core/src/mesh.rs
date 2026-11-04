@@ -459,10 +459,20 @@ pub fn bake(mesh: &TriangleMesh, transform: &Transform) -> TriangleMesh {
             [point[0] as f32, point[1] as f32, point[2] as f32]
         })
         .collect();
-    TriangleMesh {
-        vertices,
-        triangles: mesh.triangles.clone(),
-    }
+    // A negative scale is a mirror, and a mirror turns a solid inside out: the
+    // corners move but every face now points inward, so an engine that fills by
+    // winding sees a void and drops the walls. Swapping the last two corners of
+    // each triangle puts the faces back on the outside.
+    let inside_out = transform.scale[0] * transform.scale[1] * transform.scale[2] < 0.0;
+    let triangles = if inside_out {
+        mesh.triangles
+            .iter()
+            .map(|triangle| [triangle[0], triangle[2], triangle[1]])
+            .collect()
+    } else {
+        mesh.triangles.clone()
+    };
+    TriangleMesh { vertices, triangles }
 }
 
 /// Shift a mesh from Shale's machine coordinates into the space CuraEngine expects.
@@ -962,6 +972,52 @@ mod tests {
     use super::*;
     use std::io::Write;
     use zip::write::SimpleFileOptions;
+
+    /// Signed volume: positive when the faces point outward.
+    fn signed_volume(mesh: &TriangleMesh) -> f64 {
+        mesh.triangles
+            .iter()
+            .map(|triangle| {
+                let [a, b, c] = triangle.map(|index| mesh.vertices[index as usize].map(f64::from));
+                (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                    + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                    / 6.0
+            })
+            .sum()
+    }
+
+    fn unit_tetrahedron() -> TriangleMesh {
+        TriangleMesh {
+            vertices: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            triangles: vec![[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]],
+        }
+    }
+
+    #[test]
+    fn a_mirrored_bake_keeps_the_faces_on_the_outside() {
+        let mesh = unit_tetrahedron();
+        assert!((signed_volume(&mesh) - 1.0 / 6.0).abs() < 1e-9);
+
+        let mirrored = bake(
+            &mesh,
+            &Transform {
+                translation: [0.0, 0.0, 0.0],
+                rotation_deg: [0.0, 0.0, 0.0],
+                scale: [-1.0, 1.0, 1.0],
+            },
+        );
+        assert_eq!(mirrored.triangles.len(), 4);
+        assert!(
+            signed_volume(&mirrored) > 0.0,
+            "a mirrored solid must not end up inside out"
+        );
+        assert!((signed_volume(&mirrored).abs() - 1.0 / 6.0).abs() < 1e-9);
+    }
 
     #[test]
     fn a_three_mf_imports_even_when_its_name_has_no_extension() {

@@ -587,6 +587,21 @@ export function App() {
     }
   }
 
+  /** Rotating or scaling happens about the mesh's own origin, not the part's
+   * centre, so the part slides across the plate whenever you turn it. Measure
+   * the centre before and after, and put it back where it was. */
+  function commitAroundCentre(model: ModelView, patch: Partial<Transform>) {
+    const before = worldCentre(model.positions, model.transform);
+    const next: Transform = { ...model.transform, ...patch };
+    const after = worldCentre(model.positions, next);
+    const translation = next.translation.map((value, index) => value + (before[index] - after[index])) as [
+      number,
+      number,
+      number,
+    ];
+    void commitTransform(model.id, { ...next, translation });
+  }
+
   function editNumber(axis: 0 | 1 | 2, kind: "rotation_deg" | "scale", value: number) {
     if (!selected) return;
     const transform: Transform = {
@@ -595,7 +610,7 @@ export function App() {
       scale: [...selected.transform.scale],
     };
     transform[kind][axis] = value;
-    void commitTransform(selected.id, transform);
+    commitAroundCentre(selected, transform);
   }
 
   function editCentre(axis: 0 | 1 | 2, value: number) {
@@ -607,6 +622,42 @@ export function App() {
       ...selected.transform,
       translation,
     });
+  }
+
+  /** Mirror a part across one axis. A negative scale is a mirror, and the core
+   * flips the winding when it bakes so the solid stays right way out. */
+  function mirrorAxis(axis: 0 | 1 | 2) {
+    if (!selected) return;
+    const scale = [...selected.transform.scale] as [number, number, number];
+    scale[axis] = -scale[axis];
+    commitAroundCentre(selected, { scale });
+  }
+
+  /** Turn a part by a quarter, which is how most parts actually get placed. */
+  function turnQuarter(axis: 0 | 1 | 2, quarters: number) {
+    if (!selected) return;
+    const rotation_deg = [...selected.transform.rotation_deg] as [number, number, number];
+    rotation_deg[axis] = Math.round((rotation_deg[axis] + 90 * quarters) * 1000) / 1000;
+    commitAroundCentre(selected, { rotation_deg });
+  }
+
+  async function resetTransform() {
+    if (!selected) return;
+    try {
+      const transform = await api.dropModel(selected.id);
+      const upright: Transform = {
+        translation: transform.translation,
+        rotation_deg: [0, 0, 0],
+        scale: [1, 1, 1],
+      };
+      await api.updateTransform(selected.id, upright);
+      remember();
+      setModels((current) =>
+        current.map((model) => (model.id === selected.id ? { ...model, transform: upright } : model)),
+      );
+    } catch (err) {
+      setError(messageOf(err));
+    }
   }
 
   async function dropSelected() {
@@ -1510,9 +1561,27 @@ export function App() {
                     );
                   })}
                 </div>
+                <div className="row" role="group" aria-label="Mirror and turn">
+                  {(["X", "Y", "Z"] as const).map((axis, index) => (
+                    <button
+                      key={axis}
+                      type="button"
+                      title={`Mirror across ${axis}`}
+                      onClick={() => mirrorAxis(index as 0 | 1 | 2)}
+                    >
+                      mirror {axis}
+                    </button>
+                  ))}
+                  <button type="button" title="Turn a quarter turn about Z" onClick={() => turnQuarter(2, 1)}>
+                    turn 90°
+                  </button>
+                </div>
                 <div className="row">
                   <button type="button" onClick={() => void dropSelected()}>
                     Drop to plate
+                  </button>
+                  <button type="button" onClick={() => void resetTransform()}>
+                    Upright
                   </button>
                   <button type="button" onClick={() => void removeSelected()}>
                     Remove
