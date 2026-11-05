@@ -75,7 +75,7 @@ Creality's preferred quality type in 5.13 is `standard`, and that profile does n
 
 ## CAD import
 
-STL is a mesh already. 3MF mesh import reads the triangles in the package (units, build items, and component transforms) and does not tessellate anything. STEP is a boundary representation. Shale reads it with truck (Apache-2.0) and tessellates the surfaces here. OpenCASCADE is not linked; see [LICENSING.md](LICENSING.md).
+STL is a mesh already. 3MF mesh import reads the triangles in the package (units, build items, and component transforms) and does not tessellate anything. A package holding several objects is imported as several parts — each keeps the name and the place the file gave it, so a MakerWorld model made of two halves stays two halves you can move, paint or spool separately, and the assembly is dropped to the bed rather than pulled to the middle. STEP is a boundary representation. Shale reads it with truck (Apache-2.0) and tessellates the surfaces here. OpenCASCADE is not linked; see [LICENSING.md](LICENSING.md).
 
 The chordal tolerance is the largest gap, in millimetres, between a triangle edge and the curve it stands in for. It starts at half the layer height and is never coarser than half the nozzle, clamped to 0.02–0.5 mm. The angular tolerance is the largest turn, in degrees, between two neighbouring chords of a curved edge. If the first mesh turns more sharply than that, the chord is tightened and the shape is meshed again. Both controls sit in the Slice panel. Planes ignore them. A file whose length unit is centimetres, metres, or inches is scaled to millimetres; a file with no unit is treated as millimetres.
 

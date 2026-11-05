@@ -599,13 +599,18 @@ export function App() {
     setImporting(true);
     setImportProgress({ fraction: 0.01, message: "Reading model" });
     try {
-      const model = await api.importModel(picked, printerId || null, variant, quality, chord, turn);
+      const added = await api.importModel(picked, printerId || null, variant, quality, chord, turn);
       remember();
-      setModels((current) => [...current, model]);
-      setSelectedId(model.id);
+      setModels((current) => [...current, ...added]);
+      const last = added[added.length - 1];
+      setSelectedId(last.id);
       setPreview(false);
       setShowModel(true);
-      setImportProgress({ fraction: 1, message: `${model.triangles} triangles` });
+      const triangles = added.reduce((total, model) => total + model.triangles, 0);
+      setImportProgress({
+        fraction: 1,
+        message: added.length > 1 ? `${added.length} parts, ${triangles} triangles` : `${triangles} triangles`,
+      });
     } catch (err) {
       const message = messageOf(err);
       // Only a deliberate cancel stays quiet; any other failure is shown.

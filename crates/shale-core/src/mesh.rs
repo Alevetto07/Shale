@@ -588,7 +588,87 @@ pub fn drop_to_bed(mesh: &TriangleMesh, transform: &mut Transform) {
     }
 }
 
+/// One object out of a file: what it is called, and its own triangles.
+///
+/// A 3MF is a package of objects and a build that places them, so importing one
+/// as a single mesh throws away the parts it is made of — and a Bambu model
+/// downloaded from MakerWorld is exactly that, several objects in one file.
+#[derive(Clone, Debug)]
+pub struct NamedObject {
+    pub name: String,
+    pub mesh: TriangleMesh,
+}
+
+/// Read every object a file holds.
+///
+/// A 3MF can hold several; an STL and a STEP hold one. Parts keep the positions
+/// the file gave them, because a multi-part model is an assembly and moving its
+/// parts to the middle of the plate would pull it apart.
+pub fn load_objects(
+    file_name: &str,
+    bytes: &[u8],
+    tolerance: &crate::cad::TessellationTolerance,
+    progress: &mut dyn FnMut(f32, &str),
+    cancel: &AtomicBool,
+) -> Result<Vec<NamedObject>, Error> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Error::Mesh("Import cancelled".into()));
+    }
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let extension = match extension.as_str() {
+        "3mf" | "step" | "stp" | "stl" => extension,
+        _ => sniff_format(bytes).to_string(),
+    };
+    let mut objects = match extension.as_str() {
+        "3mf" => {
+            progress(0.2, "reading 3MF");
+            load_3mf_objects(bytes)?
+                .into_iter()
+                .map(|(name, mesh)| NamedObject { name, mesh })
+                .collect::<Vec<_>>()
+        }
+        "step" | "stp" => {
+            progress(0.2, "tessellating STEP");
+            let imported = crate::cad::import_step(bytes, tolerance)?;
+            vec![NamedObject {
+                name: "part".to_string(),
+                mesh: imported.mesh,
+            }]
+        }
+        _ => {
+            progress(0.2, "reading STL");
+            vec![NamedObject {
+                name: "part".to_string(),
+                mesh: load_stl(bytes)?,
+            }]
+        }
+    };
+    for object in &mut objects {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(Error::Mesh("Import cancelled".into()));
+        }
+        right_way_round(&mut object.mesh);
+    }
+    progress(1.0, "import finished");
+    Ok(objects)
+}
+
 fn load_3mf(bytes: &[u8]) -> Result<TriangleMesh, Error> {
+    let objects = load_3mf_objects(bytes)?;
+    Ok(crate::exchange::merge(
+        &objects
+            .into_iter()
+            .map(|(_, mesh)| mesh)
+            .collect::<Vec<_>>(),
+    ))
+}
+
+/// One mesh per object the build places, with the build's transforms applied.
+fn load_3mf_objects(bytes: &[u8]) -> Result<Vec<(String, TriangleMesh)>, Error> {
     let mut archive = ZipArchive::new(Cursor::new(bytes))
         .map_err(|err| Error::Mesh(format!("3MF is not a zip archive: {err}")))?;
     let root_path = threemf_root_part(&mut archive)?;
@@ -632,27 +712,41 @@ fn load_3mf(bytes: &[u8]) -> Result<TriangleMesh, Error> {
             "3MF model has no mesh. Component-only files without a build item are not supported yet.".into(),
         ));
     }
-    let mut vertices = Vec::new();
-    let mut triangles = Vec::new();
+    let mut objects = Vec::new();
     for (id, transform) in items {
+        let mut vertices = Vec::new();
+        let mut triangles = Vec::new();
         flatten_object(id, transform, root, &parts, &mut vertices, &mut triangles, 0)?;
-    }
-    if scale != 1.0 {
-        for vertex in &mut vertices {
-            vertex[0] *= scale as f32;
-            vertex[1] *= scale as f32;
-            vertex[2] *= scale as f32;
+        if triangles.is_empty() {
+            continue;
         }
+        if scale != 1.0 {
+            for vertex in &mut vertices {
+                vertex[0] *= scale as f32;
+                vertex[1] *= scale as f32;
+                vertex[2] *= scale as f32;
+            }
+        }
+        let name = root
+            .objects
+            .iter()
+            .find(|(object_id, _)| *object_id == id)
+            .and_then(|(_, object)| object.name.clone())
+            .unwrap_or_else(|| format!("object {id}"));
+        objects.push((
+            name,
+            TriangleMesh {
+                vertices,
+                triangles,
+            },
+        ));
     }
-    if triangles.is_empty() {
+    if objects.is_empty() {
         return Err(Error::Mesh(
             "3MF model did not contain any triangles".into(),
         ));
     }
-    Ok(TriangleMesh {
-        vertices,
-        triangles,
-    })
+    Ok(objects)
 }
 
 /// A 3MF package can hold several `.model` parts. Bambu Studio, Orca and
@@ -733,6 +827,8 @@ fn unit_scale(unit: &str) -> f64 {
 }
 
 struct RawObject {
+    /// `<object name="...">`, when the file names its objects.
+    name: Option<String>,
     vertices: Vec<[f32; 3]>,
     triangles: Vec<[u32; 3]>,
     components: Vec<RawComponent>,
@@ -843,6 +939,7 @@ fn note_3mf_start(
             *current = Some((
                 id,
                 RawObject {
+                    name: xml_attr(event, "name").filter(|n| !n.trim().is_empty()),
                     vertices: Vec::new(),
                     triangles: Vec::new(),
                     components: Vec::new(),
@@ -1041,6 +1138,41 @@ mod tests {
             ],
             triangles: vec![[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]],
         }
+    }
+
+    /// A closed tetrahedron with its lowest corner at `(x, 0, 0)`.
+    fn tetrahedron_at(x: f32) -> TriangleMesh {
+        let mut mesh = unit_tetrahedron();
+        for vertex in &mut mesh.vertices {
+            vertex[0] += x;
+        }
+        mesh
+    }
+
+    #[test]
+    fn a_three_mf_of_two_objects_comes_back_as_two_parts() {
+        let left = tetrahedron_at(-40.0);
+        let right = tetrahedron_at(40.0);
+        let bytes = crate::exchange::to_3mf(&[("left arm", &left), ("right arm", &right)]).unwrap();
+        let objects = load_objects(
+            "assembly.3mf",
+            &bytes,
+            &crate::cad::TessellationTolerance::standard(),
+            &mut |_, _| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(objects.len(), 2, "two build items, two parts");
+        assert_eq!(objects[0].name, "left arm");
+        assert_eq!(objects[1].name, "right arm");
+        assert_eq!(objects[0].mesh.triangles.len(), left.triangles.len());
+        // The parts kept the places the file gave them: an assembly is not two
+        // parts stacked in the middle of the plate.
+        let centre = |mesh: &TriangleMesh| {
+            mesh.vertices.iter().map(|v| v[0]).sum::<f32>() / mesh.vertices.len() as f32
+        };
+        assert!(centre(&objects[0].mesh) < -20.0, "left part stayed left");
+        assert!(centre(&objects[1].mesh) > 20.0, "right part stayed right");
     }
 
     #[test]

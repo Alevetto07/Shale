@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use shale_core::{
-    compare_support, drop_to_bed, forget_recent, load_mesh_reporting, load_mesh_with,
+    compare_support, drop_to_bed, forget_recent, load_mesh_with,
     load_named_bytes, load_recents, now_ms, overlays, place_on_bed, propose, read_project,
     remember_recent, set_enabled, slice, Catalog, CustomInstruction, Engine, EngineBackend,
     ImportReport, MaterialInfo, PlacedModel, PrinterInfo, ProjectData, ProjectModel, QualityInfo,
@@ -329,7 +329,7 @@ async fn import_model(
     quality_type: Option<String>,
     chordal_mm: Option<f64>,
     angular_deg: Option<f64>,
-) -> Result<ModelView, String> {
+) -> Result<Vec<ModelView>, String> {
     let tolerance = match (chordal_mm, angular_deg) {
         (Some(chordal), Some(angular)) => TessellationTolerance::new(chordal, angular),
         _ => TessellationTolerance::standard(),
@@ -342,10 +342,14 @@ async fn import_model(
     let file = PathBuf::from(path);
     let load_path = file.clone();
     let app_progress = app.clone();
-    let imported = tauri::async_runtime::spawn_blocking(move || {
+    let loaded = tauri::async_runtime::spawn_blocking(move || {
         let source_bytes = fs::read(&load_path)?;
-        let imported = load_mesh_reporting(
-            &load_path,
+        let objects = shale_core::mesh::load_objects(
+            load_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("model"),
+            &source_bytes,
             &tolerance,
             &mut |fraction, message| {
                 let _ = app_progress.emit(
@@ -355,14 +359,12 @@ async fn import_model(
             },
             &cancel,
         )?;
-        Ok::<_, shale_core::Error>((source_bytes, imported))
+        Ok::<_, shale_core::Error>((source_bytes, objects))
     })
     .await
     .map_err(|err| format!("import task failed: {err}"))?
     .map_err(|err| err.to_string())?;
-    let (source_bytes, imported) = imported;
-    let mesh = imported.mesh;
-    let report = imported.report;
+    let (source_bytes, objects) = loaded;
     let mut inner = lock(&state)?;
     let placed = printer_id.and_then(|printer_id| {
         catalog(&mut inner)
@@ -377,40 +379,89 @@ async fn import_model(
             })
             .ok()
     });
-    let transform = match placed {
-        Some(resolved) => place_on_bed(
-            &mesh,
-            resolved.summary.machine_width,
-            resolved.summary.machine_depth,
-            resolved.summary.machine_center_is_zero,
-        ),
-        None => {
-            let mut transform = Transform::default();
-            drop_to_bed(&mesh, &mut transform);
-            transform
-        }
-    };
-    let id = inner.next_id;
-    inner.next_id += 1;
-    let name = file
+    let file_name = file
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("model")
         .to_string();
-    let settings = std::collections::BTreeMap::new();
-    let view = view_of(id, &name, &transform, &report, &settings, None);
-    inner.models.push(LoadedModel {
-        id,
-        name,
-        mesh,
-        transform,
-        report,
-        source_bytes,
-        visible: true,
-        settings: std::collections::BTreeMap::new(),
-        slot: None,
-    });
-    Ok(view)
+    // A file of one object is dropped in the middle of the plate. A file of
+    // several is an assembly: the parts keep the places the file gave them, or
+    // the model would come apart.
+    let assembly = objects.len() > 1;
+    let mut views = Vec::with_capacity(objects.len());
+    for (index, object) in objects.into_iter().enumerate() {
+        let transform = if assembly {
+            let mut transform = Transform::default();
+            drop_to_bed(&object.mesh, &mut transform);
+            transform
+        } else {
+            match &placed {
+                Some(resolved) => place_on_bed(
+                    &object.mesh,
+                    resolved.summary.machine_width,
+                    resolved.summary.machine_depth,
+                    resolved.summary.machine_center_is_zero,
+                ),
+                None => {
+                    let mut transform = Transform::default();
+                    drop_to_bed(&object.mesh, &mut transform);
+                    transform
+                }
+            }
+        };
+        let mut name = if assembly {
+            let wanted = object.name.trim().to_string();
+            if wanted.is_empty() || wanted.starts_with("object ") {
+                format!("{file_name} part {}", index + 1)
+            } else {
+                wanted
+            }
+        } else {
+            file_name.clone()
+        };
+        // Two objects in one file can share a name; the plate cannot. Only the
+        // parts on the plate count: a part that was deleted is still held, so
+        // that undo can bring it back.
+        let mut suffix = 2;
+        while inner
+            .models
+            .iter()
+            .any(|model| model.visible && model.name == name)
+        {
+            name = format!("{} ({suffix})", name.split(" (").next().unwrap_or(&name));
+            suffix += 1;
+        }
+        let triangles = object.mesh.triangles.len();
+        let report = ImportReport {
+            triangles,
+            max_deviation_mm: None,
+            max_turning_deg: None,
+            milliseconds: 0,
+            source: "3mf".to_string(),
+            chordal_mm: None,
+            angular_deg: None,
+        };
+        let id = inner.next_id;
+        inner.next_id += 1;
+        let settings = std::collections::BTreeMap::new();
+        let view = view_of(id, &name, &transform, &report, &settings, None);
+        inner.models.push(LoadedModel {
+            id,
+            name,
+            mesh: object.mesh,
+            transform,
+            report,
+            source_bytes: source_bytes.clone(),
+            visible: true,
+            settings: std::collections::BTreeMap::new(),
+            slot: None,
+        });
+        views.push(view);
+    }
+    if views.is_empty() {
+        return Err("That file held no geometry".to_string());
+    }
+    Ok(views)
 }
 
 /// One band of a calibration print, as the window sees it.

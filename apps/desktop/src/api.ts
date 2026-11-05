@@ -262,7 +262,7 @@ export const api = {
     chordalMm: number,
     angularDeg: number,
   ) =>
-    invoke<ModelView>("import_model", {
+    invoke<ModelView[]>("import_model", {
       path,
       printerId,
       variantName,
