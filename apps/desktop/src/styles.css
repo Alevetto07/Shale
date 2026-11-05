@@ -861,3 +861,45 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   color: var(--ink);
   border-color: var(--muted);
 }
+
+/* Plates: a row of chips, the one in front marked. */
+.plates {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.plate-chip {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line, #2b2b2b);
+}
+
+.plate-tab {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 3px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.plate-tab.active {
+  background: var(--ink, #e8e6df);
+  color: var(--paper, #101010);
+}
+
+.plate-drop {
+  background: none;
+  border: none;
+  border-left: 1px solid var(--line, #2b2b2b);
+  color: inherit;
+  font: inherit;
+  padding: 0 5px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.plate-drop:hover {
+  opacity: 1;
+}

@@ -34,6 +34,10 @@ pub struct ProjectModel {
     /// Which AMS spool printed this part.
     #[serde(default)]
     pub slot: Option<usize>,
+    /// Which build plate this part sits on. A project holds several plates and
+    /// slices them one at a time; plate 0 is the one the tab opens on.
+    #[serde(default)]
+    pub plate: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -51,6 +55,10 @@ pub struct ProjectData {
     pub chord_mm: f64,
     pub turn_deg: f64,
     pub models: Vec<ProjectModel>,
+    /// The name of each plate, in plate order. A project with no names has one
+    /// plate that nothing has bothered to name.
+    #[serde(default)]
+    pub plate_names: Vec<String>,
     pub instructions: Vec<CustomInstruction>,
     pub support: Option<SupportPlan>,
     /// Index into [`ProjectData::models`] the support plan belongs to.
@@ -87,6 +95,8 @@ struct Document {
     turn_deg: f64,
     models: Vec<DocumentModel>,
     #[serde(default)]
+    plate_names: Vec<String>,
+    #[serde(default)]
     instructions: Vec<CustomInstruction>,
     #[serde(default)]
     support: Option<SupportPlan>,
@@ -103,6 +113,8 @@ struct DocumentModel {
     settings: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     slot: Option<usize>,
+    #[serde(default)]
+    plate: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -150,6 +162,7 @@ pub fn write_project(path: &Path, data: &ProjectData) -> Result<(), Error> {
             transform: model.transform.clone(),
             settings: model.settings.clone(),
             slot: model.slot,
+            plate: model.plate,
         });
     }
     if let Some(index) = data.support_model {
@@ -178,6 +191,11 @@ pub fn write_project(path: &Path, data: &ProjectData) -> Result<(), Error> {
         chord_mm: data.chord_mm,
         turn_deg: data.turn_deg,
         models: document_models,
+        plate_names: if data.plate_names.is_empty() {
+            vec!["plate 1".to_string()]
+        } else {
+            data.plate_names.clone()
+        },
         instructions: data.instructions.clone(),
         support,
         support_model: data.support_model,
@@ -258,6 +276,7 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
             transform: entry.transform.clone(),
             settings: entry.settings.clone(),
             slot: entry.slot,
+            plate: entry.plate,
         });
     }
     let thumbnail = match read_zip(&mut zip, "thumbnail.jpg") {
@@ -280,6 +299,11 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
             chord_mm: document.chord_mm,
             turn_deg: document.turn_deg,
             models,
+            plate_names: if document.plate_names.is_empty() {
+                vec!["plate 1".to_string()]
+            } else {
+                document.plate_names
+            },
             instructions: document.instructions,
             support: document.support,
             support_model: document.support_model,
@@ -494,6 +518,7 @@ mod tests {
                     },
                     settings: Default::default(),
                     slot: Some(1),
+                    plate: 0,
                 },
                 ProjectModel {
                     name: "block-20.step".into(),
@@ -501,8 +526,10 @@ mod tests {
                     transform: Transform::default(),
                     settings: Default::default(),
                     slot: None,
+                    plate: 1,
                 },
             ],
+            plate_names: vec!["front".into(), "back".into()],
             instructions: vec![CustomInstruction::Beep { layer: 4 }],
             support: Some(sample_support()),
             support_model: Some(0),
@@ -530,6 +557,10 @@ mod tests {
         assert_eq!(data.models[0].name, "cube.stl");
         assert_eq!(data.models[0].bytes, stl);
         assert_eq!(data.models[0].transform, saved.models[0].transform);
+        // Two plates, named, with each part on the one it was put on.
+        assert_eq!(data.plate_names, vec!["front".to_string(), "back".to_string()]);
+        assert_eq!(data.models[0].plate, 0);
+        assert_eq!(data.models[1].plate, 1);
         assert_eq!(data.models[1].name, "block-20.step");
         assert_eq!(data.models[1].bytes, step);
         assert!(data.models[1].name.ends_with(".step"));

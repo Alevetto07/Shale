@@ -72,6 +72,18 @@ export interface ModelView {
   slot: number | null;
 }
 
+export interface PlateView {
+  index: number;
+  name: string;
+  models: number;
+  active: boolean;
+}
+
+export interface PlateSwitch {
+  plates: PlateView[];
+  models: ModelView[];
+}
+
 export interface CalibrationBand {
   index: number;
   z_mm: number;
@@ -244,6 +256,11 @@ export const api = {
   autoOrient: (id: number) => invoke<Transform>("auto_orient", { id }),
   cut: (id: number, axis: number, offset: number, keep: string) =>
     invoke<ModelView[]>("cut_model", { id, axis, offset, keep }),
+  listPlates: () => invoke<PlateView[]>("list_plates"),
+  addPlate: () => invoke<PlateSwitch>("add_plate"),
+  switchPlate: (index: number) => invoke<PlateSwitch>("switch_plate", { index }),
+  deletePlate: (index: number) => invoke<PlateView[]>("delete_plate", { index }),
+  renamePlate: (index: number, name: string) => invoke<PlateView[]>("rename_plate", { index, name }),
   calibrationTower: (printerId: string | null, bands = 5, startC = 230, stepC = 5) =>
     invoke<TowerBuilt>("calibration_tower", { printerId, bands, startC, stepC }),
   calibrateSlice: (bands: CalibrationBand[]) => invoke<CalibrationApplied>("calibrate_slice", { bands }),

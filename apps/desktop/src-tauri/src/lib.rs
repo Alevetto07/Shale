@@ -26,6 +26,11 @@ struct Inner {
     /// that parked under this lock turned that into a frozen window.
     catalog_loading: bool,
     models: Vec<LoadedModel>,
+    /// The plates behind the one on screen. `models` is always the plate in
+    /// front, and a stashed plate keeps its models and its support plan so a
+    /// switch is a swap rather than a reload. `plates[active_plate]` is empty.
+    plates: Vec<PlateStash>,
+    active_plate: usize,
     next_id: u32,
     instructions: Vec<(u32, CustomInstruction)>,
     next_instruction: u32,
@@ -37,6 +42,14 @@ struct Inner {
     slicing: bool,
     cancel_import: Arc<AtomicBool>,
     engine_message: String,
+}
+
+#[derive(Default)]
+struct PlateStash {
+    name: String,
+    models: Vec<LoadedModel>,
+    support: Option<SupportPlan>,
+    support_model_id: Option<u32>,
 }
 
 struct LoadedModel {
@@ -1723,10 +1736,199 @@ fn forget_recent_project(app: AppHandle, path: String) -> Result<Vec<RecentEntry
     forget_recent(&dir, &path).map_err(|err| err.to_string())
 }
 
+/// A plate as the window sees it: its name and how many parts are on it.
+#[derive(Clone, Debug, serde::Serialize)]
+struct PlateView {
+    index: usize,
+    name: String,
+    models: usize,
+    active: bool,
+}
+
+#[derive(serde::Serialize)]
+struct PlateSwitch {
+    plates: Vec<PlateView>,
+    models: Vec<ModelView>,
+}
+
+impl Inner {
+    fn plate_names(&self) -> Vec<String> {
+        self.plates
+            .iter()
+            .enumerate()
+            .map(|(index, plate)| {
+                if plate.name.is_empty() {
+                    format!("plate {}", index + 1)
+                } else {
+                    plate.name.clone()
+                }
+            })
+            .collect()
+    }
+
+    fn plate_views(&self) -> Vec<PlateView> {
+        self.plates
+            .iter()
+            .enumerate()
+            .map(|(index, plate)| PlateView {
+                index,
+                name: if plate.name.is_empty() {
+                    format!("plate {}", index + 1)
+                } else {
+                    plate.name.clone()
+                },
+                models: if index == self.active_plate {
+                    self.models.iter().filter(|model| model.visible).count()
+                } else {
+                    plate.models.iter().filter(|model| model.visible).count()
+                },
+                active: index == self.active_plate,
+            })
+            .collect()
+    }
+
+    /// Move the plate in front into its stash, so the next one can take its
+    /// place. The support plan travels with the plate it was proposed on.
+    fn park_plate(&mut self) {
+        if let Some(slot) = self.plates.get_mut(self.active_plate) {
+            slot.models = std::mem::take(&mut self.models);
+            slot.support = self.support.take();
+            slot.support_model_id = self.support_model_id.take();
+        }
+    }
+
+    /// Bring a stashed plate to the front. Whatever was in front is parked
+    /// first, so this is always a swap.
+    fn resume_plate(&mut self, index: usize) {
+        if index == self.active_plate || index >= self.plates.len() {
+            return;
+        }
+        self.park_plate();
+        self.active_plate = index;
+        let slot = &mut self.plates[index];
+        self.models = std::mem::take(&mut slot.models);
+        self.support = slot.support.take();
+        self.support_model_id = slot.support_model_id.take();
+        // A slice belongs to the plate that was sliced.
+        self.toolpath = None;
+        self.gcode_path = None;
+    }
+}
+
+#[tauri::command]
+fn list_plates(state: State<AppState>) -> Result<Vec<PlateView>, String> {
+    let inner = lock(&state)?;
+    Ok(inner.plate_views())
+}
+
+/// Add an empty plate and turn to it, the way Bambu's plus button does.
+#[tauri::command]
+fn add_plate(state: State<AppState>) -> Result<PlateSwitch, String> {
+    let mut inner = lock(&state)?;
+    inner.park_plate();
+    let name = format!("plate {}", inner.plates.len() + 1);
+    inner.plates.push(PlateStash {
+        name,
+        ..PlateStash::default()
+    });
+    let index = inner.plates.len() - 1;
+    inner.active_plate = index;
+    inner.models.clear();
+    inner.support = None;
+    inner.support_model_id = None;
+    inner.toolpath = None;
+    inner.gcode_path = None;
+    let plates = inner.plate_views();
+    Ok(PlateSwitch {
+        plates,
+        models: Vec::new(),
+    })
+}
+
+#[tauri::command]
+fn switch_plate(state: State<AppState>, index: usize) -> Result<PlateSwitch, String> {
+    let mut inner = lock(&state)?;
+    if index >= inner.plates.len() {
+        return Err(format!("There is no plate {}.", index + 1));
+    }
+    inner.resume_plate(index);
+    let views: Vec<ModelView> = inner
+        .models
+        .iter()
+        .filter(|model| model.visible)
+        .map(|model| {
+            view_of(
+                model.id,
+                &model.name,
+                &model.transform,
+                &model.report,
+                &model.settings,
+                model.slot.as_ref(),
+            )
+        })
+        .collect();
+    let plates = inner.plate_views();
+    Ok(PlateSwitch {
+        plates,
+        models: views,
+    })
+}
+
+/// A project with no plates cannot be sliced, so the last one stays.
+#[tauri::command]
+fn delete_plate(state: State<AppState>, index: usize) -> Result<Vec<PlateView>, String> {
+    let mut inner = lock(&state)?;
+    if inner.plates.len() <= 1 {
+        return Err("A project needs at least one plate.".to_string());
+    }
+    if index >= inner.plates.len() {
+        return Err(format!("There is no plate {}.", index + 1));
+    }
+    if index == inner.active_plate {
+        // Step off the plate being removed before it goes.
+        let other = if index == 0 { 1 } else { 0 };
+        inner.resume_plate(other);
+    }
+    inner.plates.remove(index);
+    // The stash array shifted, so the index of the plate in front moved too.
+    let active = if index < inner.active_plate {
+        inner.active_plate - 1
+    } else {
+        inner.active_plate
+    };
+    inner.active_plate = active.min(inner.plates.len() - 1);
+    Ok(inner.plate_views())
+}
+
+#[tauri::command]
+fn rename_plate(
+    state: State<AppState>,
+    index: usize,
+    name: String,
+) -> Result<Vec<PlateView>, String> {
+    let mut inner = lock(&state)?;
+    let plate = inner
+        .plates
+        .get_mut(index)
+        .ok_or_else(|| format!("There is no plate {}.", index + 1))?;
+    let trimmed = name.trim();
+    plate.name = if trimmed.is_empty() {
+        format!("plate {}", index + 1)
+    } else {
+        trimmed.chars().take(48).collect()
+    };
+    Ok(inner.plate_views())
+}
+
 #[tauri::command]
 fn clear_job(state: State<AppState>) -> Result<(), String> {
     let mut inner = lock(&state)?;
     inner.models.clear();
+    inner.plates = vec![PlateStash {
+        name: "plate 1".to_string(),
+        ..PlateStash::default()
+    }];
+    inner.active_plate = 0;
     inner.next_id = 1;
     inner.instructions.clear();
     inner.next_instruction = 1;
@@ -1744,36 +1946,46 @@ fn save_project(
     project: SaveRequest,
 ) -> Result<Vec<RecentEntry>, String> {
     let inner = lock(&state)?;
-    let support_model = inner.support_model_id.and_then(|id| {
-        inner
-            .models
-            .iter()
-            .position(|model| model.id == id)
-    });
+    // `support_model` indexes the flat list of every plate's parts, so a plan
+    // proposed on plate 2 has to be shifted past the parts of plate 1.
+    let before: usize = inner
+        .plates
+        .iter()
+        .take(inner.active_plate)
+        .map(|plate| plate.models.iter().filter(|model| model.visible).count())
+        .sum();
+    let support_model = inner
+        .support_model_id
+        .and_then(|id| inner.models.iter().position(|model| model.id == id))
+        .map(|index| index + before);
     let mut support = inner.support.clone();
     if support_model.is_none() {
         support = None;
     }
-    let models = inner
-        .models
-        .iter()
-        .filter(|model| model.visible)
-        .map(|model| {
+    let mut models: Vec<ProjectModel> = Vec::new();
+    for (index, plate) in inner.plates.iter().enumerate() {
+        let list = if index == inner.active_plate {
+            &inner.models
+        } else {
+            &plate.models
+        };
+        for model in list.iter().filter(|model| model.visible) {
             if model.source_bytes.is_empty() {
                 return Err(format!(
                     "Cannot save {}: the original file is missing.",
                     model.name
                 ));
             }
-            Ok(ProjectModel {
+            models.push(ProjectModel {
                 name: model.name.clone(),
                 bytes: model.source_bytes.clone(),
                 transform: model.transform.clone(),
                 settings: model.settings.clone(),
                 slot: model.slot,
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+                plate: index,
+            });
+        }
+    }
     let data = ProjectData {
         name: project.name.clone(),
         printer_id: project.printer_id,
@@ -1786,6 +1998,7 @@ fn save_project(
         chord_mm: project.chord_mm,
         turn_deg: project.turn_deg,
         models,
+        plate_names: inner.plate_names(),
         instructions: inner
             .instructions
             .iter()
@@ -1827,6 +2040,7 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
                 imported,
                 model.settings.clone(),
                 model.slot,
+                model.plate,
             ));
         }
         Ok::<_, String>((project, built))
@@ -1843,12 +2057,31 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
     inner.gcode_path = None;
     inner.next_id = 1;
     inner.next_instruction = 1;
+    // One plate per name, and at least enough plates to hold every model, so a
+    // file written before plates existed still opens with one.
+    let names = project.data.plate_names.clone();
+    let plate_count = names
+        .len()
+        .max(built.iter().map(|entry| entry.6 + 1).max().unwrap_or(1))
+        .max(1);
+    inner.plates = (0..plate_count)
+        .map(|index| PlateStash {
+            name: names
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| format!("plate {}", index + 1)),
+            ..PlateStash::default()
+        })
+        .collect();
+    inner.active_plate = 0;
     let mut views = Vec::new();
-    for (name, bytes, transform, imported, settings, slot) in built {
+    let mut ids: Vec<u32> = Vec::new();
+    for (name, bytes, transform, imported, settings, slot, plate) in built {
         let id = inner.next_id;
         inner.next_id += 1;
         let view = view_of(id, &name, &transform, &imported.report, &settings, slot.as_ref());
-        inner.models.push(LoadedModel {
+        ids.push(id);
+        let model = LoadedModel {
             id,
             name,
             mesh: imported.mesh,
@@ -1858,8 +2091,13 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
             visible: true,
             settings,
             slot,
-        });
-        views.push(view);
+        };
+        if plate == 0 {
+            inner.models.push(model);
+            views.push(view);
+        } else if let Some(stash) = inner.plates.get_mut(plate) {
+            stash.models.push(model);
+        }
     }
     for instruction in project.data.instructions.clone() {
         let id = inner.next_instruction;
@@ -1867,9 +2105,15 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
         inner.instructions.push((id, instruction));
     }
     if let Some(index) = project.data.support_model {
-        if let Some(model) = inner.models.get(index) {
-            inner.support_model_id = Some(model.id);
-            inner.support = project.data.support.clone();
+        if let Some(&id) = ids.get(index) {
+            let plate = project.data.models.get(index).map(|model| model.plate).unwrap_or(0);
+            if plate == 0 {
+                inner.support_model_id = Some(id);
+                inner.support = project.data.support.clone();
+            } else if let Some(stash) = inner.plates.get_mut(plate) {
+                stash.support_model_id = Some(id);
+                stash.support = project.data.support.clone();
+            }
         }
     }
     let instructions = stored_instructions(&inner);
@@ -1977,6 +2221,11 @@ pub fn run() {
             catalog_error,
             catalog_loading,
             models,
+            plates: vec![PlateStash {
+                name: "plate 1".to_string(),
+                ..PlateStash::default()
+            }],
+            active_plate: 0,
             next_id,
             instructions,
             next_instruction,
@@ -2060,6 +2309,11 @@ pub fn run() {
             save_project,
             open_project,
             clear_job,
+            list_plates,
+            add_plate,
+            switch_plate,
+            delete_plate,
+            rename_plate,
             list_recents,
             forget_recent_project
         ])

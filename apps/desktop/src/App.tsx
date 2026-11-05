@@ -11,6 +11,8 @@ import {
   type MeasureSpan,
   type ModelView,
   type OpenedProject,
+  type PlateSwitch,
+  type PlateView,
   type PreviewPath,
   type PrinterInfo,
   type QualityInfo,
@@ -86,6 +88,15 @@ export function App() {
   const [nozzle, setNozzle] = useState(200);
   const [bedTemp, setBedTemp] = useState(60);
   const [models, setModels] = useState<ModelView[]>([]);
+  /// The plates in this project. The one flagged `active` is the one `models`
+  /// holds; the rest live in the backend until they are turned to.
+  const [plates, setPlates] = useState<PlateView[]>([]);
+  // Part counts are the backend's, because it holds the plates that are not in
+  // front. A part arriving or leaving is the only thing that changes them.
+  useEffect(() => {
+    void api.listPlates().then(setPlates).catch(() => {});
+  }, [models.length]);
+
   /// Which part the settings sheet writes to: "all" for the plate, or a part id.
   const [scope, setScope] = useState<string>("all");
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -1007,6 +1018,84 @@ export function App() {
 
   /** Put a temperature tower on the plate. Shale builds the geometry itself,
    * so the engine only ever sees an ordinary STL. */
+  /// Turn to a plate. The backend swaps that plate's models in and parks the
+  /// one in front, so anything on screen that belonged to the old plate —
+  /// selection, preview, the calibration readout — has to go.
+  async function showPlate(index: number) {
+    try {
+      const turned: PlateSwitch = await api.switchPlate(index);
+      setModels(turned.models);
+      setPlates(turned.plates);
+      setSelectedId(null);
+      setScope("all");
+      setPreview(false);
+      // The model is drawn only while `showModel` is on, and the slice that was
+      // on screen belonged to the plate we just left: its layer count and its
+      // toolpaths have to go with it.
+      setShowModel(turned.models.length > 0);
+      setPaths([]);
+      setLayer(0);
+      setLayerCount(0);
+      setLayerZ([]);
+      setPrintSeconds(null);
+      setTower(null);
+      setCalibration(null);
+      setMeasureSpan(null);
+      setMeasureMarks([]);
+    } catch (failure) {
+      setError(String(failure));
+    }
+  }
+
+  async function newPlate() {
+    try {
+      const added: PlateSwitch = await api.addPlate();
+      setModels([]);
+      setPlates(added.plates);
+      setSelectedId(null);
+      setScope("all");
+      setPreview(false);
+      setShowModel(false);
+      setPaths([]);
+      setLayer(0);
+      setLayerCount(0);
+      setLayerZ([]);
+      setPrintSeconds(null);
+      setTower(null);
+      setCalibration(null);
+      setMeasureSpan(null);
+      setMeasureMarks([]);
+    } catch (failure) {
+      setError(String(failure));
+    }
+  }
+
+  async function dropPlate(index: number) {
+    try {
+      const left = await api.deletePlate(index);
+      const turned = left.find((plate) => plate.active);
+      if (turned) {
+        const swapped = await api.switchPlate(turned.index);
+        setModels(swapped.models);
+        setPlates(swapped.plates);
+        setShowModel(swapped.models.length > 0);
+      } else {
+        setPlates(left);
+      }
+      setSelectedId(null);
+      setPreview(false);
+      setPaths([]);
+      setLayer(0);
+      setLayerCount(0);
+      setLayerZ([]);
+      setPrintSeconds(null);
+      setTower(null);
+      setCalibration(null);
+    } catch (failure) {
+      setError(String(failure));
+    }
+  }
+
   async function addTemperatureTower() {
     setError(null);
     setCalibrating(true);
@@ -1424,6 +1513,39 @@ export function App() {
 
       <div className="workspace">
         <aside className="panel">
+          <Frame title="plates">
+            <div className="row plates">
+              {plates.map((plate) => (
+                <span key={plate.index} className="plate-chip">
+                  <button
+                    type="button"
+                    className={plate.active ? "plate-tab active" : "plate-tab"}
+                    title={plate.name}
+                    onClick={() => void showPlate(plate.index)}
+                  >
+                    {plate.index + 1} {plate.name} ({plate.models})
+                  </button>
+                  {plates.length > 1 && (
+                    <button
+                      type="button"
+                      className="plate-drop"
+                      title={`remove ${plate.name}`}
+                      onClick={() => void dropPlate(plate.index)}
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
+              ))}
+              <button type="button" title="add a plate" onClick={() => void newPlate()}>
+                [ + ]
+              </button>
+            </div>
+            <p className="hint">
+              each plate holds its own parts and is sliced on its own. a project saves every plate with it.
+            </p>
+          </Frame>
+
           <Frame title="printer">
             <label>
               filter
@@ -1936,7 +2058,9 @@ export function App() {
         </aside>
 
         <main className="stage">
-          <div className="plate">
+          {/* `data-show-model` is what the viewport is actually told to draw:
+              the parts list can be right and the bed still empty. */}
+          <div className="plate" data-show-model={showModel ? "yes" : "no"} data-models={models.length}>
           <Viewport
             width={bed.width}
             depth={bed.depth}
