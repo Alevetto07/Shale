@@ -110,6 +110,19 @@ export interface CalibrationApplied {
   injections: CalibrationStep[];
 }
 
+/** A contiguous patch of underside: what one brush stroke would reach. */
+export interface OverhangPatch {
+  triangles: number[];
+  area_mm2: number;
+  min: [number, number, number];
+  max: [number, number, number];
+}
+
+/** What is painted on a part. */
+export interface PaintView {
+  painted: number;
+}
+
 /** A measured distance: the line, and how much of it lies on each axis. */
 export interface MeasureSpan {
   distance_mm: number;
@@ -301,6 +314,10 @@ export const api = {
       settings,
     }),
   supportPlan: () => invoke<SupportView | null>("current_support"),
+  overhangPatches: (modelId: number) => invoke<OverhangPatch[]>("overhang_patches", { modelId }),
+  paintSupport: (modelId: number, triangles: number[]) =>
+    invoke<PaintView>("paint_support", { modelId, triangles }),
+  clearPaint: (modelId: number) => invoke<PaintView>("clear_paint", { modelId }),
   proposeSupports: (id: number, overhangAngleDeg: number, maxBridgeMm: number) =>
     invoke<SupportView>("propose_supports", {
       id,

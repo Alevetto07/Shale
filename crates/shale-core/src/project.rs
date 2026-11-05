@@ -38,6 +38,10 @@ pub struct ProjectModel {
     /// slices them one at a time; plate 0 is the one the tab opens on.
     #[serde(default)]
     pub plate: usize,
+    /// Which of this part's triangles were painted as needing support. The
+    /// indices are the part's own, so moving or turning it does not unpaint it.
+    #[serde(default)]
+    pub painted: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -115,6 +119,8 @@ struct DocumentModel {
     slot: Option<usize>,
     #[serde(default)]
     plate: usize,
+    #[serde(default)]
+    painted: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -163,6 +169,7 @@ pub fn write_project(path: &Path, data: &ProjectData) -> Result<(), Error> {
             settings: model.settings.clone(),
             slot: model.slot,
             plate: model.plate,
+            painted: model.painted.clone(),
         });
     }
     if let Some(index) = data.support_model {
@@ -277,6 +284,7 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
             settings: entry.settings.clone(),
             slot: entry.slot,
             plate: entry.plate,
+            painted: entry.painted.clone(),
         });
     }
     let thumbnail = match read_zip(&mut zip, "thumbnail.jpg") {
@@ -519,6 +527,7 @@ mod tests {
                     settings: Default::default(),
                     slot: Some(1),
                     plate: 0,
+                    painted: Vec::new(),
                 },
                 ProjectModel {
                     name: "block-20.step".into(),
@@ -527,6 +536,7 @@ mod tests {
                     settings: Default::default(),
                     slot: None,
                     plate: 1,
+                    painted: Vec::new(),
                 },
             ],
             plate_names: vec!["front".into(), "back".into()],

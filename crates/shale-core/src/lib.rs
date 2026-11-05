@@ -27,6 +27,7 @@ pub mod project;
 pub mod removal;
 pub mod resolver;
 pub mod session;
+pub mod paint;
 pub mod supports;
 mod value;
 

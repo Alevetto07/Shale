@@ -14,6 +14,7 @@ use crate::gcode::{self, Toolpath};
 use crate::instructions::{self, CustomInstruction, GcodeFlavour};
 use crate::mesh::{self, Transform, TriangleMesh};
 use crate::resolver::{ResolveRequest, ResolvedSettings, UserSettings};
+use crate::paint;
 use crate::supports::{self, SupportPlan};
 
 #[derive(Clone, Debug)]
@@ -52,6 +53,9 @@ pub fn slice(
     models: &[PlacedModel],
     instructions: &[CustomInstruction],
     support: Option<&SupportPlan>,
+    // Faces painted as needing support. Each patch becomes a column of prisms
+    // under the part, handed to the engine as a `support_mesh`.
+    painted: &[paint::PaintedPatch],
     output_path: PathBuf,
     on_progress: &mut dyn FnMut(EngineProgress),
 ) -> Result<SliceOutcome, Error> {
@@ -126,6 +130,42 @@ pub fn slice(
     }
 
     let mut modifiers = Vec::new();
+    // Painting means "support here, and only here": the plate's own support is
+    // turned off and the columns are the whole of it.
+    let painted_present = painted
+        .iter()
+        .any(|patch| !patch.triangles.is_empty());
+    if painted_present {
+        force_setting(&mut resolved, "support_enable", "false");
+        force_setting(&mut resolved, "support_meshes_present", "true");
+    }
+    for patch in painted.iter().filter(|patch| !patch.triangles.is_empty()) {
+        let Some(model) = models.get(patch.model) else {
+            continue;
+        };
+        // Straight down has to mean straight down on the bed, so the part is
+        // placed first and the prisms are dropped from where it really is. A
+        // turned part would otherwise grow columns along its own axis.
+        let mut placed = model.mesh.clone();
+        mesh::bake(&mut placed, &model.transform);
+        let mut prisms = paint::prism_mesh(&placed, &patch.triangles, 0.0);
+        if prisms.triangles.is_empty() {
+            continue;
+        }
+        mesh::to_engine_space(
+            &mut prisms,
+            resolved.summary.machine_width,
+            resolved.summary.machine_depth,
+            resolved.summary.machine_center_is_zero,
+        );
+        let path = model_dir.join(format!("painted-{}.stl", patch.model));
+        mesh::write_binary_stl(&path, &prisms)?;
+        modifiers.push(EngineMesh {
+            path,
+            settings: supports::modifier_settings(supports::RegionRole::Enforce),
+            extruder: None,
+        });
+    }
     if let Some(plan) = support {
         let enforced = plan
             .regions
@@ -223,6 +263,7 @@ pub fn compare_support(
         models,
         &[],
         Some(plan),
+        &[],
         dir.join("support-smart.gcode"),
         on_progress,
     )?;
@@ -239,6 +280,7 @@ pub fn compare_support(
         models,
         &[],
         None,
+        &[],
         dir.join("support-everywhere.gcode"),
         on_progress,
     )?;

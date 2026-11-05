@@ -31,6 +31,10 @@ struct Inner {
     /// switch is a swap rather than a reload. `plates[active_plate]` is empty.
     plates: Vec<PlateStash>,
     active_plate: usize,
+    /// Painted support, by model id: the triangles that ask for a column under
+    /// them. Kept beside the models rather than inside them, so a part keeps
+    /// what was painted on it when it is copied, saved or read back.
+    painted: std::collections::BTreeMap<u32, Vec<usize>>,
     next_id: u32,
     instructions: Vec<(u32, CustomInstruction)>,
     next_instruction: u32,
@@ -1175,6 +1179,72 @@ fn compare_supports(
     Ok(comparison)
 }
 
+/// What is painted on a part.
+#[derive(Serialize)]
+struct PaintView {
+    /// How many of the part's triangles are painted.
+    painted: usize,
+}
+
+/// The patches of underside a part offers, biggest first. One patch is one
+/// thing a brush could reach in a single stroke.
+#[tauri::command]
+fn overhang_patches(
+    state: State<AppState>,
+    model_id: u32,
+) -> Result<Vec<shale_core::paint::Patch>, String> {
+    let inner = lock(&state)?;
+    let model = inner
+        .models
+        .iter()
+        .find(|model| model.id == model_id)
+        .ok_or("That model is no longer loaded")?;
+    Ok(shale_core::paint::patches(
+        &model.mesh,
+        shale_core::paint::PAINT_ANGLE_DEG,
+        shale_core::paint::PAINT_REACH_MM,
+    ))
+}
+
+/// Paint these triangles as needing support. Painting is additive: a second
+/// patch on the same part adds to the first, the way a brush does.
+#[tauri::command]
+fn paint_support(
+    state: State<AppState>,
+    model_id: u32,
+    triangles: Vec<usize>,
+) -> Result<PaintView, String> {
+    let mut inner = lock(&state)?;
+    if inner.slicing {
+        return Err("Wait for the slice to finish".into());
+    }
+    let corners = {
+        let model = inner
+            .models
+            .iter()
+            .find(|model| model.id == model_id)
+            .ok_or("That model is no longer loaded")?;
+        model.mesh.triangles.len()
+    };
+    let painted = inner.painted.entry(model_id).or_default();
+    for triangle in triangles {
+        if triangle < corners && !painted.contains(&triangle) {
+            painted.push(triangle);
+        }
+    }
+    painted.sort_unstable();
+    let count = painted.len();
+    Ok(PaintView { painted: count })
+}
+
+/// Take the paint off a part. The columns go with it on the next slice.
+#[tauri::command]
+fn clear_paint(state: State<AppState>, model_id: u32) -> Result<PaintView, String> {
+    let mut inner = lock(&state)?;
+    inner.painted.remove(&model_id);
+    Ok(PaintView { painted: 0 })
+}
+
 #[tauri::command]
 async fn slice_model(
     app: AppHandle,
@@ -1186,7 +1256,7 @@ async fn slice_model(
     ams: Option<Vec<String>>,
     settings: UserSettings,
 ) -> Result<SliceSummary, String> {
-    let (catalog_paths, engine, placed, output) = {
+    let (catalog_paths, engine, placed, painted, output) = {
         let mut inner = lock(&state)?;
         if inner.slicing {
             return Err("A slice is already running".into());
@@ -1213,11 +1283,30 @@ async fn slice_model(
                 slot: model.slot,
             })
             .collect();
+        // The engine is given the parts in plate order, so a painted patch has
+        // to name its part by that same order rather than by model id.
+        let painted: Vec<shale_core::paint::PaintedPatch> = inner
+            .models
+            .iter()
+            .filter(|model| model.visible)
+            .enumerate()
+            .filter_map(|(index, model)| {
+                let triangles = inner.painted.get(&model.id).cloned().unwrap_or_default();
+                if triangles.is_empty() {
+                    return None;
+                }
+                Some(shale_core::paint::PaintedPatch {
+                    model: index,
+                    triangles,
+                })
+            })
+            .collect();
         let output = std::env::temp_dir().join("shale").join("slice.gcode");
         (
             catalog(&mut inner).ok().map(|c| c.paths.clone()),
             inner.engine.clone(),
             placed,
+            painted,
             output,
         )
     };
@@ -1266,6 +1355,7 @@ async fn slice_model(
             &placed,
             &instructions,
             support.as_ref(),
+            &painted,
             output,
             &mut |progress| {
                 let layer = progress.layer.as_ref().map(|layer| {
@@ -1642,6 +1732,7 @@ fn preload_demo(
             }],
             &[pause],
             None,
+            &[],
             output,
             &mut |_| {},
         ) {
@@ -1983,6 +2074,7 @@ fn save_project(
                 settings: model.settings.clone(),
                 slot: model.slot,
                 plate: index,
+                painted: inner.painted.get(&model.id).cloned().unwrap_or_default(),
             });
         }
     }
@@ -2041,6 +2133,7 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
                 model.settings.clone(),
                 model.slot,
                 model.plate,
+                model.painted.clone(),
             ));
         }
         Ok::<_, String>((project, built))
@@ -2050,6 +2143,7 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
     let (project, built) = loaded;
     let mut inner = lock(&state)?;
     inner.models.clear();
+    inner.painted.clear();
     inner.instructions.clear();
     inner.support = None;
     inner.support_model_id = None;
@@ -2076,9 +2170,12 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
     inner.active_plate = 0;
     let mut views = Vec::new();
     let mut ids: Vec<u32> = Vec::new();
-    for (name, bytes, transform, imported, settings, slot, plate) in built {
+    for (name, bytes, transform, imported, settings, slot, plate, painted) in built {
         let id = inner.next_id;
         inner.next_id += 1;
+        if !painted.is_empty() {
+            inner.painted.insert(id, painted);
+        }
         let view = view_of(id, &name, &transform, &imported.report, &settings, slot.as_ref());
         ids.push(id);
         let model = LoadedModel {
@@ -2226,6 +2323,7 @@ pub fn run() {
                 ..PlateStash::default()
             }],
             active_plate: 0,
+            painted: std::collections::BTreeMap::new(),
             next_id,
             instructions,
             next_instruction,
@@ -2299,6 +2397,9 @@ pub fn run() {
             current_support,
             compare_supports,
             slice_model,
+            overhang_patches,
+            paint_support,
+            clear_paint,
             preview_until,
             loaded_models,
             existing_slice,

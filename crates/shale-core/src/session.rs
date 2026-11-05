@@ -418,6 +418,7 @@ impl Session {
             &placed,
             &instructions,
             self.support.as_ref(),
+            &[],
             output,
             on_progress,
         )?;

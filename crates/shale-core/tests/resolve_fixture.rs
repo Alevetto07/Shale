@@ -369,6 +369,7 @@ endsolid cube
             message: Some("swap".into()),
         }],
         None,
+        &[],
         dir.join("cube.gcode"),
         &mut |progress| eprintln!("{:.0}% {}", progress.fraction * 100.0, progress.message),
     );
@@ -450,6 +451,7 @@ fn arcus_slices_the_cube_when_configured() {
         }],
         &[],
         None,
+        &[],
         std::env::temp_dir().join("shale-arcus-cube.gcode"),
         &mut |progress| {
             peak = peak.max(progress.fraction);

@@ -10,6 +10,7 @@ import {
   type MaterialInfo,
   type MeasureSpan,
   type ModelView,
+  type OverhangPatch,
   type OpenedProject,
   type PlateSwitch,
   type PlateView,
@@ -88,6 +89,12 @@ export function App() {
   const [nozzle, setNozzle] = useState(200);
   const [bedTemp, setBedTemp] = useState(60);
   const [models, setModels] = useState<ModelView[]>([]);
+  /// The part being painted, the patches it offers and how many of its
+  /// triangles are painted. Painting is per part, keyed on the part's own
+  /// triangles, so it survives a move or a turn.
+  const [paintTarget, setPaintTarget] = useState<number | null>(null);
+  const [patches, setPatches] = useState<OverhangPatch[]>([]);
+  const [painted, setPainted] = useState(0);
   /// The plates in this project. The one flagged `active` is the one `models`
   /// holds; the rest live in the backend until they are turned to.
   const [plates, setPlates] = useState<PlateView[]>([]);
@@ -1018,6 +1025,67 @@ export function App() {
 
   /** Put a temperature tower on the plate. Shale builds the geometry itself,
    * so the engine only ever sees an ordinary STL. */
+  /// The patches of underside the part on the plate offers. A patch is what a
+  /// brush stroke would cover, so listing them is the nearest thing to
+  /// painting without a pointer on the mesh.
+  async function loadPatches(id: number | null) {
+    if (id === null) {
+      setPatches([]);
+      setPainted(0);
+      return;
+    }
+    try {
+      setPatches(await api.overhangPatches(id));
+      setPainted(0);
+    } catch (failure) {
+      setPatches([]);
+      setError(String(failure));
+    }
+  }
+
+  /** Paint one patch. Anything painted adds a column under that part on the
+   * next slice, so the toolpath on screen is no longer what the plate would
+   * print. */
+  async function paintPatch(triangles: number[]) {
+    if (paintTarget === null) {
+      return;
+    }
+    try {
+      const state = await api.paintSupport(paintTarget, triangles);
+      setPainted(state.painted);
+      // The plate would print differently now, so the toolpath on screen is
+      // stale: drop it rather than show support that is not there.
+      setPaths([]);
+      setLayer(0);
+      setLayerCount(0);
+      setLayerZ([]);
+      setPrintSeconds(null);
+      setPreview(false);
+      setNote(`painted ${state.painted} faces: they will be held up on the next slice`);
+    } catch (failure) {
+      setError(String(failure));
+    }
+  }
+
+  async function unpaint() {
+    if (paintTarget === null) {
+      return;
+    }
+    try {
+      const state = await api.clearPaint(paintTarget);
+      setPainted(state.painted);
+      setPaths([]);
+      setLayer(0);
+      setLayerCount(0);
+      setLayerZ([]);
+      setPrintSeconds(null);
+      setPreview(false);
+      setNote("paint cleared");
+    } catch (failure) {
+      setError(String(failure));
+    }
+  }
+
   /// Turn to a plate. The backend swaps that plate's models in and parks the
   /// one in front, so anything on screen that belonged to the old plate —
   /// selection, preview, the calibration readout — has to go.
@@ -1046,6 +1114,24 @@ export function App() {
       setError(String(failure));
     }
   }
+
+  // The part being painted is the selected one, else the first part on the
+  // plate. A plate switch or a part that went away has to reload the list.
+  useEffect(() => {
+    const wanted =
+      selectedId !== null && models.some((model) => model.id === selectedId)
+        ? selectedId
+        : models.length > 0
+          ? models[0].id
+          : null;
+    if (wanted !== paintTarget) {
+      setPaintTarget(wanted);
+    }
+  }, [models, selectedId, paintTarget]);
+
+  useEffect(() => {
+    void loadPatches(paintTarget);
+  }, [paintTarget]);
 
   async function newPlate() {
     try {
@@ -1544,6 +1630,45 @@ export function App() {
             <p className="hint">
               each plate holds its own parts and is sliced on its own. a project saves every plate with it.
             </p>
+          </Frame>
+
+          <Frame title="paint support">
+            {paintTarget === null ? (
+              <p className="hint">import a part and its undersides can be painted here.</p>
+            ) : (
+              <>
+                <p className="hint">
+                  {models.find((model) => model.id === paintTarget)?.name ?? "part"} —{" "}
+                  {painted > 0
+                    ? `${painted} faces painted`
+                    : patches.length > 0
+                      ? `${patches.length} patches of underside`
+                      : "nothing underneath to hold up"}
+                </p>
+                <div className="row paint-patches">
+                  {patches.map((patch, index) => (
+                    <button
+                      key={index}
+                      type="button"
+                      className="paint-patch"
+                      title={`under ${patch.min[0].toFixed(0)},${patch.min[1].toFixed(0)} to ${patch.max[0].toFixed(0)},${patch.max[1].toFixed(0)}`}
+                      onClick={() => void paintPatch(patch.triangles)}
+                    >
+                      [ paint {Math.round(patch.area_mm2)} mm² ]
+                    </button>
+                  ))}
+                  {painted > 0 && (
+                    <button type="button" className="paint-clear" onClick={() => void unpaint()}>
+                      [ clear ]
+                    </button>
+                  )}
+                </div>
+                <p className="hint">
+                  a painted face is held up by a column to the bed, and painting turns the plate's own
+                  support off: what you paint is the whole of it.
+                </p>
+              </>
+            )}
           </Frame>
 
           <Frame title="printer">

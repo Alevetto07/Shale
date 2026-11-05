@@ -635,6 +635,7 @@ mod tests {
             }],
             &[],
             None,
+            &[],
             std::env::temp_dir().join("shale-step-cylinder.gcode"),
             &mut |_| {},
         )
