@@ -87,20 +87,25 @@ export interface PlateSwitch {
 export interface CalibrationBand {
   index: number;
   z_mm: number;
-  temperature: number;
+  /** °C, percent of flow, or K of pressure advance, depending on `kind`. */
+  value: number;
 }
 
 export interface TowerBuilt {
   model: ModelView;
   bands: CalibrationBand[];
   band_height_mm: number;
+  /** `temperature-tower`, `flow-coupon` or `pressure-tower`. */
+  kind: string;
+  /** `C`, `%` or `K`. */
+  unit: string;
 }
 
 export interface CalibrationStep {
   band: number;
   layer: number;
   z_mm: number;
-  temperature: number;
+  value: number;
 }
 
 export interface CalibrationApplied {
@@ -276,7 +281,12 @@ export const api = {
   renamePlate: (index: number, name: string) => invoke<PlateView[]>("rename_plate", { index, name }),
   calibrationTower: (printerId: string | null, bands = 5, startC = 230, stepC = 5) =>
     invoke<TowerBuilt>("calibration_tower", { printerId, bands, startC, stepC }),
-  calibrateSlice: (bands: CalibrationBand[]) => invoke<CalibrationApplied>("calibrate_slice", { bands }),
+  flowCoupon: (printerId: string | null, bands = 5, startPct = 105, stepPct = 2.5) =>
+    invoke<TowerBuilt>("flow_coupon", { printerId, bands, startPct, stepPct }),
+  pressureTower: (printerId: string | null, bands = 5, startK = 0, stepK = 0.01) =>
+    invoke<TowerBuilt>("pressure_tower", { printerId, bands, startK, stepK }),
+  calibrateSlice: (bands: CalibrationBand[], kind: string | null = null) =>
+    invoke<CalibrationApplied>("calibrate_slice", { bands, kind }),
   snapMeasure: (id: number, point: [number, number, number]) =>
     invoke<[number, number, number] | null>("snap_measure", { id, point }),
   measureSpan: (a: [number, number, number], b: [number, number, number]) =>

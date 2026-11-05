@@ -1182,11 +1182,17 @@ export function App() {
     }
   }
 
-  async function addTemperatureTower() {
+  /** Put one of the three calibration prints on the plate. */
+  async function addCalibration(kind: "temperature" | "flow" | "pressure") {
     setError(null);
     setCalibrating(true);
     try {
-      const built = await api.calibrationTower(printerId || null);
+      const built =
+        kind === "flow"
+          ? await api.flowCoupon(printerId || null)
+          : kind === "pressure"
+            ? await api.pressureTower(printerId || null)
+            : await api.calibrationTower(printerId || null);
       remember();
       setModels((current) => [...current, built.model]);
       setSelectedId(built.model.id);
@@ -1202,13 +1208,13 @@ export function App() {
   }
 
   /** Rewrite the slice already on screen so each band is printed at its own
-   * temperature. Nothing else in the file moves. */
-  async function stepHotend() {
+   * value — temperature, flow or pressure advance. Nothing else moves. */
+  async function stepCalibration() {
     if (!tower) return;
     setError(null);
     setCalibrating(true);
     try {
-      setCalibration(await api.calibrateSlice(tower.bands));
+      setCalibration(await api.calibrateSlice(tower.bands, tower.kind));
     } catch (err) {
       setError(messageOf(err));
     } finally {
@@ -1754,30 +1760,37 @@ export function App() {
           <Frame title="calibration">
             <p className="meta">
               {tower
-                ? `${tower.bands.length} bands, ${tower.bands[0].temperature} to ${
-                    tower.bands[tower.bands.length - 1].temperature
-                  } °C, ${tower.band_height_mm} mm each`
+                ? `${tower.bands.length} bands, ${tower.bands[0].value} to ${
+                    tower.bands[tower.bands.length - 1].value
+                  } ${tower.unit}, ${tower.band_height_mm} mm each — ${tower.kind}`
                 : "a five-band temperature tower, 5 °C apart"}
             </p>
             <div className="row">
-              <button type="button" disabled={calibrating} onClick={() => void addTemperatureTower()}>
+              <button type="button" disabled={calibrating} onClick={() => void addCalibration("temperature")}>
                 [ temperature tower ]
               </button>
-              <button type="button" disabled={!tower || calibrating} onClick={() => void stepHotend()}>
-                [ step the hotend ]
+              <button type="button" disabled={calibrating} onClick={() => void addCalibration("flow")}>
+                [ flow coupon ]
+              </button>
+              <button type="button" disabled={calibrating} onClick={() => void addCalibration("pressure")}>
+                [ pressure tower ]
+              </button>
+              <button type="button" disabled={!tower || calibrating} onClick={() => void stepCalibration()}>
+                [ step it ]
               </button>
             </div>
             {calibration && (
               <p className="meta">
                 {calibration.injections.length} steps:{" "}
                 {calibration.injections
-                  .map((step) => `L${step.layer} ${step.temperature}°C`)
+                  .map((step) => `L${step.layer} ${step.value}${tower ? tower.unit : ""}`)
                   .join(", ")}
               </p>
             )}
             <p className="hint">
-              the tower alternates 20 mm and 26 mm blocks, so every band overhangs the one below by 3 mm. slice it,
-              then step the hotend: one M104 per band, written into the slice, and the preview stays as it was.
+              the tower alternates 20 mm and 26 mm blocks, so every band overhangs the one below by 3 mm; the flow
+              coupon is a 30 mm single-wall tube, because flow is measured with calipers, not judged. slice it, then
+              step it: one M104, M221 or M900 per band, written into the slice, and the preview stays as it was.
             </p>
           </Frame>
 

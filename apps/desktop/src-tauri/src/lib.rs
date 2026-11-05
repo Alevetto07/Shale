@@ -418,7 +418,8 @@ async fn import_model(
 struct CalibrationBand {
     index: usize,
     z_mm: f64,
-    temperature: f64,
+    /// °C, percent of flow, or K of pressure advance, depending on `kind`.
+    value: f64,
 }
 
 #[derive(serde::Serialize)]
@@ -426,6 +427,10 @@ struct TowerBuilt {
     model: ModelView,
     bands: Vec<CalibrationBand>,
     band_height_mm: f64,
+    /// `temperature`, `flow` or `pressure` — which line the step writes.
+    kind: String,
+    /// `C`, `%` or `K`, so the panel can write the numbers properly.
+    unit: String,
 }
 
 #[derive(serde::Serialize)]
@@ -433,7 +438,7 @@ struct CalibrationStep {
     band: usize,
     layer: usize,
     z_mm: f64,
-    temperature: f64,
+    value: f64,
 }
 
 #[derive(serde::Serialize)]
@@ -444,23 +449,10 @@ struct CalibrationApplied {
     injections: Vec<CalibrationStep>,
 }
 
-/// Build a temperature tower and put it on the plate.
-///
-/// The tower is geometry Shale makes itself, so the only thing the engine sees
-/// is an ordinary STL: five blocks, ten millimetres each, alternating 20 and
-/// 26 mm so every band meets the same 3 mm overhang.
-#[tauri::command]
-fn calibration_tower(
-    state: State<AppState>,
-    printer_id: Option<String>,
-    bands: Option<usize>,
-    start_c: Option<f64>,
-    step_c: Option<f64>,
-    band_height_mm: Option<f64>,
-) -> Result<TowerBuilt, String> {
-    let mut inner = lock(&state)?;
-    let centre = match printer_id {
-        Some(printer_id) => catalog(&mut inner)
+/// Where the middle of the plate is, for a print Shale makes itself.
+fn plate_centre(inner: &mut Inner, printer_id: Option<String>) -> [f64; 2] {
+    match printer_id {
+        Some(printer_id) => catalog(inner)
             .ok()
             .and_then(|catalog| {
                 catalog
@@ -482,17 +474,16 @@ fn calibration_tower(
             })
             .unwrap_or([128.0, 128.0]),
         None => [128.0, 128.0],
-    };
-    let bands = bands.unwrap_or(5).clamp(2, 10);
-    let start_c = start_c.unwrap_or(230.0);
-    let step_c = step_c.unwrap_or(5.0);
-    if !shale_core::calibrate::cooling_step(start_c, step_c, bands) {
-        return Err(format!(
-            "{bands} bands of {step_c} °C from {start_c} °C would end at or below zero; ask for fewer bands or a smaller step"
-        ));
     }
-    let height = band_height_mm.unwrap_or(shale_core::calibrate::BAND_HEIGHT_MM);
-    let tower = shale_core::calibrate::temperature_tower(centre, bands, height, start_c, step_c);
+}
+
+/// Put a calibration print on the plate and hand the window its bands.
+fn build_calibration(
+    inner: &mut Inner,
+    name: String,
+    tower: shale_core::calibrate::Tower,
+    step: shale_core::calibrate::Step,
+) -> TowerBuilt {
     let report = ImportReport {
         triangles: tower.mesh.triangles.len(),
         max_deviation_mm: None,
@@ -505,7 +496,6 @@ fn calibration_tower(
     let source_bytes = shale_core::exchange::to_stl(&tower.mesh);
     let id = inner.next_id;
     inner.next_id += 1;
-    let name = format!("temperature tower ({bands} bands)");
     let transform = Transform::default();
     let settings = std::collections::BTreeMap::new();
     let view = view_of(id, &name, &transform, &report, &settings, None);
@@ -520,7 +510,7 @@ fn calibration_tower(
         settings: std::collections::BTreeMap::new(),
         slot: None,
     });
-    Ok(TowerBuilt {
+    TowerBuilt {
         model: view,
         bands: tower
             .bands
@@ -528,28 +518,148 @@ fn calibration_tower(
             .map(|band| CalibrationBand {
                 index: band.index,
                 z_mm: band.z_mm,
-                temperature: band.temperature,
+                value: band.value,
             })
             .collect(),
         band_height_mm: tower.band_height_mm,
-    })
+        kind: step.name().to_string(),
+        unit: step.unit().to_string(),
+    }
 }
 
-/// Step the hotend at each band of the slice that is already on screen.
+/// Build a temperature tower and put it on the plate.
+///
+/// The tower is geometry Shale makes itself, so the only thing the engine sees
+/// is an ordinary STL: five blocks, ten millimetres each, alternating 20 and
+/// 26 mm so every band meets the same 3 mm overhang.
+#[tauri::command]
+fn calibration_tower(
+    state: State<AppState>,
+    printer_id: Option<String>,
+    bands: Option<usize>,
+    start_c: Option<f64>,
+    step_c: Option<f64>,
+    band_height_mm: Option<f64>,
+) -> Result<TowerBuilt, String> {
+    let mut inner = lock(&state)?;
+    let centre = plate_centre(&mut inner, printer_id);
+    let bands = bands.unwrap_or(5).clamp(2, 10);
+    let start_c = start_c.unwrap_or(230.0);
+    let step_c = step_c.unwrap_or(5.0);
+    if !shale_core::calibrate::cooling_step(start_c, step_c, bands) {
+        return Err(format!(
+            "{bands} bands of {step_c} °C from {start_c} °C would end at or below zero; ask for fewer bands or a smaller step"
+        ));
+    }
+    let height = band_height_mm.unwrap_or(shale_core::calibrate::BAND_HEIGHT_MM);
+    let tower = shale_core::calibrate::temperature_tower(centre, bands, height, start_c, step_c);
+    let name = format!("temperature tower ({bands} bands)");
+    Ok(build_calibration(
+        &mut inner,
+        name,
+        tower,
+        shale_core::calibrate::Step::Temperature,
+    ))
+}
+
+/// Build a single-wall tube whose flow steps down as it rises.
+///
+/// Flow is measured, not judged: at the right percentage the wall calipers at
+/// the line width. Five bands of 2.5 % from 105 % down to 95 % covers the usual
+/// error in either direction.
+#[tauri::command]
+fn flow_coupon(
+    state: State<AppState>,
+    printer_id: Option<String>,
+    bands: Option<usize>,
+    start_pct: Option<f64>,
+    step_pct: Option<f64>,
+    band_height_mm: Option<f64>,
+) -> Result<TowerBuilt, String> {
+    let mut inner = lock(&state)?;
+    let centre = plate_centre(&mut inner, printer_id);
+    let bands = bands.unwrap_or(5).clamp(2, 10);
+    let start_pct = start_pct.unwrap_or(105.0);
+    let step_pct = step_pct.unwrap_or(2.5);
+    if step_pct <= 0.0 {
+        return Err("The flow coupon has to step downwards".to_string());
+    }
+    let lowest = start_pct - step_pct * (bands - 1) as f64;
+    if lowest <= 20.0 || start_pct > 200.0 {
+        return Err(format!(
+            "{bands} bands of {step_pct} % from {start_pct} % would end at {lowest} %; ask for fewer bands or a smaller step"
+        ));
+    }
+    let height = band_height_mm.unwrap_or(shale_core::calibrate::BAND_HEIGHT_MM);
+    let coupon = shale_core::calibrate::flow_coupon(centre, bands, height, start_pct, step_pct);
+    let name = format!("flow coupon ({bands} bands)");
+    Ok(build_calibration(
+        &mut inner,
+        name,
+        coupon,
+        shale_core::calibrate::Step::Flow,
+    ))
+}
+
+/// Build the alternating tower again, this time stepping pressure advance.
+#[tauri::command]
+fn pressure_tower(
+    state: State<AppState>,
+    printer_id: Option<String>,
+    bands: Option<usize>,
+    start_k: Option<f64>,
+    step_k: Option<f64>,
+    band_height_mm: Option<f64>,
+) -> Result<TowerBuilt, String> {
+    let mut inner = lock(&state)?;
+    let centre = plate_centre(&mut inner, printer_id);
+    let bands = bands.unwrap_or(5).clamp(2, 10);
+    let start_k = start_k.unwrap_or(0.0);
+    let step_k = step_k.unwrap_or(0.01);
+    if step_k <= 0.0 {
+        return Err("Pressure advance has to step upwards, or there is nothing to read".to_string());
+    }
+    let highest = start_k + step_k * (bands - 1) as f64;
+    if start_k < 0.0 || highest > 1.0 {
+        return Err(format!(
+            "{bands} bands of {step_k} K from {start_k} K would reach {highest} K; pressure advance above 1 is not a setting"
+        ));
+    }
+    let height = band_height_mm.unwrap_or(shale_core::calibrate::BAND_HEIGHT_MM);
+    let tower = shale_core::calibrate::pressure_tower(centre, bands, height, start_k, step_k);
+    let name = format!("pressure tower ({bands} bands)");
+    Ok(build_calibration(
+        &mut inner,
+        name,
+        tower,
+        shale_core::calibrate::Step::PressureAdvance,
+    ))
+}
+
+/// Step the slice that is already on screen, one line per band.
+///
+/// `kind` says which line: `temperature` (the default), `flow` or `pressure`.
 #[tauri::command]
 fn calibrate_slice(
     state: State<AppState>,
     bands: Vec<CalibrationBand>,
+    kind: Option<String>,
 ) -> Result<CalibrationApplied, String> {
     if bands.is_empty() {
         return Err("There is no calibration plan to apply".to_string());
     }
+    let step = match kind.as_deref() {
+        None | Some("temperature") | Some("temperature-tower") => shale_core::calibrate::Step::Temperature,
+        Some("flow") | Some("flow-coupon") => shale_core::calibrate::Step::Flow,
+        Some("pressure") | Some("pressure-tower") => shale_core::calibrate::Step::PressureAdvance,
+        Some(other) => return Err(format!("There is no calibration called {other}")),
+    };
     let path = {
         let inner = lock(&state)?;
         inner
             .gcode_path
             .clone()
-            .ok_or_else(|| "Slice the plate before stepping the hotend".to_string())?
+            .ok_or_else(|| "Slice the plate before stepping it".to_string())?
     };
     let gcode = fs::read_to_string(&path).map_err(|err| format!("could not read the slice: {err}"))?;
     let plan: Vec<shale_core::calibrate::Band> = bands
@@ -557,10 +667,10 @@ fn calibrate_slice(
         .map(|band| shale_core::calibrate::Band {
             index: band.index,
             z_mm: band.z_mm,
-            temperature: band.temperature,
+            value: band.value,
         })
         .collect();
-    let (rewritten, injected) = shale_core::calibrate::step_temperatures(&gcode, &plan);
+    let (rewritten, injected) = shale_core::calibrate::step_bands(&gcode, &plan, step);
     if injected.is_empty() {
         return Err("The slice has no layer at any band height".to_string());
     }
@@ -571,11 +681,11 @@ fn calibrate_slice(
         bands,
         injections: injected
             .into_iter()
-            .map(|step| CalibrationStep {
-                band: step.band,
-                layer: step.layer,
-                z_mm: step.z_mm,
-                temperature: step.temperature,
+            .map(|injected| CalibrationStep {
+                band: injected.band,
+                layer: injected.layer,
+                z_mm: injected.z_mm,
+                value: injected.value,
             })
             .collect(),
     })
@@ -2383,6 +2493,8 @@ pub fn run() {
             measure_span,
             cut_model,
             calibration_tower,
+            flow_coupon,
+            pressure_tower,
             calibrate_slice,
             drop_model,
             arrange_models,
