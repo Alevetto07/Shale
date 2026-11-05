@@ -217,6 +217,10 @@ pub fn propose(mesh: &TriangleMesh, params: &SupportParams) -> SupportPlan {
     let everywhere = everywhere_totals(&found, &params);
     let mut regions = Vec::new();
     let mut next_id = 1u32;
+    // One cantilever made of two triangles arrives as two spans with the same
+    // footprint. Emitting both doubles the volume the panel reports and hands
+    // the engine a second box on top of the first.
+    let mut placed: Vec<[f64; 6]> = Vec::new();
     for component in &found {
         if component.span.area_mm2 < params.min_region_area_mm2 {
             continue;
@@ -249,6 +253,16 @@ pub fn propose(mesh: &TriangleMesh, params: &SupportParams) -> SupportPlan {
                     (min, max, 0.0)
                 }
             };
+            let bounds = [min[0], min[1], min[2], max[0], max[1], max[2]];
+            if placed.iter().any(|other| {
+                other
+                    .iter()
+                    .zip(bounds.iter())
+                    .all(|(a, b)| (a - b).abs() < 0.01)
+            }) {
+                continue;
+            }
+            placed.push(bounds);
             let id = next_id;
             next_id += 1;
             let contact = if role == RegionRole::Enforce {

@@ -148,6 +148,9 @@ pub fn load_mesh_reporting(
     if cancel.load(Ordering::Relaxed) {
         return Err(Error::Mesh("Import cancelled".into()));
     }
+    if right_way_round(&mut imported.mesh) {
+        progress(0.99, "turned the mesh right way round");
+    }
     if imported.report.milliseconds == 0 {
         imported.report.milliseconds = started.elapsed().as_millis() as u64;
     }
@@ -199,6 +202,9 @@ pub fn load_named_bytes(
             crate::cad::ImportedMesh::from_mesh(load_stl(bytes)?, "stl")
         }
     };
+    if right_way_round(&mut imported.mesh) {
+        progress(0.99, "turned the mesh right way round");
+    }
     if imported.report.milliseconds == 0 {
         imported.report.milliseconds = started.elapsed().as_millis() as u64;
     }
@@ -463,6 +469,40 @@ pub fn bounds(mesh: &TriangleMesh) -> ([f64; 3], [f64; 3]) {
     } else {
         (min, max)
     }
+}
+
+/// Signed volume of a closed mesh: positive when the faces point outward.
+pub fn signed_volume(mesh: &TriangleMesh) -> f64 {
+    mesh.triangles
+        .iter()
+        .map(|triangle| {
+            let [a, b, c] = triangle.map(|index| mesh.vertices[index as usize].map(f64::from));
+            (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                / 6.0
+        })
+        .sum()
+}
+
+/// Turn a mesh the right way round, and say whether it had to.
+///
+/// An STL carries no statement about which side of a triangle is out, and
+/// exporters do get it backwards: `tee.stl` here arrived entirely inside out —
+/// the signed volume was minus the part's volume. CuraEngine slices such a mesh
+/// without complaint, so nothing looked wrong, but every analysis that reads a
+/// normal saw the part upside down: overhang detection found no underside,
+/// auto-orient scored the top faces as the overhang, and the support proposer
+/// came back with an empty plan. Repairing it at the door is what Cura and
+/// Bambu do, and it is cheaper than teaching each analysis to distrust its own
+/// winding.
+pub fn right_way_round(mesh: &mut TriangleMesh) -> bool {
+    if mesh.triangles.len() < 4 || signed_volume(mesh) >= 0.0 {
+        return false;
+    }
+    for triangle in &mut mesh.triangles {
+        triangle.swap(1, 2);
+    }
+    true
 }
 
 pub fn bake(mesh: &TriangleMesh, transform: &Transform) -> TriangleMesh {
@@ -991,19 +1031,6 @@ mod tests {
     use std::io::Write;
     use zip::write::SimpleFileOptions;
 
-    /// Signed volume: positive when the faces point outward.
-    fn signed_volume(mesh: &TriangleMesh) -> f64 {
-        mesh.triangles
-            .iter()
-            .map(|triangle| {
-                let [a, b, c] = triangle.map(|index| mesh.vertices[index as usize].map(f64::from));
-                (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
-                    + a[2] * (b[0] * c[1] - b[1] * c[0]))
-                    / 6.0
-            })
-            .sum()
-    }
-
     fn unit_tetrahedron() -> TriangleMesh {
         TriangleMesh {
             vertices: vec![
@@ -1014,6 +1041,72 @@ mod tests {
             ],
             triangles: vec![[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]],
         }
+    }
+
+    #[test]
+    fn right_way_round_flips_an_inside_out_solid_and_leaves_a_sound_one() {
+        let sound = unit_tetrahedron();
+        let mut inverted = sound.clone();
+        for triangle in &mut inverted.triangles {
+            triangle.swap(1, 2);
+        }
+        assert!(signed_volume(&sound) > 0.0, "the fixture should be outward");
+        assert!(signed_volume(&inverted) < 0.0, "the copy should be inward");
+
+        let mut flipped = inverted.clone();
+        assert!(right_way_round(&mut flipped), "an inward mesh must be repaired");
+        assert!(
+            (signed_volume(&flipped) - signed_volume(&sound)).abs() < 1e-12,
+            "repairing must restore the sound volume, got {} against {}",
+            signed_volume(&flipped),
+            signed_volume(&sound)
+        );
+        assert_eq!(flipped.vertices.len(), sound.vertices.len());
+        assert_eq!(flipped.triangles.len(), sound.triangles.len());
+
+        let mut untouched = sound.clone();
+        assert!(!right_way_round(&mut untouched), "a sound mesh must be left alone");
+        assert_eq!(untouched.triangles, sound.triangles);
+    }
+
+    /// A binary STL carrying `mesh` exactly as it stands, winding included.
+    fn binary_stl_bytes(mesh: &TriangleMesh) -> Vec<u8> {
+        let mut bytes = vec![0u8; 80];
+        bytes.extend_from_slice(&(mesh.triangles.len() as u32).to_le_bytes());
+        for triangle in &mesh.triangles {
+            for _ in 0..3 {
+                bytes.extend_from_slice(&0f32.to_le_bytes());
+            }
+            for index in triangle {
+                for axis in mesh.vertices[*index as usize] {
+                    bytes.extend_from_slice(&axis.to_le_bytes());
+                }
+            }
+            bytes.extend_from_slice(&0u16.to_le_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn an_inside_out_stl_is_turned_round_on_the_way_in() {
+        let mut inverted = unit_tetrahedron();
+        for triangle in &mut inverted.triangles {
+            triangle.swap(1, 2);
+        }
+        let bytes = binary_stl_bytes(&inverted);
+        let imported = load_named_bytes(
+            "inside-out.stl",
+            &bytes,
+            &crate::cad::TessellationTolerance::standard(),
+            &mut |_, _| {},
+            &AtomicBool::new(false),
+        )
+        .expect("the inverted mesh should still import");
+        assert!(
+            signed_volume(&imported.mesh) > 0.0,
+            "the loader must hand back an outward mesh, got {}",
+            signed_volume(&imported.mesh)
+        );
     }
 
     #[test]
