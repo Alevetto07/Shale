@@ -174,4 +174,20 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: "material_flow_layer_0", label: "First layer flow", kind: "number", bambu: "", min: 50, max: 150, step: 1, unit: "%" },
     ],
   },
+  {
+    // Bambu calls it the prime tower and flushes into it; Cura calls it the
+    // same thing, so these are real Cura keys with a real Bambu counterpart
+    // where one exists. Position is explicit because CuraEngine takes the
+    // tower's corner as a coordinate, not as "next to the plate".
+    id: 'multi',
+    label: 'Multi',
+    fields: [
+      { key: "prime_tower_enable", label: "Prime tower", kind: "toggle", bambu: "enable_prime_tower" },
+      { key: "prime_tower_size", label: "Tower width", kind: "number", bambu: "prime_tower_width", min: 10, max: 100, step: 5, unit: "mm" },
+      { key: "prime_tower_position_x", label: "Tower X", kind: "number", bambu: "", min: 0, max: 300, step: 5, unit: "mm" },
+      { key: "prime_tower_position_y", label: "Tower Y", kind: "number", bambu: "", min: 0, max: 300, step: 5, unit: "mm" },
+      { key: "prime_tower_min_volume", label: "Purge per layer", kind: "number", bambu: "", min: 1, max: 40, step: 1, unit: "mm³" },
+      { key: "prime_tower_wipe_enabled", label: "Wipe into tower", kind: "toggle", bambu: "" },
+    ],
+  },
 ];
