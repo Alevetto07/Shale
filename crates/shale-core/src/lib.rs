@@ -7,6 +7,7 @@
 
 pub mod bambu;
 pub mod cad;
+pub mod calibrate;
 pub mod cut;
 pub mod catalog;
 mod definition;

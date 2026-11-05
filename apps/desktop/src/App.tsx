@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   type Bed,
+  type CalibrationApplied,
   type CustomInstruction,
   type MaterialInfo,
   type MeasureSpan,
@@ -18,6 +19,7 @@ import {
   type StoredInstruction,
   type SupportComparison,
   type SupportView,
+  type TowerBuilt,
   type Transform,
   type VariantInfo,
 } from "./api";
@@ -138,6 +140,9 @@ export function App() {
   const [supportAngle, setSupportAngle] = useState(50);
   const [bridgeMm, setBridgeMm] = useState(20);
   const [supportBusy, setSupportBusy] = useState(false);
+  const [tower, setTower] = useState<TowerBuilt | null>(null);
+  const [calibration, setCalibration] = useState<CalibrationApplied | null>(null);
+  const [calibrating, setCalibrating] = useState(false);
   const [frameToken, setFrameToken] = useState(0);
   const [chord, setChord] = useState(0.1);
   const [turn, setTurn] = useState(15);
@@ -831,6 +836,7 @@ export function App() {
     }
     setError(null);
     setBusy(true);
+    setCalibration(null);
     setProgress({ fraction: 0.01, message: "Starting" });
     try {
       const summary = await api.slice(printerId, variant, quality, material, ams, {
@@ -996,6 +1002,42 @@ export function App() {
       setInstructions(await api.removeInstruction(id));
     } catch (err) {
       setError(messageOf(err));
+    }
+  }
+
+  /** Put a temperature tower on the plate. Shale builds the geometry itself,
+   * so the engine only ever sees an ordinary STL. */
+  async function addTemperatureTower() {
+    setError(null);
+    setCalibrating(true);
+    try {
+      const built = await api.calibrationTower(printerId || null);
+      remember();
+      setModels((current) => [...current, built.model]);
+      setSelectedId(built.model.id);
+      setPreview(false);
+      setShowModel(true);
+      setTower(built);
+      setCalibration(null);
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setCalibrating(false);
+    }
+  }
+
+  /** Rewrite the slice already on screen so each band is printed at its own
+   * temperature. Nothing else in the file moves. */
+  async function stepHotend() {
+    if (!tower) return;
+    setError(null);
+    setCalibrating(true);
+    try {
+      setCalibration(await api.calibrateSlice(tower.bands));
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setCalibrating(false);
     }
   }
 
@@ -1459,6 +1501,36 @@ export function App() {
             <p className="hint">
               the plate material is spool 1. give a part a spool in the model frame and the slice gets a tool change,
               its own hotend temperature and its own filament.
+            </p>
+          </Frame>
+
+          <Frame title="calibration">
+            <p className="meta">
+              {tower
+                ? `${tower.bands.length} bands, ${tower.bands[0].temperature} to ${
+                    tower.bands[tower.bands.length - 1].temperature
+                  } °C, ${tower.band_height_mm} mm each`
+                : "a five-band temperature tower, 5 °C apart"}
+            </p>
+            <div className="row">
+              <button type="button" disabled={calibrating} onClick={() => void addTemperatureTower()}>
+                [ temperature tower ]
+              </button>
+              <button type="button" disabled={!tower || calibrating} onClick={() => void stepHotend()}>
+                [ step the hotend ]
+              </button>
+            </div>
+            {calibration && (
+              <p className="meta">
+                {calibration.injections.length} steps:{" "}
+                {calibration.injections
+                  .map((step) => `L${step.layer} ${step.temperature}°C`)
+                  .join(", ")}
+              </p>
+            )}
+            <p className="hint">
+              the tower alternates 20 mm and 26 mm blocks, so every band overhangs the one below by 3 mm. slice it,
+              then step the hotend: one M104 per band, written into the slice, and the preview stays as it was.
             </p>
           </Frame>
 

@@ -396,6 +396,174 @@ async fn import_model(
     Ok(view)
 }
 
+/// One band of a calibration print, as the window sees it.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct CalibrationBand {
+    index: usize,
+    z_mm: f64,
+    temperature: f64,
+}
+
+#[derive(serde::Serialize)]
+struct TowerBuilt {
+    model: ModelView,
+    bands: Vec<CalibrationBand>,
+    band_height_mm: f64,
+}
+
+#[derive(serde::Serialize)]
+struct CalibrationStep {
+    band: usize,
+    layer: usize,
+    z_mm: f64,
+    temperature: f64,
+}
+
+#[derive(serde::Serialize)]
+struct CalibrationApplied {
+    path: String,
+    bytes: usize,
+    bands: Vec<CalibrationBand>,
+    injections: Vec<CalibrationStep>,
+}
+
+/// Build a temperature tower and put it on the plate.
+///
+/// The tower is geometry Shale makes itself, so the only thing the engine sees
+/// is an ordinary STL: five blocks, ten millimetres each, alternating 20 and
+/// 26 mm so every band meets the same 3 mm overhang.
+#[tauri::command]
+fn calibration_tower(
+    state: State<AppState>,
+    printer_id: Option<String>,
+    bands: Option<usize>,
+    start_c: Option<f64>,
+    step_c: Option<f64>,
+    band_height_mm: Option<f64>,
+) -> Result<TowerBuilt, String> {
+    let mut inner = lock(&state)?;
+    let centre = match printer_id {
+        Some(printer_id) => catalog(&mut inner)
+            .ok()
+            .and_then(|catalog| {
+                catalog
+                    .resolve(&shale_core::ResolveRequest {
+                        printer_id,
+                        variant_name: None,
+                        quality_type: None,
+                        material_id: None,
+                        intent_category: None,
+                        settings: UserSettings::default(),
+                    })
+                    .ok()
+            })
+            .map(|resolved| {
+                [
+                    resolved.summary.machine_width / 2.0,
+                    resolved.summary.machine_depth / 2.0,
+                ]
+            })
+            .unwrap_or([128.0, 128.0]),
+        None => [128.0, 128.0],
+    };
+    let bands = bands.unwrap_or(5).clamp(2, 10);
+    let start_c = start_c.unwrap_or(230.0);
+    let step_c = step_c.unwrap_or(5.0);
+    if !shale_core::calibrate::cooling_step(start_c, step_c, bands) {
+        return Err(format!(
+            "{bands} bands of {step_c} °C from {start_c} °C would end at or below zero; ask for fewer bands or a smaller step"
+        ));
+    }
+    let height = band_height_mm.unwrap_or(shale_core::calibrate::BAND_HEIGHT_MM);
+    let tower = shale_core::calibrate::temperature_tower(centre, bands, height, start_c, step_c);
+    let report = ImportReport {
+        triangles: tower.mesh.triangles.len(),
+        max_deviation_mm: None,
+        max_turning_deg: None,
+        milliseconds: 0,
+        source: "calibration".to_string(),
+        chordal_mm: None,
+        angular_deg: None,
+    };
+    let source_bytes = shale_core::exchange::to_stl(&tower.mesh);
+    let id = inner.next_id;
+    inner.next_id += 1;
+    let name = format!("temperature tower ({bands} bands)");
+    let transform = Transform::default();
+    let settings = std::collections::BTreeMap::new();
+    let view = view_of(id, &name, &transform, &report, &settings, None);
+    inner.models.push(LoadedModel {
+        id,
+        name,
+        mesh: tower.mesh,
+        transform,
+        report,
+        source_bytes,
+        visible: true,
+        settings: std::collections::BTreeMap::new(),
+        slot: None,
+    });
+    Ok(TowerBuilt {
+        model: view,
+        bands: tower
+            .bands
+            .iter()
+            .map(|band| CalibrationBand {
+                index: band.index,
+                z_mm: band.z_mm,
+                temperature: band.temperature,
+            })
+            .collect(),
+        band_height_mm: tower.band_height_mm,
+    })
+}
+
+/// Step the hotend at each band of the slice that is already on screen.
+#[tauri::command]
+fn calibrate_slice(
+    state: State<AppState>,
+    bands: Vec<CalibrationBand>,
+) -> Result<CalibrationApplied, String> {
+    if bands.is_empty() {
+        return Err("There is no calibration plan to apply".to_string());
+    }
+    let path = {
+        let inner = lock(&state)?;
+        inner
+            .gcode_path
+            .clone()
+            .ok_or_else(|| "Slice the plate before stepping the hotend".to_string())?
+    };
+    let gcode = fs::read_to_string(&path).map_err(|err| format!("could not read the slice: {err}"))?;
+    let plan: Vec<shale_core::calibrate::Band> = bands
+        .iter()
+        .map(|band| shale_core::calibrate::Band {
+            index: band.index,
+            z_mm: band.z_mm,
+            temperature: band.temperature,
+        })
+        .collect();
+    let (rewritten, injected) = shale_core::calibrate::step_temperatures(&gcode, &plan);
+    if injected.is_empty() {
+        return Err("The slice has no layer at any band height".to_string());
+    }
+    fs::write(&path, rewritten.as_bytes()).map_err(|err| format!("could not write the slice: {err}"))?;
+    Ok(CalibrationApplied {
+        path: path.to_string_lossy().to_string(),
+        bytes: rewritten.len(),
+        bands,
+        injections: injected
+            .into_iter()
+            .map(|step| CalibrationStep {
+                band: step.band,
+                layer: step.layer,
+                z_mm: step.z_mm,
+                temperature: step.temperature,
+            })
+            .collect(),
+    })
+}
+
 #[tauri::command]
 fn model_geometry(
     state: State<AppState>,
@@ -1867,6 +2035,8 @@ pub fn run() {
             snap_measure,
             measure_span,
             cut_model,
+            calibration_tower,
+            calibrate_slice,
             drop_model,
             arrange_models,
             restore_models,

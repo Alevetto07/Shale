@@ -72,6 +72,32 @@ export interface ModelView {
   slot: number | null;
 }
 
+export interface CalibrationBand {
+  index: number;
+  z_mm: number;
+  temperature: number;
+}
+
+export interface TowerBuilt {
+  model: ModelView;
+  bands: CalibrationBand[];
+  band_height_mm: number;
+}
+
+export interface CalibrationStep {
+  band: number;
+  layer: number;
+  z_mm: number;
+  temperature: number;
+}
+
+export interface CalibrationApplied {
+  path: string;
+  bytes: number;
+  bands: CalibrationBand[];
+  injections: CalibrationStep[];
+}
+
 /** A measured distance: the line, and how much of it lies on each axis. */
 export interface MeasureSpan {
   distance_mm: number;
@@ -218,6 +244,9 @@ export const api = {
   autoOrient: (id: number) => invoke<Transform>("auto_orient", { id }),
   cut: (id: number, axis: number, offset: number, keep: string) =>
     invoke<ModelView[]>("cut_model", { id, axis, offset, keep }),
+  calibrationTower: (printerId: string | null, bands = 5, startC = 230, stepC = 5) =>
+    invoke<TowerBuilt>("calibration_tower", { printerId, bands, startC, stepC }),
+  calibrateSlice: (bands: CalibrationBand[]) => invoke<CalibrationApplied>("calibrate_slice", { bands }),
   snapMeasure: (id: number, point: [number, number, number]) =>
     invoke<[number, number, number] | null>("snap_measure", { id, point }),
   measureSpan: (a: [number, number, number], b: [number, number, number]) =>

@@ -83,16 +83,15 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Supports: normal and tree | yes | yes (no painting) | Support → *Support shape* picks `normal` or `tree`, with the branch knobs Bambu exposes (angle, diameter) plus Cura's flare, tip and top density. On the upright T-bracket, whose arm hangs over nothing, normal support lays **3276.1 mm** of filament and tree support **2069.9 mm** — 36.8 % less support and 14.9 % less plastic in the whole part, same 170 layers. Paint-on supports are a separate subsystem and are still missing |
 | Support regions: enforcers and blockers | yes | yes, proposed rather than painted | [propose] reads the overhangs past the angle and turns each cantilever into an enforcer volume, one per column, which the panel lists with its volume and contact area and you can switch off one at a time. On the bracket it finds **2 cantilever columns** (17 mm span, 102 mm² contact, 2989 mm³ each); [compare] then slices twice — plan against support switched on everywhere — and the engine's own filament figure comes back **2.4464 m against 3.8505 m**, 36.5 % less. Switching one column off drops the plan to **1.2235 m**. There is no free-hand brush: you get the regions the analysis found, not any triangle you point at |
 | Support painting / seam painting | yes | **no** | needs a triangle-level brush, a large subsystem |
-| AMS / multi-material | yes | yes (four spools) | The `ams` frame holds three more spools beside the plate material, and any part can name one in the model frame — the list tags it `T2`, `T3`, `T4` and the spool picker sets it. Each part reaches the engine as `-eN` in front of its `-l`, and the plate sends one material per spool, so a mixed plate slices with a real tool change: its own hotend temperature, its own flow, its own filament. On a two-cube plate the control file carries no `T` line at all, and pointing the copy at spool 2 (Generic PETG) gives **301 tool changes**, hotends at **220 and 205 °C**, and the same **300 layers**. Bambu flushes into a prime tower and counts the flushed grams; Shale has no tower yet, so the first lines after a change are the thin spot |
+| AMS / multi-material | yes | yes (four spools) | The `ams` frame holds three more spools beside the plate material, and any part can name one in the model frame — the list tags it `T2`, `T3`, `T4` and the spool picker sets it. Each part reaches the engine as `-eN` in front of its `-l`, and the plate sends one material per spool, so a mixed plate slices with a real tool change: its own hotend temperature, its own flow, its own filament. On a two-cube plate the control file carries no `T` line at all, and pointing the copy at spool 2 (Generic PETG) gives **301 tool changes**, hotends at **220 and 205 °C**, and the same **300 layers**. Bambu flushes into a prime tower and counts the flushed grams; Shale has the tower (next row) but not the accounting |
 | Prime tower | yes | yes | The *Multi* tab carries `prime_tower_enable`, the tower's width and its corner, and the purge it holds per layer. With it off, a two-spool plate carries **no prime tower at all**; with it on at 45 mm the same plate grows a tower on **300 layers** holding **3590.2 mm** of filament — **44.6 mm** square on a **60.6 mm** base, sitting at x 137.2–197.8 and y 182.2–242.8 inside the 256 mm bed — and keeps its 301 tool changes. CuraEngine tags the sections `;TYPE:PRIME-TOWER`, hyphen and all, which is not the name of the setting |
 | Send to printer / network | yes | **no** | deliberate: Shale does not talk to a printer |
 | Device tab, camera, monitoring | yes | **no** | out of scope, see `docs/print-removal.md` |
-| Calibration utilities | yes | **no** | |
+| Calibration utilities | yes | one, proved | Calibration → *temperature tower* builds the test part itself and puts it on the plate: five 10 mm bands, alternating 20 mm and 26 mm blocks so every band overhangs the one below by 3 mm, and every band is asked the same question. Slicing it gives **250 layers**; *step the hotend* then rewrites that slice so band *n* prints 5 °C cooler than band *n−1* — five `M104` lines at layers 0, 48, 98, 148 and 198, whose heights read back out of the file as **0.2, 10.0, 20.0, 30.0 and 40.0 mm**, with every `G` line in the file unchanged and the layer count still 250. Bambu's calibration page also has a flow-rate pass and a pressure-advance pattern; Shale has the tower |
 | Timelapse | yes | **no** | |
 | Project save | 3MF | `.shale` zip | round-trips models and settings |
 | STL export | yes | yes | `File → Export plate as STL…` merges the visible parts, world transforms baked |
 | 3MF export | yes | yes | `File → Export plate as 3MF…` keeps one named object per part |
-| Measuring tool | yes | **no** | |
 | G-code flavour | Bambu/Marlin | Marlin | see the caveat in README |
 
 ## Verified, not assumed
@@ -111,6 +110,7 @@ stated, reset to the profile between runs:
 | Outer wall 40 mm/s | number | feed `F2400` ×260 |
 | Travel 300 mm/s | number | `F7200` ×2214 → `F18000` ×2214 |
 | Layer height 0.2 → 0.3 | number | `;LAYER_COUNT` 55 → 37 |
+| Temperature tower, stepped | command | 250 layers, 5 `M104` at layers 0/48/98/148/198 → z 0.2/10/20/30/40 mm, every `G` line unchanged |
 
 One caveat worth knowing: on a Bambu process the single "Print speed" field
 barely moves the G-code, because the profile pins a speed per feature
@@ -121,7 +121,14 @@ that matter, which is also how Bambu Studio's own speed page behaves.
 ## The honest summary
 
 Shale now covers the settings a person actually turns on a Bambu machine, and
-proves it in the G-code. It does not yet cover the workflows that make Bambu
-Studio feel like Bambu Studio: undo, arrange, paint-on supports, per-object
-settings, AMS, and sending the job to the printer. Those are the next four
-pieces of work, in that order, and each one is a feature rather than a field.
+proves it in the G-code. The workflows that make Bambu Studio feel like Bambu
+Studio have mostly arrived too: undo, arrange, per-object settings, the AMS,
+tree supports, support regions and a prime tower are all in and each one was
+proved from the file rather than from a screenshot.
+
+What is left is paint. Support and seam painting need a triangle-level brush — a
+brush, an undo of its own, and a way to carry painted triangles to the engine —
+and that is one large subsystem, not a field. Then plate management (several
+plates in one project), cut booleans with pegs and holes, a native Bambu G-code
+flavour, and the flush accounting behind the tower. Sending the job to the
+printer is still deliberately absent: Shale does not open a socket to a machine.
