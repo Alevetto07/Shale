@@ -13,15 +13,22 @@ numbers move when the schema does.
 ## Slicing settings
 
 Bambu Studio's BBL process profiles carry **188 distinct setting keys**. Shale's
-settings menu exposes **76 fields**, of which **63** stand in for a Bambu key by
-name. The rest are Cura settings with no Bambu equivalent (wall widths, combing,
-ironing inset) that the engine needs to be told anything at all.
+settings menu exposes **82 fields**, of which **62** name a key that Bambu
+actually ships somewhere in its BBL library (60 distinct keys). The rest are Cura
+settings with no Bambu equivalent (wall widths, combing, ironing inset) that the
+engine needs to be told anything at all.
+
+The count is strict on purpose: it only credits a field when its `bambu` mapping
+is a key that appears in `BBL/{process,filament,machine}/*.json`. Five earlier
+credits were matched on Bambu's UI label rather than a key (`print speed`,
+`sparse_infill_anchor`, `support_density`, `brim_type`, `internal_bridge_speed`)
+and are now blank, and `ironing` points at `ironing_type`, which is real.
 
 | Group | Fields | Bambu group it answers to |
 | --- | --- | --- |
 | Quality | 6 | Quality (widths, initial layer) |
 | Strength | 7 | Strength (walls, shells, sparse infill) |
-| Support | 7 | Support |
+| Support | 13 | Support (normal and tree) |
 | Build plate | 6 | Others → Bed adhesion, prime tower |
 | Speed | 13 | Speed |
 | Cooling | 7 | Cooling |
@@ -62,7 +69,7 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Printer library | yes | yes | 655 machines: Cura's 642 plus 13 Bambu, with real beds |
 | Filament library | yes | yes | Bambu's per-machine compatible filaments, plus Cura materials |
 | Process/quality picker | yes | yes | per-printer processes |
-| Menu-bar slicing settings | yes | yes | File / Edit / View / Printer / Slice settings, 76 fields |
+| Menu-bar slicing settings | yes | yes | File / Edit / View / Printer / Slice settings, 82 fields |
 | Slice and preview toolpaths | yes | yes | layer slider, G-code parsed back into paths |
 | Move / rotate / scale / mirror | yes | yes | typed, dragged, and one-click: *mirror X/Y/Z*, *turn 90°*, *Upright*. Every one of them turns about the part's centre, and a mirror flips the triangle winding when it bakes, so the solid does not come out inside out |
 | Duplicate | yes | yes | `Ctrl+D` |
@@ -73,6 +80,7 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Cut / split | yes | yes (plane only) | The model frame has `cut X/Y/Z`, an offset, and *both halves* / *upper only* / *lower only*. Every cut is capped: crossed triangles leave cut segments, the segments are stitched into loops and each loop is triangulated and welded on with outward winding, because a bare clipper leaves two open shells and an engine that fills by winding reads an open shell as a void. Both halves are set down on the plate. Bambu's cut also does booleans between two parts, holes and ear-shaped cuts; Shale has the plane |
 | Per-object settings | yes | yes | Slice settings → *Applies to*: pick a part and the sheet writes that part's overrides; they ride beside its mesh to the engine and survive save/open |
 | Variable layer height | yes | yes | Quality → *Variable layer height*; the engine re-plans the whole plate (0.10–0.28 mm gaps on the A1) — it is not painted per object the way Bambu's height-range modifier is |
+| Supports: normal and tree | yes | yes (no painting) | Support → *Support shape* picks `normal` or `tree`, with the branch knobs Bambu exposes (angle, diameter) plus Cura's flare, tip and top density. On the upright T-bracket, whose arm hangs over nothing, normal support lays **3262.7 mm** of filament and tree support **2213.8 mm** — 32 % less support and 12.5 % less plastic in the whole part, same 170 layers. Paint-on supports are a separate subsystem and are still missing |
 | Support painting / seam painting | yes | **no** | needs a triangle-level brush, a large subsystem |
 | AMS / multi-material | yes | yes (four spools) | The `ams` frame holds three more spools beside the plate material, and any part can name one in the model frame — the list tags it `T2`, `T3`, `T4` and the spool picker sets it. Each part reaches the engine as `-eN` in front of its `-l`, and the plate sends one material per spool, so a mixed plate slices with a real tool change: its own hotend temperature, its own flow, its own filament. On a two-cube plate the control file carries no `T` line at all, and pointing the copy at spool 2 (Generic PETG) gives **301 tool changes**, hotends at **220 and 205 °C**, and the same **300 layers**. Bambu flushes into a prime tower and counts the flushed grams; Shale has no tower yet, so the first lines after a change are the thin spot |
 | Send to printer / network | yes | **no** | deliberate: Shale does not talk to a printer |
