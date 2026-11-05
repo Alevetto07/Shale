@@ -346,7 +346,7 @@ endsolid cube
         "creality_ender3",
         Some("0.4mm Nozzle".into()),
         Some("draft".into()),
-        Some("generic_pla".into()),
+        &[Some("generic_pla".into())],
         UserSettings {
             layer_height: Some(0.2),
             infill_sparse_density: Some(20.0),
@@ -360,6 +360,7 @@ endsolid cube
             mesh,
             transform: shale_core::Transform::default(),
             settings: Vec::new(),
+            slot: None,
         }],
         &[shale_core::CustomInstruction::Pause {
             layer: Some(10),
@@ -431,7 +432,7 @@ fn arcus_slices_the_cube_when_configured() {
         "creality_ender3",
         Some("0.4mm Nozzle".into()),
         Some("draft".into()),
-        Some("generic_pla".into()),
+        &[Some("generic_pla".into())],
         UserSettings {
             layer_height: Some(0.2),
             infill_sparse_density: Some(15.0),
@@ -445,6 +446,7 @@ fn arcus_slices_the_cube_when_configured() {
             mesh,
             transform: shale_core::Transform::default(),
             settings: Vec::new(),
+            slot: None,
         }],
         &[],
         None,

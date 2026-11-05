@@ -619,7 +619,7 @@ mod tests {
             "creality_ender3",
             Some("0.4mm Nozzle".into()),
             Some("draft".into()),
-            Some("generic_pla".into()),
+            &[Some("generic_pla".into())],
             crate::UserSettings {
                 layer_height: Some(0.2),
                 infill_sparse_density: Some(15.0),
@@ -631,6 +631,7 @@ mod tests {
                 mesh: imported.mesh,
                 transform,
                 settings: Vec::new(),
+                slot: None,
             }],
             &[],
             None,

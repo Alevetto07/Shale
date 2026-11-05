@@ -1097,6 +1097,7 @@ mod tests {
             mesh,
             transform: crate::Transform::default(),
             settings: Vec::new(),
+            slot: None,
         }];
         let comparison = crate::compare_support(
             &catalog,

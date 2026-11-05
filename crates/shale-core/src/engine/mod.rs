@@ -26,6 +26,9 @@ use crate::error::Error;
 pub struct EngineMesh {
     pub path: PathBuf,
     pub settings: Vec<(String, String)>,
+    /// Which extruder prints this mesh. `None` means the machine's default, so a
+    /// single-material plate costs no extra engine arguments at all.
+    pub extruder: Option<usize>,
 }
 
 #[derive(Clone, Debug)]

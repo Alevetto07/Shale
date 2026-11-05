@@ -24,6 +24,9 @@ pub struct PlacedModel {
     /// Per-part overrides. The engine reads these per object, so one part can
     /// print with six walls while its neighbour keeps two.
     pub settings: Vec<(String, String)>,
+    /// Which spool in the AMS prints this part. `None` is the machine's own
+    /// extruder, and that is also what slot 0 resolves to.
+    pub slot: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -43,7 +46,8 @@ pub fn slice(
     printer_id: &str,
     variant_name: Option<String>,
     quality_type: Option<String>,
-    material_id: Option<String>,
+    // One filament per AMS slot, in slot order. `None` leaves the printer to pick.
+    materials: &[Option<String>],
     settings: UserSettings,
     models: &[PlacedModel],
     instructions: &[CustomInstruction],
@@ -55,14 +59,43 @@ pub fn slice(
         return Err(Error::message("import a model before slicing"));
     }
     on_progress(EngineProgress::new(0.02, "Resolving printer settings"));
-    let mut resolved = catalog.resolve(&ResolveRequest {
+    let request_for = |material: Option<String>| ResolveRequest {
         printer_id: printer_id.to_string(),
-        variant_name,
-        quality_type,
-        material_id,
+        variant_name: variant_name.clone(),
+        quality_type: quality_type.clone(),
+        material_id: material,
         intent_category: None,
-        settings,
-    })?;
+        settings: settings.clone(),
+    };
+    let mut resolved = catalog.resolve(&request_for(materials.first().cloned().flatten()))?;
+
+    // Each slot is its own material, so each slot gets its own resolve: that is
+    // what gives the engine a second nozzle temperature and a second filament.
+    // The plate's non-material settings still come from slot 0.
+    let slot_count = models
+        .iter()
+        .map(|model| model.slot.unwrap_or(0))
+        .max()
+        .unwrap_or(0)
+        + 1;
+    if slot_count > 1 {
+        let mut extruders = vec![resolved.extruders.first().cloned().unwrap_or_default()];
+        for index in 1..slot_count {
+            let material = materials
+                .get(index)
+                .cloned()
+                .flatten()
+                .or_else(|| materials.first().cloned().flatten());
+            let extra = catalog.resolve(&request_for(material))?;
+            let mut map = extra.extruders.into_iter().next().unwrap_or_default();
+            map.insert("extruder_nr".to_string(), index.to_string());
+            extruders.push(map);
+        }
+        resolved.extruders = extruders;
+        resolved
+            .global
+            .insert("machine_extruder_count".to_string(), slot_count.to_string());
+    }
 
     let layer_height = resolved.summary.layer_height.max(0.05);
     let mut estimated_layers = 1u32;
@@ -88,6 +121,7 @@ pub fn slice(
         baked_paths.push(EngineMesh {
             path,
             settings: model.settings.clone(),
+            extruder: model.slot,
         });
     }
 
@@ -118,6 +152,7 @@ pub fn slice(
             modifiers.push(EngineMesh {
                 path,
                 settings: supports::modifier_settings(region.role),
+                extruder: None,
             });
         }
     }
@@ -183,7 +218,7 @@ pub fn compare_support(
         printer_id,
         variant_name.clone(),
         quality_type.clone(),
-        material_id.clone(),
+        &[material_id.clone()],
         smart_settings,
         models,
         &[],
@@ -199,7 +234,7 @@ pub fn compare_support(
         printer_id,
         variant_name,
         quality_type,
-        material_id,
+        &[material_id.clone()],
         everywhere_settings,
         models,
         &[],

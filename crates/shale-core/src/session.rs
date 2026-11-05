@@ -392,6 +392,7 @@ impl Session {
             .models
             .iter()
             .map(|model| PlacedModel {
+                slot: None,
                 name: model.name.clone(),
                 mesh: model.mesh.clone(),
                 transform: model.transform.clone(),
@@ -412,7 +413,7 @@ impl Session {
             &printer_id,
             self.variant_name.clone(),
             self.quality_type.clone(),
-            self.material_id.clone(),
+            &[self.material_id.clone()],
             self.settings.clone(),
             &placed,
             &instructions,

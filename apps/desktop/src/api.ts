@@ -68,6 +68,8 @@ export interface ModelView {
   source: string;
   /// Per-part overrides; empty means the part follows the plate settings.
   settings: Record<string, string>;
+  /// Which AMS spool prints this part. `null` is the machine's own extruder.
+  slot: number | null;
 }
 
 /** A measured distance: the line, and how much of it lies on each axis. */
@@ -224,6 +226,9 @@ export const api = {
   duplicateModel: (id: number) => invoke<ModelView>("duplicate_model", { id }),
   setModelSettings: (id: number, settings: Record<string, string>) =>
     invoke<ModelView>("set_model_settings", { id, settings }),
+  /// Which AMS spool prints a part. `null` is the machine's own extruder.
+  setModelSlot: (id: number, slot: number | null) =>
+    invoke<ModelView>("set_model_slot", { id, slot }),
   removeModel: (id: number) => invoke<void>("remove_model", { id }),
   restoreModels: (models: { id: number; transform: Transform }[]) =>
     invoke<ModelView[]>("restore_models", { models }),
@@ -238,6 +243,7 @@ export const api = {
     variantName: string | null,
     qualityType: string | null,
     materialId: string | null,
+    ams: string[],
     settings: SliceSettings,
   ) =>
     invoke<SliceSummary>("slice_model", {
@@ -245,6 +251,7 @@ export const api = {
       variantName,
       qualityType,
       materialId,
+      ams,
       settings,
     }),
   supportPlan: () => invoke<SupportView | null>("current_support"),
@@ -316,6 +323,8 @@ export interface SaveProject {
   variant_name: string | null;
   quality_type: string | null;
   material_id: string | null;
+  /// The spools in the AMS beyond the plate's own material, in slot order.
+  ams: string[];
   settings: SliceSettings;
   chord_mm: number;
   turn_deg: number;
@@ -330,6 +339,7 @@ export interface OpenedProject {
   variant_name: string | null;
   quality_type: string | null;
   material_id: string | null;
+  ams: string[];
   settings: SliceSettings;
   chord_mm: number;
   turn_deg: number;

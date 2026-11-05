@@ -52,6 +52,8 @@ struct LoadedModel {
     /// Per-part overrides, sent to the engine beside that part's mesh. Empty
     /// means the part follows the global settings.
     settings: std::collections::BTreeMap<String, String>,
+    /// Which AMS spool prints this part. `None` is the machine's own extruder.
+    slot: Option<usize>,
 }
 
 struct AppState(Mutex<Inner>);
@@ -84,6 +86,7 @@ struct ModelView {
     import_ms: u64,
     source: String,
     settings: std::collections::BTreeMap<String, String>,
+    slot: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -378,7 +381,7 @@ async fn import_model(
         .unwrap_or("model")
         .to_string();
     let settings = std::collections::BTreeMap::new();
-    let view = view_of(id, &name, &transform, &report, &settings);
+    let view = view_of(id, &name, &transform, &report, &settings, None);
     inner.models.push(LoadedModel {
         id,
         name,
@@ -388,6 +391,7 @@ async fn import_model(
         source_bytes,
         visible: true,
         settings: std::collections::BTreeMap::new(),
+        slot: None,
     });
     Ok(view)
 }
@@ -440,6 +444,7 @@ fn duplicate_model(state: State<AppState>, id: u32) -> Result<ModelView, String>
         &transform,
         &inner.models[index].report,
         &inner.models[index].settings,
+        inner.models[index].slot.as_ref(),
     );
     let model = LoadedModel {
         id: new_id,
@@ -450,6 +455,7 @@ fn duplicate_model(state: State<AppState>, id: u32) -> Result<ModelView, String>
         source_bytes: inner.models[index].source_bytes.clone(),
         visible: true,
         settings: inner.models[index].settings.clone(),
+        slot: inner.models[index].slot,
     };
     inner.models.push(model);
     Ok(view)
@@ -587,7 +593,7 @@ fn cut_model(state: State<AppState>, id: u32, axis: u8, offset: f64, keep: Optio
             rotation_deg: [0.0, 0.0, 0.0],
             scale: [1.0, 1.0, 1.0],
         };
-        views.push(view_of(new_id, &name, &transform, &report, &settings));
+        views.push(view_of(new_id, &name, &transform, &report, &settings, None));
         inner.models.push(LoadedModel {
             id: new_id,
             name,
@@ -597,6 +603,7 @@ fn cut_model(state: State<AppState>, id: u32, axis: u8, offset: f64, keep: Optio
             source_bytes: source_bytes.clone(),
             visible: true,
             settings: settings.clone(),
+            slot: None,
         });
     }
     inner.toolpath = None;
@@ -704,6 +711,7 @@ fn arrange_models(
                 &model.transform,
                 &model.report,
                 &model.settings,
+                model.slot.as_ref(),
             )
         })
         .collect())
@@ -753,6 +761,7 @@ fn restore_models(
                 &model.transform,
                 &model.report,
                 &model.settings,
+                model.slot.as_ref(),
             )
         })
         .collect())
@@ -959,6 +968,7 @@ fn compare_supports(
                 .iter()
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect(),
+            slot: None,
         })
         .collect();
     let comparison = {
@@ -992,6 +1002,7 @@ async fn slice_model(
     variant_name: Option<String>,
     quality_type: Option<String>,
     material_id: Option<String>,
+    ams: Option<Vec<String>>,
     settings: UserSettings,
 ) -> Result<SliceSummary, String> {
     let (catalog_paths, engine, placed, output) = {
@@ -1018,6 +1029,7 @@ async fn slice_model(
                     .iter()
                     .map(|(key, value)| (key.clone(), value.clone()))
                     .collect(),
+                slot: model.slot,
             })
             .collect();
         let output = std::env::temp_dir().join("shale").join("slice.gcode");
@@ -1054,6 +1066,12 @@ async fn slice_model(
             inner.support.clone(),
         )
     };
+    let mut materials: Vec<Option<String>> = vec![material_id];
+    for material in ams.unwrap_or_default() {
+        if !material.trim().is_empty() {
+            materials.push(Some(material));
+        }
+    }
     let app_progress = app.clone();
     let resolved_and_models = tauri::async_runtime::spawn_blocking(move || {
         slice(
@@ -1062,7 +1080,7 @@ async fn slice_model(
             &printer_id,
             variant_name,
             quality_type,
-            material_id,
+            &materials,
             settings,
             &placed,
             &instructions,
@@ -1153,6 +1171,7 @@ fn loaded_models(state: State<AppState>) -> Result<Vec<ModelView>, String> {
                 &model.transform,
                 &model.report,
                 &model.settings,
+                model.slot.as_ref(),
             )
         })
         .collect())
@@ -1215,6 +1234,36 @@ fn set_model_settings(
         &model.transform,
         &model.report,
         &model.settings,
+        model.slot.as_ref(),
+    ))
+}
+
+#[tauri::command]
+fn set_model_slot(state: State<AppState>, id: u32, slot: Option<usize>) -> Result<ModelView, String> {
+    let mut inner = lock(&state)?;
+    let index = inner
+        .models
+        .iter()
+        .position(|model| model.id == id)
+        .ok_or_else(|| format!("no part {id}"))?;
+    // A Bambu AMS has four spools, so a part can point at T0..T3 and no further.
+    if let Some(slot) = slot {
+        if slot > 3 {
+            return Err(format!("slot {slot} is past the fourth spool"));
+        }
+    }
+    inner.models[index].slot = slot;
+    // Which spool a part uses changes the toolpath, so the old one is stale.
+    inner.toolpath = None;
+    inner.gcode_path = None;
+    let model = &inner.models[index];
+    Ok(view_of(
+        model.id,
+        &model.name,
+        &model.transform,
+        &model.report,
+        &model.settings,
+        model.slot.as_ref(),
     ))
 }
 
@@ -1297,6 +1346,7 @@ fn view_of(
     transform: &Transform,
     report: &ImportReport,
     settings: &std::collections::BTreeMap<String, String>,
+    slot: Option<&usize>,
 ) -> ModelView {
     ModelView {
         id,
@@ -1309,6 +1359,7 @@ fn view_of(
         import_ms: report.milliseconds,
         source: report.source.clone(),
         settings: settings.clone(),
+        slot: slot.copied(),
     }
 }
 
@@ -1392,7 +1443,7 @@ fn preload_demo(
             &printer_id,
             Some("0.4mm Nozzle".into()),
             Some("draft".into()),
-            Some("generic_pla".into()),
+            &[Some("generic_pla".into())],
             UserSettings {
                 layer_height: Some(0.2),
                 infill_sparse_density: Some(20.0),
@@ -1406,6 +1457,7 @@ fn preload_demo(
                 mesh: mesh.clone(),
                 transform: transform.clone(),
                 settings: Vec::new(),
+                slot: None,
             }],
             &[pause],
             None,
@@ -1426,6 +1478,7 @@ fn preload_demo(
             source_bytes: fs::read(std::path::Path::new(&path)).unwrap_or_default(),
             visible: true,
             settings: std::collections::BTreeMap::new(),
+            slot: None,
         }],
         instructions,
         toolpath,
@@ -1442,6 +1495,8 @@ struct SaveRequest {
     variant_name: Option<String>,
     quality_type: Option<String>,
     material_id: Option<String>,
+    #[serde(default)]
+    ams: Vec<String>,
     settings: UserSettings,
     chord_mm: f64,
     turn_deg: f64,
@@ -1457,6 +1512,7 @@ struct OpenedJob {
     variant_name: Option<String>,
     quality_type: Option<String>,
     material_id: Option<String>,
+    ams: Vec<String>,
     settings: UserSettings,
     chord_mm: f64,
     turn_deg: f64,
@@ -1546,6 +1602,7 @@ fn save_project(
                 bytes: model.source_bytes.clone(),
                 transform: model.transform.clone(),
                 settings: model.settings.clone(),
+                slot: model.slot,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -1556,6 +1613,7 @@ fn save_project(
         variant_name: project.variant_name,
         quality_type: project.quality_type,
         material_id: project.material_id,
+        ams: project.ams,
         settings: project.settings,
         chord_mm: project.chord_mm,
         turn_deg: project.turn_deg,
@@ -1600,6 +1658,7 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
                 model.transform.clone(),
                 imported,
                 model.settings.clone(),
+                model.slot,
             ));
         }
         Ok::<_, String>((project, built))
@@ -1617,10 +1676,10 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
     inner.next_id = 1;
     inner.next_instruction = 1;
     let mut views = Vec::new();
-    for (name, bytes, transform, imported, settings) in built {
+    for (name, bytes, transform, imported, settings, slot) in built {
         let id = inner.next_id;
         inner.next_id += 1;
-        let view = view_of(id, &name, &transform, &imported.report, &settings);
+        let view = view_of(id, &name, &transform, &imported.report, &settings, slot.as_ref());
         inner.models.push(LoadedModel {
             id,
             name,
@@ -1630,6 +1689,7 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
             source_bytes: bytes,
             visible: true,
             settings,
+            slot,
         });
         views.push(view);
     }
@@ -1665,6 +1725,7 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
         variant_name: project.data.variant_name,
         quality_type: project.data.quality_type,
         material_id: project.data.material_id,
+        ams: project.data.ams,
         settings: project.data.settings,
         chord_mm: project.data.chord_mm,
         turn_deg: project.data.turn_deg,
@@ -1825,6 +1886,7 @@ pub fn run() {
             export_gcode,
             export_plate,
             set_model_settings,
+            set_model_slot,
             save_project,
             open_project,
             clear_job,

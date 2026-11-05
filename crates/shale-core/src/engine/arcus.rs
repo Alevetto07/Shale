@@ -219,10 +219,18 @@ impl SlicingEngine for ArcusEngine {
 fn objects_from_request(request: &EngineRequest) -> Result<Vec<ObjectMesh>, Error> {
     let mut objects = Vec::new();
     for model in &request.models {
-        objects.push(mesh_from_path(&model.path, model.settings.clone())?);
+        objects.push(mesh_from_path(
+            &model.path,
+            model.settings.clone(),
+            model.extruder,
+        )?);
     }
     for modifier in &request.modifiers {
-        objects.push(mesh_from_path(&modifier.path, modifier.settings.clone())?);
+        objects.push(mesh_from_path(
+            &modifier.path,
+            modifier.settings.clone(),
+            modifier.extruder,
+        )?);
     }
     Ok(objects)
 }
@@ -230,6 +238,7 @@ fn objects_from_request(request: &EngineRequest) -> Result<Vec<ObjectMesh>, Erro
 fn mesh_from_path(
     path: &std::path::Path,
     settings: Vec<(String, String)>,
+    extruder: Option<usize>,
 ) -> Result<ObjectMesh, Error> {
     let mesh = mesh::load_mesh(path)?;
     // CuraEngine treats `vertices` as a triangle soup: three XYZ floats per
@@ -244,7 +253,12 @@ fn mesh_from_path(
     }
     let mut settings = settings;
     if !settings.iter().any(|(key, _)| key == "extruder_nr") {
-        settings.push(("extruder_nr".into(), "0".into()));
+        // The mesh group carries the extruder, so a part on the second spool asks
+        // the engine for the second tool even though the printer has one nozzle.
+        settings.push((
+            "extruder_nr".into(),
+            extruder.unwrap_or(0).to_string(),
+        ));
     }
     let name = path
         .file_stem()

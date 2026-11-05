@@ -872,6 +872,12 @@ mod tests {
     #[test]
     fn the_whole_library_reads_quickly() {
         let Some(root) = root() else { return };
+        // The first read is the disk's time, not the code's: on a cold page
+        // cache Windows Defender opens every one of the ~780 profile files and
+        // that alone took 38 s on this machine. What this test guards is that
+        // the library is parsed once per printer rather than once per model, so
+        // it warms the cache and then times a second read.
+        let _ = Library::from_root(Some(root.clone()));
         let start = std::time::Instant::now();
         let library = Library::from_root(Some(root));
         let elapsed = start.elapsed();
@@ -885,9 +891,8 @@ mod tests {
         );
         // The whole library is re-read on every launch, so this has to stay
         // cheap: it used to take eight seconds because both profile folders
-        // were parsed once per printer model. The bound is loose because the
-        // rest of the suite runs on the same cores; a repeat of that bug blows
-        // straight through it.
+        // were parsed once per printer model. A repeat of that bug blows
+        // straight through this bound even with the cache warm.
         assert!(
             elapsed.as_millis() < 5000,
             "reading the profile library took {elapsed:?}"

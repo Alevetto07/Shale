@@ -45,7 +45,7 @@ says it should.
 | Overhang, bridge, support detail | 35 | `bridge_flow`, `detect_overhang_wall`, `enable_overhang_speed`, `tree_support_*` |
 | Speed, acceleration, jerk | 17 | `internal_solid_infill_speed`, `gap_infill_speed`, `initial_layer_acceleration`, `ironing_speed` |
 | Seams and walls | 12 | `seam_slope_*`, `only_one_wall_top`, `infill_wall_overlap`, `inner_wall_acceleration` |
-| AMS and multi-filament | 9 | `prime_tower_*`, scarf-seam overrides |
+| AMS and multi-filament | 9 | `prime_tower_*` (no flush tower yet), scarf-seam overrides |
 | G-code and machine | 4 | `print_extruder_id`, `reduce_infill_retraction` |
 | Cooling and thermal | 2 | `pre_start_fan_time`, `standby_temperature_delta` |
 | Print layout | 1 | `enable_arc_fitting` |
@@ -74,7 +74,7 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Per-object settings | yes | yes | Slice settings → *Applies to*: pick a part and the sheet writes that part's overrides; they ride beside its mesh to the engine and survive save/open |
 | Variable layer height | yes | yes | Quality → *Variable layer height*; the engine re-plans the whole plate (0.10–0.28 mm gaps on the A1) — it is not painted per object the way Bambu's height-range modifier is |
 | Support painting / seam painting | yes | **no** | needs a triangle-level brush, a large subsystem |
-| AMS / multi-material | yes | **no** | single extruder path end to end |
+| AMS / multi-material | yes | yes (four spools) | The `ams` frame holds three more spools beside the plate material, and any part can name one in the model frame — the list tags it `T2`, `T3`, `T4` and the spool picker sets it. Each part reaches the engine as `-eN` in front of its `-l`, and the plate sends one material per spool, so a mixed plate slices with a real tool change: its own hotend temperature, its own flow, its own filament. On a two-cube plate the control file carries no `T` line at all, and pointing the copy at spool 2 (Generic PETG) gives **301 tool changes**, hotends at **220 and 205 °C**, and the same **300 layers**. Bambu flushes into a prime tower and counts the flushed grams; Shale has no tower yet, so the first lines after a change are the thin spot |
 | Send to printer / network | yes | **no** | deliberate: Shale does not talk to a printer |
 | Device tab, camera, monitoring | yes | **no** | out of scope, see `docs/print-removal.md` |
 | Calibration utilities | yes | **no** | |

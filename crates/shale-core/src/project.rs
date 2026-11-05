@@ -31,6 +31,9 @@ pub struct ProjectModel {
     /// Per-part overrides, kept so a saved plate slices the same way twice.
     #[serde(default)]
     pub settings: std::collections::BTreeMap<String, String>,
+    /// Which AMS spool printed this part.
+    #[serde(default)]
+    pub slot: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -41,6 +44,9 @@ pub struct ProjectData {
     pub variant_name: Option<String>,
     pub quality_type: Option<String>,
     pub material_id: Option<String>,
+    /// The spools in the AMS beyond the plate's own material, in slot order.
+    #[serde(default)]
+    pub ams: Vec<String>,
     pub settings: UserSettings,
     pub chord_mm: f64,
     pub turn_deg: f64,
@@ -72,6 +78,8 @@ struct Document {
     #[serde(default)]
     material_id: Option<String>,
     #[serde(default)]
+    ams: Vec<String>,
+    #[serde(default)]
     settings: UserSettings,
     #[serde(default)]
     chord_mm: f64,
@@ -93,6 +101,8 @@ struct DocumentModel {
     transform: Transform,
     #[serde(default)]
     settings: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    slot: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -139,6 +149,7 @@ pub fn write_project(path: &Path, data: &ProjectData) -> Result<(), Error> {
             name: model.name.clone(),
             transform: model.transform.clone(),
             settings: model.settings.clone(),
+            slot: model.slot,
         });
     }
     if let Some(index) = data.support_model {
@@ -162,6 +173,7 @@ pub fn write_project(path: &Path, data: &ProjectData) -> Result<(), Error> {
         variant_name: data.variant_name.clone(),
         quality_type: data.quality_type.clone(),
         material_id: data.material_id.clone(),
+        ams: data.ams.clone(),
         settings: data.settings.clone(),
         chord_mm: data.chord_mm,
         turn_deg: data.turn_deg,
@@ -245,6 +257,7 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
             bytes,
             transform: entry.transform.clone(),
             settings: entry.settings.clone(),
+            slot: entry.slot,
         });
     }
     let thumbnail = match read_zip(&mut zip, "thumbnail.jpg") {
@@ -262,6 +275,7 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
             variant_name: document.variant_name,
             quality_type: document.quality_type,
             material_id: document.material_id,
+            ams: document.ams,
             settings: document.settings,
             chord_mm: document.chord_mm,
             turn_deg: document.turn_deg,
@@ -458,6 +472,7 @@ mod tests {
             variant_name: Some("0.4mm Nozzle".into()),
             quality_type: Some("draft".into()),
             material_id: Some("generic_pla".into()),
+            ams: vec!["generic_petg".into(), String::new(), "generic_abs".into()],
             settings: UserSettings {
                 layer_height: Some(0.16),
                 infill_sparse_density: Some(18.0),
@@ -478,12 +493,14 @@ mod tests {
                         scale: [1.0, 1.0, 2.0],
                     },
                     settings: Default::default(),
+                    slot: Some(1),
                 },
                 ProjectModel {
                     name: "block-20.step".into(),
                     bytes: step.clone(),
                     transform: Transform::default(),
                     settings: Default::default(),
+                    slot: None,
                 },
             ],
             instructions: vec![CustomInstruction::Beep { layer: 4 }],
@@ -501,6 +518,11 @@ mod tests {
         assert_eq!(data.variant_name, saved.variant_name);
         assert_eq!(data.quality_type, saved.quality_type);
         assert_eq!(data.material_id, saved.material_id);
+        // The AMS is part of the plate: a spool list and which spool each part
+        // prints from have to survive a save and a reopen.
+        assert_eq!(data.ams, saved.ams);
+        assert_eq!(data.models[0].slot, Some(1));
+        assert_eq!(data.models[1].slot, None);
         assert_eq!(data.settings, saved.settings);
         assert_eq!(data.chord_mm, saved.chord_mm);
         assert_eq!(data.turn_deg, saved.turn_deg);

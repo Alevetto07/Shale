@@ -69,6 +69,9 @@ export function App() {
   const [variant, setVariant] = useState<string | null>(null);
   const [quality, setQuality] = useState<string | null>(null);
   const [material, setMaterial] = useState<string | null>(null);
+  // The AMS holds three more spools beside the plate's own material. An empty
+  // string is an empty bay, so the slot count is derived instead of stored.
+  const [ams, setAms] = useState<string[]>(["", "", ""]);
   const [bed, setBed] = useState<Bed>(FALLBACK_BED);
   const [layerHeight, setLayerHeight] = useState(0.2);
   const [infill, setInfill] = useState(20);
@@ -807,6 +810,20 @@ export function App() {
     }
   }
 
+  async function assignSlot(slot: number | null) {
+    if (!selectedId) return;
+    try {
+      const updated = await api.setModelSlot(selectedId, slot);
+      // Spool choice is a plate setting, like the settings sheet: it is not on
+      // the undo stack, because undo restores transforms from the backend and
+      // the backend is the one holding the slot.
+      setModels((list) => list.map((item) => (item.id === updated.id ? updated : item)));
+      setNotice(slot == null || slot === 0 ? "Part prints from the plate material" : `Part prints from spool ${slot + 1}`);
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
   async function slice() {
     if (!printerId) {
       setError("Choose a printer first.");
@@ -816,7 +833,7 @@ export function App() {
     setBusy(true);
     setProgress({ fraction: 0.01, message: "Starting" });
     try {
-      const summary = await api.slice(printerId, variant, quality, material, {
+      const summary = await api.slice(printerId, variant, quality, material, ams, {
         layer_height: layerHeight,
         infill_sparse_density: infill,
         support_enable: supports,
@@ -1096,6 +1113,7 @@ export function App() {
         variant_name: variant,
         quality_type: quality,
         material_id: material,
+        ams,
         settings: currentSettings(),
         chord_mm: chord,
         turn_deg: turn,
@@ -1127,6 +1145,7 @@ export function App() {
     setVariant(opened.variant_name);
     setQuality(opened.quality_type);
     setMaterial(opened.material_id);
+    setAms([0, 1, 2].map((index) => opened.ams?.[index] ?? ""));
     if (opened.settings.layer_height != null) setLayerHeight(opened.settings.layer_height);
     if (opened.settings.infill_sparse_density != null) setInfill(opened.settings.infill_sparse_density);
     if (opened.settings.support_enable != null) setSupports(opened.settings.support_enable);
@@ -1415,6 +1434,34 @@ export function App() {
             </p>
           </Frame>
 
+          <Frame title="ams">
+            <p className="meta">
+              {ams.filter(Boolean).length === 0
+                ? "one spool: the plate material"
+                : `plate plus ${ams.filter(Boolean).length} spool${ams.filter(Boolean).length === 1 ? "" : "s"}`}
+            </p>
+            {[0, 1, 2].map((index) => (
+              <label key={index}>
+                spool {index + 2}
+                <AsciiSelect
+                  label={`spool ${index + 2}`}
+                  value={ams[index] ?? ""}
+                  options={[
+                    { value: "", label: "empty" },
+                    ...materials.map((item) => ({ value: item.id, label: item.label })),
+                  ]}
+                  onChange={(next) =>
+                    setAms((list) => list.map((item, position) => (position === index ? next : item)))
+                  }
+                />
+              </label>
+            ))}
+            <p className="hint">
+              the plate material is spool 1. give a part a spool in the model frame and the slice gets a tool change,
+              its own hotend temperature and its own filament.
+            </p>
+          </Frame>
+
           <Frame title="slice">
             <label>
               layer mm
@@ -1609,12 +1656,28 @@ export function App() {
                     onClick={() => setSelectedId(model.id)}
                   >
                     {model.name}
+                    {model.slot ? `  T${model.slot + 1}` : ""}
                   </button>
                 </li>
               ))}
             </ul>
             {selected && (
               <>
+                <label>
+                  spool
+                  <AsciiSelect
+                    label="spool"
+                    value={String(selected.slot ?? 0)}
+                    options={[
+                      { value: "0", label: "plate (T1)" },
+                      ...ams
+                        .map((spool, index) => ({ spool, index }))
+                        .filter((item) => item.spool)
+                        .map((item) => ({ value: String(item.index + 1), label: `spool ${item.index + 2} (T${item.index + 2})` })),
+                    ]}
+                    onChange={(next) => void assignSlot(Number(next))}
+                  />
+                </label>
                 <div className="modes" role="group" aria-label="Transform">
                   {(["translate", "rotate", "scale"] as const).map((item) => (
                     <button
