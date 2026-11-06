@@ -127,6 +127,27 @@ stated, reset to the profile between runs:
 | Z hop 0.4 | number | `;LAYER_COUNT` unchanged, 34 → 34 lift moves, `z_heights` gains the hop |
 | Filament weight | data | job card 3.7 m → 11 g on generic PLA (density read from the material's `<properties><density>`) |
 
+**The sheet's numbers reach the engine, and Ctrl+Z takes them back.** Two bugs
+shared one symptom: a field moved, was remembered, and the slice ignored it.
+
+The first was in the job builder. Every value typed into the sheet travels to the
+core as `extra`, and the only entries the core ever read were the handful of keys
+with hand-written handling — `cool_fan_enabled` and its fan speeds. Every other
+field in the sheet was a facade: `sparse infill density` at 40 % on a 20 mm cube
+produced a file identical to 20 %. The extras are now merged into the resolved
+settings last, so an override beats the profile whatever key it names, and an
+overridden `layer_height` is read back out of the merged map because the layer
+estimate is computed from it. The proof is the file: 4,884.7 mm of infill and a
+5,422 s estimate at the profile's 20 %, 6,423.9 mm and 6,896 s at 40 %.
+
+The second was the history. Undo knew about models and, after the paint work,
+about paint — but a number typed into the sheet was not a step, so Ctrl+Z after
+changing the density quietly undid the last unrelated model move instead. The
+history is one typed log now (a model snapshot, a paint stroke, or the sheet's
+numbers), pushed in the order the hand acts, so Ctrl+Z always takes back the last
+thing. Proven end to end: the number goes back to the profile's placeholder, the
+slice returns to 4,884.7 mm exactly, and Ctrl+Y puts both back.
+
 **A paint stroke can be taken back.** Painting used to sit outside the undo
 stack: Ctrl+Z restored the models and the painted columns stayed, because paint
 is triangle indices, not geometry, and the model snapshot knew nothing about it.

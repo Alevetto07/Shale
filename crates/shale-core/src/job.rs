@@ -101,6 +101,33 @@ pub fn slice(
             .insert("machine_extruder_count".to_string(), slot_count.to_string());
     }
 
+    // A number typed into the sheet is an override of the profile, whatever key
+    // it names. Those values travelled all the way from the panel as `extra` and
+    // the only ones that reached the engine were the handful of keys with
+    // hand-written handling below, so every other field in the sheet was a
+    // facade: it moved, it was remembered, and the slice ignored it. Merged in
+    // last, an override wins over the profile, which is what an override means.
+    for (key, value) in settings
+        .extra
+        .iter()
+        .chain(models.iter().flat_map(|model| model.settings.iter()))
+    {
+        if !value.is_empty() {
+            resolved.global.insert(key.clone(), value.clone());
+        }
+    }
+    // The layer height also drives the layer estimate, so an overridden height
+    // has to be read back out of the merged map rather than the profile's copy.
+    if let Some(height) = resolved
+        .global
+        .get("layer_height")
+        .and_then(|value| value.parse::<f64>().ok())
+    {
+        if height > 0.0 {
+            resolved.summary.layer_height = height;
+        }
+    }
+
     // Cura's own UI treats cool_fan_enabled as the switch over the fan and leaves
     // the speeds alone. The engine only reads the speeds, so with the switch off
     // it keeps blowing at cool_fan_speed. Turning cooling off has to mean the fan

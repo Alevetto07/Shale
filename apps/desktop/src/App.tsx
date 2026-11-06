@@ -115,6 +115,9 @@ export function App() {
   const [speed, setSpeed] = useState(50);
   // Cura settings the user changed in the menu; anything absent is the profile's.
   const [overrides, setOverrides] = useState<Record<string, string>>({});
+  useEffect(() => {
+    overridesRef.current = overrides;
+  }, [overrides]);
   const [nozzle, setNozzle] = useState(200);
   const [bedTemp, setBedTemp] = useState(60);
   const [models, setModels] = useState<ModelView[]>([]);
@@ -124,11 +127,6 @@ export function App() {
   const [paintTarget, setPaintTarget] = useState<number | null>(null);
   const [patches, setPatches] = useState<OverhangPatch[]>([]);
   const [painted, setPainted] = useState(0);
-  // How many paint strokes sit between the plate and the last model edit. A
-  // model edit clears it: once geometry moves, the model history is the right
-  // thing for Ctrl+Z and the paint stack would be a second, confusing history.
-  const paintDepth = useRef(0);
-  const paintRedoable = useRef(0);
   /// The plates in this project. The one flagged `active` is the one `models`
   /// holds; the rest live in the backend until they are turned to.
   const [plates, setPlates] = useState<PlateView[]>([]);
@@ -403,8 +401,19 @@ export function App() {
   // Undo is a stack of plate snapshots. Deleting a part only hides it in the
   // backend, so a snapshot is a list of ids and transforms: no geometry is
   // copied, and undoing a delete does not re-read a file.
-  const past = useRef<{ models: ModelView[]; selected: number | null }[]>([]);
-  const future = useRef<{ models: ModelView[]; selected: number | null }[]>([]);
+  // One history for everything a hand can change, in the order it happened:
+  // moving a part, painting a face, and typing a number into the sheet are all
+  // steps in the same past, so Ctrl+Z always takes back the last thing rather
+  // than whichever stack happened to be non-empty.
+  type HistoryEntry =
+    | { kind: "models"; models: ModelView[]; selected: number | null }
+    | { kind: "settings"; overrides: Record<string, string> }
+    | { kind: "paint" };
+  const past = useRef<HistoryEntry[]>([]);
+  const future = useRef<HistoryEntry[]>([]);
+  // The sheet's numbers as they are right now, for a snapshot taken inside a
+  // handler that would otherwise capture an older render's copy.
+  const overridesRef = useRef<Record<string, string>>({});
   const modelsRef = useRef<ModelView[]>(models);
   const lastEdit = useRef<{ key: string; at: number } | null>(null);
   const [historyDepth, setHistoryDepth] = useState({ past: 0, future: 0 });
@@ -472,12 +481,21 @@ export function App() {
       return;
     }
     lastEdit.current = key ? { key, at: now } : null;
-    paintDepth.current = 0;
-    paintRedoable.current = 0;
     markTabDirty();
-    past.current.push({ models: modelsRef.current, selected: selectedId });
+    past.current.push({ kind: "models", models: modelsRef.current, selected: selectedId });
     if (past.current.length > 80) past.current.shift();
     future.current = [];
+    syncHistory();
+  }
+
+  /** One step in the sheet, so a number typed there is a step Ctrl+Z can take
+   * back. The scope's own settings are not in this history yet; the sheet's
+   * global numbers are, and they are the ones the slice reads first. */
+  function rememberSettings() {
+    past.current.push({ kind: "settings", overrides: { ...overridesRef.current } });
+    if (past.current.length > 80) past.current.shift();
+    future.current = [];
+    markTabDirty();
     syncHistory();
   }
 
@@ -502,52 +520,71 @@ export function App() {
   }
 
   async function undo() {
-    if (paintDepth.current > 0) {
+    const entry = past.current.pop();
+    if (!entry) return;
+    if (entry.kind === "settings") {
+      future.current.push({ kind: "settings", overrides: { ...overridesRef.current } });
+      setOverrides(entry.overrides);
+      markTabDirty();
+      syncHistory();
+      setNote("setting taken back");
+      return;
+    }
+    if (entry.kind === "paint") {
       try {
         const view = await api.undoPaint();
-        paintDepth.current -= 1;
-        paintRedoable.current += 1;
+        future.current.push({ kind: "paint" });
         setPainted(view.painted);
         setPaths([]);
+        setLayer(0);
         setLayerCount(0);
+        setLayerZ([]);
         forgetSlice();
         setPreview(false);
         setNote("paint taken back");
-        return;
-      } catch {
-        // The stack is empty after all: fall through to the model history.
-        paintDepth.current = 0;
+      } catch (failure) {
+        setError(String(failure));
       }
+      syncHistory();
+      return;
     }
-    const snapshot = past.current.pop();
-    if (!snapshot) return;
-    future.current.push({ models: modelsRef.current, selected: selectedId });
+    future.current.push({ kind: "models", models: modelsRef.current, selected: selectedId });
     syncHistory();
-    await restoreSnapshot(snapshot);
+    await restoreSnapshot(entry);
   }
 
   async function redo() {
-    if (paintRedoable.current > 0) {
+    const entry = future.current.pop();
+    if (!entry) return;
+    if (entry.kind === "settings") {
+      past.current.push({ kind: "settings", overrides: { ...overridesRef.current } });
+      setOverrides(entry.overrides);
+      markTabDirty();
+      syncHistory();
+      setNote("setting put back");
+      return;
+    }
+    if (entry.kind === "paint") {
       try {
         const view = await api.redoPaint();
-        paintRedoable.current -= 1;
-        paintDepth.current += 1;
+        past.current.push({ kind: "paint" });
         setPainted(view.painted);
         setPaths([]);
+        setLayer(0);
         setLayerCount(0);
+        setLayerZ([]);
         forgetSlice();
         setPreview(false);
         setNote("paint put back");
-        return;
-      } catch {
-        paintRedoable.current = 0;
+      } catch (failure) {
+        setError(String(failure));
       }
+      syncHistory();
+      return;
     }
-    const snapshot = future.current.pop();
-    if (!snapshot) return;
-    past.current.push({ models: modelsRef.current, selected: selectedId });
+    past.current.push({ kind: "models", models: modelsRef.current, selected: selectedId });
     syncHistory();
-    await restoreSnapshot(snapshot);
+    await restoreSnapshot(entry);
   }
 
   // The keyboard effect is installed once, so it reaches the current handlers
@@ -1101,6 +1138,7 @@ export function App() {
 
   async function setScopedOverride(key: string, value: string) {
     if (!scopedPart) {
+      if ((overridesRef.current[key] ?? "") !== value) rememberSettings();
       setOverrides((prev) => {
         const next = { ...prev };
         if (value === "") delete next[key];
@@ -1125,6 +1163,7 @@ export function App() {
 
   async function resetScopedOverrides() {
     if (!scopedPart) {
+      if (Object.keys(overridesRef.current).length > 0) rememberSettings();
       setOverrides({});
       return;
     }
@@ -1251,9 +1290,10 @@ export function App() {
       return;
     }
     try {
+      past.current.push({ kind: "paint" });
+      future.current = [];
+      syncHistory();
       const state = await api.paintSupport(paintTarget, triangles);
-      paintDepth.current += 1;
-      paintRedoable.current = 0;
       setPainted(state.painted);
       // The plate would print differently now, so the toolpath on screen is
       // stale: drop it rather than show support that is not there.
@@ -1274,8 +1314,6 @@ export function App() {
   async function takeBackPaint() {
     try {
       const view = await api.undoPaint();
-      if (paintDepth.current > 0) paintDepth.current -= 1;
-      paintRedoable.current += 1;
       setPainted(view.painted);
       setPaths([]);
       setLayerCount(0);
@@ -1292,9 +1330,10 @@ export function App() {
       return;
     }
     try {
+      past.current.push({ kind: "paint" });
+      future.current = [];
+      syncHistory();
       const state = await api.clearPaint(paintTarget);
-      paintDepth.current += 1;
-      paintRedoable.current = 0;
       setPainted(state.painted);
       setPaths([]);
       setLayer(0);
