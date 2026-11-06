@@ -799,12 +799,22 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 /* Settings sheet: Bambu-style tabs down the left, fields on the right. */
 .menu-sheet.settings-sheet {
   display: grid;
-  grid-template-columns: 9rem minmax(20rem, 1fr);
+  /* Three rows and a named place for each child. Placement used to be left to
+     the auto-flow, and once a title row was added above the two columns every
+     item slid one cell along: the body landed in the 9 rem tab column and the
+     whole list wrapped inside a strip a tenth of the sheet's width. The rows
+     say where things go, so adding a child cannot shuffle the sheet again. */
+  grid-template-columns: 9rem minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 0.75rem;
   width: min(46rem, calc(100vw - 3rem));
   max-height: min(32rem, calc(100vh - 6rem));
   padding: 0.75rem;
 }
+.menu-sheet.settings-sheet > .settings-scope { grid-column: 1 / -1; grid-row: 1; }
+.menu-sheet.settings-sheet > .settings-tabs { grid-column: 1; grid-row: 2 / 4; }
+.menu-sheet.settings-sheet > .settings-search { grid-column: 2; grid-row: 2; }
+.menu-sheet.settings-sheet > .settings-body { grid-column: 2; grid-row: 3; min-width: 0; }
 
 .settings-scope {
   display: flex;
@@ -827,6 +837,7 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 
 .settings-tabs {
   display: flex;
+  min-height: 0;
   flex-direction: column;
   gap: 0.15rem;
   border-right: 1px solid var(--line);
@@ -1273,17 +1284,20 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 
 .settings-search input {
   flex: 1 1 auto;
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  padding: 0.2rem 0;
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 0.3rem 0.5rem;
   font-family: var(--prose);
   font-size: 13px;
   letter-spacing: 0;
   text-transform: none;
   color: var(--ink);
 }
-.settings-search input:focus { border-color: var(--accent); outline: none; }
+.settings-search input:focus {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  outline: none;
+}
 .settings-search input::placeholder { color: rgba(233, 232, 242, 0.3); font-style: italic; }
 .settings-search em {
   font-style: normal;
@@ -1297,8 +1311,20 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   align-items: baseline;
   gap: 0.8rem;
 }
-.settings-hit > .menu-row { flex: 1 1 auto; border-bottom: 0; }
+/* A hit is one line of a list: the name takes the room, the control and the
+   group label keep theirs. A grid here looked right on paper and broke the list
+   in the window — the group label clipped to three letters and the whole sheet
+   grew a horizontal scrollbar — because a grid that does not know the widest
+   label pushes everything else out. Flex with a floor does not. */
+.settings-hit > .menu-row {
+  /* A content-sized basis let the row collapse to a third of the sheet and wrap
+     its own label; a zero basis makes it claim the room the group label leaves. */
+  flex: 1 1 0%;
+  min-width: 0;
+  border-bottom: 0;
+}
 .settings-hit-group {
+  flex: 0 0 auto;
   font-family: var(--prose);
   font-size: 10px;
   letter-spacing: 0.18em;
@@ -1312,16 +1338,23 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   display: inline-flex;
   align-items: baseline;
   gap: 0.35rem;
+  min-width: 0;
 }
 .menu-name.moved { color: var(--ink); }
 .menu-reset {
-  padding: 0 0.15rem;
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  font-size: 11px;
   line-height: 1;
-  color: var(--ink-3);
-  opacity: 0.75;
+  color: var(--ink-2);
 }
-.menu-reset:hover { color: var(--accent); opacity: 1; }
+.menu-reset:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
 
 /* ── what the plate costs ───────────────────────────────────────────────────
    A slicer's corner card: time, filament, weight, layers. It sits on the plate
@@ -1454,3 +1487,15 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 .legend-row.off { color: var(--ink-3); }
 .legend-row.off i { opacity: 0.2; }
 .legend-row.off span { text-decoration: line-through; text-decoration-thickness: 1px; }
+
+/* ── drop-downs carry a caret, not the platform's glyph ──────────────────────
+   WebView2 draws a small `v` for a select that has lost its native chrome, so
+   every list looked like it was labelled with a letter. One drawn caret instead,
+   the same shape at every size. */
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6'%3E%3Cpath d='M0 0l4.5 5L9 0z' fill='%23807f8d'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.2rem center;
+  padding-right: 1.15rem;
+}
