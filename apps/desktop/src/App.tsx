@@ -408,6 +408,7 @@ export function App() {
   type HistoryEntry =
     | { kind: "models"; models: ModelView[]; selected: number | null }
     | { kind: "settings"; overrides: Record<string, string> }
+    | { kind: "partSettings"; id: number; settings: Record<string, string> }
     | { kind: "paint" };
   const past = useRef<HistoryEntry[]>([]);
   const future = useRef<HistoryEntry[]>([]);
@@ -530,6 +531,13 @@ export function App() {
       setNote("setting taken back");
       return;
     }
+    if (entry.kind === "partSettings") {
+      const now = modelsRef.current.find((model) => model.id === entry.id)?.settings ?? {};
+      future.current.push({ kind: "partSettings", id: entry.id, settings: { ...now } });
+      syncHistory();
+      await applyPartSettings(entry.id, entry.settings);
+      return;
+    }
     if (entry.kind === "paint") {
       try {
         const view = await api.undoPaint();
@@ -562,6 +570,13 @@ export function App() {
       markTabDirty();
       syncHistory();
       setNote("setting put back");
+      return;
+    }
+    if (entry.kind === "partSettings") {
+      const now = modelsRef.current.find((model) => model.id === entry.id)?.settings ?? {};
+      past.current.push({ kind: "partSettings", id: entry.id, settings: { ...now } });
+      syncHistory();
+      await applyPartSettings(entry.id, entry.settings);
       return;
     }
     if (entry.kind === "paint") {
@@ -1136,6 +1151,27 @@ export function App() {
   const scopedPart =
     scope === "all" ? null : models.find((model) => model.id === Number(scope)) ?? null;
 
+  /** One part's own numbers, snapshotted before they change. `restore_models`
+   * only carries transforms, so a per-part override needs its own kind of step. */
+  function rememberPartSettings(part: { id: number; settings: Record<string, string> }) {
+    past.current.push({ kind: "partSettings", id: part.id, settings: { ...part.settings } });
+    if (past.current.length > 80) past.current.shift();
+    future.current = [];
+    markTabDirty();
+    syncHistory();
+  }
+
+  async function applyPartSettings(id: number, settings: Record<string, string>) {
+    try {
+      const updated = await api.setModelSettings(id, settings);
+      setModels((current) => current.map((model) => (model.id === updated.id ? updated : model)));
+      forgetSlice();
+      setNote("that part's setting changed");
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
   async function setScopedOverride(key: string, value: string) {
     if (!scopedPart) {
       if ((overridesRef.current[key] ?? "") !== value) rememberSettings();
@@ -1147,6 +1183,7 @@ export function App() {
       });
       return;
     }
+    if ((scopedPart.settings[key] ?? "") !== value) rememberPartSettings(scopedPart);
     const next = { ...scopedPart.settings };
     if (value === "") delete next[key];
     else next[key] = value;
