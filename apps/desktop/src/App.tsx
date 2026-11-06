@@ -124,6 +124,11 @@ export function App() {
   const [paintTarget, setPaintTarget] = useState<number | null>(null);
   const [patches, setPatches] = useState<OverhangPatch[]>([]);
   const [painted, setPainted] = useState(0);
+  // How many paint strokes sit between the plate and the last model edit. A
+  // model edit clears it: once geometry moves, the model history is the right
+  // thing for Ctrl+Z and the paint stack would be a second, confusing history.
+  const paintDepth = useRef(0);
+  const paintRedoable = useRef(0);
   /// The plates in this project. The one flagged `active` is the one `models`
   /// holds; the rest live in the backend until they are turned to.
   const [plates, setPlates] = useState<PlateView[]>([]);
@@ -467,6 +472,8 @@ export function App() {
       return;
     }
     lastEdit.current = key ? { key, at: now } : null;
+    paintDepth.current = 0;
+    paintRedoable.current = 0;
     markTabDirty();
     past.current.push({ models: modelsRef.current, selected: selectedId });
     if (past.current.length > 80) past.current.shift();
@@ -495,6 +502,23 @@ export function App() {
   }
 
   async function undo() {
+    if (paintDepth.current > 0) {
+      try {
+        const view = await api.undoPaint();
+        paintDepth.current -= 1;
+        paintRedoable.current += 1;
+        setPainted(view.painted);
+        setPaths([]);
+        setLayerCount(0);
+        forgetSlice();
+        setPreview(false);
+        setNote("paint taken back");
+        return;
+      } catch {
+        // The stack is empty after all: fall through to the model history.
+        paintDepth.current = 0;
+      }
+    }
     const snapshot = past.current.pop();
     if (!snapshot) return;
     future.current.push({ models: modelsRef.current, selected: selectedId });
@@ -503,6 +527,22 @@ export function App() {
   }
 
   async function redo() {
+    if (paintRedoable.current > 0) {
+      try {
+        const view = await api.redoPaint();
+        paintRedoable.current -= 1;
+        paintDepth.current += 1;
+        setPainted(view.painted);
+        setPaths([]);
+        setLayerCount(0);
+        forgetSlice();
+        setPreview(false);
+        setNote("paint put back");
+        return;
+      } catch {
+        paintRedoable.current = 0;
+      }
+    }
     const snapshot = future.current.pop();
     if (!snapshot) return;
     past.current.push({ models: modelsRef.current, selected: selectedId });
@@ -1212,6 +1252,8 @@ export function App() {
     }
     try {
       const state = await api.paintSupport(paintTarget, triangles);
+      paintDepth.current += 1;
+      paintRedoable.current = 0;
       setPainted(state.painted);
       // The plate would print differently now, so the toolpath on screen is
       // stale: drop it rather than show support that is not there.
@@ -1227,12 +1269,32 @@ export function App() {
     }
   }
 
+  /** Take one stroke back, from the panel rather than the keyboard: a mouse
+   * user has no Ctrl habit, and paint is the one edit with its own stack. */
+  async function takeBackPaint() {
+    try {
+      const view = await api.undoPaint();
+      if (paintDepth.current > 0) paintDepth.current -= 1;
+      paintRedoable.current += 1;
+      setPainted(view.painted);
+      setPaths([]);
+      setLayerCount(0);
+      forgetSlice();
+      setPreview(false);
+      setNote("paint taken back");
+    } catch (failure) {
+      setError(String(failure));
+    }
+  }
+
   async function unpaint() {
     if (paintTarget === null) {
       return;
     }
     try {
       const state = await api.clearPaint(paintTarget);
+      paintDepth.current += 1;
+      paintRedoable.current = 0;
       setPainted(state.painted);
       setPaths([]);
       setLayer(0);
@@ -2070,9 +2132,14 @@ export function App() {
                     </button>
                   ))}
                   {painted > 0 && (
-                    <button type="button" className="paint-clear" onClick={() => void unpaint()}>
-                      [ clear ]
-                    </button>
+                    <>
+                      <button type="button" className="paint-back" onClick={() => void takeBackPaint()}>
+                        [ take back ]
+                      </button>
+                      <button type="button" className="paint-clear" onClick={() => void unpaint()}>
+                        [ clear ]
+                      </button>
+                    </>
                   )}
                 </div>
                 <p className="hint">

@@ -127,6 +127,17 @@ stated, reset to the profile between runs:
 | Z hop 0.4 | number | `;LAYER_COUNT` unchanged, 34 → 34 lift moves, `z_heights` gains the hop |
 | Filament weight | data | job card 3.7 m → 11 g on generic PLA (density read from the material's `<properties><density>`) |
 
+**A paint stroke can be taken back.** Painting used to sit outside the undo
+stack: Ctrl+Z restored the models and the painted columns stayed, because paint
+is triangle indices, not geometry, and the model snapshot knew nothing about it.
+The backend keeps its own small history of strokes now (sixty deep, each a map of
+part to faces — cheap, because a stroke is a list of indices). Ctrl+Z takes the
+stroke back before it touches geometry, Ctrl+Y puts it back, and the paint panel
+grows a `[ take back ]` for the mouse. Proven end to end rather than by
+inspection: a painted underside puts `;TYPE:SUPPORT` in the file 146 times, one
+Ctrl+Z takes the paint off the part without touching the part, and the next slice
+has none.
+
 **The sheet shows the profile's own numbers.** A field nobody has touched used
 to be a blank; now `profile_settings` resolves the chosen printer, quality and
 material with nothing overridden, and every number shows that value as a grey

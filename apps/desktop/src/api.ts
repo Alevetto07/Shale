@@ -365,6 +365,10 @@ export const api = {
   paintSupport: (modelId: number, triangles: number[]) =>
     invoke<PaintView>("paint_support", { modelId, triangles }),
   clearPaint: (modelId: number) => invoke<PaintView>("clear_paint", { modelId }),
+  // Paint is its own small history: a stroke is triangle indices, so taking one
+  // back costs nothing and a brush that cannot be undone is a trap.
+  undoPaint: () => invoke<PaintView>("undo_paint"),
+  redoPaint: () => invoke<PaintView>("redo_paint"),
   proposeSupports: (id: number, overhangAngleDeg: number, maxBridgeMm: number) =>
     invoke<SupportView>("propose_supports", {
       id,

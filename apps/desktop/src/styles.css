@@ -928,7 +928,8 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 }
 
 .paint-patch,
-.paint-clear {
+.paint-clear,
+.paint-back {
   font-family: inherit;
   border: 1px solid var(--line, #2a2a2a);
   background: transparent;

@@ -35,6 +35,12 @@ struct Inner {
     /// them. Kept beside the models rather than inside them, so a part keeps
     /// what was painted on it when it is copied, saved or read back.
     painted: std::collections::BTreeMap<u32, Vec<usize>>,
+    /// The paint as it was before each stroke, newest last. A stroke is cheap —
+    /// triangle indices, not geometry — so keeping a stack of them costs little
+    /// and makes paint the one thing a brush must always be able to take back.
+    paint_past: Vec<std::collections::BTreeMap<u32, Vec<usize>>>,
+    /// Strokes that were taken back, newest last, so one can come forward again.
+    paint_future: Vec<std::collections::BTreeMap<u32, Vec<usize>>>,
     next_id: u32,
     instructions: Vec<(u32, CustomInstruction)>,
     next_instruction: u32,
@@ -1702,6 +1708,12 @@ fn paint_support(
             .ok_or("That model is no longer loaded")?;
         model.mesh.triangles.len()
     };
+    let before = inner.painted.clone();
+    inner.paint_past.push(before);
+    if inner.paint_past.len() > PAINT_STEPS {
+        inner.paint_past.remove(0);
+    }
+    inner.paint_future.clear();
     let painted = inner.painted.entry(model_id).or_default();
     for triangle in triangles {
         if triangle < corners && !painted.contains(&triangle) {
@@ -1717,8 +1729,58 @@ fn paint_support(
 #[tauri::command]
 fn clear_paint(state: State<AppState>, model_id: u32) -> Result<PaintView, String> {
     let mut inner = lock(&state)?;
-    inner.painted.remove(&model_id);
+    if inner.painted.contains_key(&model_id) {
+        let before = inner.painted.clone();
+        inner.paint_past.push(before);
+        if inner.paint_past.len() > PAINT_STEPS {
+            inner.paint_past.remove(0);
+        }
+        inner.paint_future.clear();
+        inner.painted.remove(&model_id);
+    }
     Ok(PaintView { painted: 0 })
+}
+
+/// How much paint the plate carries in all, which is what a stroke's undo
+/// changes and what the paint chip reads back.
+const PAINT_STEPS: usize = 60;
+
+fn paint_total(painted: &std::collections::BTreeMap<u32, Vec<usize>>) -> usize {
+    painted.values().map(|faces| faces.len()).sum()
+}
+
+/// Take the last stroke back. Returns the paint left on the plate.
+#[tauri::command]
+fn undo_paint(state: State<AppState>) -> Result<PaintView, String> {
+    let mut inner = lock(&state)?;
+    let Some(previous) = inner.paint_past.pop() else {
+        return Err("Nothing painted to take back".into());
+    };
+    let undone = std::mem::replace(&mut inner.painted, previous);
+    inner.paint_future.push(undone);
+    if inner.paint_future.len() > PAINT_STEPS {
+        inner.paint_future.remove(0);
+    }
+    Ok(PaintView {
+        painted: paint_total(&inner.painted),
+    })
+}
+
+/// Put the last taken-back stroke forward again.
+#[tauri::command]
+fn redo_paint(state: State<AppState>) -> Result<PaintView, String> {
+    let mut inner = lock(&state)?;
+    let Some(next) = inner.paint_future.pop() else {
+        return Err("No paint to put back".into());
+    };
+    let replaced = std::mem::replace(&mut inner.painted, next);
+    inner.paint_past.push(replaced);
+    if inner.paint_past.len() > PAINT_STEPS {
+        inner.paint_past.remove(0);
+    }
+    Ok(PaintView {
+        painted: paint_total(&inner.painted),
+    })
 }
 
 /// What the profile itself says, so the settings sheet can show the truth:
@@ -2888,6 +2950,8 @@ pub fn run() {
             }],
             active_plate: 0,
             painted: std::collections::BTreeMap::new(),
+            paint_past: Vec::new(),
+            paint_future: Vec::new(),
             next_id,
             instructions,
             next_instruction,
@@ -2971,6 +3035,8 @@ pub fn run() {
             overhang_patches,
             paint_support,
             clear_paint,
+            undo_paint,
+            redo_paint,
             preview_until,
             loaded_models,
             existing_slice,
