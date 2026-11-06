@@ -1734,6 +1734,11 @@ export function App() {
     activate(id);
     const parked = next.path ?? next.scratch;
     if (parked) {
+      // The plate in the core still belongs to the tab you just left, and
+      // restoring a parked plate puts its models *on top of* what is loaded. So
+      // the plate is emptied before the file is read, or switching tabs stacks
+      // both plates and the old parts come back with the new one.
+      await resetPlate();
       if (next.path != null) {
         await openProject(next.path);
       } else {
