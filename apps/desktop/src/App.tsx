@@ -1645,10 +1645,15 @@ export function App() {
   /// tab's own file away before switching away from it.
   async function writeProjectFile(path: string, tabId = activeTabRef.current, adopt = true): Promise<boolean> {
     const fileName = path.split(/[/\\]/).pop()?.replace(/\.shale$/i, "") || "Untitled";
+    // A park writes to a scratch file whose name was sanitised for the disk
+    // ("Untitled 2" became "Untitled-2"), and the file's `name` is what the tab
+    // is called when it is read back. So a park records the tab's own name;
+    // only a real save adopts the file's.
+    const parkedName = tabsRef.current.find((tab) => tab.id === tabId)?.name ?? fileName;
     try {
       const listed = await api.saveProject({
         path,
-        name: fileName,
+        name: adopt ? fileName : parkedName,
         printer_id: printerId,
         printer_label: printerLabel(),
         variant_name: variant,

@@ -127,6 +127,23 @@ stated, reset to the profile between runs:
 | Z hop 0.4 | number | `;LAYER_COUNT` unchanged, 34 → 34 lift moves, `z_heights` gains the hop |
 | Filament weight | data | job card 3.7 m → 11 g on generic PLA (density read from the material's `<properties><density>`) |
 
+**A plate keeps its own machine and material, and its own name.** Bambu lets two
+tabs be two jobs — one plate on PETG, one on PLA. Shale was already most of the
+way there without anyone checking: a tab is parked to a file when you leave it
+(`writeProjectFile`) and read back when you return (`openProject` →
+`applyOpened`), and that file carries `printer_id`, `variant_name`,
+`quality_type`, `material_id` and the AMS slots, so the recipe comes back with the
+plate. What did not survive was the tab's *name*: a park wrote its scratch file's
+sanitised base ("Untitled 2" → "Untitled-2") into the project's `name`, and the
+read-back then renamed the tab after the file. A park records the tab's own name
+now; only a real save adopts the file's.
+
+Proved with two tabs: plate 1 switched to Generic PETG and sliced to a file whose
+only tool temperature is **240 °C**; a second tab opened on the same window, set
+to Generic PLA, sliced to **200 °C**; back on plate 1 the sheet read PETG again,
+the tab still read "Untitled", and the re-slice was the same **240 °C** file.
+14 checks, `recipe_v1.py`.
+
 **The sheet's numbers reach the engine, and Ctrl+Z takes them back.** Two bugs
 shared one symptom: a field moved, was remembered, and the slice ignored it.
 
