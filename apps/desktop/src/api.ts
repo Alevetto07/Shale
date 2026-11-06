@@ -258,6 +258,14 @@ export const api = {
   materials: (printerId: string) => invoke<MaterialInfo[]>("list_materials", { printerId }),
   bed: (printerId: string, variantName: string | null, qualityType: string | null, materialId: string | null) =>
     invoke<Bed>("printer_bed", { printerId, variantName, qualityType, materialId }),
+  // The profile's own numbers, so an untouched field in the sheet reads what the
+  // printer would actually use instead of showing nothing.
+  profileSettings: (
+    printerId: string,
+    variantName: string | null,
+    qualityType: string | null,
+    materialId: string | null
+  ) => invoke<Record<string, string>>("profile_settings", { printerId, variantName, qualityType, materialId }),
   importModel: (
     path: string,
     printerId: string | null,

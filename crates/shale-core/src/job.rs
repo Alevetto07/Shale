@@ -101,6 +101,26 @@ pub fn slice(
             .insert("machine_extruder_count".to_string(), slot_count.to_string());
     }
 
+    // Cura's own UI treats cool_fan_enabled as the switch over the fan and leaves
+    // the speeds alone. The engine only reads the speeds, so with the switch off
+    // it keeps blowing at cool_fan_speed. Turning cooling off has to mean the fan
+    // is off, whichever field it was switched from.
+    let cooling_off = settings
+        .extra
+        .iter()
+        .chain(models.iter().flat_map(|model| model.settings.iter()))
+        .any(|(key, value)| key == "cool_fan_enabled" && matches!(value.as_str(), "False" | "false"));
+    if cooling_off {
+        for key in [
+            "cool_fan_speed",
+            "cool_fan_speed_0",
+            "cool_fan_speed_min",
+            "cool_fan_speed_max",
+        ] {
+            force_setting(&mut resolved, key, "0");
+        }
+    }
+
     let layer_height = resolved.summary.layer_height.max(0.05);
     let mut estimated_layers = 1u32;
     let mut baked_paths = Vec::new();

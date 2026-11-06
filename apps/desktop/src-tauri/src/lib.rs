@@ -1721,6 +1721,32 @@ fn clear_paint(state: State<AppState>, model_id: u32) -> Result<PaintView, Strin
     Ok(PaintView { painted: 0 })
 }
 
+/// What the profile itself says, so the settings sheet can show the truth:
+/// a field nobody has touched reads its profile value instead of looking blank,
+/// and a switch shows the state the printer would actually run.
+#[tauri::command]
+fn profile_settings(
+    state: State<'_, AppState>,
+    printer_id: String,
+    variant_name: Option<String>,
+    quality_type: Option<String>,
+    material_id: Option<String>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let mut inner = lock(&state)?;
+    let catalogue = catalog(&mut inner).map_err(|error| error.to_string())?;
+    let resolved = catalogue
+        .resolve(&shale_core::ResolveRequest {
+        printer_id,
+        variant_name,
+        quality_type,
+        material_id,
+        intent_category: None,
+        settings: UserSettings::default(),
+    })
+        .map_err(|error| error.to_string())?;
+    Ok(resolved.global.into_iter().collect())
+}
+
 #[tauri::command]
 async fn slice_model(
     app: AppHandle,
@@ -1732,6 +1758,9 @@ async fn slice_model(
     ams: Option<Vec<String>>,
     settings: UserSettings,
 ) -> Result<SliceSummary, String> {
+    if std::env::var_os("SHALE_TRACE").is_some() {
+        eprintln!("[shale] slice_model extra: {:?}", settings.extra);
+    }
     let (catalog_paths, engine, placed, painted, output) = {
         let mut inner = lock(&state)?;
         if inner.slicing {
@@ -2903,6 +2932,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scratch_path,
             app_status,
+            profile_settings,
             set_engine,
             cancel_import,
             list_printers,

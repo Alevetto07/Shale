@@ -79,7 +79,30 @@ export function App() {
   const [materials, setMaterials] = useState<MaterialInfo[]>([]);
   const [variant, setVariant] = useState<string | null>(null);
   const [quality, setQuality] = useState<string | null>(null);
+  // The numbers the chosen profile carries, fetched once per printer/quality/
+  // material: the sheet shows them, so a field you have not touched is not a
+  // blank and a switch you have not touched is not lying about the machine.
+  const [profileValues, setProfileValues] = useState<Record<string, string>>({});
   const [material, setMaterial] = useState<string | null>(null);
+  useEffect(() => {
+    if (!printerId) {
+      setProfileValues({});
+      return;
+    }
+    let live = true;
+    api
+      .profileSettings(printerId, variant, quality, material)
+      .then((values) => {
+        if (live) setProfileValues(values ?? {});
+      })
+      .catch(() => {
+        if (live) setProfileValues({});
+      });
+    return () => {
+      live = false;
+    };
+  }, [printerId, variant, quality, material]);
+
   // The AMS holds three more spools beside the plate's own material. An empty
   // string is an empty bay, so the slot count is derived instead of stored.
   const [ams, setAms] = useState<string[]>(["", "", ""]);
@@ -1868,6 +1891,7 @@ export function App() {
           settings={sliceSettings}
           onSettings={applySliceSettings}
           overrides={scope === "all" ? overrides : (models.find((m) => m.id === Number(scope))?.settings ?? {})}
+          profileValues={profileValues}
           onOverride={(key, value) => void setScopedOverride(key, value)}
           onResetOverrides={() => void resetScopedOverrides()}
           scope={scope}

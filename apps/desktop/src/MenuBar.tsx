@@ -73,6 +73,7 @@ export interface MenuBarProps {
   onSettings: (patch: Partial<SliceSettings>) => void;
   /** Cura settings the user has changed; anything absent comes from the profile. */
   overrides: Record<string, string>;
+  profileValues?: Record<string, string>;
   onOverride: (key: string, value: string) => void;
   /// Which part the settings sheet writes to: "all" for the plate, or a part id.
   scope: string;
@@ -98,6 +99,15 @@ const INFILL_PATTERNS = [
 type Menu = "file" | "edit" | "view" | "printer" | "settings";
 
 const FIRST_GROUP = SETTING_GROUPS[0]?.id ?? "";
+
+/** Does this field offer this value? A profile can hold something the list does
+ *  not, and a `<select>` given an unknown value silently shows nothing. */
+function options_has(
+  item: { options?: string[] } | { options?: readonly string[] },
+  value: string
+): boolean {
+  return value !== "" && (item.options ?? []).some((option) => option === value);
+}
 
 export function MenuBar(props: MenuBarProps) {
   const [open, setOpen] = useState<Menu | null>(null);
@@ -178,6 +188,10 @@ export function MenuBar(props: MenuBarProps) {
 
   const field = (item: (typeof SETTING_GROUPS)[number]["fields"][number]) => {
     const value = props.overrides[item.key] ?? "";
+    // What the profile says, used only where the field is untouched: a switch
+    // shows the state the printer would run, and a number shows the number it
+    // would use, greyed as a placeholder rather than pretending to be a choice.
+    const profile = props.profileValues?.[item.key] ?? "";
     const send = (next: string) => props.onOverride(item.key, next);
     // A setting that has been moved off the profile says so, and says how to
     // put it back: the same click on either scope (every part, or one).
@@ -197,7 +211,8 @@ export function MenuBar(props: MenuBarProps) {
       </span>
     );
     if (item.kind === "toggle") {
-      const on = value === "True";
+      // the resolver writes booleans lowercase ("true"), the sheet writes "True"
+      const on = value === "" ? /^true$/i.test(profile) : value === "True";
       return (
         <div className="menu-row" key={item.key}>
           {name}
@@ -207,7 +222,7 @@ export function MenuBar(props: MenuBarProps) {
               checked={on}
               onChange={(event) => send(event.target.checked ? "True" : "False")}
             />
-            <em>{value === "" ? "profile" : on ? "on" : "off"}</em>
+            <em>{value === "" && profile === "" ? "profile" : on ? "on" : "off"}</em>
           </label>
         </div>
       );
@@ -216,7 +231,10 @@ export function MenuBar(props: MenuBarProps) {
       return (
         <div className="menu-row" key={item.key}>
           {name}
-          <select value={value} onChange={(event) => send(event.target.value)}>
+          <select
+            value={value === "" ? (options_has(item, profile) ? profile : "") : value}
+            onChange={(event) => send(event.target.value)}
+          >
             <option value="">profile</option>
             {(item.options ?? []).map((option) => (
               <option key={option} value={option}>
@@ -234,7 +252,7 @@ export function MenuBar(props: MenuBarProps) {
           <input
             type="number"
             value={value}
-            placeholder="auto"
+            placeholder={profile || "auto"}
             min={item.min}
             max={item.max}
             step={item.step}

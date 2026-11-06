@@ -122,6 +122,28 @@ stated, reset to the profile between runs:
 | Layer height 0.2 → 0.3 | number | `;LAYER_COUNT` 55 → 37 |
 | Temperature tower, stepped | command | 250 layers, 5 `M104` at layers 0/48/98/148/198 → z 0.2/10/20/30/40 mm, every `G` line unchanged |
 | Two plates, saved | command | 2 archive entries, `plate` 0 and 1, `plate_names` ["plate 1", "plate 2"]; reopening restores 1 part per plate |
+| Part cooling off | toggle | fan commands 85/170/255 → one opening burst plus `M106 S0`; the print runs unfanned |
+| Fan speed 40 | number | ramp 85/170/255 → 34/68/102; the profile's half speed (170) gone |
+| Z hop 0.4 | number | `;LAYER_COUNT` unchanged, 34 → 34 lift moves, `z_heights` gains the hop |
+| Filament weight | data | job card 3.7 m → 11 g on generic PLA (density read from the material's `<properties><density>`) |
+
+**The sheet shows the profile's own numbers.** A field nobody has touched used
+to be a blank; now `profile_settings` resolves the chosen printer, quality and
+material with nothing overridden, and every number shows that value as a grey
+placeholder, every switch shows the state the machine would run, and every
+choice shows the profile's option. Bambu Studio's sheet behaves this way, and so
+does Cura's — the number you see before you touch anything is the number the
+slice will use. The "profile" option in a list and the × beside a moved field
+both put the field back.
+
+**Part cooling is a switch in Cura's UI and two numbers in the engine.** Turning
+it off leaves `cool_fan_speed` at 100, so the engine keeps writing `M106 S255`
+and the switch changes nothing. `resolver.rs` now carries the switch down to
+`cool_fan_speed`, `_min` and `_max`, and `job.rs` does the same for a switch set
+per object, because a per-object `cool_fan_enabled` never reaches the resolver at
+all. Proved in the G-code: the profile's ramp of `M106` at 85/170/255 becomes a
+single opening burst and an explicit `M106 S0`, and the rest of the print runs
+with the fan off.
 
 One caveat worth knowing: on a Bambu process the single "Print speed" field
 barely moves the G-code, because the profile pins a speed per feature

@@ -669,6 +669,27 @@ fn apply_user(
         force_literal(global, key, literal.clone());
         force_literal(extruder, key, literal);
     }
+    // Cura's own UI treats cool_fan_enabled as the switch and leaves the speeds
+    // alone; the engine does not, and keeps emitting M106 at cool_fan_speed. So
+    // "part cooling off" would be a switch that changes nothing. Zero the
+    // speeds with it, which is what the person turning it off means.
+    let cooling_off = settings
+        .extra
+        .iter()
+        .find(|(key, _)| key == "cool_fan_enabled")
+        .map(|(_, value)| matches!(parse_literal(value), Value::Bool(false)))
+        .unwrap_or(false);
+    if cooling_off {
+        for key in [
+            "cool_fan_speed",
+            "cool_fan_speed_0",
+            "cool_fan_speed_min",
+            "cool_fan_speed_max",
+        ] {
+            force_literal(global, key, Value::Num(0.0));
+            force_literal(extruder, key, Value::Num(0.0));
+        }
+    }
 }
 
 fn set_literal(specs: &mut HashMap<String, SettingSpec>, key: &str, value: Value) {

@@ -100,11 +100,15 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .app > .workspace,
 .app > /* Home is a workspace, not a different window: the top bar and its tabs stay
    where they are while the start screen sits in the main area. */
+/* Home is a workspace, not a different window: the start screen sits inside this
+   pane, so the tab strip and the four chips stay overhead. The pane is the
+   containing block for `.start` (which is inset: 0); without this it would take
+   the whole window and hide the very bar that got you here. */
 .home-pane {
+  position: relative;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 0 clamp(1rem, 3vw, 3rem) 2.5rem;
+  overflow: hidden;
 }
 
 .device { flex: 1 1 auto; }

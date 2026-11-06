@@ -197,6 +197,17 @@ impl SlicingEngine for CliEngine {
 
         if std::env::var_os("SHALE_TRACE").is_some() {
             eprintln!("[shale] engine: {command:?}");
+            for key in [
+                "cool_fan_enabled",
+                "cool_fan_speed",
+                "cool_fan_speed_min",
+                "cool_fan_speed_max",
+                "ironing_enabled",
+            ] {
+                if let Some(value) = request.global.get(key) {
+                    eprintln!("[shale] global {key} = {value}");
+                }
+            }
         }
         let mut child = command.spawn().map_err(|err| {
             Error::Engine(format!(
