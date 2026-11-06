@@ -30,6 +30,8 @@ import mark from "./brand/shale-mark-dark.svg";
 import { worldCentre, translationForCentre } from "./coords";
 import { andromeda } from "./field/credit";
 import { StartScreen } from "./StartScreen";
+import { DevicePane, TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
+import { FeatureLegend } from "./Legend";
 import { thumbnailJpeg } from "./thumbnail";
 import { Frame, meter, track } from "./theme";
 import { MenuBar, type SliceSettings } from "./MenuBar";
@@ -62,6 +64,10 @@ const FALLBACK_BED: Bed = {
   speed_print: 50,
   warning_count: 0,
 };
+
+/// The plate a window opens with. A window always has one tab, so a plate
+/// always has somewhere to be put away.
+const FIRST_TAB: DocTab[] = [{ id: 1, name: "Untitled", path: null, scratch: null, dirty: false }];
 
 export function App() {
   const [status, setStatus] = useState<Status | null>(null);
@@ -122,6 +128,17 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [screen, setScreen] = useState<"start" | "slicer">("start");
   const [workspace, setWorkspace] = useState(false);
+  /// Which pane the window is pointed at. Home is the start screen; the others
+  /// are the plate, the toolpath, and the machine.
+  const [pane, setPane] = useState<Pane>("home");
+  /// Open projects. A tab holds a name, a file, and whether the file is behind
+  /// the plate; switching saves the tab you leave so nothing is lost.
+  // A window always has a plate in it, so it always has a tab: the tab strip is
+  // the only thing that can say where a plate went, and a plate with no tab has
+  // nowhere to be put away.
+  const [docTabs, setDocTabs] = useState<DocTab[]>(FIRST_TAB);
+  const [activeTab, setActiveTab] = useState(FIRST_TAB[0].id);
+  const tabSeq = useRef(2);
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [projectName, setProjectName] = useState("Untitled");
   const [recents, setRecents] = useState<RecentProject[]>([]);
@@ -137,10 +154,16 @@ export function App() {
   // wash of grey.
   const [showModel, setShowModel] = useState(false);
   const [layer, setLayer] = useState(0);
+  /// Preview plays the toolpath a layer at a time, the way a print would.
+  const [playing, setPlaying] = useState(false);
   const [layerCount, setLayerCount] = useState(0);
   const [layerZ, setLayerZ] = useState<number[]>([]);
   const [paths, setPaths] = useState<PreviewPath[]>([]);
+  /// Kinds turned off in the legend. The toolpath stays loaded; this only
+  /// decides what is drawn, so switching a kind back on is instant.
+  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
   const [printSeconds, setPrintSeconds] = useState<number | null>(null);
+  const [filamentMetres, setFilamentMetres] = useState<number | null>(null);
   const [enginePath, setEnginePath] = useState("");
   const [libDir, setLibDir] = useState("");
   const [backend, setBackend] = useState("cli");
@@ -365,6 +388,54 @@ export function App() {
     modelsRef.current = models;
   }, [models]);
 
+  /// The tab bar's bookkeeping. `markTabDirty` is called from `remember`, so
+  /// every edit that can be undone also marks the file as behind — one place,
+  /// and no handler can forget it.
+  // The tab strip is read and written inside one async command at a time
+  // (write this plate, then open that one), and React's state copy is a render
+  // behind. A ref beside it is the only way to read the tab you just wrote.
+  const activeTabRef = useRef(1);
+  // The ref has to start where the state starts, or the first actions of a
+  // session see a window with no tabs at all.
+  const tabsRef = useRef<DocTab[]>(FIRST_TAB);
+
+  function setTabs(next: DocTab[] | ((current: DocTab[]) => DocTab[])) {
+    const value = typeof next === "function" ? next(tabsRef.current) : next;
+    tabsRef.current = value;
+    setDocTabs(value);
+  }
+
+  function activate(id: number) {
+    activeTabRef.current = id;
+    setActiveTab(id);
+  }
+
+  function markTabDirty() {
+    setTabs((current) =>
+      current.map((tab) => (tab.id === activeTabRef.current && !tab.dirty ? { ...tab, dirty: true } : tab)),
+    );
+  }
+
+  function addTab(name: string, path: string | null): number {
+    const id = tabSeq.current++;
+    setTabs((current) => [...current, { id, name, path, scratch: null, dirty: false }]);
+    activate(id);
+    return id;
+  }
+
+  /// Give a tab its file. A tab that was opened from a file takes the file's
+  /// name; one that was only put away quietly keeps the name it had, because
+  /// "Untitled 2" is what the person called it.
+  function nameTab(path: string | null, name: string, id?: number) {
+    setTabs((current) =>
+      current.map((tab) => {
+        const mine = id != null ? tab.id === id : tab.path === path || tab.id === activeTabRef.current;
+        if (!mine) return tab;
+        return { ...tab, name: tab.path === path && tab.path != null ? tab.name : name, path: path ?? tab.path, dirty: false };
+      }),
+    );
+  }
+
   /** Remember the plate as it is now, before it changes. */
   function remember(key = "") {
     const now = Date.now();
@@ -373,6 +444,7 @@ export function App() {
       return;
     }
     lastEdit.current = key ? { key, at: now } : null;
+    markTabDirty();
     past.current.push({ models: modelsRef.current, selected: selectedId });
     if (past.current.length > 80) past.current.shift();
     future.current = [];
@@ -619,7 +691,10 @@ export function App() {
       // The slicer is entered before the read starts so progress has somewhere
       // to appear. On failure with nothing else loaded, go back rather than
       // leaving an empty slicer on screen.
-      if (models.length === 0) setScreen("start");
+      if (models.length === 0) {
+        setScreen("start");
+        setPane("home");
+      }
     } finally {
       setImportProgress(null);
       setImporting(false);
@@ -826,6 +901,62 @@ export function App() {
     }
   }
 
+  /// As many copies of the selected part as the plate holds, laid out the way
+  /// Bambu's "Fill plate" does — a grid with a small gap, skipping anything
+  /// already standing there.
+  async function fillPlate() {
+    if (!selected) return;
+    try {
+      remember();
+      const copies = await api.fillPlate(selected.id, {
+        width: bed.width,
+        depth: bed.depth,
+        centerIsZero: bed.center_is_zero,
+      });
+      setModels((current) => [...current, ...copies]);
+      setSelectedId(copies[0]?.id ?? selected.id);
+      setPaths([]);
+      setLayerCount(0);
+      forgetSlice();
+      setNotice(`${copies.length + 1} copies on the plate`);
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  /// A primitive, the way Bambu's right-click menu adds one: 20 mm across,
+  /// standing on the bed, on the first free patch.
+  async function addPart(kind: "cube" | "cylinder" | "cone" | "sphere") {
+    try {
+      remember();
+      const wanted = await api.addPrimitive(kind, 20, 20, {
+        width: bed.width,
+        depth: bed.depth,
+        centerIsZero: bed.center_is_zero,
+      });
+      setModels((current) => [...current, wanted]);
+      setSelectedId(wanted.id);
+      setPaths([]);
+      setLayerCount(0);
+      forgetSlice();
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  async function splitSelected() {
+    if (!selected) return;
+    try {
+      remember();
+      const pieces = await api.splitModel(selected.id);
+      setModels((current) => [...current.filter((model) => model.id !== selected.id), ...pieces]);
+      setSelectedId(pieces[0].id);
+      setNotice(`Split into ${pieces.length} parts, each with its own place on the plate`);
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
   async function removeSelected() {
     if (!selected) return;
     try {
@@ -876,6 +1007,7 @@ export function App() {
       setLayerZ(summary.layers.map((item) => item.z));
       setLayer(Math.max(0, summary.layer_count - 1));
       setPrintSeconds(summary.print_time_seconds);
+      setFilamentMetres(summary.filament_metres);
       setPreview(true);
       setShowModel(false);
       setProgress({ fraction: 1, message: `${summary.layer_count} layers` });
@@ -1064,7 +1196,7 @@ export function App() {
       setLayer(0);
       setLayerCount(0);
       setLayerZ([]);
-      setPrintSeconds(null);
+      forgetSlice();
       setPreview(false);
       setNote(`painted ${state.painted} faces: they will be held up on the next slice`);
     } catch (failure) {
@@ -1083,7 +1215,7 @@ export function App() {
       setLayer(0);
       setLayerCount(0);
       setLayerZ([]);
-      setPrintSeconds(null);
+      forgetSlice();
       setPreview(false);
       setNote("paint cleared");
     } catch (failure) {
@@ -1110,7 +1242,7 @@ export function App() {
       setLayer(0);
       setLayerCount(0);
       setLayerZ([]);
-      setPrintSeconds(null);
+      forgetSlice();
       setTower(null);
       setCalibration(null);
       setMeasureSpan(null);
@@ -1151,7 +1283,7 @@ export function App() {
       setLayer(0);
       setLayerCount(0);
       setLayerZ([]);
-      setPrintSeconds(null);
+      forgetSlice();
       setTower(null);
       setCalibration(null);
       setMeasureSpan(null);
@@ -1179,7 +1311,7 @@ export function App() {
       setLayer(0);
       setLayerCount(0);
       setLayerZ([]);
-      setPrintSeconds(null);
+      forgetSlice();
       setTower(null);
       setCalibration(null);
     } catch (failure) {
@@ -1302,6 +1434,18 @@ export function App() {
     setScreen("slicer");
   }
 
+  // A play that ends holds the last layer instead of snapping back: the point
+  // of watching is the top of the print.
+  useEffect(() => {
+    if (!playing) return;
+    if (layer >= layerCount - 1) {
+      setPlaying(false);
+      return;
+    }
+    const tick = window.setTimeout(() => setLayer((current) => Math.min(layerCount - 1, current + 1)), 90);
+    return () => window.clearTimeout(tick);
+  }, [playing, layer, layerCount]);
+
   function currentSettings() {
     return {
       layer_height: layerHeight,
@@ -1319,19 +1463,27 @@ export function App() {
     return `${printer.manufacturer ? `${printer.manufacturer} ` : ""}${printer.name}`;
   }
 
-  async function saveProject(asNew: boolean) {
-    setError(null);
-    let path = asNew ? null : projectPath;
-    const name = projectName.trim() || "Untitled";
-    if (!path) {
-      const picked = await save({
-        defaultPath: `${name}.shale`,
-        filters: [{ name: "Shale project", extensions: ["shale"] }],
-      });
-      if (typeof picked !== "string") return;
-      path = picked.toLowerCase().endsWith(".shale") ? picked : `${picked}.shale`;
-    }
-    const fileName = path.split(/[/\\]/).pop()?.replace(/\.shale$/i, "") || name;
+  function materialLabel(id: string | null): string {
+    if (!id) return "";
+    return materials.find((item) => item.id === id)?.label ?? id;
+  }
+
+  function materialName(): string {
+    return materialLabel(material);
+  }
+
+  /// The bays as the machine numbers them: T1 is the plate's own material, and
+  /// T2..T4 are the AMS. An empty string is an empty bay, not a blank label.
+  function spoolsForDevice(): Spool[] {
+    const bays: Spool[] = [{ bay: 1, material: materialLabel(material) }];
+    ams.forEach((slot, index) => bays.push({ bay: index + 2, material: materialLabel(slot || null) }));
+    return bays;
+  }
+
+  /// Write the plate to a path, with no dialog: the tab bar uses this to put a
+  /// tab's own file away before switching away from it.
+  async function writeProjectFile(path: string, tabId = activeTabRef.current, adopt = true): Promise<boolean> {
+    const fileName = path.split(/[/\\]/).pop()?.replace(/\.shale$/i, "") || "Untitled";
     try {
       const listed = await api.saveProject({
         path,
@@ -1346,14 +1498,128 @@ export function App() {
         chord_mm: chord,
         turn_deg: turn,
         thumbnail: thumbnailJpeg(models),
+        quiet: !adopt,
       });
-      setProjectPath(path);
-      setProjectName(fileName);
-      setRecents(listed);
-      setNotice(`Saved ${fileName}.shale`);
+      // A quiet save is a place to put a plate down, not a file to adopt: the
+      // tab keeps its name and its (empty) path, and the project does not start
+      // claiming to live in the temp folder.
+      if (adopt) {
+        setProjectPath(path);
+        setRecents(listed);
+        setProjectName(fileName);
+      }
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.id === tabId
+            ? adopt
+              ? { ...tab, path, dirty: false, name: fileName }
+              : { ...tab, scratch: path, dirty: false }
+            : tab,
+        ),
+      );
+      return true;
     } catch (err) {
       setError(messageOf(err));
+      return false;
     }
+  }
+
+  async function saveProject(asNew: boolean) {
+    setError(null);
+    let path = asNew ? null : projectPath;
+    const name = projectName.trim() || "Untitled";
+    if (!path) {
+      const picked = await save({
+        defaultPath: `${name}.shale`,
+        filters: [{ name: "Shale project", extensions: ["shale"] }],
+      });
+      if (typeof picked !== "string") return;
+      path = picked.toLowerCase().endsWith(".shale") ? picked : `${picked}.shale`;
+    }
+    if (await writeProjectFile(path)) setNotice(`Saved ${projectName.trim() || name}.shale`);
+  }
+
+  /// Switch to another open project. The tab you leave is written first — to
+  /// its own file, or to a scratch copy when it has never been saved — because
+  /// the backend holds one plate at a time and the plate is the thing being
+  /// put away.
+  /// Put the front plate away. A draft is parked whether or not the dot is
+  /// showing: the tab strip is a promise that the plate is still there, and a
+  /// plate that was never marked dirty would otherwise be dropped without a
+  /// word. Every way of leaving a tab goes through here — clicking another tab,
+  /// pressing +, opening a file into a new tab.
+  async function parkActive() {
+    const leaving = tabsRef.current.find((tab) => tab.id === activeTabRef.current);
+    if (!leaving || (leaving.path != null && !leaving.dirty)) return;
+    const target = leaving.path ?? leaving.scratch ?? (await api.scratchPath(leaving.name));
+    await writeProjectFile(target, leaving.id, leaving.path != null);
+  }
+
+  async function selectTab(id: number) {
+    if (id === activeTabRef.current) {
+      setPane("prepare");
+      return;
+    }
+    // Park the plate you are leaving before the other one is read: the file
+    // is the only thing that survives a switch.
+    await parkActive();
+    const next = tabsRef.current.find((tab) => tab.id === id);
+    if (!next) return;
+    activate(id);
+    const parked = next.path ?? next.scratch;
+    if (parked) {
+      if (next.path != null) {
+        await openProject(next.path);
+      } else {
+        // A parked plate is a draft: read it back without letting the scratch
+        // file become the project, or the tab would be renamed after it and
+        // saving would land in the temp folder.
+        try {
+          const opened = await api.openProject(parked);
+          applyOpened(opened);
+          setProjectPath(null);
+          setProjectName(next.name);
+          setRecents((current) => current);
+        } catch (err) {
+          setError(messageOf(err));
+        }
+      }
+    } else {
+      await resetPlate();
+    }
+    setPane("prepare");
+  }
+
+  async function closeTab(id: number) {
+    const left = tabsRef.current.filter((tab) => tab.id !== id);
+    setTabs(left);
+    if (id !== activeTabRef.current) return;
+    if (left.length === 0) {
+      await resetPlate();
+      addTab("Untitled", null);
+      return;
+    }
+    const next = left[0];
+    activate(next.id);
+    if (next.path) await openProject(next.path);
+    else await resetPlate();
+  }
+
+  async function openInNewTab() {
+    const chosen = await open({
+      multiple: false,
+      filters: [{ name: "Shale project", extensions: ["shale"] }],
+    });
+    if (typeof chosen !== "string") return;
+    const existing = tabsRef.current.find((tab) => tab.path === chosen);
+    if (existing) {
+      await selectTab(existing.id);
+      return;
+    }
+    // Opening into a new tab is also leaving the plate you were on.
+    await parkActive();
+    addTab(chosen.split(/[/\\]/).pop()?.replace(/\.shale$/i, "") || "Untitled", chosen);
+    await openProject(chosen);
   }
 
   function applyOpened(opened: OpenedProject) {
@@ -1394,8 +1660,10 @@ export function App() {
     setPaths([]);
     setLayerCount(0);
     setLayer(0);
-    setPrintSeconds(null);
+    forgetSlice();
     setProgress(null);
+    nameTab(opened.path, opened.name);
+    setPane("prepare");
     if (opened.warnings.length > 0) setNotice(opened.warnings.join("\n"));
     enterSlicer();
   }
@@ -1411,6 +1679,18 @@ export function App() {
       if (typeof chosen !== "string") return;
       picked = chosen;
     }
+    // A file opened from a dialog, a recent, or a double-click needs a tab of
+    // its own; a file already open gets its tab brought forward instead.
+    const fileLabel = picked.split(/[/\\]/).pop()?.replace(/\.shale$/i, "") || "Untitled";
+    const already = tabsRef.current.find((tab) => tab.path === picked);
+    const front = tabsRef.current.find((tab) => tab.id === activeTabRef.current);
+    // A blank plate nobody has touched is not worth a second tab: it becomes
+    // the file. That is what every editor does with an empty window.
+    const blank = front && front.path == null && !front.dirty && models.length === 0 ? front : null;
+    if (already) activate(already.id);
+    else if (blank) {
+      setTabs((current) => current.map((tab) => (tab.id === blank.id ? { ...tab, name: fileLabel, path: picked } : tab)));
+    } else addTab(fileLabel, picked);
     try {
       const opened = await api.openProject(picked);
       applyOpened(opened);
@@ -1421,7 +1701,9 @@ export function App() {
     }
   }
 
-  async function newProject() {
+  /// Empty the plate without touching the tab bar: used when a tab is closed
+  /// and when a tab that has never been saved is switched back to.
+  async function resetPlate() {
     setError(null);
     try {
       await api.clearJob();
@@ -1441,11 +1723,35 @@ export function App() {
     setPaths([]);
     setLayerCount(0);
     setLayer(0);
-    setPrintSeconds(null);
+    forgetSlice();
     setProgress(null);
     setProjectPath(null);
     setProjectName("Untitled");
+    setPane("prepare");
     enterSlicer();
+  }
+
+  async function newProject() {
+    const front = tabsRef.current.find((tab) => tab.id === activeTabRef.current);
+    // A blank plate nobody has touched is not worth a second tab: "new project"
+    // in a window that is already an untouched blank should give one blank, the
+    // way every editor does.
+    const untouched =
+      front != null && front.path == null && front.scratch == null && !front.dirty && modelsRef.current.length === 0;
+    // + clears the plate, so the plate has to be put away first.
+    if (!untouched) await parkActive();
+    await resetPlate();
+    if (untouched) {
+      setPane("prepare");
+      return;
+    }
+    // Two blank plates in one window still need two names: the tab strip is
+    // the only thing telling them apart.
+    const used = new Set(tabsRef.current.map((tab) => tab.name));
+    let name = "Untitled";
+    for (let index = 2; used.has(name); index += 1) name = `Untitled ${index}`;
+    addTab(name, null);
+    setPane("prepare");
   }
 
   async function quit() {
@@ -1471,47 +1777,34 @@ export function App() {
     void openProject(path);
   };
 
+  /// A slice decides four numbers together, and a plate that changed decides
+  /// none of them: they are dropped as one so a stale time never sits beside a
+  /// fresh layer count.
+  function forgetSlice() {
+    setPrintSeconds(null);
+    setFilamentMetres(null);
+  }
+
   const minutes = printSeconds == null ? null : Math.max(1, Math.round(printSeconds / 60));
+  /// Preview draws the toolpath and nothing else. A solid part in front of it
+  /// hides exactly the thing the preview exists to show — the infill inside.
+  const solidShown = showModel && !preview;
+  const materialInfo = materials.find((item) => item.id === material);
+  // CuraEngine counts filament as length. Weight is length times the strand's
+  // cross-section times the profile's density, and the profile is the only
+  // place a density can honestly come from: Cura's materials do not carry one.
+  const grams = (() => {
+    if (filamentMetres == null) return null;
+    const density = materialInfo?.density;
+    if (!density) return null;
+    const diameter = materialInfo?.diameter ?? 1.75;
+    const area = Math.PI * (diameter / 2) ** 2;
+    return filamentMetres * area * density;
+  })();
+  const clockTime = (seconds: number) =>
+    `${Math.floor(seconds / 3600)} h ${String(Math.round((seconds % 3600) / 60)).padStart(2, "0")} m`;
   const marks = instructionMarks(instructions, layerZ, layerHeight);
   const marksHere = instructions.filter((item) => markOf(item, layerZ, layerHeight) === layer);
-
-  if (screen === "start") {
-    return (
-      <div className="app">
-        <StartScreen
-          live={!busy && !importing}
-          canReturn={workspace}
-          recents={recents}
-          printers={printers}
-          printerId={printerId}
-          enginePath={enginePath}
-          libDir={libDir}
-          backend={backend}
-          onReturn={() => setScreen("slicer")}
-          onNew={() => void newProject()}
-          onOpen={() => void openProject()}
-          onImport={() => void importModel()}
-          onOpenRecent={(path) => void openProject(path)}
-          onChoosePrinter={setPrinterId}
-          onEnginePath={setEnginePath}
-          onLibDir={setLibDir}
-          onBackend={setBackend}
-          onApplyEngine={() => void applyEngine()}
-          onQuit={() => void quit()}
-        />
-        {error && (
-          <p className="banner error floating" role="alert">
-            {error}
-          </p>
-        )}
-        {notice && (
-          <p className="banner floating" role="status">
-            {notice}
-          </p>
-        )}
-      </div>
-    );
-  }
 
   return (
     <div className="app">
@@ -1529,7 +1822,10 @@ export function App() {
           hasModels={models.length > 0}
           hasSelection={selectedId !== null}
           importing={importing}
-          onStart={() => setScreen("start")}
+          onStart={() => {
+            setScreen("start");
+            setPane("home");
+          }}
           onNew={() => void newProject()}
           onOpen={() => void openProject()}
           onImport={() => void importModel()}
@@ -1539,6 +1835,9 @@ export function App() {
           onExportGeometry={(format) => void exportGeometry(format)}
           onQuit={() => void quit()}
           onDuplicate={() => void duplicateSelected()}
+          onSplit={() => void splitSelected()}
+          onAddPart={(kind) => void addPart(kind)}
+          onFillPlate={() => void fillPlate()}
           onDelete={() => void removeSelected()}
           onDrop={() => void dropSelected()}
           onArrange={() => void arrangeAll()}
@@ -1551,7 +1850,7 @@ export function App() {
           onViewStyle={setViewStyle}
           preview={preview}
           onPreview={setPreview}
-          showModel={showModel}
+          showModel={solidShown}
           onShowModel={setShowModel}
           onFrame={() => setFrameToken((token) => token + 1)}
           printers={printers}
@@ -1608,6 +1907,84 @@ export function App() {
         </p>
       )}
 
+      <TabBar
+        pane={pane}
+        onPane={(next) => {
+          if (next === "home") {
+            setPane("home");
+            setScreen("start");
+            return;
+          }
+          setScreen("slicer");
+          setPane(next);
+          if (next === "preview") {
+            setPreview(true);
+            setShowModel(false);
+          }
+          if (next === "prepare") {
+            setPreview(false);
+            setShowModel(true);
+          }
+        }}
+        tabs={docTabs}
+        activeTab={activeTab}
+        onTab={(id) => void selectTab(id)}
+        onCloseTab={(id) => void closeTab(id)}
+        onNewTab={() => void newProject()}
+        onOpenTab={() => void openInNewTab()}
+        printer={printerLabel()}
+        sliced={layerCount > 0}
+      />
+
+      {pane === "home" ? (
+        <div className="home-pane">
+          <StartScreen
+            live={!busy && !importing}
+            canReturn={workspace}
+            recents={recents}
+            printers={printers}
+            printerId={printerId}
+            enginePath={enginePath}
+            libDir={libDir}
+            backend={backend}
+            onReturn={() => {
+              setScreen("slicer");
+              setPane("prepare");
+            }}
+            onNew={() => void newProject()}
+            onOpen={() => void openProject()}
+            onImport={() => void importModel()}
+            onOpenRecent={(path) => void openProject(path)}
+            onChoosePrinter={setPrinterId}
+            onEnginePath={setEnginePath}
+            onLibDir={setLibDir}
+            onBackend={setBackend}
+            onApplyEngine={() => void applyEngine()}
+            onQuit={() => void quit()}
+          />
+        </div>
+      ) : pane === "device" ? (
+        <DevicePane
+          machine={printerLabel()}
+          source={printers.find((item) => item.id === printerId)?.source ?? "cura"}
+          bedWidth={bed.width}
+          bedDepth={bed.depth}
+          bedHeight={bed.height}
+          nozzleSize={bed.nozzle_size}
+          spools={spoolsForDevice()}
+          job={{
+            layers: layerCount,
+            seconds: printSeconds,
+            layerHeight,
+            nozzle,
+            bedTemp,
+            material: materialName(),
+            sliced: layerCount > 0,
+          }}
+          engineBackend={backend}
+          engineReady={enginePath.length > 0}
+        />
+      ) : (
       <div className="workspace">
         <aside className="panel">
           <Frame title="plates">
@@ -2203,7 +2580,56 @@ export function App() {
         <main className="stage">
           {/* `data-show-model` is what the viewport is actually told to draw:
               the parts list can be right and the bed still empty. */}
-          <div className="plate" data-show-model={showModel ? "yes" : "no"} data-models={models.length}>
+          <div className="plate" data-show-model={solidShown ? "yes" : "no"} data-models={models.length}>
+          {/* What the plate will cost to print, the way a slicer's corner card
+              reads: time, filament, weight, layers. Every figure comes from the
+              slice that is on screen, and a plate that changed shows none of
+              them rather than the last job's. */}
+          {preview && paths.length > 0 && (
+            <FeatureLegend
+              paths={paths}
+              hidden={hiddenKinds}
+              onToggle={(kind) =>
+                setHiddenKinds((current) => {
+                  const next = new Set(current);
+                  if (next.has(kind)) next.delete(kind);
+                  else next.add(kind);
+                  return next;
+                })
+              }
+              onAll={() => setHiddenKinds(new Set())}
+              onNone={() => setHiddenKinds(new Set(paths.map((path) => path.kind)))}
+            />
+          )}
+          <div className="job-card" data-sliced={layerCount > 0 ? "yes" : "no"}>
+            {layerCount > 0 ? (
+              <>
+                <span className="job-state">sliced</span>
+                <dl>
+                  <div>
+                    <dt>time</dt>
+                    <dd>{printSeconds == null ? "—" : clockTime(printSeconds)}</dd>
+                  </div>
+                  <div>
+                    <dt>filament</dt>
+                    <dd>{filamentMetres == null ? "—" : `${filamentMetres.toFixed(1)} m`}</dd>
+                  </div>
+                  {grams != null && (
+                    <div>
+                      <dt>weight</dt>
+                      <dd>{grams < 10 ? grams.toFixed(1) : grams.toFixed(0)} g</dd>
+                    </div>
+                  )}
+                  <div>
+                    <dt>layers</dt>
+                    <dd>{layerCount}</dd>
+                  </div>
+                </dl>
+              </>
+            ) : (
+              <span className="job-state quiet">not sliced</span>
+            )}
+          </div>
           <Viewport
             width={bed.width}
             depth={bed.depth}
@@ -2215,9 +2641,9 @@ export function App() {
               transform: model.transform,
               selected: model.id === selectedId,
             }))}
-            toolpaths={paths}
+            toolpaths={hiddenKinds.size === 0 ? paths : paths.filter((path) => !hiddenKinds.has(path.kind))}
             overlays={support?.overlays ?? []}
-            showModel={showModel}
+            showModel={solidShown}
             showToolpaths={preview}
             viewStyle={viewStyle}
             mode={mode}
@@ -2249,6 +2675,18 @@ export function App() {
             </span>
             {preview ? (
               <>
+                <button
+                  type="button"
+                  className={playing ? "selected" : ""}
+                  onClick={() => {
+                    // At the top of a finished preview, play means watch it
+                    // again, not press a button that does nothing.
+                    if (!playing && layer >= layerCount - 1) setLayer(0);
+                    setPlaying((on) => !on);
+                  }}
+                >
+                  {playing ? "pause" : "play"}
+                </button>
                 <button type="button" onClick={() => { setPreview(false); setShowModel(true); }}>
                   model
                 </button>
@@ -2295,6 +2733,7 @@ export function App() {
           </footer>
         </main>
       </div>
+      )}
     </div>
   );
 }

@@ -495,6 +495,100 @@ pub fn signed_volume(mesh: &TriangleMesh) -> f64 {
 /// came back with an empty plan. Repairing it at the door is what Cura and
 /// Bambu do, and it is cheaper than teaching each analysis to distrust its own
 /// winding.
+/// One mesh per connected shell, biggest first.
+///
+/// A single file often holds several bodies that touch nothing at all: a card
+/// of parts, a clip and its lid, a print-in-place hinge. They arrive as one
+/// part, and a part can only be moved, painted or spooled whole — so the parts
+/// inside it can never be given their own settings or their own bay.
+///
+/// Corners are welded by position first, because an STL repeats every corner
+/// once per facet and a seam would otherwise read as a break. Two shells that
+/// merely share a face are still two shells: nothing is merged that the file
+/// did not join.
+pub fn split_objects(mesh: &TriangleMesh) -> Vec<TriangleMesh> {
+    let count = mesh.triangles.len();
+    if count == 0 {
+        return Vec::new();
+    }
+
+    // Weld corners to the grid they sit on, so a corner written twice at the
+    // same place is one vertex.
+    const GRID: f32 = 10_000.0; // 0.1 µm
+    let mut ids: std::collections::HashMap<(i64, i64, i64), u32> = std::collections::HashMap::new();
+    let mut corner = Vec::with_capacity(mesh.triangles.len() * 3);
+    for triangle in &mesh.triangles {
+        for index in triangle {
+            let vertex = mesh.vertices.get(*index as usize).copied().unwrap_or([0.0; 3]);
+            let key = (
+                (vertex[0] * GRID).round() as i64,
+                (vertex[1] * GRID).round() as i64,
+                (vertex[2] * GRID).round() as i64,
+            );
+            let next = ids.len() as u32;
+            corner.push(*ids.entry(key).or_insert(next));
+        }
+    }
+
+    // Union-find over the welded corners: a triangle joins the corners it uses.
+    let mut parent: Vec<u32> = (0..ids.len() as u32).collect();
+    fn find(parent: &mut Vec<u32>, mut node: u32) -> u32 {
+        while parent[node as usize] != node {
+            let grand = parent[parent[node as usize] as usize];
+            parent[node as usize] = grand;
+            node = grand;
+        }
+        node
+    }
+    for triangle in corner.chunks_exact(3) {
+        let a = find(&mut parent, triangle[0]);
+        let b = find(&mut parent, triangle[1]);
+        let c = find(&mut parent, triangle[2]);
+        let root = a;
+        for other in [b, c] {
+            let other = find(&mut parent, other);
+            if other != root {
+                parent[other as usize] = root;
+            }
+        }
+    }
+
+    // Group the triangles by the root of their first corner.
+    let mut groups: std::collections::HashMap<u32, Vec<usize>> = std::collections::HashMap::new();
+    for (index, triangle) in corner.chunks_exact(3).enumerate() {
+        let root = find(&mut parent, triangle[0]);
+        groups.entry(root).or_default().push(index);
+    }
+
+    let mut pieces: Vec<TriangleMesh> = Vec::with_capacity(groups.len());
+    for (_, faces) in groups {
+        let mut vertices: Vec<[f32; 3]> = Vec::new();
+        let mut index_of: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        let mut triangles: Vec<[u32; 3]> = Vec::with_capacity(faces.len());
+        for face in faces {
+            let source = mesh.triangles[face];
+            let mut rebuilt = [0u32; 3];
+            for (slot, original) in source.iter().enumerate() {
+                let vertex = mesh.vertices.get(*original as usize).copied().unwrap_or([0.0; 3]);
+                // Key on the welded corner, not on the file's index: a corner
+                // written once per facet must land as one vertex here too.
+                let welded = corner[face * 3 + slot];
+                let next = vertices.len() as u32;
+                let index = *index_of.entry(welded).or_insert(next);
+                if index == next {
+                    vertices.push(vertex);
+                }
+                rebuilt[slot] = index;
+            }
+            triangles.push(rebuilt);
+        }
+        pieces.push(TriangleMesh { vertices, triangles });
+    }
+
+    pieces.sort_by(|left, right| right.triangles.len().cmp(&left.triangles.len()));
+    pieces
+}
+
 pub fn right_way_round(mesh: &mut TriangleMesh) -> bool {
     if mesh.triangles.len() < 4 || signed_volume(mesh) >= 0.0 {
         return false;
@@ -1127,6 +1221,67 @@ mod tests {
     use super::*;
     use std::io::Write;
     use zip::write::SimpleFileOptions;
+
+    /// A closed box, which is the cheapest thing with a volume and a top face.
+    fn cube_at(x: f32, y: f32) -> TriangleMesh {
+        let mut vertices = Vec::new();
+        for (dx, dy, dz) in [
+            (0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (10.0, 10.0, 0.0), (0.0, 10.0, 0.0),
+            (0.0, 0.0, 10.0), (10.0, 0.0, 10.0), (10.0, 10.0, 10.0), (0.0, 10.0, 10.0),
+        ] {
+            vertices.push([x + dx, y + dy, dz]);
+        }
+        TriangleMesh {
+            vertices,
+            triangles: vec![
+                [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
+                [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5],
+                [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7],
+            ],
+        }
+    }
+
+    fn merged(meshes: &[TriangleMesh]) -> TriangleMesh {
+        let mut out = TriangleMesh { vertices: Vec::new(), triangles: Vec::new() };
+        for mesh in meshes {
+            let offset = out.vertices.len() as u32;
+            out.vertices.extend_from_slice(&mesh.vertices);
+            for triangle in &mesh.triangles {
+                out.triangles.push([triangle[0] + offset, triangle[1] + offset, triangle[2] + offset]);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_file_of_two_bodies_splits_into_two_bodies() {
+        // Two boxes that touch nothing, written as one file — a kit card, a
+        // clip and its lid. Each corner is duplicated per facet, as an STL has
+        // it, so the weld is under test as much as the walk.
+        let both = merged(&[cube_at(0.0, 0.0), cube_at(40.0, 0.0)]);
+        let pieces = split_objects(&both);
+        assert_eq!(pieces.len(), 2, "two shells, two pieces");
+        assert_eq!(pieces[0].triangles.len(), 12);
+        assert_eq!(pieces[1].triangles.len(), 12);
+        for piece in &pieces {
+            assert_eq!(piece.vertices.len(), 8, "a box has eight corners, welded");
+            let (min, max) = piece.bounds();
+            assert!((max[0] - min[0] - 10.0).abs() < 1e-4);
+        }
+        // Two shells of equal size have no "biggest", so the check is that the
+        // two places they stood are both still there.
+        let mut xs: Vec<f32> = pieces.iter().map(|piece| piece.bounds().0[0]).collect();
+        xs.sort_by(|left, right| left.partial_cmp(right).unwrap());
+        assert!((xs[0] - 0.0).abs() < 1e-3 && (xs[1] - 40.0).abs() < 1e-3, "still where they were: {xs:?}");
+    }
+
+    #[test]
+    fn one_body_is_left_alone() {
+        let pieces = split_objects(&cube_at(0.0, 0.0));
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0].triangles.len(), 12);
+        assert!((signed_volume(&pieces[0]) - 1000.0).abs() < 1.0);
+    }
 
     fn unit_tetrahedron() -> TriangleMesh {
         TriangleMesh {

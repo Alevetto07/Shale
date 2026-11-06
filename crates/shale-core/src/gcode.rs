@@ -48,6 +48,41 @@ pub fn annotate_header(gcode: &str, print_time_seconds: Option<f64>) -> String {
     text
 }
 
+/// What a finished file's own header says about the job.
+///
+/// CuraEngine writes `;TIME:` and `;Filament used:` before the first move, and
+/// `annotate_header` puts the measured figures back into those lines. Reading
+/// them costs a few kilobytes, which is what a plate reopened from disk can
+/// afford; measuring the moves again would mean reading the whole file.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HeaderFacts {
+    pub seconds: Option<f64>,
+    pub filament_metres: Option<f64>,
+}
+
+pub fn header_facts(gcode: &str) -> HeaderFacts {
+    let mut facts = HeaderFacts::default();
+    for raw in gcode.lines() {
+        let line = raw.trim();
+        if !line.starts_with(';') {
+            // The header ends at the first command; anything after it is a
+            // later marker and not the file's own account of itself.
+            break;
+        }
+        if let Some(value) = line.strip_prefix(";TIME:") {
+            facts.seconds = value.trim().parse::<f64>().ok().filter(|value| *value > 0.0);
+        } else if let Some(value) = line.strip_prefix(";Filament used:") {
+            facts.filament_metres = value
+                .trim()
+                .trim_end_matches('m')
+                .parse::<f64>()
+                .ok()
+                .filter(|value| *value > 0.0);
+        }
+    }
+    facts
+}
+
 fn elapsed_seconds(gcode: &str) -> Option<f64> {
     gcode
         .lines()

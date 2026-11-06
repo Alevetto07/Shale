@@ -46,6 +46,9 @@ export interface MaterialInfo {
   label: string;
   color: string;
   diameter: number;
+  /// Grams per cubic centimetre, when the profile says: Bambu's filaments carry
+  /// a density, Cura's materials do not.
+  density?: number;
 }
 
 export interface Transform {
@@ -155,6 +158,7 @@ export interface SliceSummary {
   layer_count: number;
   layers: { index: number; z: number }[];
   print_time_seconds: number | null;
+  filament_metres: number | null;
   warning_count: number;
   gcode_path: string;
 }
@@ -293,6 +297,31 @@ export const api = {
     invoke<MeasureSpan>("measure_span", { a, b }),
   dropModel: (id: number) => invoke<Transform>("drop_model", { id }),
   duplicateModel: (id: number) => invoke<ModelView>("duplicate_model", { id }),
+  splitModel: (id: number) => invoke<ModelView[]>("split_model", { id }),
+  /// Copies of one part, stepped across the bed until the plate runs out.
+  fillPlate: (id: number, bed: { width: number; depth: number; centerIsZero: boolean }) =>
+    invoke<ModelView[]>("fill_plate", {
+      id,
+      bedWidth: bed.width,
+      bedDepth: bed.depth,
+      centerIsZero: bed.centerIsZero,
+    }),
+  /// A solid with no file behind it. `size` is the footprint across x and y in
+  /// millimetres (the diameter for a cylinder, cone or sphere).
+  addPrimitive: (
+    kind: "cube" | "cylinder" | "cone" | "sphere",
+    size: number,
+    height: number,
+    bed: { width: number; depth: number; centerIsZero: boolean },
+  ) =>
+    invoke<ModelView>("add_primitive", {
+      kind,
+      size,
+      height,
+      bedWidth: bed.width,
+      bedDepth: bed.depth,
+      centerIsZero: bed.centerIsZero,
+    }),
   setModelSettings: (id: number, settings: Record<string, string>) =>
     invoke<ModelView>("set_model_settings", { id, settings }),
   /// Which AMS spool prints a part. `null` is the machine's own extruder.
@@ -360,6 +389,8 @@ export const api = {
   loadedModels: () => invoke<ModelView[]>("loaded_models"),
   existingSlice: () => invoke<SliceSummary | null>("existing_slice"),
   saveProject: (project: SaveProject) => invoke<RecentProject[]>("save_project", { project }),
+  /** Where an unsaved tab can be put away without a dialog. */
+  scratchPath: (name: string) => invoke<string>("scratch_path", { name }),
   geometry: async (id: number, maxTriangles?: number): Promise<Float32Array> => {
     const raw = await invoke<ArrayBuffer | Uint8Array>("model_geometry", {
       id,
@@ -402,6 +433,9 @@ export interface SaveProject {
   chord_mm: number;
   turn_deg: number;
   thumbnail: number[];
+  /// Write the file without putting it in the recent list: a draft parked
+  /// behind another tab is not a project the person chose to open.
+  quiet?: boolean;
 }
 
 export interface OpenedProject {

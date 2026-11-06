@@ -129,6 +129,9 @@ struct SliceSummary {
     layer_count: usize,
     layers: Vec<LayerMark>,
     print_time_seconds: Option<f64>,
+    /// Filament the job draws, in metres. `None` when a slice came back from
+    /// disk with no measured figure in its header.
+    filament_metres: Option<f64>,
     warning_count: usize,
     gcode_path: String,
 }
@@ -462,6 +465,252 @@ async fn import_model(
         return Err("That file held no geometry".to_string());
     }
     Ok(views)
+}
+
+/// Fill the plate with copies of one part, the way Bambu Studio's "Fill plate"
+/// does: step the part's own footprint across the bed with a gap between copies
+/// and skip any place that is already taken. The first copy keeps the model it
+/// came from; the rest are new parts with their own ids, so each can be moved,
+/// painted or deleted on its own.
+#[tauri::command]
+fn fill_plate(
+    state: State<AppState>,
+    id: u32,
+    gap: Option<f64>,
+    bed_width: Option<f64>,
+    bed_depth: Option<f64>,
+    center_is_zero: Option<bool>,
+) -> Result<Vec<ModelView>, String> {
+    let mut inner = lock(&state)?;
+    // Copied out of the borrow up front: the loop below adds to `inner.models`.
+    let (source_name, source_mesh, source_transform, source_report, source_bytes) = {
+        let source = inner
+            .models
+            .iter()
+            .find(|model| model.id == id && model.visible)
+            .ok_or_else(|| "that part is not on the plate".to_string())?;
+        (
+            source.name.clone(),
+            source.mesh.clone(),
+            source.transform.clone(),
+            source.report.clone(),
+            source.source_bytes.clone(),
+        )
+    };
+    let (min, max) = source_mesh.bounds();
+    let scale = source_transform.scale;
+    let width_mm = (max[0] - min[0]) as f64 * scale[0];
+    let depth_mm = (max[1] - min[1]) as f64 * scale[1];
+    let gap = gap.unwrap_or(4.0).max(0.0);
+    let step_x = width_mm + gap;
+    let step_y = depth_mm + gap;
+    if step_x <= 0.0 || step_y <= 0.0 {
+        return Err("that part has no footprint to repeat".to_string());
+    }
+    let bed_width = bed_width.unwrap_or(220.0);
+    let bed_depth = bed_depth.unwrap_or(220.0);
+    let center_zero = center_is_zero.unwrap_or(false);
+    let (low_x, high_x) = if center_zero {
+        (-bed_width / 2.0, bed_width / 2.0)
+    } else {
+        (0.0, bed_width)
+    };
+    let (low_y, high_y) = if center_zero {
+        (-bed_depth / 2.0, bed_depth / 2.0)
+    } else {
+        (0.0, bed_depth)
+    };
+
+    // What is already on the plate, in absolute plate coordinates.
+    let taken: Vec<([f64; 2], [f64; 2])> = inner
+        .models
+        .iter()
+        .filter(|model| model.visible && model.id != id)
+        .map(|model| {
+            let (low, high) = model.mesh.bounds();
+            let shift = &model.transform.translation;
+            (
+                [low[0] as f64 * model.transform.scale[0] + shift[0], low[1] as f64 * model.transform.scale[1] + shift[1]],
+                [high[0] as f64 * model.transform.scale[0] + shift[0], high[1] as f64 * model.transform.scale[1] + shift[1]],
+            )
+        })
+        .collect();
+
+    let base = source_transform;
+    // The walk starts in the plate's own low corner rather than at the part:
+    // "fill the plate" means the whole plate, and the original's cell is simply
+    // skipped where it falls.
+    let mut placed: Vec<([f64; 2], [f64; 2])> = Vec::new();
+    let mut views = Vec::new();
+    let mut copies: Vec<LoadedModel> = Vec::new();
+    let mut y = low_y + depth_mm / 2.0;
+    'rows: while y + depth_mm / 2.0 <= high_y + 1e-6 {
+        let mut x = low_x + width_mm / 2.0;
+        while x + width_mm / 2.0 <= high_x + 1e-6 {
+            let cell_low = [x - width_mm / 2.0, y - depth_mm / 2.0];
+            let cell_high = [x + width_mm / 2.0, y + depth_mm / 2.0];
+            let here = base.translation[0];
+            let there = base.translation[1];
+            let holds_the_original = (here - x).abs() < step_x / 2.0 && (there - y).abs() < step_y / 2.0;
+            let blocked = holds_the_original
+                || taken.iter().chain(placed.iter()).any(|(other_low, other_high)| {
+                    cell_low[0] < other_high[0] + gap / 2.0
+                        && cell_high[0] > other_low[0] - gap / 2.0
+                        && cell_low[1] < other_high[1] + gap / 2.0
+                        && cell_high[1] > other_low[1] - gap / 2.0
+                });
+            if !blocked {
+                let mut transform = base.clone();
+                transform.translation[0] = x;
+                transform.translation[1] = y;
+                let name = format!("{source_name} · {}", views.len() + 2);
+                let report = ImportReport {
+                    triangles: source_report.triangles,
+                    max_deviation_mm: None,
+                    max_turning_deg: None,
+                    milliseconds: 0,
+                    source: "copy".to_string(),
+                    chordal_mm: None,
+                    angular_deg: None,
+                };
+                let new_id = inner.next_id + copies.len() as u32;
+                let settings = std::collections::BTreeMap::new();
+                views.push(view_of(new_id, &name, &transform, &report, &settings, None));
+                copies.push(LoadedModel {
+                    id: new_id,
+                    name,
+                    mesh: source_mesh.clone(),
+                    transform,
+                    report,
+                    source_bytes: source_bytes.clone(),
+                    visible: true,
+                    settings: std::collections::BTreeMap::new(),
+                    slot: None,
+                });
+                placed.push((cell_low, cell_high));
+                if views.len() >= 40 {
+                    break 'rows;
+                }
+            }
+            x += step_x;
+        }
+        y += step_y;
+    }
+    if views.is_empty() {
+        return Err("nothing else fits on this plate".to_string());
+    }
+    inner.next_id += copies.len() as u32;
+    inner.models.extend(copies);
+    inner.toolpath = None;
+    inner.gcode_path = None;
+    Ok(views)
+}
+
+/// A solid put on the plate without a file.
+///
+/// Bambu Studio's right-click menu has "Add primitive"; it is the fastest way to
+/// get a first-layer pad or a hole-clearance cylinder onto the bed. The part
+/// lands on a free patch rather than on top of whatever is already there, so
+/// adding four cubes in a row gives four cubes and not one.
+#[tauri::command]
+fn add_primitive(
+    state: State<AppState>,
+    kind: String,
+    size: Option<f64>,
+    height: Option<f64>,
+    bed_width: Option<f64>,
+    bed_depth: Option<f64>,
+    center_is_zero: Option<bool>,
+) -> Result<ModelView, String> {
+    let mut inner = lock(&state)?;
+    let size = size.unwrap_or(20.0).clamp(1.0, 400.0);
+    let height = height.unwrap_or(size).clamp(0.2, 400.0);
+    let mesh = match kind.as_str() {
+        "cube" | "box" => shale_core::primitives::box_solid(size, size, height),
+        "cylinder" => shale_core::primitives::cylinder(size / 2.0, height),
+        "cone" => shale_core::primitives::cone(size / 2.0, height),
+        "sphere" => shale_core::primitives::sphere(size / 2.0),
+        other => return Err(format!("no primitive called {other}")),
+    };
+    // A solid built here has no file behind it, and a plate cannot be saved
+    // without one. Write its own STL now: it is the same bytes an import would
+    // have brought, so saving, reopening and exporting all behave alike.
+    let source_bytes = shale_core::exchange::to_stl(&mesh);
+    // The window already knows the bed it is drawing, so it says so rather than
+    // making this command resolve a printer again.
+    let width = bed_width.unwrap_or(220.0);
+    let depth = bed_depth.unwrap_or(220.0);
+    let centre_zero = center_is_zero.unwrap_or(false);
+    let mut transform = place_on_bed(&mesh, width, depth, centre_zero);
+    let (min, max) = mesh.bounds();
+    let foot = ((max[0] - min[0]) as f64, (max[1] - min[1]) as f64);
+
+    // Walk a coarse grid across the bed and take the first patch that touches
+    // nothing already on the plate.
+    let taken: Vec<([f64; 2], [f64; 2])> = inner
+        .models
+        .iter()
+        .filter(|model| model.visible)
+        .map(|model| {
+            let (low, high) = model.mesh.bounds();
+            let shift = &model.transform.translation;
+            (
+                [low[0] as f64 + shift[0], low[1] as f64 + shift[1]],
+                [high[0] as f64 + shift[0], high[1] as f64 + shift[1]],
+            )
+        })
+        .collect();
+    let gap = 4.0;
+    let step_x = foot.0 + gap;
+    let step_y = foot.1 + gap;
+    'search: for row in 0..12 {
+        for column in 0..12 {
+            let mut candidate = transform.clone();
+            candidate.translation[0] = transform.translation[0] + column as f64 * step_x;
+            candidate.translation[1] = transform.translation[1] - row as f64 * step_y;
+            let low = [min[0] as f64 + candidate.translation[0], min[1] as f64 + candidate.translation[1]];
+            let high = [max[0] as f64 + candidate.translation[0], max[1] as f64 + candidate.translation[1]];
+            let hits = taken.iter().any(|(other_low, other_high)| {
+                low[0] < other_high[0] + gap / 2.0
+                    && high[0] > other_low[0] - gap / 2.0
+                    && low[1] < other_high[1] + gap / 2.0
+                    && high[1] > other_low[1] - gap / 2.0
+            });
+            if !hits {
+                transform = candidate;
+                break 'search;
+            }
+        }
+    }
+
+    let report = ImportReport {
+        triangles: mesh.triangles.len(),
+        max_deviation_mm: None,
+        max_turning_deg: None,
+        milliseconds: 0,
+        source: "primitive".to_string(),
+        chordal_mm: None,
+        angular_deg: None,
+    };
+    let name = format!("{kind} {size:.0} mm");
+    let id = inner.next_id;
+    inner.next_id += 1;
+    let settings = std::collections::BTreeMap::new();
+    let view = view_of(id, &name, &transform, &report, &settings, None);
+    inner.models.push(LoadedModel {
+        id,
+        name,
+        mesh,
+        transform,
+        report,
+        source_bytes,
+        visible: true,
+        settings: std::collections::BTreeMap::new(),
+        slot: None,
+    });
+    inner.toolpath = None;
+    inner.gcode_path = None;
+    Ok(view)
 }
 
 /// One band of a calibration print, as the window sees it.
@@ -1113,6 +1362,72 @@ fn restore_models(
         .collect())
 }
 
+/// Split one part into the bodies it is made of.
+///
+/// A file made of several shells imports as one part, and one part can only be
+/// moved or spooled whole. This hides the whole part and stands each shell in
+/// its place as a part of its own, at the coordinates it already stood at, so
+/// nothing on the plate moves.
+#[tauri::command]
+fn split_model(state: State<AppState>, id: u32) -> Result<Vec<ModelView>, String> {
+    let mut inner = lock(&state)?;
+    let index = inner
+        .models
+        .iter()
+        .position(|model| model.id == id)
+        .ok_or_else(|| "That model is no longer loaded".to_string())?;
+    let pieces = shale_core::mesh::split_objects(&inner.models[index].mesh);
+    if pieces.len() < 2 {
+        return Err("This part is already one piece: there is nothing to split".to_string());
+    }
+
+    let name = inner.models[index].name.clone();
+    let transform = inner.models[index].transform.clone();
+    let source = inner.models[index].report.source.clone();
+    let source_bytes = inner.models[index].source_bytes.clone();
+    let settings = inner.models[index].settings.clone();
+    let slot = inner.models[index].slot;
+
+    // Hidden, not removed: undo brings the whole part back, and the bodies it
+    // was split into are hidden in turn by the snapshot that follows.
+    inner.models[index].visible = false;
+
+    let total = pieces.len();
+    let mut views = Vec::with_capacity(total);
+    for (number, piece) in pieces.into_iter().enumerate() {
+        let new_id = inner.next_id;
+        inner.next_id += 1;
+        let piece_name = format!("{} {}", name, number + 1);
+        let imported = shale_core::cad::ImportedMesh::from_mesh(piece, &source);
+        views.push(view_of(
+            new_id,
+            &piece_name,
+            &transform,
+            &imported.report,
+            &settings,
+            slot.as_ref(),
+        ));
+        inner.models.push(LoadedModel {
+            id: new_id,
+            name: piece_name,
+            mesh: imported.mesh,
+            transform: transform.clone(),
+            report: imported.report,
+            source_bytes: source_bytes.clone(),
+            visible: true,
+            settings: settings.clone(),
+            slot,
+        });
+    }
+    // The toolpath belonged to the whole part and no longer describes the
+    // plate: the next preview slices these bodies, not that one.
+    inner.toolpath = None;
+    inner.gcode_path = None;
+    inner.support = None;
+    inner.support_model_id = None;
+    Ok(views)
+}
+
 #[tauri::command]
 fn remove_model(state: State<AppState>, id: u32) -> Result<(), String> {
     let mut inner = lock(&state)?;
@@ -1551,6 +1866,11 @@ async fn slice_model(
     let mut inner = lock(&state)?;
     inner.slicing = false;
     let outcome = resolved_and_models.map_err(|err| err.to_string())?;
+    // The engine reports its duration two ways: a figure on the outcome, and
+    // the `;TIME:` line `annotate_header` measured from the file's own
+    // `;TIME_ELAPSED:` markers. When the first is missing the second is the
+    // truth, and the file is what the person will actually print.
+    let facts = shale_core::gcode::header_facts(&read_head(&outcome.gcode_path, 64 * 1024));
     let summary = SliceSummary {
         layer_count: outcome.toolpath.layers.len(),
         layers: outcome
@@ -1562,7 +1882,10 @@ async fn slice_model(
                 z: layer.z,
             })
             .collect(),
-        print_time_seconds: outcome.print_time_seconds,
+        print_time_seconds: outcome.print_time_seconds.or(facts.seconds),
+        filament_metres: Some(outcome.filament_metres)
+            .filter(|metres| *metres > 0.0)
+            .or(facts.filament_metres),
         warning_count: outcome.resolved.warning_count,
         gcode_path: outcome.gcode_path.display().to_string(),
     };
@@ -1609,6 +1932,26 @@ fn loaded_models(state: State<AppState>) -> Result<Vec<ModelView>, String> {
         .collect())
 }
 
+/// The first `limit` bytes of a file as text, cut on a line boundary.
+///
+/// A sliced file runs to tens of megabytes and the header sits at the top of
+/// it: a plate reopened from disk should not read the whole toolpath back to
+/// say how long the print takes.
+fn read_head(path: &std::path::Path, limit: usize) -> String {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let mut buffer = vec![0u8; limit];
+    let read = file.read(&mut buffer).unwrap_or(0);
+    buffer.truncate(read);
+    let text = String::from_utf8_lossy(&buffer).to_string();
+    match text.rfind('\n') {
+        Some(index) => text[..index].to_string(),
+        None => text,
+    }
+}
+
 #[tauri::command]
 fn existing_slice(state: State<AppState>) -> Result<Option<SliceSummary>, String> {
     let inner = lock(&state)?;
@@ -1618,6 +1961,7 @@ fn existing_slice(state: State<AppState>) -> Result<Option<SliceSummary>, String
     let Some(path) = &inner.gcode_path else {
         return Ok(None);
     };
+    let facts = shale_core::gcode::header_facts(&read_head(path, 64 * 1024));
     Ok(Some(SliceSummary {
         layer_count: toolpath.layers.len(),
         layers: toolpath
@@ -1628,7 +1972,8 @@ fn existing_slice(state: State<AppState>) -> Result<Option<SliceSummary>, String
                 z: layer.z,
             })
             .collect(),
-        print_time_seconds: None,
+        print_time_seconds: facts.seconds,
+        filament_metres: facts.filament_metres,
         warning_count: 0,
         gcode_path: path.display().to_string(),
     }))
@@ -1934,6 +2279,11 @@ struct SaveRequest {
     chord_mm: f64,
     turn_deg: f64,
     thumbnail: Vec<u8>,
+    /// A plate parked behind another tab is written so it is not lost, but it
+    /// is not something the person asked for: it has no business in the list of
+    /// projects they opened, and it must not push a real one off that list.
+    #[serde(default)]
+    quiet: bool,
 }
 
 #[derive(Serialize)]
@@ -2191,6 +2541,25 @@ fn clear_job(state: State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// A path under the app's scratch directory for a project that has never been
+/// saved. The tab bar writes a tab here before switching away from it, so a
+/// plate you have not named yet survives a click on another tab.
+#[tauri::command]
+fn scratch_path(name: String) -> String {
+    let mut safe: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    while safe.contains("--") {
+        safe = safe.replace("--", "-");
+    }
+    let safe = safe.trim_matches('-').to_string();
+    let stem = if safe.is_empty() { "untitled".to_string() } else { safe };
+    let dir = std::env::temp_dir().join("shale").join("tabs");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join(format!("{stem}.shale")).to_string_lossy().into_owned()
+}
+
 #[tauri::command]
 fn save_project(
     app: AppHandle,
@@ -2264,6 +2633,11 @@ fn save_project(
     drop(inner);
     let path = PathBuf::from(&project.path);
     shale_core::project::write_project(&path, &data).map_err(|err| err.to_string())?;
+    if project.quiet {
+        // Written, not remembered: a parked plate is still a draft.
+        let dir = config_dir(&app)?;
+        return load_recents(&dir).map_err(|err| err.to_string());
+    }
     remember(&app, &project.path, &project.name, &project.printer_label)
 }
 
@@ -2527,6 +2901,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            scratch_path,
             app_status,
             set_engine,
             cancel_import,
@@ -2538,6 +2913,9 @@ pub fn run() {
             import_model,
             model_geometry,
             duplicate_model,
+            split_model,
+            add_primitive,
+            fill_plate,
             update_transform,
             auto_orient,
             snap_measure,

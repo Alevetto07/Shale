@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { MaterialInfo, PrinterInfo, QualityInfo, VariantInfo } from "./api";
 import { SETTING_GROUPS } from "./settings";
@@ -36,6 +36,9 @@ export interface MenuBarProps {
   onQuit: () => void;
 
   onDuplicate: () => void;
+  onSplit: () => void;
+  onAddPart: (kind: "cube" | "cylinder" | "cone" | "sphere") => void;
+  onFillPlate: () => void;
   onDelete: () => void;
   onArrange: () => void;
   onUndo: () => void;
@@ -153,17 +156,51 @@ export function MenuBar(props: MenuBarProps) {
     </span>
   );
 
+  const [search, setSearch] = useState("");
   const changed = Object.keys(props.overrides).length;
   const active = SETTING_GROUPS.find((entry) => entry.id === group) ?? SETTING_GROUPS[0];
+  // Bambu's sheet has a search field because nobody remembers which of eleven
+  // tabs holds the setting they want. The hits are drawn by the same row
+  // renderer as the tab, so they look and behave the same.
+  const hits = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return [];
+    const found: { group: string; item: (typeof SETTING_GROUPS)[number]["fields"][number] }[] = [];
+    for (const entry of SETTING_GROUPS) {
+      for (const item of entry.fields) {
+        if (item.label.toLowerCase().includes(term) || item.key.toLowerCase().includes(term)) {
+          found.push({ group: entry.label, item });
+        }
+      }
+    }
+    return found;
+  }, [search]);
 
   const field = (item: (typeof SETTING_GROUPS)[number]["fields"][number]) => {
     const value = props.overrides[item.key] ?? "";
     const send = (next: string) => props.onOverride(item.key, next);
+    // A setting that has been moved off the profile says so, and says how to
+    // put it back: the same click on either scope (every part, or one).
+    const name = (
+      <span className={value === "" ? undefined : "menu-name moved"}>
+        {item.label}
+        {value !== "" && (
+          <button
+            type="button"
+            className="menu-reset"
+            title="back to the profile"
+            onClick={() => send("")}
+          >
+            ×
+          </button>
+        )}
+      </span>
+    );
     if (item.kind === "toggle") {
       const on = value === "True";
       return (
         <div className="menu-row" key={item.key}>
-          <span>{item.label}</span>
+          {name}
           <label className="menu-toggle">
             <input
               type="checkbox"
@@ -178,7 +215,7 @@ export function MenuBar(props: MenuBarProps) {
     if (item.kind === "choice") {
       return (
         <div className="menu-row" key={item.key}>
-          <span>{item.label}</span>
+          {name}
           <select value={value} onChange={(event) => send(event.target.value)}>
             <option value="">profile</option>
             {(item.options ?? []).map((option) => (
@@ -192,7 +229,7 @@ export function MenuBar(props: MenuBarProps) {
     }
     return (
       <div className="menu-row" key={item.key}>
-        <span>{item.label}</span>
+        {name}
         <span className="menu-field">
           <input
             type="number"
@@ -233,6 +270,21 @@ export function MenuBar(props: MenuBarProps) {
               <span>Import model…</span>
               <kbd>Ctrl I</kbd>
             </button>
+            <hr />
+            <p className="menu-label">Add a part</p>
+            {(
+              [
+                ["cube", "Cube"],
+                ["cylinder", "Cylinder"],
+                ["cone", "Cone"],
+                ["sphere", "Sphere"],
+              ] as const
+            ).map(([kind, title]) => (
+              <button key={kind} type="button" onClick={pick(() => props.onAddPart(kind))}>
+                <span>{title}</span>
+                <kbd>20 mm</kbd>
+              </button>
+            ))}
             <hr />
             <button type="button" onClick={pick(props.onSave)}>
               <span>Save</span>
@@ -287,6 +339,12 @@ export function MenuBar(props: MenuBarProps) {
             <button type="button" disabled={!props.hasSelection} onClick={pick(props.onDuplicate)}>
               <span>Duplicate</span>
               <kbd>Ctrl D</kbd>
+            </button>
+            <button type="button" disabled={!props.hasSelection} onClick={pick(props.onSplit)}>
+              <span>Split to objects</span>
+            </button>
+            <button type="button" disabled={!props.hasSelection} onClick={pick(props.onFillPlate)}>
+              <span>Fill the plate</span>
             </button>
             <button type="button" disabled={!props.hasSelection} onClick={pick(props.onDrop)}>
               <span>Drop to plate</span>
@@ -474,6 +532,35 @@ export function MenuBar(props: MenuBarProps) {
                 </span>
               )}
             </div>
+            <label className="settings-search">
+              <span>find</span>
+              <input
+                type="search"
+                value={search}
+                placeholder="wall, support, ironing…"
+                onChange={(event) => setSearch(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setSearch("");
+                }}
+              />
+              {search && (
+                <em>
+                  {hits.length} {hits.length === 1 ? "setting" : "settings"}
+                </em>
+              )}
+            </label>
+            {search ? (
+              <div className="settings-body">
+                {hits.length === 0 && <p className="hint">Nothing by that name. Try “wall”, “infill”, “fan”.</p>}
+                {hits.map((hit) => (
+                  <div className="settings-hit" key={hit.item.key}>
+                    {field(hit.item)}
+                    <span className="settings-hit-group">{hit.group}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+            <>
             <div className="settings-tabs">
               {SETTING_GROUPS.map((entry) => (
                 <button
@@ -550,6 +637,8 @@ export function MenuBar(props: MenuBarProps) {
                   : "Anything left alone comes from the selected profile."}
               </p>
             </div>
+            </>
+            )}
           </div>
         )}
       </div>

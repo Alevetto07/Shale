@@ -23,6 +23,7 @@ pub mod layout;
 pub mod measure;
 pub mod mesh;
 pub mod orient;
+pub mod primitives;
 pub mod project;
 pub mod removal;
 pub mod resolver;

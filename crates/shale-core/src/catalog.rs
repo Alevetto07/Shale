@@ -269,6 +269,11 @@ pub struct MaterialInfo {
     pub label: String,
     pub color: String,
     pub diameter: f64,
+    /// Grams per cubic centimetre, when the profile says. Bambu's filaments
+    /// carry it; Cura's materials do not, and a weight invented from a guess
+    /// would be worse than no weight at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub density: Option<f64>,
 }
 
 impl Catalog {
@@ -486,6 +491,7 @@ impl Catalog {
                 ),
                 color: material.color.clone(),
                 diameter: material.diameter,
+                density: material.settings.get("material_density").copied(),
             })
             .collect();
         materials.sort_by(|a, b| a.label.cmp(&b.label));
@@ -524,6 +530,7 @@ impl Catalog {
                 label: material.name.clone(),
                 color: material.color.clone(),
                 diameter: material.diameter,
+                density: material.settings.get("material_density").copied(),
             })
             .collect();
         // The library already orders these (PLA first, then the rest) and that

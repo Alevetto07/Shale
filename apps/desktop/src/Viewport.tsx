@@ -37,7 +37,9 @@ interface ViewportProps {
   onTransform: (id: number, transform: Transform) => void;
 }
 
-const KIND_COLOR: Record<string, string> = {
+/// The colour each kind of line is drawn in. Exported because the
+/// preview's legend has to name the same colour the plate is painted with.
+export const KIND_COLOR: Record<string, string> = {
   "wall-outer": "#e2dff0",
   "wall-inner": "#8e8ba4",
   skin: "#6e6b80",

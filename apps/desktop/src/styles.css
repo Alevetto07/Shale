@@ -89,11 +89,25 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   outline-offset: 2px;
 }
 
+/* A column, not a grid: the tab strip, the banners and the plate come and go,
+   and a fixed row count would hand the plate the wrong slice of the window. */
 .app {
   height: 100%;
-  display: grid;
-  grid-template-rows: auto auto 1fr;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
+.app > .workspace,
+.app > /* Home is a workspace, not a different window: the top bar and its tabs stay
+   where they are while the start screen sits in the main area. */
+.home-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 clamp(1rem, 3vw, 3rem) 2.5rem;
+}
+
+.device { flex: 1 1 auto; }
 
 .topbar {
   display: flex;
@@ -923,3 +937,492 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 .paint-clear:hover {
   border-color: var(--ink, #e6e6e6);
 }
+
+/* ── the tab strip and the pane switch ──────────────────────────────────────
+   Two rows, the way a slicer's header reads: the projects that are open, then
+   the four places a project can be looked at. Small caps for the pane names so
+   they read as places, not as buttons that do something. */
+
+.tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0 1.4rem 0.55rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.doc-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.doc-tabs::-webkit-scrollbar { display: none; }
+
+.doc-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  max-width: 15rem;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
+  padding: 0 0.1rem 0 0.55rem;
+  color: var(--ink-3);
+  position: relative;
+  top: 1px;
+}
+.doc-tab:hover { color: var(--ink-2); }
+.doc-tab.active {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--ink);
+}
+/* A hairline of accent under the tab you are in: it is the same signal the
+   pane switch uses, one row down. */
+.doc-tab.active::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px 0;
+  height: 1px;
+  background: var(--accent);
+  opacity: 0.85;
+}
+
+.doc-name {
+  border: 0;
+  padding: 0.32rem 0;
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--prose);
+  font-size: 12.5px;
+  letter-spacing: 0;
+  color: inherit;
+}
+.doc-name:hover { color: inherit; }
+.doc-dirty {
+  color: var(--accent);
+  margin-left: 0.35rem;
+  font-size: 15px;
+  line-height: 1;
+}
+.doc-close {
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 0.35rem;
+  color: var(--ink-3);
+  opacity: 0;
+}
+.doc-tab:hover .doc-close,
+.doc-tab.active .doc-close { opacity: 1; }
+.doc-close:hover { color: var(--ink); }
+
+.doc-add,
+.doc-open {
+  padding: 0.3rem 0.5rem;
+  color: var(--ink-3);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+.doc-add { font-size: 16px; line-height: 1; }
+.doc-open { margin-left: 0.3rem; text-transform: lowercase; }
+
+.mode-bar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.mode-chips { display: flex; gap: 1.35rem; }
+
+.mode-chip {
+  position: relative;
+  padding: 0.15rem 0 0.35rem;
+  font-family: var(--prose);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.mode-chip:hover:not(:disabled) { color: var(--ink); }
+.mode-chip.active { color: var(--accent); }
+.mode-chip.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--accent);
+}
+.mode-chip:disabled::after { content: none; }
+
+.mode-printer {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── device ──────────────────────────────────────────────────────────────── */
+
+.device {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2.4rem 1.4rem 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2.2rem;
+  max-width: 74rem;
+}
+
+.device-head { display: flex; flex-direction: column; gap: 0.35rem; }
+
+.device-kicker {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.device-title {
+  margin: 0;
+  font-family: var(--wordmark);
+  font-weight: 600;
+  font-size: 40px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.device-sub {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.device-status {
+  margin: 0.55rem 0 0;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  border-left: 2px solid var(--line);
+  padding-left: 0.6rem;
+}
+.device-status.live { border-color: var(--accent); color: var(--ink-2); }
+
+.device-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.device-card {
+  background: var(--panel);
+  padding: 1rem 1.1rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.device-label {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.device-big {
+  margin: 0;
+  font-family: var(--wordmark);
+  font-weight: 600;
+  font-size: 30px;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.device-note {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-3);
+  max-width: 46ch;
+}
+
+.device-panel {
+  border-top: 1px solid var(--line);
+  padding-top: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.device-spools {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.6rem;
+}
+.device-spools li { display: flex; align-items: baseline; gap: 0.5rem; }
+.device-spools .bay {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+.device-spools .spool {
+  font-family: var(--prose);
+  font-size: 14px;
+  color: var(--ink);
+}
+.device-spools .spool.empty { color: var(--ink-3); font-style: italic; }
+
+.device-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.4rem;
+}
+.device-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-family: var(--prose);
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.device-form input {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0.3rem 0;
+  min-width: 15rem;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.device-form input:focus { border-color: var(--accent); outline: none; }
+.device-form input::placeholder { color: rgba(233, 232, 242, 0.28); }
+
+/* ── finding a setting ─────────────────────────────────────────────────────
+   Eleven tabs is past the point where you can hunt: Bambu Studio puts a search
+   field above its tabs, so this one does too. A setting that has been moved off
+   the profile wears a dot and a way back. */
+
+.settings-search {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0 1.1rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--prose);
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.settings-search input {
+  flex: 1 1 auto;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0.2rem 0;
+  font-family: var(--prose);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
+}
+.settings-search input:focus { border-color: var(--accent); outline: none; }
+.settings-search input::placeholder { color: rgba(233, 232, 242, 0.3); font-style: italic; }
+.settings-search em {
+  font-style: normal;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.settings-hit {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+}
+.settings-hit > .menu-row { flex: 1 1 auto; border-bottom: 0; }
+.settings-hit-group {
+  font-family: var(--prose);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+/* the name of an overridden setting, and the cross that puts it back */
+.menu-row > .menu-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.menu-name.moved { color: var(--ink); }
+.menu-reset {
+  padding: 0 0.15rem;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--ink-3);
+  opacity: 0.75;
+}
+.menu-reset:hover { color: var(--accent); opacity: 1; }
+
+/* ── what the plate costs ───────────────────────────────────────────────────
+   A slicer's corner card: time, filament, weight, layers. It sits on the plate
+   rather than in a panel because it is about the plate, and it reads in
+   tabular figures so two slices can be compared at a glance. */
+
+.job-card {
+  position: absolute;
+  left: 1.1rem;
+  top: 1.1rem;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 9.5rem;
+  padding: 0.7rem 0.9rem 0.8rem;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.job-state {
+  font-family: var(--prose);
+  font-size: 9.5px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.job-state.quiet { color: var(--ink-3); letter-spacing: 0.18em; }
+
+.job-card dl {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.15rem 0.9rem;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.job-card dl > div {
+  display: contents;
+}
+.job-card dt {
+  font-family: var(--prose);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.job-card dd {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ── the features in the toolpath ──────────────────────────────────────────
+   Bambu Studio's preview lists what the slice is made of down the right-hand
+   side, with a switch per kind. Same idea: the colour is the colour the line is
+   drawn in, so the list doubles as the key. */
+
+.legend {
+  position: absolute;
+  right: 1.1rem;
+  top: 1.1rem;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  min-width: 10.5rem;
+  padding: 0.5rem 0.35rem 0.45rem;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+
+.legend header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  padding: 0.05rem 0.45rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--prose);
+  font-size: 9.5px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.legend header span { flex: 1 1 auto; }
+.legend header em {
+  font-style: normal;
+  letter-spacing: 0.12em;
+  color: var(--ink-3);
+}
+.legend header button {
+  padding: 0 0.15rem;
+  font-family: var(--prose);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.legend header button:hover:not(:disabled) { color: var(--accent); }
+.legend header button:disabled { opacity: 0.35; }
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.24rem 0.45rem;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  text-align: left;
+}
+.legend-row:hover { background: rgba(255, 255, 255, 0.04); color: var(--ink); }
+.legend-row i {
+  width: 0.55rem;
+  height: 0.55rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+.legend-row span { flex: 1 1 auto; }
+.legend-row em {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.legend-row.off { color: var(--ink-3); }
+.legend-row.off i { opacity: 0.2; }
+.legend-row.off span { text-decoration: line-through; text-decoration-thickness: 1px; }
