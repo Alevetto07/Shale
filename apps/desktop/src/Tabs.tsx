@@ -439,6 +439,10 @@ export function DevicePane({
 
   return (
     <div className="device">
+      {/* Two columns, because the page was one column of sections with
+          two-thirds of a wide screen left empty: the machine on the left, what
+          is going to it on the right. */}
+      <div className="device-col">
       <section className="device-head">
         <p className="device-kicker">device</p>
         <h2 className="device-title">{machine}</h2>
@@ -547,6 +551,73 @@ export function DevicePane({
         {note ? <p className="device-note">{note}</p> : null}
       </section>
 
+      <section className="device-panel">
+        <p className="device-label">connection</p>
+        <div className="device-form">
+          <label>
+            host
+            <input
+              type="text"
+              aria-label="printer host"
+              placeholder="192.168.1.40"
+              value={host}
+              onChange={(event) => setHost(event.target.value)}
+            />
+          </label>
+          <label>
+            serial
+            <input
+              type="text"
+              aria-label="printer serial"
+              placeholder="01P00A000000000"
+              value={serial}
+              onChange={(event) => setSerial(event.target.value)}
+            />
+          </label>
+          <label>
+            access code
+            <input
+              type="password"
+              aria-label="printer access code"
+              placeholder="8 characters, from the printer's LAN settings"
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+            />
+          </label>
+          <label>
+            plate
+            <select
+              aria-label="build plate"
+              value={bedType}
+              onChange={(event) => setBedType(event.target.value)}
+            >
+              <option value="textured_plate">textured PEI</option>
+              <option value="smooth_plate">smooth PEI</option>
+              <option value="engineering_plate">engineering</option>
+              <option value="cool_plate">cool plate</option>
+            </select>
+          </label>
+        </div>
+        <div className="device-controls">
+          <button type="button" disabled={connected} onClick={connect}>
+            connect
+          </button>
+          <button type="button" disabled={!connected} onClick={disconnect}>
+            disconnect
+          </button>
+          <span className="device-note">
+            {connected
+              ? `${statusOf?.reports ?? 0} reports received`
+              : "the printer must be in LAN mode with the access code enabled"}
+          </span>
+        </div>
+        <p className="device-note">
+          the access code is kept in this profile's storage, never in the repository. the link is read-write:
+          send, pause, resume and stop all go to the machine over its own local interface.
+        </p>
+      </section>
+      </div>
+      <div className="device-col">
       <section className="device-queue">
         <p className="device-label">queue</p>
         {queue.length === 0 ? (
@@ -658,72 +729,7 @@ export function DevicePane({
           material, with its own hotend temperature.
         </p>
       </section>
-
-      <section className="device-panel">
-        <p className="device-label">connection</p>
-        <div className="device-form">
-          <label>
-            host
-            <input
-              type="text"
-              aria-label="printer host"
-              placeholder="192.168.1.40"
-              value={host}
-              onChange={(event) => setHost(event.target.value)}
-            />
-          </label>
-          <label>
-            serial
-            <input
-              type="text"
-              aria-label="printer serial"
-              placeholder="01P00A000000000"
-              value={serial}
-              onChange={(event) => setSerial(event.target.value)}
-            />
-          </label>
-          <label>
-            access code
-            <input
-              type="password"
-              aria-label="printer access code"
-              placeholder="8 characters, from the printer's LAN settings"
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-            />
-          </label>
-          <label>
-            plate
-            <select
-              aria-label="build plate"
-              value={bedType}
-              onChange={(event) => setBedType(event.target.value)}
-            >
-              <option value="textured_plate">textured PEI</option>
-              <option value="smooth_plate">smooth PEI</option>
-              <option value="engineering_plate">engineering</option>
-              <option value="cool_plate">cool plate</option>
-            </select>
-          </label>
-        </div>
-        <div className="device-controls">
-          <button type="button" disabled={connected} onClick={connect}>
-            connect
-          </button>
-          <button type="button" disabled={!connected} onClick={disconnect}>
-            disconnect
-          </button>
-          <span className="device-note">
-            {connected
-              ? `${statusOf?.reports ?? 0} reports received`
-              : "the printer must be in LAN mode with the access code enabled"}
-          </span>
-        </div>
-        <p className="device-note">
-          the access code is kept in this profile's storage, never in the repository. the link is read-write:
-          send, pause, resume and stop all go to the machine over its own local interface.
-        </p>
-      </section>
+      </div>
     </div>
   );
 }

@@ -1203,10 +1203,25 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   min-height: 0;
   overflow-y: auto;
   padding: 2.4rem 1.4rem 3rem;
+  /* Two columns: the machine on the left, what is going to it on the right.
+     One column of sections left two-thirds of a wide screen empty. */
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: start;
+  gap: 2.2rem 3rem;
+  max-width: 84rem;
+}
+
+.device-col {
   display: flex;
   flex-direction: column;
   gap: 2.2rem;
-  max-width: 74rem;
+  min-width: 0;
+}
+
+/* A narrow window still gets the whole page, in one column. */
+@media (max-width: 1080px) {
+  .device { grid-template-columns: minmax(0, 1fr); }
 }
 
 .device-head { display: flex; flex-direction: column; gap: 0.35rem; }
@@ -1248,7 +1263,7 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 
 .device-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
   background: var(--line);
   border: 1px solid var(--line);
