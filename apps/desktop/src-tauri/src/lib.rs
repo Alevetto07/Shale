@@ -2172,9 +2172,17 @@ fn slice_tools(state: State<'_, AppState>) -> Result<serde_json::Value, String> 
         }
     }
     tools.sort_unstable();
+    // How much filament each tool takes. A second spool that is needed for a
+    // gram is worth knowing about, but it is not the same decision as one that
+    // is needed for a hundred.
+    let usage: Vec<serde_json::Value> = shale_core::gcode::filament_by_tool(&text)
+        .into_iter()
+        .map(|(tool, metres)| serde_json::json!({ "tool": tool, "metres": metres }))
+        .collect();
     Ok(serde_json::json!({
         "tools": tools,
         "changes": changes,
+        "usage": usage,
         "file": std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()),
     }))
 }

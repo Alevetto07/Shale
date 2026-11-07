@@ -195,8 +195,16 @@ export const hostStatus = () => invoke<HostStatus>("host_status");
 export const hostSend = (bedType: string) =>
   invoke<{ remote: string; bytes: number }>("host_send", { bedType });
 
-export const sliceTools = () =>
-  invoke<{ tools: number[]; changes: number; file: string | null }>("slice_tools");
+/// What the sliced file needs: which tools it selects, how often, and how much
+/// filament each one takes, in metres.
+export interface SliceTools {
+  tools: number[];
+  changes: number;
+  file: string | null;
+  usage: { tool: number; metres: number }[];
+}
+
+export const sliceTools = () => invoke<SliceTools>("slice_tools");
 
 export const hostControl = (command: "pause" | "resume" | "stop") =>
   invoke<void>("host_control", { command });

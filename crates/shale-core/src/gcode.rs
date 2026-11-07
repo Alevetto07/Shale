@@ -151,6 +151,68 @@ pub fn support_filament_metres(gcode: &str) -> f64 {
     total / 1000.0
 }
 
+/// Filament used per tool, in metres, keyed by the tool the G-code selected.
+///
+/// A plate sliced for two spools carries `T0` for one and `T1` for the other, and
+/// the total alone cannot say whether the second spool is needed for a gram or
+/// for a hundred — which is the difference between a tool change nobody notices
+/// and a print that runs out. The same E accounting as [`filament_length_metres`]:
+/// absolute moves add their rise, relative moves add themselves, and `G92 E0` at
+/// a tool change only resets the reference.
+pub fn filament_by_tool(gcode: &str) -> std::collections::BTreeMap<u8, f64> {
+    let mut absolute = true;
+    let mut position = 0.0f64;
+    let mut tool: u8 = 0;
+    let mut totals: std::collections::BTreeMap<u8, f64> = std::collections::BTreeMap::new();
+    totals.insert(0, 0.0);
+    for raw in gcode.lines() {
+        let line = raw.trim();
+        if line.starts_with(';') {
+            continue;
+        }
+        if line.starts_with("M82") {
+            absolute = true;
+            continue;
+        }
+        if line.starts_with("M83") {
+            absolute = false;
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix('T') {
+            let digits: String = rest.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(index) = digits.parse::<u8>() {
+                tool = index;
+                totals.entry(tool).or_insert(0.0);
+            }
+            continue;
+        }
+        if line.starts_with("G92") {
+            if let Some(value) = word(line, 'E') {
+                position = value as f64;
+            }
+            continue;
+        }
+        if line.starts_with("G0") || line.starts_with("G1") {
+            if let Some(value) = word(line, 'E') {
+                let value = value as f64;
+                let entry = totals.entry(tool).or_insert(0.0);
+                if absolute {
+                    if value > position {
+                        *entry += value - position;
+                    }
+                    position = value;
+                } else if value > 0.0 {
+                    *entry += value;
+                }
+            }
+        }
+    }
+    for value in totals.values_mut() {
+        *value /= 1000.0;
+    }
+    totals
+}
+
 pub fn filament_length_metres(gcode: &str) -> f64 {
     let mut absolute = true;
     let mut position = 0.0f64;
@@ -508,5 +570,35 @@ M84
         assert_eq!(toolpath.layers.len(), 2);
         assert_eq!(toolpath.layers[0].z, 0.2);
         assert_eq!(toolpath.layers[1].z, 0.4);
+    }
+}
+
+#[cfg(test)]
+mod filament_tests {
+    use super::*;
+
+    #[test]
+    fn a_second_spool_is_counted_on_its_own() {
+        // 1,000 mm on T0, then G92 E0, then 250 mm on T1: the absolute
+        // reference restarts, and the two spools must not be added together.
+        let gcode = "M82\nG1 X1 E1000\nT1\nG92 E0\nG1 X2 E250\n";
+        let by_tool = filament_by_tool(gcode);
+        assert_eq!(by_tool.get(&0).copied(), Some(1.0));
+        assert_eq!(by_tool.get(&1).copied(), Some(0.25));
+    }
+
+    #[test]
+    fn relative_extrusion_is_per_tool_too() {
+        let gcode = "M83\nT0\nG1 E10\nT1\nG1 E5\nG1 E5\n";
+        let by_tool = filament_by_tool(gcode);
+        assert_eq!(by_tool.get(&0).copied(), Some(0.01));
+        assert_eq!(by_tool.get(&1).copied(), Some(0.01));
+    }
+
+    #[test]
+    fn a_single_tool_file_is_one_entry() {
+        let by_tool = filament_by_tool("M83\nG1 E40\n");
+        assert_eq!(by_tool.len(), 1);
+        assert_eq!(by_tool.get(&0).copied(), Some(0.04));
     }
 }

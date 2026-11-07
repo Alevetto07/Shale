@@ -194,7 +194,7 @@ export function DevicePane({
   const [status, setStatus] = useState<api.HostStatus | null>(null);
   const [sending, setSending] = useState(false);
   const [asking, setAsking] = useState(false);
-  const [tools, setTools] = useState<{ tools: number[]; changes: number } | null>(null);
+  const [tools, setTools] = useState<api.SliceTools | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   useEffect(() => {
@@ -367,9 +367,16 @@ export function DevicePane({
               </p>
               {tools && tools.tools.length > 1 ? (
                 <p className="device-warn">
-                  this slice uses {tools.tools.length} spools ({tools.changes} tool changes). Bambu takes a
-                  sliced 3MF with an AMS mapping for a multi-colour plate, and Shale sends plain G-code, so
-                  the machine will print this in one colour.
+                  this slice uses {tools.tools.length} spools ({tools.changes} tool changes)
+                  {tools.usage.length
+                    ? ` — ${tools.usage
+                        // A tool and its figure belong on one line: "T2:" alone at the
+                        // end of a line reads as a stray token.
+                        .map((used) => `T${used.tool}:\u00a0${used.metres.toFixed(2)}\u00a0m`)
+                        .join(", ")}`
+                    : ""}
+                  . Bambu takes a sliced 3MF with an AMS mapping for a multi-colour plate, and Shale sends
+                  plain G-code, so the machine will print this in one colour.
                 </p>
               ) : null}
               <div>
