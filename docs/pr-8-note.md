@@ -92,8 +92,9 @@ system theme whatever the app does.
 - **Seam painting** — Bambu paints where the z-seam goes; Shale cannot, because
   CuraEngine has no per-face seam input. `z_seam_type` is a setting, not a brush.
 - **Per-filament flush volumes** — the AMS volumes are not exposed as a control.
-- **Ear-shaped cuts** — the cut is a plane, plus pins. `csg::subtract` exists but
-  no UI path cuts part A with part B.
+- **Ear-shaped cuts** — the cut is a plane, plus pins. Joint profiles beyond a
+  round peg do not exist yet. (The boolean that lets part A cut part B landed
+  after this note was first written; see below.)
 - **Camera** — not implemented. `SHALE_PRINT_REMOVAL` stays off, sends no motion,
   and `will_move_printer` is false.
 - **Bambu-flavoured G-code** — the output is Marlin-flavoured, which the A1
@@ -101,3 +102,25 @@ system theme whatever the app does.
 - **Multi-spool send** — correctly refused rather than silently wrong.
 - **The video is not in the repo.** It is 1.6 MB of screen recording; it belongs
   in the PR description, not in a git object.
+
+## Since this note was first written
+
+- **A boolean between parts** — *subtract*, *union*, *common* in the model frame,
+  both sides baked into world space, cutters consumed, and only parts whose
+  bounds actually meet the chosen one taking part. Measured: two 20 mm cubes
+  overlapping 10 mm → subtract exports 16 triangles / 4000.00 mm³ spanning
+  x −10.0…0.0 and slices as 100 layers; union 12000.00 mm³; common 4000.00 mm³.
+  Nothing overlapping is refused in words rather than performed.
+- **Place on face** — a click names the surface that goes down; the turn is the
+  shortest arc from the clicked normal to straight down, composed with the
+  rotation the part already had, then dropped and kept where it stood in plan.
+  On the bracket: rot 0,0,0 → −180,0,−180, volume 3885 mm³ unchanged, plan centre
+  128.00, 128.00, resting at z 0.00, and Ctrl+Z puts it back.
+- **The delete key**, undoably, and undo/redo now clear the notice that was
+  describing something no longer true.
+- **An idle document tab reads as a tab** — border, darker seat, close cross
+  always visible.
+- **`docs/verification.md`** — every headline number in one place with the
+  command that produces it, and the list of what is still not proved.
+- **The video was re-recorded** on this build: 2560 × 1558, 30 fps, 39.90 s,
+  1,864,360 bytes, every pane change checked against the active chip.
