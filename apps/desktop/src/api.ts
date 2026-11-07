@@ -376,7 +376,7 @@ export const api = {
   /* One part against the others: subtract keeps what the others do not cover,
      union and common are the other two answers to the same question. */
   boolean: (id: number, mode: "subtract" | "union" | "common") =>
-    invoke<ModelView[]>("boolean_model", { id, mode }),
+    invoke<{ views: ModelView[]; consumed: number }>("boolean_model", { id, mode }),
   listPlates: () => invoke<PlateView[]>("list_plates"),
   addPlate: () => invoke<PlateSwitch>("add_plate"),
   switchPlate: (index: number) => invoke<PlateSwitch>("switch_plate", { index }),

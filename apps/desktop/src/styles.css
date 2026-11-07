@@ -387,6 +387,9 @@ button.model.selected::before { content: "> "; color: var(--accent); }
    and they stack into four lines. */
 .cut-row select,
 .cut-row input[type="number"] { width: auto; flex: 1 1 4.5rem; min-width: 0; }
+/* "both halves" is two words; at a 4.5rem basis the select clipped it to
+   "both halv" and the arrow ate the last letter. */
+.cut-row select[aria-label="Keep after cutting"] { flex: 1.3 1 6.5rem; }
 .cut-row button { flex: 0 0 auto; }
 
 /* The ruler's number, floating at the middle of the line it describes. */

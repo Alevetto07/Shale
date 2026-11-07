@@ -1255,8 +1255,16 @@ fn cut_model(
 /// One part against the others: the boolean Bambu calls a mesh boolean.
 /// `mode` is `subtract` (the chosen part keeps only what the others do not
 /// cover), `union`, or `common`.
+/// What a boolean did, so the notice can say how many parts it actually folded
+/// in rather than how many were standing nearby.
+#[derive(Serialize)]
+struct BooleanResult {
+    views: Vec<ModelView>,
+    consumed: usize,
+}
+
 #[tauri::command]
-fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Vec<ModelView>, String> {
+fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<BooleanResult, String> {
     let mut inner = lock(&state)?;
     let index = inner
         .models
@@ -1272,14 +1280,28 @@ fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Vec<Mo
     // Both sides are baked into world space: a boolean of two parts that were
     // merely dragged is a boolean of where they are, not of where they were.
     let mut solid = shale_core::mesh::bake(&inner.models[index].mesh, &inner.models[index].transform);
-    let others: Vec<TriangleMesh> = inner
-        .models
-        .iter()
-        .enumerate()
-        .filter(|(position, _)| *position != index)
-        .map(|(_, model)| shale_core::mesh::bake(&model.mesh, &model.transform))
-        .collect();
-    for other in &others {
+    // Only parts that actually touch the chosen one are cutlery. A plate can
+    // hold forty parts, and eating the thirty-nine that are nowhere near the
+    // one being cut is not a boolean, it is a mistake.
+    let (low, high) = shale_core::mesh::bounds(&solid);
+    let mut others: Vec<(u32, TriangleMesh)> = Vec::new();
+    for (position, model) in inner.models.iter().enumerate() {
+        if position == index || !model.visible {
+            // A part you cannot see cannot cut: an invisible model taking part
+            // in a boolean is a bite out of the plate with no cause on screen.
+            continue;
+        }
+        let world = shale_core::mesh::bake(&model.mesh, &model.transform);
+        let (other_low, other_high) = shale_core::mesh::bounds(&world);
+        let apart = (0..3).any(|axis| other_low[axis] >= high[axis] || other_high[axis] <= low[axis]);
+        if !apart {
+            others.push((model.id, world));
+        }
+    }
+    if others.is_empty() {
+        return Err("No other part overlaps this one, so there is nothing to cut with".to_string());
+    }
+    for (_, other) in &others {
         let next = match mode.as_str() {
             "subtract" => shale_core::csg::subtract(&solid, other),
             "union" => shale_core::csg::union(&solid, other),
@@ -1304,9 +1326,10 @@ fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Vec<Mo
     let report = model.report.clone();
     let settings = model.settings.clone();
     let source_bytes = model.source_bytes.clone();
-    // Every part has been folded in: the cutters are cutlery now, not
-    // geometry, and leaving them behind would leave a plate printed twice.
-    inner.models.clear();
+    // The cutters are cutlery now, not geometry: leaving them behind would
+    // leave a plate printed twice. Everything they did not touch stays.
+    inner.models
+        .retain(|model| model.id != id && !others.iter().any(|(used, _)| *used == model.id));
     let (low, _) = shale_core::mesh::bounds(&solid);
     let transform = Transform {
         translation: [0.0, 0.0, -low[2]],
@@ -1319,7 +1342,6 @@ fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Vec<Mo
     };
     let new_id = inner.next_id;
     inner.next_id += 1;
-    let view = view_of(new_id, &name, &transform, &report, &settings, None);
     inner.models.push(LoadedModel {
         id: new_id,
         name,
@@ -1333,7 +1355,25 @@ fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Vec<Mo
     });
     inner.toolpath = None;
     inner.gcode_path = None;
-    Ok(vec![view])
+    let consumed = others.len();
+    // Every part that is still on the plate, not only the one that changed: a
+    // list that forgets the parts a boolean did not touch is a list that lies
+    // about the plate.
+    let views: Vec<ModelView> = inner
+        .models
+        .iter()
+        .map(|model| {
+            view_of(
+                model.id,
+                &model.name,
+                &model.transform,
+                &model.report,
+                &model.settings,
+                model.slot.as_ref(),
+            )
+        })
+        .collect();
+    Ok(BooleanResult { views, consumed })
 }
 
 #[tauri::command]

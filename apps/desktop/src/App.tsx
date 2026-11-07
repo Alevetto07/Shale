@@ -1177,13 +1177,17 @@ export function App() {
     try {
       remember();
       const result = await api.boolean(selected.id, mode);
-      setModels(result);
-      setSelectedId(result[0]?.id ?? null);
+      setModels(result.views);
+      setSelectedId(result.views[0]?.id ?? null);
       setPreview(false);
       setPaths([]);
       setLayerCount(0);
       forgetSlice();
-      setNotice(`boolean: ${mode} against ${models.length - 1} part(s)`);
+      // Only the parts that overlapped took part; saying "against 2 parts" when
+      // one of them was nowhere near would be a number the app did not measure.
+      setNotice(
+        `boolean: ${mode}, ${result.consumed} ${result.consumed === 1 ? "part" : "parts"} folded in`,
+      );
     } catch (err) {
       setError(messageOf(err));
     }
