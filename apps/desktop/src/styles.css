@@ -193,6 +193,27 @@ code { font-family: var(--mono); }
   overflow: hidden;
   user-select: none;
 }
+.frame-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: none;
+  padding: 0 0.25rem;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.frame-toggle:hover { background: rgba(233, 232, 242, 0.05); }
+.frame-caret {
+  color: var(--ink-3);
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.7;
+}
+.frame-toggle:hover .frame-caret { opacity: 1; color: var(--accent); }
 .frame-title {
   color: var(--ink-3);
   flex: none;
@@ -200,6 +221,8 @@ code { font-family: var(--mono); }
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
+.frame-toggle:hover .frame-title { color: var(--ink-2); }
+.frame.closed .frame-title { opacity: 0.75; }
 .rule {
   overflow: hidden;
   white-space: nowrap;
