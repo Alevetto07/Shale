@@ -32,15 +32,16 @@ struct Inner {
     plates: Vec<PlateStash>,
     active_plate: usize,
     /// Painted support, by model id: the triangles that ask for a column under
-    /// them. Kept beside the models rather than inside them, so a part keeps
-    /// what was painted on it when it is copied, saved or read back.
-    painted: std::collections::BTreeMap<u32, Vec<usize>>,
+    /// them, and the triangles that ask for none. Kept beside the models rather
+    /// than inside them, so a part keeps what was painted on it when it is
+    /// copied, saved or read back.
+    painted: std::collections::BTreeMap<u32, Paint>,
     /// The paint as it was before each stroke, newest last. A stroke is cheap —
     /// triangle indices, not geometry — so keeping a stack of them costs little
     /// and makes paint the one thing a brush must always be able to take back.
-    paint_past: Vec<std::collections::BTreeMap<u32, Vec<usize>>>,
+    paint_past: Vec<std::collections::BTreeMap<u32, Paint>>,
     /// Strokes that were taken back, newest last, so one can come forward again.
-    paint_future: Vec<std::collections::BTreeMap<u32, Vec<usize>>>,
+    paint_future: Vec<std::collections::BTreeMap<u32, Paint>>,
     next_id: u32,
     instructions: Vec<(u32, CustomInstruction)>,
     next_instruction: u32,
@@ -1669,11 +1670,28 @@ fn compare_supports(
     Ok(comparison)
 }
 
+/// What is painted on a part, by role.
+#[derive(Clone, Default, Debug)]
+struct Paint {
+    /// Triangles that should grow support under them.
+    enforce: Vec<usize>,
+    /// Triangles that should keep support out.
+    block: Vec<usize>,
+}
+
+impl Paint {
+    fn is_empty(&self) -> bool {
+        self.enforce.is_empty() && self.block.is_empty()
+    }
+}
+
 /// What is painted on a part.
 #[derive(Serialize)]
 struct PaintView {
-    /// How many of the part's triangles are painted.
+    /// How many of the part's triangles ask for support.
     painted: usize,
+    /// How many ask for none.
+    blocked: usize,
 }
 
 /// The patches of underside a part offers, biggest first. One patch is one
@@ -1703,6 +1721,7 @@ fn paint_support(
     state: State<AppState>,
     model_id: u32,
     triangles: Vec<usize>,
+    block: Option<bool>,
 ) -> Result<PaintView, String> {
     let mut inner = lock(&state)?;
     if inner.slicing {
@@ -1722,15 +1741,25 @@ fn paint_support(
         inner.paint_past.remove(0);
     }
     inner.paint_future.clear();
-    let painted = inner.painted.entry(model_id).or_default();
+    let painting = inner.painted.entry(model_id).or_default();
+    // A triangle painted one way is not painted both ways: the later stroke
+    // wins, the way a second brush stroke over the first does.
+    let (paint, other) = if block.unwrap_or(false) {
+        (&mut painting.block, &mut painting.enforce)
+    } else {
+        (&mut painting.enforce, &mut painting.block)
+    };
     for triangle in triangles {
-        if triangle < corners && !painted.contains(&triangle) {
-            painted.push(triangle);
+        if triangle < corners && !paint.contains(&triangle) {
+            paint.push(triangle);
+            other.retain(|value| *value != triangle);
         }
     }
-    painted.sort_unstable();
-    let count = painted.len();
-    Ok(PaintView { painted: count })
+    paint.sort_unstable();
+    Ok(PaintView {
+        painted: painting.enforce.len(),
+        blocked: painting.block.len(),
+    })
 }
 
 /// Take the paint off a part. The columns go with it on the next slice.
@@ -1746,15 +1775,21 @@ fn clear_paint(state: State<AppState>, model_id: u32) -> Result<PaintView, Strin
         inner.paint_future.clear();
         inner.painted.remove(&model_id);
     }
-    Ok(PaintView { painted: 0 })
+    Ok(PaintView {
+        painted: 0,
+        blocked: 0,
+    })
 }
 
 /// How much paint the plate carries in all, which is what a stroke's undo
 /// changes and what the paint chip reads back.
 const PAINT_STEPS: usize = 60;
 
-fn paint_total(painted: &std::collections::BTreeMap<u32, Vec<usize>>) -> usize {
-    painted.values().map(|faces| faces.len()).sum()
+fn paint_total(painted: &std::collections::BTreeMap<u32, Paint>) -> usize {
+    painted
+        .values()
+        .map(|paint| paint.enforce.len() + paint.block.len())
+        .sum()
 }
 
 /// Take the last stroke back. Returns the paint left on the plate.
@@ -1771,6 +1806,7 @@ fn undo_paint(state: State<AppState>) -> Result<PaintView, String> {
     }
     Ok(PaintView {
         painted: paint_total(&inner.painted),
+        blocked: inner.painted.values().map(|paint| paint.block.len()).sum(),
     })
 }
 
@@ -1788,6 +1824,7 @@ fn redo_paint(state: State<AppState>) -> Result<PaintView, String> {
     }
     Ok(PaintView {
         painted: paint_total(&inner.painted),
+        blocked: inner.painted.values().map(|paint| paint.block.len()).sum(),
     })
 }
 
@@ -1886,15 +1923,22 @@ async fn slice_model(
             .iter()
             .filter(|model| model.visible)
             .enumerate()
-            .filter_map(|(index, model)| {
-                let triangles = inner.painted.get(&model.id).cloned().unwrap_or_default();
-                if triangles.is_empty() {
-                    return None;
+            .flat_map(|(index, model)| {
+                let paint = inner.painted.get(&model.id).cloned().unwrap_or_default();
+                let mut patches = Vec::new();
+                for (triangles, role) in [
+                    (paint.enforce, shale_core::paint::PaintRole::Enforce),
+                    (paint.block, shale_core::paint::PaintRole::Block),
+                ] {
+                    if !triangles.is_empty() {
+                        patches.push(shale_core::paint::PaintedPatch {
+                            model: index,
+                            triangles,
+                            role,
+                        });
+                    }
                 }
-                Some(shale_core::paint::PaintedPatch {
-                    model: index,
-                    triangles,
-                })
+                patches
             })
             .collect();
         let output = std::env::temp_dir().join("shale").join("slice.gcode");
@@ -2899,7 +2943,16 @@ fn save_project(
                 settings: model.settings.clone(),
                 slot: model.slot,
                 plate: index,
-                painted: inner.painted.get(&model.id).cloned().unwrap_or_default(),
+                painted: inner
+                    .painted
+                    .get(&model.id)
+                    .map(|paint| paint.enforce.clone())
+                    .unwrap_or_default(),
+                blocked: inner
+                    .painted
+                    .get(&model.id)
+                    .map(|paint| paint.block.clone())
+                    .unwrap_or_default(),
             });
         }
     }
@@ -2964,6 +3017,7 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
                 model.slot,
                 model.plate,
                 model.painted.clone(),
+                model.blocked.clone(),
             ));
         }
         Ok::<_, String>((project, built))
@@ -3000,11 +3054,17 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
     inner.active_plate = 0;
     let mut views = Vec::new();
     let mut ids: Vec<u32> = Vec::new();
-    for (name, bytes, transform, imported, settings, slot, plate, painted) in built {
+    for (name, bytes, transform, imported, settings, slot, plate, painted, blocked) in built {
         let id = inner.next_id;
         inner.next_id += 1;
-        if !painted.is_empty() {
-            inner.painted.insert(id, painted);
+        if !painted.is_empty() || !blocked.is_empty() {
+            inner.painted.insert(
+                id,
+                Paint {
+                    enforce: painted,
+                    block: blocked,
+                },
+            );
         }
         let view = view_of(id, &name, &transform, &imported.report, &settings, slot.as_ref());
         ids.push(id);

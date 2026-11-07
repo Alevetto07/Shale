@@ -42,6 +42,10 @@ pub struct ProjectModel {
     /// indices are the part's own, so moving or turning it does not unpaint it.
     #[serde(default)]
     pub painted: Vec<usize>,
+    /// Triangles painted as needing no support. A project written before
+    /// blockers existed has none, and reads as a plate with none.
+    #[serde(default)]
+    pub blocked: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -121,6 +125,8 @@ struct DocumentModel {
     plate: usize,
     #[serde(default)]
     painted: Vec<usize>,
+    #[serde(default)]
+    blocked: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -170,6 +176,7 @@ pub fn write_project(path: &Path, data: &ProjectData) -> Result<(), Error> {
             slot: model.slot,
             plate: model.plate,
             painted: model.painted.clone(),
+            blocked: model.blocked.clone(),
         });
     }
     if let Some(index) = data.support_model {
@@ -285,6 +292,7 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
             slot: entry.slot,
             plate: entry.plate,
             painted: entry.painted.clone(),
+            blocked: entry.blocked.clone(),
         });
     }
     let thumbnail = match read_zip(&mut zip, "thumbnail.jpg") {
@@ -528,6 +536,7 @@ mod tests {
                     slot: Some(1),
                     plate: 0,
                     painted: Vec::new(),
+                    blocked: Vec::new(),
                 },
                 ProjectModel {
                     name: "block-20.step".into(),
@@ -537,6 +546,7 @@ mod tests {
                     slot: None,
                     plate: 1,
                     painted: Vec::new(),
+                    blocked: Vec::new(),
                 },
             ],
             plate_names: vec!["front".into(), "back".into()],

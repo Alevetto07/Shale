@@ -126,9 +126,10 @@ export interface OverhangPatch {
   max: [number, number, number];
 }
 
-/** What is painted on a part. */
+/** What is painted on a part: faces that grow support, and faces that keep it out. */
 export interface PaintView {
   painted: number;
+  blocked: number;
 }
 
 /** A measured distance: the line, and how much of it lies on each axis. */
@@ -426,8 +427,9 @@ export const api = {
     }),
   supportPlan: () => invoke<SupportView | null>("current_support"),
   overhangPatches: (modelId: number) => invoke<OverhangPatch[]>("overhang_patches", { modelId }),
-  paintSupport: (modelId: number, triangles: number[]) =>
-    invoke<PaintView>("paint_support", { modelId, triangles }),
+  /** `block` paints the faces as needing no support; the default holds them up. */
+  paintSupport: (modelId: number, triangles: number[], block = false) =>
+    invoke<PaintView>("paint_support", { modelId, triangles, block }),
   clearPaint: (modelId: number) => invoke<PaintView>("clear_paint", { modelId }),
   // Paint is its own small history: a stroke is triangle indices, so taking one
   // back costs nothing and a brush that cannot be undone is a trap.

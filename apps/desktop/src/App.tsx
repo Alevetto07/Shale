@@ -153,6 +153,11 @@ export function App() {
   const [paintTarget, setPaintTarget] = useState<number | null>(null);
   const [patches, setPatches] = useState<OverhangPatch[]>([]);
   const [painted, setPainted] = useState(0);
+  /// Faces painted as needing no support. The two strokes are counted apart
+  /// because they ask for opposite things.
+  const [blocked, setBlocked] = useState(0);
+  /// Which brush the next patch press uses.
+  const [paintMode, setPaintMode] = useState<"enforce" | "block">("enforce");
   /// The plates in this project. The one flagged `active` is the one `models`
   /// holds; the rest live in the backend until they are turned to.
   const [plates, setPlates] = useState<PlateView[]>([]);
@@ -624,6 +629,7 @@ export function App() {
         const view = await api.undoPaint();
         future.current.push({ kind: "paint" });
         setPainted(view.painted);
+        setBlocked(view.blocked);
         setPaths([]);
         setLayer(0);
         setLayerCount(0);
@@ -665,6 +671,7 @@ export function App() {
         const view = await api.redoPaint();
         past.current.push({ kind: "paint" });
         setPainted(view.painted);
+        setBlocked(view.blocked);
         setPaths([]);
         setLayer(0);
         setLayerCount(0);
@@ -1428,12 +1435,14 @@ export function App() {
     if (paintTarget === null) {
       return;
     }
+    const block = paintMode === "block";
     try {
       past.current.push({ kind: "paint" });
       future.current = [];
       syncHistory();
-      const state = await api.paintSupport(paintTarget, triangles);
+      const state = await api.paintSupport(paintTarget, triangles, block);
       setPainted(state.painted);
+      setBlocked(state.blocked);
       // The plate would print differently now, so the toolpath on screen is
       // stale: drop it rather than show support that is not there.
       setPaths([]);
@@ -1442,7 +1451,11 @@ export function App() {
       setLayerZ([]);
       forgetSlice();
       setPreview(false);
-      setNote(`painted ${state.painted} faces: they will be held up on the next slice`);
+      setNote(
+        block
+          ? `${state.blocked} faces kept clear: no support will grow under them`
+          : `${state.painted} faces held up: a column will grow under them`,
+      );
     } catch (failure) {
       setError(String(failure));
     }
@@ -2371,12 +2384,38 @@ export function App() {
               <>
                 <p className="hint">
                   {models.find((model) => model.id === paintTarget)?.name ?? "part"} —{" "}
-                  {painted > 0
-                    ? `${painted} faces painted`
+                  {painted > 0 || blocked > 0
+                    ? [
+                        painted > 0 ? `${painted} held up` : null,
+                        blocked > 0 ? `${blocked} kept clear` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(", ")
                     : patches.length > 0
                       ? `${patches.length} patches of underside`
                       : "nothing underneath to hold up"}
                 </p>
+                {/* Two brushes, because they ask for opposite things. A patch is
+                    just triangles; what you press decides whether support grows
+                    under them or is kept out. */}
+                <div className="row paint-brush" role="group" aria-label="brush">
+                  {(
+                    [
+                      ["enforce", "hold up"],
+                      ["block", "keep out"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`paint-brush-button${paintMode === value ? " on" : ""}`}
+                      aria-pressed={paintMode === value}
+                      onClick={() => setPaintMode(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <div className="row paint-patches">
                   {patches.map((patch, index) => (
                     <button
@@ -2386,10 +2425,10 @@ export function App() {
                       title={`under ${patch.min[0].toFixed(0)},${patch.min[1].toFixed(0)} to ${patch.max[0].toFixed(0)},${patch.max[1].toFixed(0)}`}
                       onClick={() => void paintPatch(patch.triangles)}
                     >
-                      [ paint {Math.round(patch.area_mm2)} mm² ]
+                      [ {paintMode === "block" ? "keep out" : "hold up"} {Math.round(patch.area_mm2)} mm² ]
                     </button>
                   ))}
-                  {painted > 0 && (
+                  {(painted > 0 || blocked > 0) && (
                     <>
                       <button type="button" className="paint-back" onClick={() => void takeBackPaint()}>
                         [ take back ]

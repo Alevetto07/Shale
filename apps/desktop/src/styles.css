@@ -1842,3 +1842,32 @@ select {
   text-overflow: ellipsis;
   min-width: 0;
 }
+
+.row.paint-brush {
+  gap: 0.4rem;
+  margin-bottom: 0.15rem;
+}
+
+/* Two brushes as one control: a pair of quiet words that becomes a pair of
+   pressed ones, so the panel says which brush is in your hand. */
+.paint-brush-button {
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.14rem 0.5rem;
+  cursor: pointer;
+}
+
+/* The brush in your hand is filled, not tinted: a 10% wash was indistinguishable
+   from the idle button at a glance, and picking the wrong brush paints the
+   opposite of what you meant. */
+.paint-brush-button.on {
+  color: #14131a;
+  border-color: var(--accent, #d9a441);
+  background: var(--accent, #d9a441);
+  font-weight: 600;
+}

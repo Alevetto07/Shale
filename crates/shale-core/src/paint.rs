@@ -56,6 +56,21 @@ pub struct Patch {
 pub struct PaintedPatch {
     pub model: usize,
     pub triangles: Vec<usize>,
+    /// What the stroke means: a patch that should grow support, or one that
+    /// should keep support out. Painting in Bambu Studio has the same two
+    /// brushes, and they are not the same instruction.
+    pub role: PaintRole,
+}
+
+/// What a painted stroke asks for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaintRole {
+    /// Support under these faces — a `support_mesh` column.
+    #[default]
+    Enforce,
+    /// No support under these faces — an `anti_overhang_mesh` slab.
+    Block,
 }
 
 fn normal(mesh: &TriangleMesh, index: usize) -> [f64; 3] {

@@ -179,9 +179,11 @@ pub fn slice(
     let mut modifiers = Vec::new();
     // Painting means "support here, and only here": the plate's own support is
     // turned off and the columns are the whole of it.
+    // Only an enforce stroke turns the profile's own support off: a plate you
+    // have blocked a corner of still wants support everywhere else.
     let painted_present = painted
         .iter()
-        .any(|patch| !patch.triangles.is_empty());
+        .any(|patch| !patch.triangles.is_empty() && patch.role == paint::PaintRole::Enforce);
     if painted_present {
         force_setting(&mut resolved, "support_enable", "false");
         force_setting(&mut resolved, "support_meshes_present", "true");
@@ -205,11 +207,15 @@ pub fn slice(
             resolved.summary.machine_depth,
             resolved.summary.machine_center_is_zero,
         );
-        let path = model_dir.join(format!("painted-{}.stl", patch.model));
+        let role = match patch.role {
+            paint::PaintRole::Enforce => supports::RegionRole::Enforce,
+            paint::PaintRole::Block => supports::RegionRole::Block,
+        };
+        let path = model_dir.join(format!("painted-{}-{}.stl", patch.model, role.name()));
         mesh::write_binary_stl(&path, &prisms)?;
         modifiers.push(EngineMesh {
             path,
-            settings: supports::modifier_settings(supports::RegionRole::Enforce),
+            settings: supports::modifier_settings(role),
             extruder: None,
         });
     }

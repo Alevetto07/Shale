@@ -1199,3 +1199,24 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod modifier_role_tests {
+    use super::*;
+
+    #[test]
+    fn the_two_roles_are_two_different_asks() {
+        // The engine is told what a painted volume is for through the meshes it
+        // is handed: a support block, or a slab that may not be supported.
+        let enforce = modifier_settings(RegionRole::Enforce);
+        let block = modifier_settings(RegionRole::Block);
+        let has = |pairs: &[(String, String)], key: &str| {
+            pairs.iter().any(|(name, value)| name == key && value == "true")
+        };
+        assert!(has(&enforce, "support_mesh"));
+        assert!(has(&block, "anti_overhang_mesh"));
+        assert!(!has(&enforce, "anti_overhang_mesh"));
+        assert!(!has(&block, "support_mesh"));
+        assert_ne!(enforce, block);
+    }
+}
