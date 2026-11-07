@@ -1466,6 +1466,25 @@ export function App() {
     }
   }
 
+  // Bambu adds a pause by right-clicking a layer in the preview. The same
+  // instruction machinery already existed here, but only behind the sidebar,
+  // where nobody looks while they are scrubbing through the print.
+  async function addMarkAt(at: number, filamentChange: boolean) {
+    setError(null);
+    try {
+      const stored = await api.addInstruction({
+        kind: "pause",
+        layer: at,
+        height_mm: null,
+        filament_change: filamentChange,
+        message: null,
+      });
+      setInstructions((current) => [...current, stored]);
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
   async function removeInstruction(id: number) {
     try {
       setInstructions(await api.removeInstruction(id));
@@ -3269,6 +3288,12 @@ export function App() {
                 </button>
                 <button type="button" onClick={() => { setPreview(false); setShowModel(true); }}>
                   model
+                </button>
+                <button type="button" onClick={() => void addMarkAt(layer, false)}>
+                  pause here
+                </button>
+                <button type="button" onClick={() => void addMarkAt(layer, true)}>
+                  swap here
                 </button>
                 <AsciiCheck checked={showModel} onChange={setShowModel}>
                   ghost

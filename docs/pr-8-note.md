@@ -24,6 +24,11 @@ Bambu Studio's shell, on top of a CuraEngine slice:
   filament metres**, **per-object settings**, **variable layer height**,
   **auto-arrange**, **fill plate**, **17 solids**, **multi-plate**, **3MF in and
   out**, **temperature and flow calibration**.
+- **A pause or a filament change at the layer in hand**, from the preview's own
+  control row (`pause here`, `swap here`) — the instruction machinery was there,
+  but only behind a sidebar frame nobody opens while scrubbing. The next slice
+  carries `; SHALE pause at layer 30` then `M0 Paused by Shale`, or
+  `; SHALE filament change at layer 19` then `M600 ; Filament change`.
 
 ## What the last pass fixed, because a slicer that lies is worse than one that
 ## lacks a feature
@@ -46,6 +51,10 @@ Bambu Studio's shell, on top of a CuraEngine slice:
 - `cargo test --workspace --locked`: **123 passed, 0 failed**.
 - `npx tsc --noEmit` clean; `npm run build` clean; `cargo build -p
   shale-desktop --locked` clean.
+- Marks, end to end through the preview: `swap here` at layer 20 then `pause
+  here` at layer 31 → one `M600` at line 14314 and one `M0` at 15712, each with
+  its `; SHALE` comment, and the file otherwise unchanged (+92 bytes for one
+  mark).
 - Brush, end to end through the real UI: one drag across a 60 mm sphere painted
   **149 faces / 2205 mm²**; the slice went from **0** to **587** `;TYPE:SUPPORT`
   lines and back to 0 when the paint was cleared.

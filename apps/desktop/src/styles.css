@@ -468,6 +468,10 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   display: flex;
   align-items: center;
   gap: 1rem;
+  /* Wrap, because two more verbs now live in this row and a button label
+     broken across two lines stops reading as a button. Nothing shrinks: the
+     slider drops to its own line when the controls need the width. */
+  flex-wrap: wrap;
   padding: 0.7rem 0.2rem 0.2rem;
   color: var(--muted);
   font-size: 13px;
@@ -1760,6 +1764,8 @@ select {
    choice rather than five words in a row. */
 .scrub-group {
   display: inline-flex;
+  flex: none;
+  white-space: nowrap;
   align-items: baseline;
   gap: 0.3rem;
   padding-right: 0.7rem;
