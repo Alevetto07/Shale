@@ -1264,6 +1264,102 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 .device-form input:focus { border-color: var(--accent); outline: none; }
 .device-form input::placeholder { color: rgba(233, 232, 242, 0.28); }
 
+.device-form select {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0.3rem 0;
+  min-width: 11rem;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+}
+.device-form select:focus { border-color: var(--accent); outline: none; }
+
+/* The live half: a progress rule, four readouts, and the only four buttons in
+   the app that move a machine. */
+.device-live {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.3rem 1.4rem 1.5rem;
+  border: 1px solid var(--line);
+}
+
+.device-bar {
+  height: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.device-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 420ms ease;
+}
+
+.device-readouts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.6rem;
+  font-family: var(--prose);
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.device-readouts b {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.device-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+.device-controls button {
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 0.42rem 1rem;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease;
+}
+.device-controls button:hover:not(:disabled) { border-color: var(--ink-2); color: var(--ink); }
+.device-controls button:disabled { opacity: 0.32; cursor: default; }
+.device-controls button.device-go {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.device-controls button.device-go:hover:not(:disabled) { background: var(--accent); color: var(--bg); }
+.device-controls .device-note { margin: 0; }
+
+.device-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  border-left: 1px solid var(--accent);
+  padding-left: 0.9rem;
+}
+.device-confirm p {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.device-confirm p b { color: var(--ink); font-weight: 500; }
+.device-confirm div { display: flex; gap: 0.7rem; }
+
 /* ── finding a setting ─────────────────────────────────────────────────────
    Eleven tabs is past the point where you can hunt: Bambu Studio puts a search
    field above its tabs, so this one does too. A setting that has been moved off

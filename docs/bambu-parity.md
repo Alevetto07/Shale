@@ -230,6 +230,25 @@ else.
 What is left is the free-hand brush. Painting paints the patches the analysis
 found, not any triangle a mouse crosses, it has no undo of its own, and seams
 are not painted at all. Then cut booleans with pegs and holes, a native Bambu
-G-code flavour, and the flush accounting behind the tower. Sending the job to
-the printer is still deliberately absent: Shale does not open a socket to a
-machine.
+G-code flavour, and the flush accounting behind the tower.
+
+## The host half
+
+The last paragraph used to say that Shale does not open a socket to a machine.
+It does now, deliberately: the Device workspace holds a live link to the printer
+over its own LAN interface — MQTT/TLS on 8883 for state, implicit FTPS on 990 for
+the upload, and `pause`/`resume`/`stop` as requests. See
+[printer-host.md](printer-host.md) for the protocol, the safety line (nothing
+starts without a press, and the press asks first) and the offline proof.
+
+What that closes and what it does not:
+
+| Bambu Studio | Shale |
+|---|---|
+| live state, temperatures, layer, remaining time | yes, one poll a second |
+| upload the sliced plate and start it | yes — plain G-code, `use_ams: false` |
+| pause, resume, stop | yes |
+| sliced 3MF with `ams_mapping` for a multi-spool job | **no** — needs a sliced-3MF writer |
+| camera | **no** — a separate stream protocol |
+| firmware and account calls | **no** — those are cloud, not LAN |
+| a job queue across plates | **no** — one job, one machine |

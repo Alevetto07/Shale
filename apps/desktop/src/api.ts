@@ -155,6 +155,49 @@ export interface Bed {
   warning_count: number;
 }
 
+/// What the printer link last heard. Empty defaults mean "no link".
+export interface HostStatus {
+  connected: boolean;
+  /// `IDLE`, `PREPARE`, `RUNNING`, `PAUSE`, `FINISH`, `FAILED`.
+  state: string;
+  percent: number;
+  remainingMin: number;
+  layer: number;
+  layers: number;
+  nozzle: number;
+  nozzleTarget: number;
+  bed: number;
+  bedTarget: number;
+  file: string;
+  error: number;
+  note: string;
+  reports: number;
+  updatedAt: number;
+}
+
+export interface HostConfig {
+  host: string;
+  serial: string;
+  code: string;
+  bedType: string;
+  remoteDir: string;
+}
+
+export const hostDefaults = () =>
+  invoke<{ host: string; serial: string; code: string; bedType: string }>("host_defaults");
+
+export const hostConnect = (config: HostConfig) => invoke<HostStatus>("host_connect", { config });
+
+export const hostDisconnect = () => invoke<void>("host_disconnect");
+
+export const hostStatus = () => invoke<HostStatus>("host_status");
+
+export const hostSend = (bedType: string) =>
+  invoke<{ remote: string; bytes: number }>("host_send", { bedType });
+
+export const hostControl = (command: "pause" | "resume" | "stop") =>
+  invoke<void>("host_control", { command });
+
 export interface SliceSummary {
   layer_count: number;
   layers: { index: number; z: number }[];

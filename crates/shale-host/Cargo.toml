@@ -1,0 +1,13 @@
+[package]
+name = "shale-host"
+version = "0.1.0"
+edition = "2021"
+description = "Bambu LAN host for Shale: MQTT status, FTPS upload, print control"
+publish = false
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"

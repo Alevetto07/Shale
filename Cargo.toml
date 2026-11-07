@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/shale-core", "crates/shale-mcp", "apps/desktop/src-tauri"]
+members = ["crates/shale-core", "crates/shale-host", "crates/shale-mcp", "apps/desktop/src-tauri"]
 
 # Import, tessellation and slicing all spend their time inside dependencies
 # (serde_json, zip, truck, tokio). Optimising only the dependency crates keeps

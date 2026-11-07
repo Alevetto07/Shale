@@ -49,6 +49,8 @@ struct Inner {
     engine: Engine,
     toolpath: Option<Toolpath>,
     gcode_path: Option<PathBuf>,
+    /// The printer this window is pointed at, when one has been connected.
+    host_config: Option<shale_host::HostConfig>,
     slicing: bool,
     cancel_import: Arc<AtomicBool>,
     engine_message: String,
@@ -2047,6 +2049,134 @@ fn read_head(path: &std::path::Path, limit: usize) -> String {
     }
 }
 
+/// The printer link, kept out of `AppState` because it owns a thread and a
+/// socket rather than plate data. One at a time: a second connect closes the
+/// first, so a wrong host cannot leave a ghost subscription behind.
+#[derive(Default)]
+struct PrinterHost {
+    link: Mutex<Option<shale_host::Link>>,
+    sequence: std::sync::atomic::AtomicU64,
+}
+
+impl PrinterHost {
+    fn with<T>(&self, f: impl FnOnce(&shale_host::Link) -> Result<T, String>) -> Result<T, String> {
+        let slot = self.link.lock().map_err(|_| "the printer lock is poisoned".to_string())?;
+        match slot.as_ref() {
+            Some(link) => f(link),
+            None => Err("Connect a printer first.".to_string()),
+        }
+    }
+}
+
+/// Host, serial and access code from the environment, so a run can be started
+/// with the printer already known without writing a credential into the repo.
+#[tauri::command]
+fn host_defaults() -> serde_json::Value {
+    let env = |key: &str| std::env::var(key).unwrap_or_default();
+    serde_json::json!({
+        "host": env("SHALE_PRINTER_HOST"),
+        "serial": env("SHALE_PRINTER_SERIAL"),
+        "code": env("SHALE_PRINTER_CODE"),
+        "bedType": if env("SHALE_PRINTER_BED").is_empty() { "textured_plate".to_string() } else { env("SHALE_PRINTER_BED") },
+    })
+}
+
+#[tauri::command]
+fn host_connect(
+    config: shale_host::HostConfig,
+    state: State<AppState>,
+    host: State<PrinterHost>,
+) -> Result<shale_host::Status, String> {
+    if config.host.trim().is_empty() || config.serial.trim().is_empty() || config.code.trim().is_empty() {
+        return Err("A host, a serial and the printer's access code are all needed.".to_string());
+    }
+    let mut slot = host
+        .link
+        .lock()
+        .map_err(|_| "the printer lock is poisoned".to_string())?;
+    if let Some(old) = slot.take() {
+        old.close();
+    }
+    let link = shale_host::Link::spawn(config.clone());
+    let status = link.status();
+    *slot = Some(link);
+    drop(slot);
+    // Uploads read the same config back out of the plate state.
+    lock(&state)?.host_config = Some(config);
+    Ok(status)
+}
+
+#[tauri::command]
+fn host_disconnect(host: State<PrinterHost>) -> Result<(), String> {
+    let mut slot = host
+        .link
+        .lock()
+        .map_err(|_| "the printer lock is poisoned".to_string())?;
+    if let Some(link) = slot.take() {
+        link.close();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn host_status(host: State<PrinterHost>) -> Result<shale_host::Status, String> {
+    let slot = host
+        .link
+        .lock()
+        .map_err(|_| "the printer lock is poisoned".to_string())?;
+    Ok(match slot.as_ref() {
+        Some(link) => link.status(),
+        None => shale_host::Status::default(),
+    })
+}
+
+/// Upload the plate that was just sliced and hand the machine the command to
+/// print it. Two steps on purpose: the file lands first, so a failed upload
+/// never leaves a print command pointing at a name that is not there.
+#[tauri::command]
+async fn host_send(
+    state: State<'_, AppState>,
+    host: State<'_, PrinterHost>,
+    bed_type: String,
+) -> Result<serde_json::Value, String> {
+    let (path, config) = {
+        let inner = lock(&state)?;
+        let path = inner
+            .gcode_path
+            .clone()
+            .ok_or_else(|| "Slice the plate first: there is no G-code to send.".to_string())?;
+        (path, inner.host_config.clone())
+    };
+    let config = config.ok_or_else(|| "Connect a printer first.".to_string())?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "shale.gcode".to_string());
+    let upload = {
+        let config = config.clone();
+        let path = path.clone();
+        let name = name.clone();
+        tauri::async_runtime::spawn_blocking(move || shale_host::upload(&config, &path, &name))
+            .await
+            .map_err(|err| err.to_string())?
+            .map_err(|err| err.to_string())?
+    };
+    let remote = format!("/{}/{}", config.remote_dir.trim_matches('/'), name);
+    let sequence = host.sequence.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    host.with(|link| link.send(shale_host::gcode_file_command(sequence, &remote, &bed_type)).map_err(|err| err.to_string()))?;
+    Ok(serde_json::json!({ "remote": remote, "bytes": upload }))
+}
+
+#[tauri::command]
+fn host_control(host: State<PrinterHost>, command: String) -> Result<(), String> {
+    let allowed = ["pause", "resume", "stop"];
+    if !allowed.contains(&command.as_str()) {
+        return Err(format!("{command} is not a print control"));
+    }
+    let sequence = host.sequence.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    host.with(|link| link.send(shale_host::simple_command(sequence, &command)).map_err(|err| err.to_string()))
+}
+
 #[tauri::command]
 fn existing_slice(state: State<AppState>) -> Result<Option<SliceSummary>, String> {
     let inner = lock(&state)?;
@@ -2968,7 +3098,9 @@ pub fn run() {
             slicing: false,
             cancel_import: import_cancel,
             engine_message,
+            host_config: None,
         })))
+        .manage(PrinterHost::default())
         // The profile library reader hands its result back here rather than to a
         // command, so no command ever blocks on the disk. When it lands, the
         // window is told and asks for the printer list again.
@@ -3037,6 +3169,12 @@ pub fn run() {
             current_support,
             compare_supports,
             slice_model,
+            host_defaults,
+            host_connect,
+            host_disconnect,
+            host_status,
+            host_send,
+            host_control,
             overhang_patches,
             paint_support,
             clear_paint,

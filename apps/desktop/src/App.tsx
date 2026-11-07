@@ -2189,6 +2189,7 @@ export function App() {
           }}
           engineBackend={backend}
           engineReady={enginePath.length > 0}
+          gcodeReady={layerCount > 0}
         />
       ) : (
       <div className="workspace">

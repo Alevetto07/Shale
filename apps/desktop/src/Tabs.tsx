@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import * as api from "./api";
+
 /// Where the window is pointed. Home is the start screen; the other three are
 /// the three things a slicer does with a plate: set it up, look at the result,
 /// and talk to the machine.
@@ -146,6 +148,8 @@ export interface DevicePaneProps {
   job: JobFacts;
   engineBackend: string;
   engineReady: boolean;
+  /** True when the plate has a G-code file behind it, so there is something to send. */
+  gcodeReady: boolean;
 }
 
 function clock(seconds: number | null): string {
@@ -156,9 +160,12 @@ function clock(seconds: number | null): string {
   return hours > 0 ? `${hours} h ${String(minutes).padStart(2, "0")} m` : `${minutes} min`;
 }
 
-/// The Device pane. A printer that is not on the network yet still has a lot
-/// worth reading: what machine the plate is sliced for, which spools it will
-/// pull from, and what the job on the plate comes to.
+/// The Device pane, with a live printer behind it.
+///
+/// The link is the app's own: MQTT over TLS to the machine, FTPS for the file.
+/// Every action that moves the printer is a press here — the pane never starts
+/// a print on its own — and the send button asks first, naming the file, the
+/// plate and the time the slice predicted.
 export function DevicePane({
   machine,
   source,
@@ -170,9 +177,18 @@ export function DevicePane({
   job,
   engineBackend,
   engineReady,
+  gcodeReady,
 }: DevicePaneProps) {
   const [host, setHost] = useState(() => localStorage.getItem("shale.device.host") ?? "");
   const [serial, setSerial] = useState(() => localStorage.getItem("shale.device.serial") ?? "");
+  const [code, setCode] = useState(() => localStorage.getItem("shale.device.code") ?? "");
+  const [bedType, setBedType] = useState(
+    () => localStorage.getItem("shale.device.bed") ?? "textured_plate",
+  );
+  const [status, setStatus] = useState<api.HostStatus | null>(null);
+  const [sending, setSending] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem("shale.device.host", host);
@@ -180,8 +196,108 @@ export function DevicePane({
   useEffect(() => {
     localStorage.setItem("shale.device.serial", serial);
   }, [serial]);
+  // The access code is a password for the machine. It stays in this profile's
+  // storage and never in the repository or a log line.
+  useEffect(() => {
+    localStorage.setItem("shale.device.code", code);
+  }, [code]);
+  useEffect(() => {
+    localStorage.setItem("shale.device.bed", bedType);
+  }, [bedType]);
 
-  const connected = host.trim().length > 0 && serial.trim().length > 0;
+  // Fill the form from the environment once, if it was launched with a printer.
+  useEffect(() => {
+    let live = true;
+    api
+      .hostDefaults()
+      .then((defaults) => {
+        if (!live) return;
+        setHost((current) => current || defaults.host);
+        setSerial((current) => current || defaults.serial);
+        setCode((current) => current || defaults.code);
+        setBedType((current) => current || defaults.bedType);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // One poll a second while the pane is open. The link itself runs in the
+  // backend and reconnects on its own; this only reads the latest report.
+  useEffect(() => {
+    let live = true;
+    const read = () =>
+      api
+        .hostStatus()
+        .then((next) => {
+          if (live) setStatus(next);
+        })
+        .catch(() => undefined);
+    read();
+    const timer = window.setInterval(read, 1000);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const statusOf = status ?? null;
+  // A report can arrive before the machine has filled every field, so every
+  // number goes through this rather than trusting `undefined` to be a number.
+  const deg = (value: number | undefined) => (Number.isFinite(value) ? (value as number).toFixed(0) : "—");
+  const connected = Boolean(statusOf?.connected);
+  const printing = statusOf?.state === "RUNNING" || statusOf?.state === "PAUSE";
+  const state = statusOf?.state || "offline";
+
+  async function connect() {
+    setNote(null);
+    try {
+      const fresh = await api.hostConnect({
+        host: host.trim(),
+        serial: serial.trim(),
+        code: code.trim(),
+        bedType,
+        remoteDir: "cache",
+      });
+      setStatus(fresh);
+    } catch (err) {
+      setNote(String(err));
+    }
+  }
+
+  async function disconnect() {
+    setNote(null);
+    try {
+      await api.hostDisconnect();
+      setStatus(null);
+    } catch (err) {
+      setNote(String(err));
+    }
+  }
+
+  async function send() {
+    setAsking(false);
+    setSending(true);
+    setNote(null);
+    try {
+      const sent = await api.hostSend(bedType);
+      setNote(`sent ${Math.round(sent.bytes / 1024)} kB as ${sent.remote}`);
+    } catch (err) {
+      setNote(String(err));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function control(command: "pause" | "resume" | "stop") {
+    setNote(null);
+    try {
+      await api.hostControl(command);
+    } catch (err) {
+      setNote(String(err));
+    }
+  }
 
   return (
     <div className="device">
@@ -190,11 +306,90 @@ export function DevicePane({
         <h2 className="device-title">{machine}</h2>
         <p className="device-sub">
           {source === "bambu" ? "Bambu Studio profile" : "Cura profile"} ·{" "}
-          {bedWidth.toFixed(0)} × {bedDepth.toFixed(0)} × {bedHeight.toFixed(0)} mm · {nozzleSize.toFixed(2)} mm nozzle
+          {bedWidth.toFixed(0)} × {bedDepth.toFixed(0)} × {bedHeight.toFixed(0)} mm ·{" "}
+          {nozzleSize.toFixed(2)} mm nozzle
         </p>
         <p className={connected ? "device-status live" : "device-status"}>
-          {connected ? `set for ${serial.trim()} at ${host.trim()} — local mqtt is not wired yet` : "no printer connected"}
+          {connected
+            ? `${state.toLowerCase()} · ${statusOf?.percent ?? 0}%${
+                statusOf?.file ? ` · ${statusOf.file}` : ""
+              }`
+            : statusOf?.note
+              ? `not connected — ${statusOf.note}`
+              : "no printer connected"}
         </p>
+      </section>
+
+      <section className="device-live">
+        <div className="device-bar" aria-label="print progress">
+          <span style={{ width: `${Math.max(0, Math.min(100, statusOf?.percent ?? 0))}%` }} />
+        </div>
+        <div className="device-readouts">
+          <span>
+            layer <b>{statusOf?.layers ? `${statusOf.layer}/${statusOf.layers}` : "—"}</b>
+          </span>
+          <span>
+            left <b>{statusOf?.remainingMin ? `${statusOf.remainingMin} min` : "—"}</b>
+          </span>
+          <span>
+            nozzle <b>{statusOf ? `${deg(statusOf.nozzle)}° / ${deg(statusOf.nozzleTarget)}°` : "—"}</b>
+          </span>
+          <span>
+            bed <b>{statusOf ? `${deg(statusOf.bed)}° / ${deg(statusOf.bedTarget)}°` : "—"}</b>
+          </span>
+        </div>
+
+        <div className="device-controls">
+          {asking ? (
+            <div className="device-confirm">
+              <p>
+                print <b>{job.layers > 0 ? `${job.layers} layers` : "the plate"}</b> for{" "}
+                <b>{clock(job.seconds)}</b> on the {bedType.replace(/_/g, " ")}?
+              </p>
+              <div>
+                <button type="button" className="device-go" onClick={send}>
+                  print it
+                </button>
+                <button type="button" onClick={() => setAsking(false)}>
+                  cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="device-go"
+                disabled={!connected || !gcodeReady || sending || printing}
+                onClick={() => setAsking(true)}
+              >
+                {sending ? "sending…" : "send & print"}
+              </button>
+              <button
+                type="button"
+                disabled={!connected || state !== "RUNNING"}
+                onClick={() => control("pause")}
+              >
+                pause
+              </button>
+              <button
+                type="button"
+                disabled={!connected || state !== "PAUSE"}
+                onClick={() => control("resume")}
+              >
+                resume
+              </button>
+              <button
+                type="button"
+                disabled={!connected || !printing}
+                onClick={() => control("stop")}
+              >
+                stop
+              </button>
+            </>
+          )}
+        </div>
+        {note ? <p className="device-note">{note}</p> : null}
       </section>
 
       <section className="device-grid">
@@ -259,11 +454,46 @@ export function DevicePane({
               onChange={(event) => setSerial(event.target.value)}
             />
           </label>
+          <label>
+            access code
+            <input
+              type="password"
+              aria-label="printer access code"
+              placeholder="8 characters, from the printer's LAN settings"
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+            />
+          </label>
+          <label>
+            plate
+            <select
+              aria-label="build plate"
+              value={bedType}
+              onChange={(event) => setBedType(event.target.value)}
+            >
+              <option value="textured_plate">textured PEI</option>
+              <option value="smooth_plate">smooth PEI</option>
+              <option value="engineering_plate">engineering</option>
+              <option value="cool_plate">cool plate</option>
+            </select>
+          </label>
+        </div>
+        <div className="device-controls">
+          <button type="button" disabled={connected} onClick={connect}>
+            connect
+          </button>
+          <button type="button" disabled={!connected} onClick={disconnect}>
+            disconnect
+          </button>
+          <span className="device-note">
+            {connected
+              ? `${statusOf?.reports ?? 0} reports received`
+              : "the printer must be in LAN mode with the access code enabled"}
+          </span>
         </div>
         <p className="device-note">
-          the access code stays out of this window on purpose: it is a password for the printer. local mqtt and
-          the chamber camera come after the decision about whether shale talks to the machine or hands the
-          g-code to a host.
+          the access code is kept in this profile's storage, never in the repository. the link is read-write:
+          send, pause, resume and stop all go to the machine over its own local interface.
         </p>
       </section>
     </div>
