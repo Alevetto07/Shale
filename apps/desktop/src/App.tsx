@@ -2297,6 +2297,7 @@ export function App() {
           engineBackend={backend}
           engineReady={enginePath.length > 0}
           gcodeReady={layerCount > 0}
+          plate={docTabs.find((tab) => tab.id === activeTab)?.name ?? "plate"}
         />
       ) : (
       <div className="workspace">

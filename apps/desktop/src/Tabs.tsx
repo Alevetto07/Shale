@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import * as api from "./api";
 
@@ -159,6 +159,8 @@ export interface DevicePaneProps {
   engineReady: boolean;
   /** True when the plate has a G-code file behind it, so there is something to send. */
   gcodeReady: boolean;
+  /** The name of the document on screen, so a queued job is called something. */
+  plate: string;
 }
 
 function clock(seconds: number | null): string {
@@ -188,6 +190,7 @@ export function DevicePane({
   engineBackend,
   engineReady,
   gcodeReady,
+  plate,
 }: DevicePaneProps) {
   const [host, setHost] = useState(() => localStorage.getItem("shale.device.host") ?? "");
   const [serial, setSerial] = useState(() => localStorage.getItem("shale.device.serial") ?? "");
@@ -200,6 +203,15 @@ export function DevicePane({
   const [asking, setAsking] = useState(false);
   const [tools, setTools] = useState<api.SliceTools | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [queue, setQueue] = useState<api.QueueJob[]>([]);
+  const [queueAsking, setQueueAsking] = useState(false);
+  /// Set only by the one press that names every queued job, and cleared when the
+  /// queue empties. Nothing else may start a print.
+  const [queueRunning, setQueueRunning] = useState(false);
+  /// A job counts as finished only after the machine has reported RUNNING for
+  /// it: the IDLE report that precedes a start would otherwise advance the
+  /// queue before the first job laid a layer.
+  const queueSeenRunning = useRef(false);
 
   useEffect(() => {
     localStorage.setItem("shale.device.host", host);
@@ -250,6 +262,19 @@ export function DevicePane({
     return () => {
       live = false;
       window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .queueList()
+      .then((rows) => {
+        if (live) setQueue(rows);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
     };
   }, []);
 
@@ -311,6 +336,96 @@ export function DevicePane({
     } finally {
       setSending(false);
     }
+  }
+
+  // The queue moves itself forward — but only because one press named every job
+  // in it. `advance` is reached from that press and from this effect, nowhere
+  // else.
+  async function advance() {
+    if (queue.length === 0) {
+      setQueueRunning(false);
+      setNote("queue done — nothing left to print");
+      try {
+        setQueue(await api.queueRelease());
+      } catch {
+        undefined;
+      }
+      return;
+    }
+    setSending(true);
+    setNote(null);
+    try {
+      const next = await api.queueStartNext(bedType);
+      setQueue(next.queue);
+      setNote(
+        next.remaining
+          ? `printing ${next.name} — ${next.remaining} still queued`
+          : `printing ${next.name} — last in the queue`,
+      );
+    } catch (err) {
+      setNote(String(err));
+      setQueueRunning(false);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!queueRunning || sending) return;
+    if (state === "RUNNING" || state === "PREPARE") {
+      queueSeenRunning.current = true;
+      return;
+    }
+    if (!queueSeenRunning.current) return;
+    // A failure is not a finish: plastic is on the bed, and starting the next
+    // job from a queue nobody is watching is how a bad print becomes three.
+    if (state === "FAILED") {
+      setQueueRunning(false);
+      queueSeenRunning.current = false;
+      setNote("queue stopped — the machine reported a failed print");
+      return;
+    }
+    if (state !== "FINISH" && state !== "IDLE") return;
+    queueSeenRunning.current = false;
+    void advance();
+    // `advance` closes over the queue it was written against, so the effect
+    // lists the queue's length rather than the function.
+  }, [queueRunning, sending, state, queue.length]);
+
+  async function queueThis() {
+    setNote(null);
+    try {
+      const size = job.layers > 0 ? `${job.layers} layers` : "unsliced";
+      // Two jobs from the same plate would otherwise share a name, and a
+      // confirmation listing the same words twice names nothing.
+      setQueue(await api.queueAdd(`${queue.length + 1} · ${plate} · ${size}`));
+    } catch (err) {
+      setNote(String(err));
+    }
+  }
+
+  async function dropQueued(id: number) {
+    try {
+      setQueue(await api.queueRemove(id));
+    } catch (err) {
+      setNote(String(err));
+    }
+  }
+
+  async function clearQueue() {
+    try {
+      setQueue(await api.queueClear());
+      setQueueRunning(false);
+    } catch (err) {
+      setNote(String(err));
+    }
+  }
+
+  async function beginQueue() {
+    setQueueAsking(false);
+    queueSeenRunning.current = false;
+    setQueueRunning(true);
+    await advance();
   }
 
   async function control(command: "pause" | "resume" | "stop") {
@@ -430,6 +545,77 @@ export function DevicePane({
           )}
         </div>
         {note ? <p className="device-note">{note}</p> : null}
+      </section>
+
+      <section className="device-queue">
+        <p className="device-label">queue</p>
+        {queue.length === 0 ? (
+          <p className="device-note">
+            nothing queued — a job here starts on its own when the machine goes idle, so the
+            queue is the one place that happens.
+          </p>
+        ) : (
+          <ol className="device-queue-list">
+            {queue.map((row) => (
+              <li key={row.id} className={row.running ? "running" : undefined}>
+                <span className="queue-name">{row.name}</span>
+                <span className="queue-size">{Math.round(row.bytes / 1024)} kB</span>
+                <button
+                  type="button"
+                  aria-label={`remove ${row.name}`}
+                  onClick={() => dropQueued(row.id)}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ol>
+        )}
+
+        {queueAsking ? (
+          <div className="device-confirm">
+            <p>
+              print{" "}
+              <b>
+                {queue.length} {queue.length === 1 ? "job" : "jobs"}
+              </b>
+              {queue.length === 1 ? " now" : " one after another"} —{" "}
+              {queue.map((row) => row.name).join(", ")}?
+              {queue.length === 1
+                ? " it starts on the machine as soon as you press."
+                : " each one starts when the machine goes idle."}
+            </p>
+            <p className="device-warn">
+              this is the only place a print can start without you pressing for it, and this press
+              is what authorises every job in the list.
+            </p>
+            <div>
+              <button type="button" className="device-go" onClick={beginQueue}>
+                start the queue
+              </button>
+              <button type="button" onClick={() => setQueueAsking(false)}>
+                cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="device-controls">
+            <button type="button" disabled={!gcodeReady} onClick={queueThis}>
+              queue this slice
+            </button>
+            <button
+              type="button"
+              className="device-go"
+              disabled={!connected || queue.length === 0 || queueRunning}
+              onClick={() => setQueueAsking(true)}
+            >
+              {queueRunning ? "queue running" : "start queue"}
+            </button>
+            <button type="button" disabled={queue.length === 0} onClick={clearQueue}>
+              clear
+            </button>
+          </div>
+        )}
       </section>
 
       <section className="device-grid">

@@ -252,4 +252,4 @@ What that closes and what it does not:
 | sliced 3MF with `ams_mapping` for a multi-spool job | **no** — needs a sliced-3MF writer |
 | camera | **no** — a separate stream protocol |
 | firmware and account calls | **no** — those are cloud, not LAN |
-| a job queue across plates | **no** — one job, one machine |
+| a job queue | **yes** — a job is a copy of the slice, so the next slice cannot overwrite a queued one; `start queue` names every job and is the only press that lets a print start without you pressing for it. The queue advances on `FINISH`/`IDLE` and stops on `FAILED` |

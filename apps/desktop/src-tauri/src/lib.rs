@@ -50,6 +50,12 @@ struct Inner {
     engine: Engine,
     toolpath: Option<Toolpath>,
     gcode_path: Option<PathBuf>,
+    /// Jobs waiting for the machine, oldest first. Each one is a copy of the
+    /// sliced file, because slicing the next plate overwrites the first.
+    queue: Vec<QueuedJob>,
+    queue_next_id: u64,
+    /// The queued job the machine is on, so the pane can say which of how many.
+    queue_running: Option<String>,
     /// The printer this window is pointed at, when one has been connected.
     host_config: Option<shale_host::HostConfig>,
     slicing: bool,
@@ -2246,19 +2252,18 @@ fn host_status(host: State<PrinterHost>) -> Result<shale_host::Status, String> {
 /// Upload the plate that was just sliced and hand the machine the command to
 /// print it. Two steps on purpose: the file lands first, so a failed upload
 /// never leaves a print command pointing at a name that is not there.
-#[tauri::command]
-async fn host_send(
-    state: State<'_, AppState>,
-    host: State<'_, PrinterHost>,
+/// Upload one file and tell the machine to print it. The send button and the
+/// queue both come through here, so a queued job takes exactly the same path as
+/// a pressed one — including the bed type and the sequence number.
+async fn send_file(
+    state: &State<'_, AppState>,
+    host: &State<'_, PrinterHost>,
+    path: PathBuf,
     bed_type: String,
 ) -> Result<serde_json::Value, String> {
-    let (path, config) = {
-        let inner = lock(&state)?;
-        let path = inner
-            .gcode_path
-            .clone()
-            .ok_or_else(|| "Slice the plate first: there is no G-code to send.".to_string())?;
-        (path, inner.host_config.clone())
+    let config = {
+        let inner = lock(state)?;
+        inner.host_config.clone()
     };
     let config = config.ok_or_else(|| "Connect a printer first.".to_string())?;
     let name = path
@@ -2278,6 +2283,164 @@ async fn host_send(
     let sequence = host.sequence.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     host.with(|link| link.send(shale_host::gcode_file_command(sequence, &remote, &bed_type)).map_err(|err| err.to_string()))?;
     Ok(serde_json::json!({ "remote": remote, "bytes": upload }))
+}
+
+/// The send button: whatever the plate last sliced.
+#[tauri::command]
+async fn host_send(
+    state: State<'_, AppState>,
+    host: State<'_, PrinterHost>,
+    bed_type: String,
+) -> Result<serde_json::Value, String> {
+    let path = {
+        let inner = lock(&state)?;
+        inner
+            .gcode_path
+            .clone()
+            .ok_or_else(|| "Slice the plate first: there is no G-code to send.".to_string())?
+    };
+    send_file(&state, &host, path, bed_type).await
+}
+
+fn queue_views(inner: &Inner) -> Vec<QueueView> {
+    inner
+        .queue
+        .iter()
+        .map(|job| QueueView {
+            id: job.id,
+            name: job.name.clone(),
+            bytes: job.bytes,
+            running: inner.queue_running.as_deref() == Some(job.name.as_str()),
+        })
+        .collect()
+}
+
+/// Put the plate's slice in the queue. The file is copied: slicing the next
+/// plate writes the same path, and a queue pointing at a file someone is about
+/// to overwrite is a queue that prints the wrong job.
+#[tauri::command]
+fn queue_add(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: Option<String>,
+) -> Result<Vec<QueueView>, String> {
+    let mut inner = lock(&state)?;
+    let source = inner
+        .gcode_path
+        .clone()
+        .ok_or_else(|| "Slice the plate first: there is no G-code to queue.".to_string())?;
+    let bytes = fs::metadata(&source)
+        .map_err(|err| format!("Could not read the slice: {err}"))?
+        .len();
+    let id = inner.queue_next_id;
+    inner.queue_next_id += 1;
+    let dir = config_dir(&app)?.join("queue");
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let target = dir.join(format!("{id}.gcode"));
+    fs::copy(&source, &target).map_err(|err| format!("Could not copy the slice: {err}"))?;
+    let name = name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("job {id}"));
+    inner.queue.push(QueuedJob {
+        id,
+        name,
+        path: target,
+        bytes,
+    });
+    Ok(queue_views(&inner))
+}
+
+#[tauri::command]
+fn queue_list(state: State<'_, AppState>) -> Result<Vec<QueueView>, String> {
+    let inner = lock(&state)?;
+    Ok(queue_views(&inner))
+}
+
+#[tauri::command]
+fn queue_remove(state: State<'_, AppState>, id: u64) -> Result<Vec<QueueView>, String> {
+    let mut inner = lock(&state)?;
+    if let Some(index) = inner.queue.iter().position(|job| job.id == id) {
+        let job = inner.queue.remove(index);
+        let _ = fs::remove_file(&job.path);
+        if inner.queue_running.as_deref() == Some(job.name.as_str()) {
+            inner.queue_running = None;
+        }
+    }
+    Ok(queue_views(&inner))
+}
+
+#[tauri::command]
+fn queue_clear(state: State<'_, AppState>) -> Result<Vec<QueueView>, String> {
+    let mut inner = lock(&state)?;
+    for job in inner.queue.drain(..) {
+        let _ = fs::remove_file(&job.path);
+    }
+    inner.queue_running = None;
+    Ok(Vec::new())
+}
+
+/// Send the head of the queue. Reached only from a pressed button: this is the
+/// one path that starts a print the person did not press "print" for, and it is
+/// why the queue's own button names every job before it starts.
+#[tauri::command]
+async fn queue_start_next(
+    state: State<'_, AppState>,
+    host: State<'_, PrinterHost>,
+    bed_type: String,
+) -> Result<serde_json::Value, String> {
+    let job = {
+        let mut inner = lock(&state)?;
+        if inner.queue.is_empty() {
+            return Err("The queue is empty.".to_string());
+        }
+        inner.queue.remove(0)
+    };
+    match send_file(&state, &host, job.path.clone(), bed_type).await {
+        Ok(sent) => {
+            let mut inner = lock(&state)?;
+            inner.queue_running = Some(job.name.clone());
+            Ok(serde_json::json!({
+                "name": job.name,
+                "sent": sent,
+                "remaining": inner.queue.len(),
+                "queue": queue_views(&inner),
+            }))
+        }
+        Err(err) => {
+            // Nothing is lost: the job goes back to the head of the queue.
+            let mut inner = lock(&state)?;
+            inner.queue.insert(0, job);
+            Err(err)
+        }
+    }
+}
+
+/// The machine has stopped printing the queued job, so the pane stops calling
+/// it the running one.
+#[tauri::command]
+fn queue_release(state: State<'_, AppState>) -> Result<Vec<QueueView>, String> {
+    let mut inner = lock(&state)?;
+    inner.queue_running = None;
+    Ok(queue_views(&inner))
+}
+
+/// A job waiting for the machine.
+#[derive(Clone, Debug)]
+struct QueuedJob {
+    id: u64,
+    name: String,
+    path: PathBuf,
+    bytes: u64,
+}
+
+#[derive(Serialize)]
+struct QueueView {
+    id: u64,
+    name: String,
+    bytes: u64,
+    /// True for the job the machine is printing right now.
+    running: bool,
 }
 
 #[tauri::command]
@@ -3224,6 +3387,9 @@ pub fn run() {
             engine,
             toolpath,
             gcode_path,
+            queue: Vec::new(),
+            queue_next_id: 1,
+            queue_running: None,
             slicing: false,
             cancel_import: import_cancel,
             engine_message,
@@ -3305,6 +3471,12 @@ pub fn run() {
             host_status,
             host_send,
             host_control,
+            queue_add,
+            queue_list,
+            queue_remove,
+            queue_clear,
+            queue_start_next,
+            queue_release,
             slice_tools,
             overhang_patches,
             paint_support,

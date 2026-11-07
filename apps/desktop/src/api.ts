@@ -207,6 +207,22 @@ export interface SliceTools {
 
 export const sliceTools = () => invoke<SliceTools>("slice_tools");
 
+/** A job waiting for the machine. `running` marks the one it is on now. */
+export interface QueueJob {
+  id: number;
+  name: string;
+  bytes: number;
+  running: boolean;
+}
+
+export const queueAdd = (name?: string) => invoke<QueueJob[]>("queue_add", { name });
+export const queueList = () => invoke<QueueJob[]>("queue_list");
+export const queueRemove = (id: number) => invoke<QueueJob[]>("queue_remove", { id });
+export const queueClear = () => invoke<QueueJob[]>("queue_clear");
+export const queueRelease = () => invoke<QueueJob[]>("queue_release");
+export const queueStartNext = (bedType: string) =>
+  invoke<{ name: string; remaining: number; queue: QueueJob[] }>("queue_start_next", { bedType });
+
 export const hostControl = (command: "pause" | "resume" | "stop") =>
   invoke<void>("host_control", { command });
 
