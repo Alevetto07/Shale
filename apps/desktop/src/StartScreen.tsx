@@ -340,7 +340,9 @@ function menuItems({
     { id: "open", label: "Open project...", hint: "o", run: onOpen },
     { id: "import", label: "Import model...", hint: "i", run: onImport },
   );
-  for (const recent of recents.slice(0, 8)) {
+  // Five, not eight: eight recents plus the commands and the printers row make
+  // a menu taller than the window, and the last row was clipped by the edge.
+  for (const recent of recents.slice(0, 5)) {
     items.push({
       id: `recent-${recent.path}`,
       label: recent.name,
