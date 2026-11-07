@@ -388,6 +388,10 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   min-height: 0;
   display: grid;
   grid-template-rows: 1fr auto;
+  /* One column that cannot exceed the stage. Without this the column is sized
+     to its content, and the canvas — a device-pixel buffer — makes it wider
+     than the pane, which pushed the plate and its legend off the right edge. */
+  grid-template-columns: minmax(0, 1fr);
   position: relative;
   background: var(--bg);
 }
@@ -396,6 +400,10 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   min-width: 0;
   min-height: 0;
   height: 100%;
+  /* The canvas is sized in device pixels and will happily grow past its column;
+     clipping here keeps the plate inside the stage, which is what keeps the
+     legend — positioned against this box — on screen. */
+  overflow: hidden;
 }
 .plate-field, .margin-field {
   position: absolute;
@@ -405,7 +413,7 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   pointer-events: none;
 }
 .margin-field { position: fixed; z-index: 3; }
-.plate canvas { display: block; }
+.plate canvas { display: block; max-width: 100%; max-height: 100%; }
 .caption {
   position: absolute;
   left: 1rem;
@@ -962,8 +970,8 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 .tabs {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  padding: 0 1.4rem 0.55rem;
+  gap: 0.55rem;
+  padding: 0 1.4rem 0.6rem;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1036,16 +1044,41 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 .doc-tab.active .doc-close { opacity: 1; }
 .doc-close:hover { color: var(--ink); }
 
+/* The tab strip's own controls. `+` is a button with a box around it, not a
+   stray glyph between two words: it is the only control here that makes
+   something out of nothing, and it should look like one. */
+.doc-rule {
+  width: 1px;
+  align-self: stretch;
+  margin: 0.3rem 0.35rem;
+  background: var(--line);
+}
 .doc-add,
 .doc-open {
-  padding: 0.3rem 0.5rem;
+  align-self: center;
+  padding: 0.22rem 0.5rem;
   color: var(--ink-3);
   font-size: 12px;
   letter-spacing: 0.06em;
+  border-radius: 4px;
 }
-.doc-add { font-size: 16px; line-height: 1; }
-.doc-open { margin-left: 0.3rem; text-transform: lowercase; color: var(--ink-2); }
-.doc-open:hover { color: var(--ink); }
+.doc-add {
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+.doc-add:hover {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+.doc-open { color: var(--ink-2); }
+.doc-open:hover { color: var(--ink); background: rgba(233, 232, 242, 0.06); }
 
 .mode-bar {
   display: flex;
@@ -1650,3 +1683,24 @@ select {
   font-variant-numeric: tabular-nums;
 }
 .legend-row i.muted { opacity: 0.22; }
+
+/* The footer's groups. Each control has a one-word label in small caps and the
+   groups are separated by a hairline, so `[ solid wire ascii ]` reads as one
+   choice rather than five words in a row. */
+.scrub-group {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding-right: 0.7rem;
+  margin-right: 0.15rem;
+  border-right: 1px solid var(--line);
+}
+.scrub-group:last-of-type { border-right: 0; }
+.scrub-group em {
+  font-style: normal;
+  color: var(--ink-3);
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-right: 0.15rem;
+}

@@ -2928,8 +2928,9 @@ export function App() {
           )}
           </div>
           <footer className="scrubber">
-            <span>
-              view{" "}
+            <span className="scrub-group">
+              <em>view</em>
+              {""}
               {(["solid", "wire", "ascii"] as const).map((item) => (
                 <button
                   key={item}
@@ -2941,8 +2942,10 @@ export function App() {
                 </button>
               ))}
             </span>
-            <span>
-              colour{" "}
+            {preview && (
+            <span className="scrub-group">
+              <em>colour</em>
+              {""}
               {(["type", "speed"] as const).map((item) => (
                 <button
                   key={item}
@@ -2954,8 +2957,12 @@ export function App() {
                 </button>
               ))}
             </span>
+            )}
             {preview ? (
               <>
+                <span className="scrub-group">
+                  <em>preview</em>
+                  {""}
                 <button
                   type="button"
                   className={playing ? "selected" : ""}
@@ -2974,6 +2981,7 @@ export function App() {
                 <AsciiCheck checked={showModel} onChange={setShowModel}>
                   ghost
                 </AsciiCheck>
+                </span>
                 <div className="ascii-slider">
                   <div className="readout">
                     layer <span className="active">{String(layer + 1).padStart(3, " ")}</span> / {layerCount}

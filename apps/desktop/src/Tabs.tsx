@@ -85,11 +85,18 @@ export function TabBar({
             )}
           </span>
         ))}
-        <button type="button" className="doc-add" title="a new empty plate in its own tab" onClick={onNewTab}>
+        <span className="doc-rule" aria-hidden="true" />
+        <button
+          type="button"
+          className="doc-add"
+          aria-label="new project"
+          title="a new empty plate in its own tab"
+          onClick={onNewTab}
+        >
           +
         </button>
         <button type="button" className="doc-open" title="open a project into a new tab" onClick={onOpenTab}>
-          open…
+          Open…
         </button>
       </div>
 
