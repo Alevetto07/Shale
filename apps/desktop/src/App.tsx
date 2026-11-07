@@ -258,6 +258,27 @@ export function App() {
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
   const [printSeconds, setPrintSeconds] = useState<number | null>(null);
   const [filamentMetres, setFilamentMetres] = useState<number | null>(null);
+
+  // What the plate *is*, near enough to tell whether a slice still describes
+  // it: every part, where it sits and how big it is. A part leaving, arriving
+  // or moving makes the last slice a description of some other plate.
+  const plateKey = models
+    .map(
+      (model) =>
+        `${model.id}:${model.transform.translation.join(",")}:${model.transform.rotation_deg.join(",")}:${model.transform.scale.join(",")}`,
+    )
+    .join("|");
+  const slicedPlate = useRef<string | null>(null);
+
+  useEffect(() => {
+    // Nothing was sliced, or the plate is still the one that was sliced.
+    if (slicedPlate.current === null || slicedPlate.current === plateKey) return;
+    slicedPlate.current = null;
+    setLayerCount(0);
+    setLayerZ([]);
+    setPrintSeconds(null);
+    setFilamentMetres(null);
+  }, [plateKey]);
   const [enginePath, setEnginePath] = useState("");
   const [libDir, setLibDir] = useState("");
   const [backend, setBackend] = useState("cli");
@@ -324,10 +345,21 @@ export function App() {
           const stored = await api.instructions();
           setInstructions(stored);
           setSupport(await api.supportPlan());
-          if (existing && existing.layer_count > 0) {
+          // A slice describes the plate it was taken from. If the plate has
+          // changed since — a part added, a part taken away — the old numbers
+          // are about some other plate and the job card must not wear them.
+          const samePlate =
+            existing !== null &&
+            existing.model_ids.length === loaded.length &&
+            existing.model_ids.every((id) => loaded.some((model) => model.id === id));
+          if (existing && samePlate && existing.layer_count > 0) {
             const zs = existing.layers.map((item) => item.z);
             setLayerCount(existing.layer_count);
             setLayerZ(zs);
+            // The card's other two figures came back as dashes on a reload,
+            // because only the layers were put back.
+            setPrintSeconds(existing.print_time_seconds);
+            setFilamentMetres(existing.filament_metres);
             const marked = instructionMarks(stored, zs, 0.2);
             const focus = marked.find((index) => index >= 0 && index < existing.layer_count);
             setLayer(focus ?? Math.max(0, Math.floor(existing.layer_count / 2)));
@@ -1245,6 +1277,7 @@ export function App() {
         extra: overridesFor(),
       });
       setLayerCount(summary.layer_count);
+      slicedPlate.current = plateKey;
       setLayerZ(summary.layers.map((item) => item.z));
       setLayer(Math.max(0, summary.layer_count - 1));
       setPrintSeconds(summary.print_time_seconds);

@@ -153,6 +153,9 @@ struct SliceSummary {
     filament_metres: Option<f64>,
     warning_count: usize,
     gcode_path: String,
+    /// The parts the slice was made from. A job card may only describe the
+    /// plate it was taken from.
+    model_ids: Vec<u64>,
 }
 
 #[derive(Serialize)]
@@ -2131,6 +2134,7 @@ async fn slice_model(
             .or(facts.filament_metres),
         warning_count: outcome.resolved.warning_count,
         gcode_path: outcome.gcode_path.display().to_string(),
+        model_ids: inner.models.iter().map(|model| u64::from(model.id)).collect(),
     };
     inner.gcode_path = Some(outcome.gcode_path);
     inner.toolpath = Some(outcome.toolpath);
@@ -2550,6 +2554,7 @@ fn existing_slice(state: State<AppState>) -> Result<Option<SliceSummary>, String
         filament_metres: facts.filament_metres,
         warning_count: 0,
         gcode_path: path.display().to_string(),
+        model_ids: inner.models.iter().map(|model| u64::from(model.id)).collect(),
     }))
 }
 

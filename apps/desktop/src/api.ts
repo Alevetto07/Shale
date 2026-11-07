@@ -233,6 +233,12 @@ export interface SliceSummary {
   filament_metres: number | null;
   warning_count: number;
   gcode_path: string;
+  /**
+   * The parts this slice was made from. A slice describes the plate it was
+   * taken from, so a summary whose parts are not the parts on the plate is a
+   * description of some other plate: the shell must not show its numbers.
+   */
+  model_ids: number[];
 }
 
 export interface PreviewPath {
