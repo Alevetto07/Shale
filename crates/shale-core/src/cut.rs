@@ -11,6 +11,7 @@
 //! Everything here is geometry in the part's own frame: no engine, no transforms.
 
 use crate::mesh::TriangleMesh;
+use crate::csg;
 
 /// Distances are in millimetres; this is a tenth of a micron.
 const EPS: f64 = 1e-6;
@@ -109,6 +110,220 @@ pub fn cut(mesh: &TriangleMesh, plane: &Plane) -> Halves {
         }
     }
     halves
+}
+
+/// What a cut leaves behind so the two halves can be put back together: round
+/// pins on the lower half and matching holes in the upper.
+#[derive(Clone, Copy, Debug)]
+pub struct Pin {
+    /// Pin radius, in millimetres.
+    pub radius: f64,
+    /// How far the pin stands off the cut face.
+    pub height: f64,
+    /// Radial play, and the same amount again in depth so a pin cannot bottom
+    /// out. Bambu calls this the clearance.
+    pub clearance: f64,
+}
+
+impl Default for Pin {
+    fn default() -> Self {
+        Self {
+            radius: 2.0,
+            height: 5.0,
+            clearance: 0.2,
+        }
+    }
+}
+
+/// Cut, and put pins on the lower half with holes in the upper.
+///
+/// The pins point along the cut normal — up out of the lower half — because a
+/// vertical cylinder prints without support; a pin hanging down from the upper
+/// half would need it. `count` is how many pins to try for: they are placed
+/// inside the cut face and only where the whole pin fits, so a narrow cross
+/// section gets fewer than it asked for rather than a pin in mid-air.
+pub fn cut_with_pins(mesh: &TriangleMesh, plane: &Plane, pin: Pin, count: usize) -> Halves {
+    let mut halves = cut(mesh, plane);
+    if halves.is_empty() || pin.radius <= 0.0 {
+        return halves;
+    }
+    let segments = cross_section(mesh, plane);
+    let rings = loops(&segments);
+    let centres = pin_centres(&rings, plane, pin, count);
+    let upright = normalise(plane.normal);
+    for centre in centres {
+        // The pin stands proud of the cut face on the lower half…
+        let peg = csg::cylinder(
+            centre,
+            upright,
+            pin.radius,
+            pin.height,
+            32,
+        );
+        halves.below = csg::union(&halves.below, &peg);
+        // …and the upper half gets a hole that is wider by the clearance and
+        // deeper by the same amount, so the pin has somewhere to go.
+        let mouth = add(centre, scale(upright, -pin.clearance));
+        let bore = csg::cylinder(
+            mouth,
+            upright,
+            pin.radius + pin.clearance,
+            pin.height + pin.clearance * 2.0,
+            32,
+        );
+        halves.above = csg::subtract(&halves.above, &bore);
+    }
+    halves
+}
+
+/// Every place the plane meets an edge, as a segment on the plane.
+fn cross_section(mesh: &TriangleMesh, plane: &Plane) -> Vec<([f64; 3], [f64; 3])> {
+    let mut segments = Vec::new();
+    for triangle in &mesh.triangles {
+        let corners = [
+            as_f64(mesh.vertices[triangle[0] as usize]),
+            as_f64(mesh.vertices[triangle[1] as usize]),
+            as_f64(mesh.vertices[triangle[2] as usize]),
+        ];
+        let distance = [
+            plane.distance(corners[0]),
+            plane.distance(corners[1]),
+            plane.distance(corners[2]),
+        ];
+        if distance.iter().all(|d| *d > EPS) || distance.iter().all(|d| *d < -EPS) {
+            continue;
+        }
+        if let Some(segment) = crossing(corners, distance) {
+            segments.push(segment);
+        }
+    }
+    segments
+}
+
+/// Points inside the cut face where a pin of this size fits, spread out.
+fn pin_centres(rings: &[Vec<[f64; 3]>], plane: &Plane, pin: Pin, count: usize) -> Vec<[f64; 3]> {
+    let (u, v) = (plane_u(plane.normal), plane_v(plane.normal));
+    let flat = |point: [f64; 3]| [dot(point, u), dot(point, v)];
+    let reach = pin.radius + pin.clearance + 0.6;
+    // A pin needs clearance from the wall, and two pins need clearance from each
+    // other.
+    let spacing = reach * 2.0;
+    let mut candidates: Vec<[f64; 3]> = Vec::new();
+    let mut rings_sorted: Vec<&Vec<[f64; 3]>> = rings.iter().filter(|ring| ring.len() >= 3).collect();
+    rings_sorted.sort_by(|a, b| b.len().cmp(&a.len()));
+    for ring in rings_sorted {
+        let polygon: Vec<[f64; 2]> = ring.iter().map(|point| flat(*point)).collect();
+        let centre = ring
+            .iter()
+            .fold([0.0f64; 3], |sum, point| add_3(sum, *point));
+        let centre = scale(centre, 1.0 / ring.len() as f64);
+        let mut here = vec![centre];
+        // Along the way out from the middle, halfway to each corner: a wide
+        // face gets pins spread across it, a narrow one keeps the middle.
+        for point in ring.iter().step_by((ring.len() / 8).max(1)) {
+            here.push(lerp(centre, *point, 0.55));
+        }
+        for point in here {
+            let middle = flat(point);
+            if fits(&polygon, middle, reach) {
+                candidates.push([point[0], point[1], point[2]]);
+            }
+        }
+    }
+    let mut chosen: Vec<[f64; 3]> = Vec::new();
+    // The middle of the biggest face first, then whatever is far enough away.
+    candidates.sort_by(|a, b| {
+        let da = distance_to(*a, &rings, plane);
+        let db = distance_to(*b, &rings, plane);
+        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    for candidate in candidates {
+        if chosen.len() >= count.max(1) {
+            break;
+        }
+        if chosen
+            .iter()
+            .all(|existing| length(sub(candidate, *existing)) >= spacing)
+        {
+            chosen.push(candidate);
+        }
+    }
+    chosen
+}
+
+fn distance_to(point: [f64; 3], _rings: &[Vec<[f64; 3]>], _plane: &Plane) -> f64 {
+    // Only the ordering of the candidate list matters; the plane origin is as
+    // good a reference as any.
+    length([point[0], point[1], point[2]])
+}
+
+/// Is a disc of `radius` around `centre` entirely inside the polygon?
+fn fits(polygon: &[[f64; 2]], centre: [f64; 2], radius: f64) -> bool {
+    if !inside(polygon, centre) {
+        return false;
+    }
+    (0..16).all(|step| {
+        let angle = std::f64::consts::TAU * step as f64 / 16.0;
+        let test = [
+            centre[0] + radius * angle.cos(),
+            centre[1] + radius * angle.sin(),
+        ];
+        inside(polygon, test)
+    })
+}
+
+/// Ray-crossing test on a polygon in the plane.
+fn inside(polygon: &[[f64; 2]], point: [f64; 2]) -> bool {
+    let mut inside = false;
+    let mut previous = polygon.len() - 1;
+    for current in 0..polygon.len() {
+        let (a, b) = (polygon[current], polygon[previous]);
+        if (a[1] > point[1]) != (b[1] > point[1]) {
+            let x = a[0] + (point[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]);
+            if point[0] < x {
+                inside = !inside;
+            }
+        }
+        previous = current;
+    }
+    inside
+}
+
+fn plane_u(normal: [f64; 3]) -> [f64; 3] {
+    let helper = if normal[0].abs() < 0.9 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    normalise(cross(normal, helper))
+}
+
+fn plane_v(normal: [f64; 3]) -> [f64; 3] {
+    normalise(cross(normal, plane_u(normal)))
+}
+
+fn add_3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+fn scale(a: [f64; 3], k: f64) -> [f64; 3] {
+    [a[0] * k, a[1] * k, a[2] * k]
+}
+
+fn lerp(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
+    add(a, scale(sub(b, a), t))
+}
+
+fn length(a: [f64; 3]) -> f64 {
+    dot(a, a).sqrt()
 }
 
 fn as_f64(vertex: [f32; 3]) -> [f64; 3] {
@@ -462,6 +677,49 @@ mod tests {
         let halves = cut(&cube, &Plane::new([0.0, 0.0, 20.0], [0.0, 0.0, 1.0]));
         assert!(halves.is_empty());
         assert!((volume(&halves.below) - 1000.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_pinned_cut_leaves_a_pin_on_one_half_and_a_hole_in_the_other() {
+        let cube = boxed([0.0, 0.0, 0.0], [20.0, 20.0, 20.0]);
+        let plane = Plane::new([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]);
+        let halves = cut_with_pins(
+            &cube,
+            &plane,
+            Pin {
+                radius: 2.0,
+                height: 4.0,
+                clearance: 0.2,
+            },
+            2,
+        );
+        let lower = volume(&halves.below);
+        let upper = volume(&halves.above);
+        // A pin adds material below the plane; its hole takes material away
+        // above it. Neither half is the plain half any more.
+        assert!(lower > 4000.0 + 20.0, "the lower half should have pins: {lower}");
+        assert!(upper < 4000.0 - 20.0, "the upper half should have holes: {upper}");
+        // Two pins, so roughly twice the hole.
+        let one_hole = std::f64::consts::PI * 2.2f64.powi(2) * 4.4;
+        assert!(
+            (4000.0 - upper - 2.0 * one_hole).abs() < one_hole * 0.3,
+            "holes should account for {:.1} mm3, missing {:.1}",
+            2.0 * one_hole,
+            4000.0 - upper
+        );
+    }
+
+    #[test]
+    fn a_pin_never_lands_outside_a_narrow_face() {
+        // Ten millimetres wide, and the pin needs 2 + 0.2 + 0.6 of clearance on
+        // every side: one fits in the middle and no more.
+        let bar = boxed([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]);
+        let plane = Plane::new([0.0, 0.0, 5.0], [0.0, 0.0, 1.0]);
+        let halves = cut_with_pins(&bar, &plane, Pin::default(), 6);
+        let added = volume(&halves.below) - 500.0;
+        let one_pin = std::f64::consts::PI * 4.0 * 5.0;
+        let pins = (added / one_pin).round();
+        assert!(pins <= 1.0, "{pins} pins were placed on a 10 mm face");
     }
 
     #[test]

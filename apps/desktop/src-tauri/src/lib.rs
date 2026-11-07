@@ -1149,7 +1149,16 @@ fn measure_span(a: [f64; 3], b: [f64; 3]) -> shale_core::measure::Span {
 /// plane from the part's own centre. Both halves arrive in world space with an
 /// identity transform, because cutting is geometry: nothing is left to rotate.
 #[tauri::command]
-fn cut_model(state: State<AppState>, id: u32, axis: u8, offset: f64, keep: Option<String>) -> Result<Vec<ModelView>, String> {
+fn cut_model(
+    state: State<AppState>,
+    id: u32,
+    axis: u8,
+    offset: f64,
+    keep: Option<String>,
+    pins: Option<u8>,
+    pin_radius: Option<f64>,
+    pin_height: Option<f64>,
+) -> Result<Vec<ModelView>, String> {
     let mut inner = lock(&state)?;
     let index = inner
         .models
@@ -1171,7 +1180,20 @@ fn cut_model(state: State<AppState>, id: u32, axis: u8, offset: f64, keep: Optio
     normal[axis] = 1.0;
     let mut point = [0.0, 0.0, 0.0];
     point[axis] = middle;
-    let halves = shale_core::cut::cut(&world, &shale_core::cut::Plane::new(point, normal));
+    let plane = shale_core::cut::Plane::new(point, normal);
+    let halves = match pins.unwrap_or(0) {
+        0 => shale_core::cut::cut(&world, &plane),
+        count => {
+            // Pins are what makes the cut reversible: the halves come off the
+            // plate and go back together in the same place.
+            let pin = shale_core::cut::Pin {
+                radius: pin_radius.unwrap_or(2.0).clamp(0.4, 12.0),
+                height: pin_height.unwrap_or(5.0).clamp(0.6, 40.0),
+                clearance: 0.2,
+            };
+            shale_core::cut::cut_with_pins(&world, &plane, pin, count as usize)
+        }
+    };
     let keep = keep.unwrap_or_else(|| "both".to_string());
     let mut pieces: Vec<(&str, TriangleMesh)> = Vec::new();
     if keep != "above" && !halves.below.triangles.is_empty() {

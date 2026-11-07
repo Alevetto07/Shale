@@ -365,8 +365,8 @@ export const api = {
     }),
   updateTransform: (id: number, transform: Transform) => invoke<void>("update_transform", { id, transform }),
   autoOrient: (id: number) => invoke<Transform>("auto_orient", { id }),
-  cut: (id: number, axis: number, offset: number, keep: string) =>
-    invoke<ModelView[]>("cut_model", { id, axis, offset, keep }),
+  cut: (id: number, axis: number, offset: number, keep: string, pins = 0, pinRadius = 2, pinHeight = 5) =>
+    invoke<ModelView[]>("cut_model", { id, axis, offset, keep, pins, pinRadius, pinHeight }),
   listPlates: () => invoke<PlateView[]>("list_plates"),
   addPlate: () => invoke<PlateSwitch>("add_plate"),
   switchPlate: (index: number) => invoke<PlateSwitch>("switch_plate", { index }),

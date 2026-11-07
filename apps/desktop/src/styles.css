@@ -1930,3 +1930,43 @@ select {
 .device-queue-list button:hover {
   color: var(--ink);
 }
+
+/* Pins: a small cluster under the cut row, because they are a property of the
+   cut and not a tool of their own. */
+.cut-pins {
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cut-pin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+}
+
+.cut-pin-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+}
+
+.cut-pin-field input {
+  width: 3.1rem;
+  font-size: 0.72rem;
+  padding: 0.12rem 0.24rem;
+}
+
+.cut-pin-count {
+  font-size: 0.72rem;
+  padding: 0.14rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}

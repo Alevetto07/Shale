@@ -176,6 +176,11 @@ export function App() {
   const [cutAxis, setCutAxis] = useState(2);
   const [cutOffset, setCutOffset] = useState("0");
   const [cutKeep, setCutKeep] = useState("both");
+  /// Pins turn the two halves back into one part: a round pin on the lower
+  /// half, a hole of the same size plus clearance in the upper.
+  const [cutPins, setCutPins] = useState(0);
+  const [pinRadius, setPinRadius] = useState("2");
+  const [pinHeight, setPinHeight] = useState("5");
   /// The ruler: while measuring, a click on a part drops a point instead of
   /// selecting it. Two points make a span, the number comes from the core.
   const [measuring, setMeasuring] = useState(false);
@@ -1090,7 +1095,15 @@ export function App() {
   async function cutSelected() {
     if (!selected) return;
     try {
-      const halves = await api.cut(selected.id, cutAxis, Number(cutOffset) || 0, cutKeep);
+      const halves = await api.cut(
+        selected.id,
+        cutAxis,
+        Number(cutOffset) || 0,
+        cutKeep,
+        cutPins,
+        Number(pinRadius) || 2,
+        Number(pinHeight) || 5,
+      );
       remember();
       setModels((current) => [...current.filter((model) => model.id !== selected.id), ...halves]);
       setSelectedId(halves[0]?.id ?? null);
@@ -2871,6 +2884,52 @@ export function App() {
                   <button type="button" title="Split the part with a plane through its centre" onClick={() => void cutSelected()}>
                     Cut
                   </button>
+                </div>
+                <div className="row cut-pins">
+                  <label className="cut-pin-toggle">
+                    <input
+                      type="checkbox"
+                      checked={cutPins > 0}
+                      onChange={(event) => setCutPins(event.target.checked ? 2 : 0)}
+                    />
+                    pins
+                  </label>
+                  {cutPins > 0 && (
+                    <>
+                      <label className="cut-pin-field">
+                        <span>⌀</span>
+                        <input
+                          aria-label="Pin diameter"
+                          type="number"
+                          min={1}
+                          max={20}
+                          step={0.5}
+                          value={pinRadius}
+                          onChange={(event) => setPinRadius(event.target.value)}
+                        />
+                      </label>
+                      <label className="cut-pin-field">
+                        <span>deep</span>
+                        <input
+                          aria-label="Pin depth"
+                          type="number"
+                          min={1}
+                          max={30}
+                          step={0.5}
+                          value={pinHeight}
+                          onChange={(event) => setPinHeight(event.target.value)}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="cut-pin-count"
+                        title="How many pins to try for — as many as fit inside the cut face"
+                        onClick={() => setCutPins((current) => (current >= 4 ? 1 : current + 1))}
+                      >
+                        {cutPins} {cutPins === 1 ? "pin" : "pins"}
+                      </button>
+                    </>
+                  )}
                 </div>
               </>
             )}
