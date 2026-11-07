@@ -2014,6 +2014,12 @@ select {
   padding: 0.12rem 0.24rem;
 }
 
+.cut-joint-note {
+  font-size: 0.68rem;
+  color: var(--muted, var(--ink-3));
+  letter-spacing: 0.02em;
+}
+
 .cut-pin-count {
   font-size: 0.72rem;
   padding: 0.14rem 0.4rem;

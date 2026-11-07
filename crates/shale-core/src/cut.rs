@@ -176,6 +176,258 @@ pub fn cut_with_pins(mesh: &TriangleMesh, plane: &Plane, pin: Pin, count: usize)
     halves
 }
 
+/// A dovetail: a tab that is wider at its tip than at its root.
+///
+/// Pins stop the halves sliding across the seam; they do not stop the seam
+/// opening, because a cylinder pulls straight out of its own hole. A dovetail
+/// does: the slot it sits in is narrower than its far end, so the two halves
+/// can be pressed together and then hold. Bambu's ear does the same job with a
+/// pair of hooks; this is the same idea in one piece.
+#[derive(Clone, Copy, Debug)]
+pub struct Dovetail {
+    /// Width where the tab leaves the cut face, in millimetres.
+    pub root: f64,
+    /// Width at the far end. Must be larger than `root`, or it is only a peg.
+    pub tip: f64,
+    /// How far the tab stands proud of the cut face.
+    pub depth: f64,
+    /// How thick the tab is across the face.
+    pub thickness: f64,
+    /// Play on every side, so the two halves assemble after printing.
+    pub clearance: f64,
+}
+
+impl Dovetail {
+    /// A tab shaped like its own root width: twice as wide at the tip, as deep
+    /// as it is wide, and as thick again. One number for the person cutting.
+    pub fn from_root(root: f64) -> Self {
+        Self {
+            root,
+            tip: root * 2.0,
+            depth: root,
+            thickness: root,
+            clearance: 0.2,
+        }
+    }
+}
+
+impl Default for Dovetail {
+    fn default() -> Self {
+        Self::from_root(6.0)
+    }
+}
+
+/// Cut, and put one dovetail across the seam: the tab on the lower half, the
+/// slot in the upper.
+///
+/// The tab is placed in the middle of the largest cross-section and only if the
+/// whole of it — tip included, plus clearance — lands inside that face. A part
+/// too narrow to hold one is cut plain, because a tab hanging over an edge is
+/// not a joint, it is a burr.
+pub fn cut_with_dovetail(mesh: &TriangleMesh, plane: &Plane, dovetail: Dovetail) -> Halves {
+    let mut halves = cut(mesh, plane);
+    if halves.is_empty() || dovetail.root <= 0.0 || dovetail.tip <= dovetail.root {
+        return halves;
+    }
+    let segments = cross_section(mesh, plane);
+    let rings = loops(&segments);
+    let up = normalise(plane.normal);
+
+    // The face with the most room on it, whichever way the plane's own axes
+    // happen to point.
+    let mut biggest: Option<(&Vec<[f64; 3]>, [f64; 3], [f64; 3])> = None;
+    let mut largest = 0.0;
+    for (u, v) in [
+        (plane_u(plane.normal), plane_v(plane.normal)),
+        (plane_v(plane.normal), plane_u(plane.normal)),
+    ] {
+        for ring in rings.iter().filter(|ring| ring.len() >= 3) {
+            let polygon: Vec<[f64; 2]> = ring.iter().map(|point| [dot(*point, u), dot(*point, v)]).collect();
+            let area = signed_area(&polygon).abs();
+            if area > largest {
+                largest = area;
+                biggest = Some((ring, u, v));
+            }
+        }
+    }
+    let Some((ring, u, v)) = biggest else {
+        return halves;
+    };
+    let flat = |point: [f64; 3]| [dot(point, u), dot(point, v)];
+    let polygon: Vec<[f64; 2]> = ring.iter().map(|point| flat(*point)).collect();
+    let centre = scale(
+        ring.iter().fold([0.0f64; 3], |sum, point| add_3(sum, *point)),
+        1.0 / ring.len() as f64,
+    );
+    let middle = flat(centre);
+
+    // A tab is a rectangle, not a disc: it has to fit across the face, not
+    // reach equally far in every direction. Asking for a circle the width of
+    // the tip is how a perfectly good arm-shaped face gets refused its tab.
+    //
+    // So the tab is fitted to the face it is cut into — but only down to half
+    // the size that was asked for. A tab a third of the width of the one you
+    // dialled in is not the joint you asked for, and the cut says nothing about
+    // having quietly shrunk it; past that point it is better to cut plain.
+    let margin = dovetail.clearance + 0.4;
+    let spread = |axis: usize| {
+        let low = polygon.iter().map(|p| p[axis]).fold(f64::MAX, f64::min);
+        let high = polygon.iter().map(|p| p[axis]).fold(f64::MIN, f64::max);
+        high - low
+    };
+    let rect_fits = |half_u: f64, half_v: f64| {
+        inside(&polygon, middle)
+            && [
+                [-1.0, -1.0],
+                [1.0, -1.0],
+                [1.0, 1.0],
+                [-1.0, 1.0],
+            ]
+            .iter()
+            .all(|corner| {
+                inside(
+                    &polygon,
+                    [
+                        middle[0] + corner[0] * (half_u + margin),
+                        middle[1] + corner[1] * (half_v + margin),
+                    ],
+                )
+            })
+    };
+
+    let wanted = (dovetail.root, dovetail.tip, dovetail.thickness);
+    let room = (spread(0) - margin * 2.0, spread(1) - margin * 2.0);
+    let mut chosen: Option<(f64, f64, f64)> = None;
+    for shrink in [1.0, 0.8, 0.6] {
+        let tip = (dovetail.tip * shrink).min(room.0);
+        let thickness = (dovetail.thickness * shrink).min(room.1);
+        let root = (dovetail.root * shrink).min(tip * 0.5).max(1.5);
+        if tip < wanted.1 * 0.5 || thickness < wanted.2 * 0.5 {
+            break;
+        }
+        if rect_fits(tip * 0.5, thickness * 0.5) {
+            chosen = Some((root, tip, thickness));
+            break;
+        }
+    }
+    let Some((root, tip, thickness)) = chosen else {
+        return halves;
+    };
+
+    // A tab that comes out of the far side of the other half is a spike, not a
+    // joint: keep it a millimetre short of the surface it is heading for.
+    let (_, above_bounds) = halves.above.bounds();
+    let face = dot(plane.point, up);
+    let top = [
+        above_bounds[0] as f64,
+        above_bounds[1] as f64,
+        above_bounds[2] as f64,
+    ];
+    let headroom = dot(top, up) - face - 1.0;
+    let depth = dovetail.depth.min(headroom.max(1.0)).max(1.0);
+
+    let tab = dovetail_prism(centre, u, v, up, root, tip, thickness, depth);
+    halves.below = csg::union(&halves.below, &tab);
+
+    // The slot is the same shape, grown by the clearance on every side and
+    // started a hair behind the cut face so the two booleans do not share a
+    // plane.
+    let mouth = add(centre, scale(up, -dovetail.clearance));
+    let slot = dovetail_prism(
+        mouth,
+        u,
+        v,
+        up,
+        root + dovetail.clearance * 2.0,
+        tip + dovetail.clearance * 2.0,
+        thickness + dovetail.clearance * 2.0,
+        depth + dovetail.clearance * 2.0,
+    );
+    halves.above = csg::subtract(&halves.above, &slot);
+    halves
+}
+
+/// A trapezoid prism: `root` wide where it meets the face, `tip` wide at the
+/// far end, `thickness` across, standing `depth` out along `up`.
+fn dovetail_prism(
+    centre: [f64; 3],
+    u: [f64; 3],
+    v: [f64; 3],
+    up: [f64; 3],
+    root: f64,
+    tip: f64,
+    thickness: f64,
+    depth: f64,
+) -> TriangleMesh {
+    let at = |across: f64, out: f64, along: f64| {
+        add(
+            centre,
+            add(scale(u, across), add(scale(v, along), scale(up, out))),
+        )
+    };
+    let (r, t) = (root * 0.5, thickness * 0.5);
+    let (q, s) = (tip * 0.5, thickness * 0.5);
+    let corners = [
+        at(-r, 0.0, -t),
+        at(r, 0.0, -t),
+        at(r, 0.0, t),
+        at(-r, 0.0, t),
+        at(-q, depth, -s),
+        at(q, depth, -s),
+        at(q, depth, s),
+        at(-q, depth, s),
+    ];
+    let middle = scale(
+        corners.iter().fold([0.0f64; 3], |sum, point| add_3(sum, *point)),
+        1.0 / 8.0,
+    );
+    let mut mesh = TriangleMesh {
+        vertices: Vec::new(),
+        triangles: Vec::new(),
+    };
+    // Corners run 0..3 round the face and 4..7 round the tip, so the six faces
+    // pair up as: back, front, two sides at constant v, two flanks at constant
+    // u. Pairing a face corner with the tip corner two along twists the flank
+    // into a non-planar quad, and a quad split into two triangles then holds a
+    // different volume from the solid it is supposed to be.
+    let quads = [
+        [0usize, 1, 2, 3], // back, against the cut face
+        [4, 5, 6, 7],      // front, the far end
+        [0, 1, 5, 4],      // side, at -v
+        [3, 2, 6, 7],      // side, at +v
+        [0, 4, 7, 3],      // flank, at -u
+        [1, 5, 6, 2],      // flank, at +u
+    ];
+    for quad in quads {
+        push_quad(&mut mesh, &[
+            corners[quad[0]],
+            corners[quad[1]],
+            corners[quad[2]],
+            corners[quad[3]],
+        ], middle);
+    }
+    mesh
+}
+
+/// Two triangles for a quad, wound so the face points away from `inside`.
+fn push_quad(mesh: &mut TriangleMesh, corners: &[[f64; 3]; 4], inside: [f64; 3]) {
+    let normal = cross(sub(corners[1], corners[0]), sub(corners[2], corners[0]));
+    let outward = sub(
+        scale(
+            corners.iter().fold([0.0f64; 3], |sum, point| add_3(sum, *point)),
+            0.25,
+        ),
+        inside,
+    );
+    if dot(normal, outward) < 0.0 {
+        push_triangle(mesh, &[corners[0], corners[2], corners[1]]);
+        push_triangle(mesh, &[corners[0], corners[3], corners[2]]);
+    } else {
+        push_triangle(mesh, &[corners[0], corners[1], corners[2]]);
+        push_triangle(mesh, &[corners[0], corners[2], corners[3]]);
+    }
+}
+
 /// Every place the plane meets an edge, as a segment on the plane.
 fn cross_section(mesh: &TriangleMesh, plane: &Plane) -> Vec<([f64; 3], [f64; 3])> {
     let mut segments = Vec::new();
@@ -731,5 +983,85 @@ mod tests {
         assert!((total - 1000.0).abs() < 1e-2, "{total}");
         // Symmetric cut through the middle splits the cube in two equal parts.
         assert!((volume(&halves.above) - 500.0).abs() < 1.0, "{}", volume(&halves.above));
+    }
+    #[test]
+    fn a_dovetail_stands_proud_of_the_face_and_leaves_a_slot_for_itself() {
+        let cube = boxed([0.0, 0.0, 0.0], [20.0, 20.0, 20.0]);
+        let plane = Plane::new([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]);
+        let dovetail = Dovetail {
+            root: 4.0,
+            tip: 8.0,
+            depth: 4.0,
+            thickness: 8.0,
+            clearance: 0.2,
+        };
+        let halves = cut_with_dovetail(&cube, &plane, dovetail);
+        let plain = cut(&cube, &plane);
+        let lower = volume(&halves.below);
+        let upper = volume(&halves.above);
+        // The tab is a trapezoid 4 mm at the face, 8 mm at the tip, 4 mm deep
+        // and 8 mm thick: 24 mm2 of profile, 192 mm3 of plastic, added below
+        // the plane.
+        assert!(
+            (lower - (volume(&plain.below) + 192.0)).abs() < 2.0,
+            "the lower half should carry the tab: {lower}"
+        );
+        // The slot takes that 192 mm3 away, plus the clearance around it.
+        assert!(
+            upper < volume(&plain.above) - 190.0 && upper > volume(&plain.above) - 260.0,
+            "the upper half should hold the slot: {upper}"
+        );
+        // BSP leaves seams where it clips a polygon against its neighbour, so
+        // "closed" here means a few open edges, not none.
+        let seams = csg::open_edges(&halves.above);
+        assert!(seams <= 40, "the slotted half should be all but closed: {seams} open edges");
+        let lower_seams = csg::open_edges(&halves.below);
+        assert!(lower_seams <= 40, "the tabbed half should be all but closed: {lower_seams}");
+        // It really is a dovetail: the tab reaches past the plane it was cut on.
+        let (_, top) = halves.below.bounds();
+        assert!((top[2] as f64 - 14.0).abs() < 1e-3, "the tab is 4 mm proud: {top:?}");
+    }
+
+    #[test]
+    fn a_flat_plate_takes_a_dovetail_the_size_it_was_asked_for() {
+        // The bracket's real dimensions: 70 mm square, 11 mm tall, cut through
+        // the middle. A full-size tab would be 8 mm deep, but the upper half is
+        // only 5.5 mm thick, so it is held a millimetre short of coming out of
+        // the top: 4.5 mm deep, 8 mm at the root, 16 mm at the tip, 8 mm thick.
+        // That is 54 mm2 of profile and 432 mm3 of plastic.
+        let plate = boxed([0.0, 0.0, 0.0], [70.0, 70.0, 11.0]);
+        let plane = Plane::new([0.0, 0.0, 5.5], [0.0, 0.0, 1.0]);
+        let plain = cut(&plate, &plane);
+        let halves = cut_with_dovetail(&plate, &plane, Dovetail::from_root(8.0));
+        let gained = volume(&halves.below) - volume(&plain.below);
+        assert!((gained - 432.0).abs() < 2.0, "the tab should add 432 mm3: {gained}");
+        let (_, top) = halves.below.bounds();
+        assert!((top[2] as f64 - 10.0).abs() < 1e-3, "the tab stops 1 mm under the surface: {top:?}");
+        assert!(csg::open_edges(&halves.above) <= 40);
+        assert!(csg::open_edges(&halves.below) <= 40);
+    }
+
+    #[test]
+    fn a_part_too_narrow_for_a_dovetail_is_cut_plain() {
+        let thin = boxed([0.0, 0.0, 0.0], [6.0, 6.0, 20.0]);
+        let plane = Plane::new([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]);
+        let plain = cut(&thin, &plane);
+        let halves = cut_with_dovetail(
+            &thin,
+            &plane,
+            Dovetail {
+                root: 8.0,
+                tip: 16.0,
+                depth: 6.0,
+                thickness: 14.0,
+                clearance: 0.2,
+            },
+        );
+        assert!(
+            (volume(&halves.below) - volume(&plain.below)).abs() < 1e-2,
+            "a tab that does not fit must not be forced in: {}",
+            volume(&halves.below)
+        );
+        assert!(is_closed(&halves.below) && is_closed(&halves.above));
     }
 }

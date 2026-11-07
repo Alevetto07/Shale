@@ -374,8 +374,17 @@ export const api = {
   /// Rest the chosen face on the plate. The normal is in world space.
   placeOnFace: (id: number, normal: [number, number, number]) =>
     invoke<Transform>("place_on_face", { id, normal }),
-  cut: (id: number, axis: number, offset: number, keep: string, pins = 0, pinRadius = 2, pinHeight = 5) =>
-    invoke<ModelView[]>("cut_model", { id, axis, offset, keep, pins, pinRadius, pinHeight }),
+  cut: (
+    id: number,
+    axis: number,
+    offset: number,
+    keep: string,
+    pins = 0,
+    pinRadius = 2,
+    pinHeight = 5,
+    dovetail = 0,
+  ) =>
+    invoke<ModelView[]>("cut_model", { id, axis, offset, keep, pins, pinRadius, pinHeight, dovetail }),
   /* One part against the others: subtract keeps what the others do not cover,
      union and common are the other two answers to the same question. */
   boolean: (id: number, mode: "subtract" | "union" | "common") =>

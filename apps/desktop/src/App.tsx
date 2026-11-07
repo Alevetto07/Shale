@@ -184,6 +184,8 @@ export function App() {
   /// Pins turn the two halves back into one part: a round pin on the lower
   /// half, a hole of the same size plus clearance in the upper.
   const [cutPins, setCutPins] = useState(0);
+  /// How wide a dovetail's root is, in millimetres; 0 means the cut has no dovetail.
+  const [cutDovetail, setCutDovetail] = useState(0);
   const [pinRadius, setPinRadius] = useState("2");
   const [pinHeight, setPinHeight] = useState("5");
   /// The ruler: while measuring, a click on a part drops a point instead of
@@ -1182,6 +1184,7 @@ export function App() {
         cutPins,
         Number(pinRadius) || 2,
         Number(pinHeight) || 5,
+        cutDovetail,
       );
       remember();
       setModels((current) => [...current.filter((model) => model.id !== selected.id), ...halves]);
@@ -3091,7 +3094,10 @@ export function App() {
                     <input
                       type="checkbox"
                       checked={cutPins > 0}
-                      onChange={(event) => setCutPins(event.target.checked ? 2 : 0)}
+                      onChange={(event) => {
+                        setCutPins(event.target.checked ? 2 : 0);
+                        if (event.target.checked) setCutDovetail(0);
+                      }}
                     />
                     pins
                   </label>
@@ -3130,6 +3136,38 @@ export function App() {
                         {cutPins} {cutPins === 1 ? "pin" : "pins"}
                       </button>
                     </>
+                  )}
+                </div>
+                <div className="row cut-pins cut-joint">
+                  <label className="cut-pin-toggle">
+                    <input
+                      type="checkbox"
+                      checked={cutDovetail > 0}
+                      onChange={(event) => {
+                        setCutDovetail(event.target.checked ? 6 : 0);
+                        if (event.target.checked) setCutPins(0);
+                      }}
+                    />
+                    dovetail
+                  </label>
+                  {cutDovetail > 0 && (
+                    <label className="cut-pin-field">
+                      <span>root</span>
+                      <input
+                        aria-label="Dovetail root width"
+                        type="number"
+                        min={2}
+                        max={40}
+                        step={1}
+                        value={cutDovetail}
+                        onChange={(event) => setCutDovetail(Number(event.target.value) || 0)}
+                      />
+                    </label>
+                  )}
+                  {cutDovetail > 0 && (
+                    <span className="cut-joint-note" title="The tab is twice the root wide at its tip, so the halves cannot be pulled apart along the cut">
+                      tip {cutDovetail * 2} · deep {cutDovetail}
+                    </span>
                   )}
                 </div>
                 <div className="row boolean-row">

@@ -13,7 +13,7 @@ Numbers are the point. "It sliced" is not a result; "55 layers, 27 min, 2.3 m,
 ```bash
 cd /c/Users/Alessio/shale
 cargo build -p shale-desktop --locked     # Finished in ~36 s
-cargo test  --workspace --locked          # 125 passed, 0 failed
+cargo test  --workspace --locked          # 128 passed, 0 failed
 cd apps/desktop && npx tsc --noEmit && npm run build   # ✓ built in ~12 s
 ```
 
@@ -71,6 +71,29 @@ triangles, 8000.00 mm³**. The same cut with two 4 mm pins 5 mm deep: **1880
 triangles, 7967.74 mm³** — 8000 + pins (124.86) − holes (163.20) to within
 6 mm³, which is the clearance doing its job. The pinned plate slices as 100
 layers with no complaint from the engine about BSP T-junctions.
+
+## A dovetail, and the cap on the boolean
+
+A 30 mm cube cut through its middle with a dovetail of `root 6`: the lower half
+goes **20 triangles / 13500.00 mm³ → 48 triangles / 13824.00 mm³**, so the tab is
+**324.00 mm³** and reaches **6.00 mm** past the plane — the trapezoid exactly,
+(6+12)/2 × 6 × 6. The upper half is bored by the same prism grown 0.2 mm on
+every side.
+
+At the kernel, a 70 × 70 × 11 plate cut at 5.5 with an 8 mm root gains
+**432.00 mm³** and its tab stops at z **10.00**: the upper half is 5.5 mm thick,
+so the tab is held a millimetre short of coming out of its top.
+
+The 1946-triangle bracket is **refused**, not attempted:
+
+> A joint needs a mesh boolean, and the boolean is only proven on small parts:
+> this part has 1946 triangles and the cap is 600. A plain cut still works.
+
+That is a limit, not a bug to be papered over. `csg` is a BSP tree and its cost
+climbs faster than the triangle count: before the cap existed, the same cut ran
+for five minutes and had to be killed, twice taking the whole window with it —
+BSP recursion over `main`'s two megabytes overflows the stack, so the geometry
+now runs on a thread with 256 MB.
 
 ## Painting support
 

@@ -1172,6 +1172,34 @@ fn measure_span(a: [f64; 3], b: [f64; 3]) -> shale_core::measure::Span {
 /// `axis` is the plane's normal (0 = X, 1 = Y, 2 = Z) and `offset` slides the
 /// plane from the part's own centre. Both halves arrive in world space with an
 /// identity transform, because cutting is geometry: nothing is left to rotate.
+/// The mesh boolean is only proven on small meshes.
+///
+/// `csg` is a BSP tree, and its cost grows faster than the triangle count: a
+/// 12-triangle cube unions in milliseconds, while the 1946-triangle bracket
+/// shipped as a test model did not finish a 12-face tab in five minutes and had
+/// to be killed. Above this many triangles the command says so instead of
+/// hanging, because a spinner that never returns is the worst answer.
+const BOOLEAN_CAP: usize = 600;
+
+/// BSP clipping recurses once for every polygon it splits, and a real part has
+/// enough of them to overflow the two megabytes a thread gets by default — a
+/// 1488-triangle bracket with a dovetail overflows `main` and the window dies
+/// with no message. Geometry that cuts a mesh runs on a stack that holds it.
+fn with_big_stack<T, F>(job: F) -> Result<T, String>
+where
+    F: FnOnce() -> T + Send,
+    T: Send,
+{
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn_scoped(scope, job)
+            .map_err(|err| format!("Could not start the cut: {err}"))?
+            .join()
+            .map_err(|_| "The cut stopped unexpectedly".to_string())
+    })
+}
+
 #[tauri::command]
 fn cut_model(
     state: State<AppState>,
@@ -1182,6 +1210,7 @@ fn cut_model(
     pins: Option<u8>,
     pin_radius: Option<f64>,
     pin_height: Option<f64>,
+    dovetail: Option<f64>,
 ) -> Result<Vec<ModelView>, String> {
     let mut inner = lock(&state)?;
     let index = inner
@@ -1205,19 +1234,40 @@ fn cut_model(
     let mut point = [0.0, 0.0, 0.0];
     point[axis] = middle;
     let plane = shale_core::cut::Plane::new(point, normal);
-    let halves = match pins.unwrap_or(0) {
-        0 => shale_core::cut::cut(&world, &plane),
-        count => {
-            // Pins are what makes the cut reversible: the halves come off the
-            // plate and go back together in the same place.
-            let pin = shale_core::cut::Pin {
-                radius: pin_radius.unwrap_or(2.0).clamp(0.4, 12.0),
-                height: pin_height.unwrap_or(5.0).clamp(0.6, 40.0),
-                clearance: 0.2,
-            };
-            shale_core::cut::cut_with_pins(&world, &plane, pin, count as usize)
+    let (pins, dovetail) = (pins.unwrap_or(0), dovetail.unwrap_or(0.0));
+    if pins > 0 && dovetail > 0.0 {
+        return Err("A cut carries one joint, not two: pegs or a dovetail".to_string());
+    }
+    if pins > 0 || dovetail > 0.0 {
+        let triangles = world.triangles.len();
+        if triangles > BOOLEAN_CAP {
+            return Err(format!(
+                "A joint needs a mesh boolean, and the boolean is only proven on small \
+                 parts: this part has {triangles} triangles and the cap is {BOOLEAN_CAP}. \
+                 A plain cut still works."
+            ));
         }
+    }
+    let pin = shale_core::cut::Pin {
+        radius: pin_radius.unwrap_or(2.0).clamp(0.4, 12.0),
+        height: pin_height.unwrap_or(5.0).clamp(0.6, 40.0),
+        clearance: 0.2,
     };
+    let halves = with_big_stack(|| match pins {
+        0 if dovetail > 0.0 => {
+            // A dovetail is what stops the seam opening: the tab is wider than
+            // the way out of its own slot.
+            shale_core::cut::cut_with_dovetail(
+                &world,
+                &plane,
+                shale_core::cut::Dovetail::from_root(dovetail.clamp(2.0, 40.0)),
+            )
+        }
+        0 => shale_core::cut::cut(&world, &plane),
+        // Pins are what makes the cut reversible: the halves come off the
+        // plate and go back together in the same place.
+        count => shale_core::cut::cut_with_pins(&world, &plane, pin, count as usize),
+    })?;
     let keep = keep.unwrap_or_else(|| "both".to_string());
     let mut pieces: Vec<(&str, TriangleMesh)> = Vec::new();
     if keep != "above" && !halves.below.triangles.is_empty() {
@@ -1295,6 +1345,17 @@ fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Boolea
     if inner.models.len() < 2 {
         return Err("A boolean needs a second part to work against".to_string());
     }
+    let triangles = inner
+        .models
+        .iter()
+        .map(|model| model.mesh.triangles.len())
+        .sum::<usize>();
+    if triangles > BOOLEAN_CAP {
+        return Err(format!(
+            "The mesh boolean is only proven on small parts: this plate has {triangles} \
+             triangles and the cap is {BOOLEAN_CAP}."
+        ));
+    }
     if !matches!(mode.as_str(), "subtract" | "union" | "common") {
         return Err("A boolean is subtract, union, or common".to_string());
     }
@@ -1324,9 +1385,9 @@ fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Boolea
     }
     for (_, other) in &others {
         let next = match mode.as_str() {
-            "subtract" => shale_core::csg::subtract(&solid, other),
-            "union" => shale_core::csg::union(&solid, other),
-            _ => shale_core::csg::intersect(&solid, other),
+            "subtract" => with_big_stack(|| shale_core::csg::subtract(&solid, other))?,
+            "union" => with_big_stack(|| shale_core::csg::union(&solid, other))?,
+            _ => with_big_stack(|| shale_core::csg::intersect(&solid, other))?,
         };
         // A boolean that empties the part is not a boolean: say so rather than
         // leaving a plate with nothing on it.
