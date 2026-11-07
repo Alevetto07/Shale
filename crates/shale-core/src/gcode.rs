@@ -23,6 +23,11 @@ pub struct LayerPaths {
 pub struct Polyline {
     pub kind: String,
     pub points: Vec<[f32; 3]>,
+    /// The feedrate these moves asked for, in mm/s. `F` is written in mm/min and
+    /// only when it changes, so it is carried forward like the position is; the
+    /// preview colours by it, and a polyline breaks where it steps, because a
+    /// line drawn at two speeds cannot carry one colour.
+    pub feed: f32,
 }
 
 /// Fill in header fields the CuraEngine CLI leaves as placeholders.
@@ -260,6 +265,7 @@ struct MotionState {
     z: f32,
     e: f32,
     unit: f32,
+    feed: f32,
     kind: String,
     current: Option<Polyline>,
     pending: Vec<Polyline>,
@@ -276,6 +282,7 @@ impl Default for MotionState {
             z: 0.0,
             e: 0.0,
             unit: 1.0,
+            feed: 0.0,
             kind: "extrusion".to_string(),
             current: None,
             pending: Vec::new(),
@@ -336,6 +343,9 @@ impl MotionState {
                         self.z + value
                     };
                 }
+                if let Some(value) = word(line, 'F') {
+                    self.feed = (value / 60.0).max(0.0) as f32;
+                }
                 let mut extruding = false;
                 if let Some(value) = word(line, 'E') {
                     if self.absolute_e {
@@ -355,16 +365,18 @@ impl MotionState {
                 } else {
                     "travel".to_string()
                 };
-                self.push(previous, next, &kind);
+                self.push(previous, next, &kind, self.feed);
                 self.last_extruded = extruding;
             }
             _ => {}
         }
     }
 
-    fn push(&mut self, from: [f32; 3], to: [f32; 3], kind: &str) {
+    fn push(&mut self, from: [f32; 3], to: [f32; 3], kind: &str, feed: f32) {
         let continues = self.current.as_ref().is_some_and(|polyline| {
-            polyline.kind == kind && polyline.points.last().copied() == Some(from)
+            polyline.kind == kind
+                && (polyline.feed - feed).abs() < 0.5
+                && polyline.points.last().copied() == Some(from)
         });
         if continues {
             if let Some(polyline) = self.current.as_mut() {
@@ -376,6 +388,7 @@ impl MotionState {
         self.current = Some(Polyline {
             kind: kind.to_string(),
             points: vec![from, to],
+            feed,
         });
     }
 

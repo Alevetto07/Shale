@@ -158,6 +158,8 @@ struct LayerMark {
 struct PreviewPath {
     kind: String,
     points: Vec<[f32; 3]>,
+    /// mm/s, so the preview can colour a line by how fast it is laid down.
+    feed: f32,
 }
 
 fn lock(state: &AppState) -> Result<std::sync::MutexGuard<'_, Inner>, String> {
@@ -2024,6 +2026,7 @@ fn preview_until(state: State<AppState>, layer: i32) -> Result<Vec<PreviewPath>,
             paths.push(PreviewPath {
                 kind: polyline.kind.clone(),
                 points: polyline.points.clone(),
+                feed: polyline.feed,
             });
         }
     }

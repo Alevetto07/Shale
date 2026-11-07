@@ -1,4 +1,4 @@
-import { KIND_COLOR } from "./Viewport";
+import { KIND_COLOR, SPEED_STOPS, type ColourMode } from "./Viewport";
 import type { PreviewPath } from "./api";
 
 /**
@@ -17,6 +17,9 @@ export interface FeatureLegendProps {
   onToggle: (kind: string) => void;
   onAll: () => void;
   onNone: () => void;
+  /// When the plate is coloured by speed, the swatches stop describing it; the
+  /// legend says so and shows the scale the ramp is using instead of pretending.
+  colour: ColourMode;
 }
 
 const PREFERRED = [
@@ -52,6 +55,22 @@ export function FeatureLegend(props: FeatureLegendProps) {
 
   const shown = kinds.filter((kind) => !props.hidden.has(kind)).length;
 
+  let low = Infinity;
+  let high = -Infinity;
+  if (props.colour === "speed") {
+    for (const path of props.paths) {
+      // Same rule as the viewport: the scale is for extrusion, not travel.
+      if (path.kind === "travel") continue;
+      const feed = path.feed ?? 0;
+      if (feed > 0) {
+        low = Math.min(low, feed);
+        high = Math.max(high, feed);
+      }
+    }
+  }
+  const speeds = props.colour === "speed" && Number.isFinite(low) && high > low;
+  const bySpeed = props.colour === "speed";
+
   return (
     <aside className="legend" aria-label="Features in the toolpath">
       <header>
@@ -65,6 +84,20 @@ export function FeatureLegend(props: FeatureLegendProps) {
           none
         </button>
       </header>
+      {bySpeed && (
+        <div className="legend-scale">
+          <span className="legend-scale-title">speed mm/s</span>
+          <div className="legend-ramp">
+            {SPEED_STOPS.map((stop) => (
+              <i key={stop} style={{ background: stop }} />
+            ))}
+          </div>
+          <div className="legend-scale-ends">
+            <span>{speeds ? low.toFixed(0) : "?"}</span>
+            <span>{speeds ? high.toFixed(0) : "?"}</span>
+          </div>
+        </div>
+      )}
       {kinds.map((kind) => {
         const off = props.hidden.has(kind);
         return (
@@ -76,7 +109,10 @@ export function FeatureLegend(props: FeatureLegendProps) {
             title={off ? `show ${label(kind)}` : `hide ${label(kind)}`}
             onClick={() => props.onToggle(kind)}
           >
-            <i style={{ background: KIND_COLOR[kind] ?? "#9c9aab" }} />
+            <i
+              className={bySpeed ? "muted" : undefined}
+              style={{ background: KIND_COLOR[kind] ?? "#9c9aab" }}
+            />
             <span>{label(kind)}</span>
             <em>{counts.get(kind)}</em>
           </button>

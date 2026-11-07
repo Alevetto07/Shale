@@ -8,6 +8,24 @@ import { localCentre, rotateScale, translationForCentre, worldCentre } from "./c
 export type TransformMode = "translate" | "rotate" | "scale";
 export type ViewStyle = "solid" | "wire" | "ascii";
 
+/// What the toolpath is coloured by. "type" is what the lines are (wall, skin,
+/// infill); "speed" is how fast they are laid down, which is the question a
+/// print that looks wrong actually asks. Bambu's preview offers the same choice.
+export type ColourMode = "type" | "speed";
+
+/// Slow to fast, in the same reading as a thermal camera: blue is a slow
+/// outer wall, red is infill moving at full clip. Five stops is enough for a
+/// line to be placed in the ramp by eye.
+export const SPEED_STOPS = ["#2f6fb5", "#3fa87a", "#d9c34a", "#d97b3a", "#c0442f"];
+
+export function speedColour(feed: number, low: number, high: number): string {
+  if (!(high > low)) return SPEED_STOPS[SPEED_STOPS.length - 1];
+  const span = high - low;
+  const place = Math.min(1, Math.max(0, (feed - low) / span));
+  const index = Math.min(SPEED_STOPS.length - 1, Math.floor(place * SPEED_STOPS.length));
+  return SPEED_STOPS[index];
+}
+
 interface SceneModel {
   id: number;
   positions: import("./api").Positions;
@@ -26,6 +44,7 @@ interface ViewportProps {
   showModel: boolean;
   showToolpaths: boolean;
   viewStyle: ViewStyle;
+  colour?: ColourMode;
   mode: TransformMode;
   frameToken: number;
   /// Measuring is a mode of its own: clicks pick points instead of selecting.
@@ -102,7 +121,9 @@ export function Viewport(props: ViewportProps) {
       {props.overlays.map((overlay) => (
         <SupportVolume key={overlay.id} overlay={overlay} />
       ))}
-      {props.showToolpaths && <Toolpaths paths={props.toolpaths} />}
+            {props.showToolpaths && (
+        <Toolpaths paths={props.toolpaths} colour={props.colour ?? "type"} />
+      )}
       <MeasureMarks marks={props.marks} label={props.measureLabel} />
       <OrbitControls makeDefault enableDamping dampingFactor={0.12} />
     </Canvas>
@@ -389,13 +410,38 @@ function PrintModel({
   );
 }
 
-function Toolpaths({ paths }: { paths: PreviewPath[] }) {
+function Toolpaths({ paths, colour }: { paths: PreviewPath[]; colour: ColourMode }) {
   const geometry = useMemo(() => {
     const positions: number[] = [];
     const colors: number[] = [];
     const color = new THREE.Color();
+    // The ramp is scaled to the plate on screen, not to a fixed 30–200 mm/s:
+    // a slow print and a fast one should both use the whole ramp.
+    let low = Infinity;
+    let high = -Infinity;
+    if (colour === "speed") {
+      // Travel is not a print speed. Leaving it in stretched the ramp to 120
+      // mm/s of nothing but rapid moves, and pressed every real pass into the
+      // blue end of it; the ramp is for what the nozzle lays down.
+      for (const path of paths) {
+        if (path.kind === "travel") continue;
+        const feed = path.feed ?? 0;
+        if (feed > 0) {
+          low = Math.min(low, feed);
+          high = Math.max(high, feed);
+        }
+      }
+    }
     for (const path of paths) {
-      color.set(KIND_COLOR[path.kind] ?? "#9c9aab");
+      color.set(
+        colour === "speed"
+          ? path.kind === "travel"
+            ? "#26282f"
+            : (path.feed ?? 0) > 0
+              ? speedColour(path.feed as number, low, high)
+              : KIND_COLOR[path.kind] ?? "#9c9aab"
+          : KIND_COLOR[path.kind] ?? "#9c9aab"
+      );
       for (let index = 1; index < path.points.length; index += 1) {
         const from = path.points[index - 1];
         const to = path.points[index];
@@ -407,7 +453,7 @@ function Toolpaths({ paths }: { paths: PreviewPath[] }) {
     geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
     return geo;
-  }, [paths]);
+  }, [paths, colour]);
   if (paths.length === 0) return null;
   return (
     <lineSegments geometry={geometry}>

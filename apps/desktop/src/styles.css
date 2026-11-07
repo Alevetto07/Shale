@@ -1619,3 +1619,34 @@ select {
   line-height: 1.35;
 }
 .settings-help.idle { opacity: 0.55; font-style: italic; }
+
+/* The speed ramp in the legend. It replaces the kind swatches as the thing that
+   explains the colours on the plate, so it sits above them and reads as a scale:
+   a bar, two numbers, nothing else. */
+.legend-scale {
+  margin: 0.15rem 0 0.5rem;
+  padding: 0 0.15rem;
+}
+.legend-scale-title {
+  display: block;
+  color: var(--ink-dim);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.legend-ramp {
+  display: flex;
+  height: 0.42rem;
+  margin: 0.3rem 0 0.18rem;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.legend-ramp i { flex: 1; }
+.legend-scale-ends {
+  display: flex;
+  justify-content: space-between;
+  color: var(--ink-dim);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
+.legend-row i.muted { opacity: 0.22; }

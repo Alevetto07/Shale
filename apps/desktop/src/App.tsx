@@ -35,7 +35,7 @@ import { FeatureLegend } from "./Legend";
 import { thumbnailJpeg } from "./thumbnail";
 import { Frame, meter, track } from "./theme";
 import { MenuBar, type SliceSettings } from "./MenuBar";
-import { Viewport, type TransformMode, type ViewStyle } from "./Viewport";
+import { Viewport, type TransformMode, type ViewStyle , type ColourMode } from "./Viewport";
 import { AsciiCheck, AsciiField, AsciiSelect, AsciiStepper } from "./widgets";
 
 interface Progress {
@@ -177,6 +177,8 @@ export function App() {
   const [measureMarks, setMeasureMarks] = useState<Array<[number, number, number]>>([]);
   const [measureSpan, setMeasureSpan] = useState<MeasureSpan | null>(null);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("solid");
+  /// What the toolpath is coloured by, as Bambu's preview lets you choose.
+  const [colourMode, setColourMode] = useState<ColourMode>("type");
   const [busy, setBusy] = useState(false);
   const [screen, setScreen] = useState<"start" | "slicer">("start");
   const [workspace, setWorkspace] = useState(false);
@@ -2852,6 +2854,7 @@ export function App() {
           {preview && paths.length > 0 && (
             <FeatureLegend
               paths={paths}
+              colour={colourMode}
               hidden={hiddenKinds}
               onToggle={(kind) =>
                 setHiddenKinds((current) => {
@@ -2910,6 +2913,7 @@ export function App() {
             showModel={solidShown}
             showToolpaths={preview}
             viewStyle={viewStyle}
+            colour={colourMode}
             mode={mode}
             frameToken={frameToken}
             measuring={measuring}
@@ -2932,6 +2936,19 @@ export function App() {
                   type="button"
                   className={viewStyle === item ? "selected" : ""}
                   onClick={() => setViewStyle(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </span>
+            <span>
+              colour{" "}
+              {(["type", "speed"] as const).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className={colourMode === item ? "selected" : ""}
+                  onClick={() => setColourMode(item)}
                 >
                   {item}
                 </button>

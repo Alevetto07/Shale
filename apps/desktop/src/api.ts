@@ -213,6 +213,8 @@ export interface SliceSummary {
 export interface PreviewPath {
   kind: string;
   points: [number, number, number][];
+  /** The feedrate the moves asked for, in mm/s; absent on a travel-less path. */
+  feed?: number;
 }
 
 export type CustomInstruction =
