@@ -1048,15 +1048,18 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   align-items: center;
   gap: 0.15rem;
   max-width: 15rem;
-  border: 1px solid transparent;
+  /* An inactive tab is still a tab: with a transparent border it read as loose
+     text sitting next to the real one. */
+  border: 1px solid rgba(233, 232, 242, 0.1);
   border-bottom: 0;
   border-radius: 2px 2px 0 0;
   padding: 0 0.1rem 0 0.55rem;
-  color: var(--ink-3);
+  color: var(--ink-2);
+  background: rgba(6, 7, 11, 0.55);
   position: relative;
   top: 1px;
 }
-.doc-tab:hover { color: var(--ink-2); }
+.doc-tab:hover { color: var(--ink); background: rgba(233, 232, 242, 0.08); }
 .doc-tab.active {
   background: var(--panel);
   border-color: var(--line);
@@ -1099,6 +1102,8 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   color: var(--ink-3);
   opacity: 0;
 }
+/* Every tab keeps a visible way out; at full strength only on the one in hand. */
+.doc-close { opacity: 0.45; }
 .doc-tab:hover .doc-close,
 .doc-tab.active .doc-close { opacity: 1; }
 .doc-close:hover { color: var(--ink); }
