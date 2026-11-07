@@ -2656,7 +2656,7 @@ export function App() {
           <Frame title="printer">
             <label>
               filter
-              <AsciiField label="filter" value={printerQuery} placeholder="Ender, Prusa…" onChange={setPrinterQuery} />
+              <AsciiField label="filter" value={printerQuery} placeholder="name…" onChange={setPrinterQuery} />
             </label>
             <label>
               machine
