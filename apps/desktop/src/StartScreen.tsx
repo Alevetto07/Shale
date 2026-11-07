@@ -22,6 +22,7 @@ export function StartScreen({
   live,
   canReturn,
   recents,
+  recentsRead,
   printers,
   printerId,
   enginePath,
@@ -42,6 +43,9 @@ export function StartScreen({
   live: boolean;
   canReturn: boolean;
   recents: RecentProject[];
+  /// False until the list has been read once: an empty list means "none yet",
+  /// but only after the read, never before it.
+  recentsRead: boolean;
   printers: PrinterInfo[];
   printerId: string;
   enginePath: string;
@@ -153,7 +157,11 @@ export function StartScreen({
           <div className="start-list">
             {items.map((item, index) => (
               <Fragment key={item.id}>
-                {item.id === "printers" && recents.length === 0 && <p className="start-label">Recent. none yet</p>}
+                {item.id === "printers" && recents.length === 0 && (
+                  <p className="start-label">
+                    {recentsRead ? "Recent. none yet" : "Recent. reading…"}
+                  </p>
+                )}
                 {item.id.startsWith("recent-") && !items[index - 1]?.id.startsWith("recent-") && (
                   <p className="start-label">Recent</p>
                 )}
