@@ -1165,6 +1165,30 @@ export function App() {
     }
   }
 
+  /// Bambu's mesh boolean: the chosen part against every other part on the
+  /// plate. Subtract is the one that earns its place in a slicer — it is how a
+  /// pocket, a window, or a clearance hole gets made without a CAD program.
+  async function booleanSelected(mode: "subtract" | "union" | "common") {
+    if (!selected) return;
+    if (models.length < 2) {
+      setNotice("a boolean needs a second part on the plate");
+      return;
+    }
+    try {
+      remember();
+      const result = await api.boolean(selected.id, mode);
+      setModels(result);
+      setSelectedId(result[0]?.id ?? null);
+      setPreview(false);
+      setPaths([]);
+      setLayerCount(0);
+      forgetSlice();
+      setNotice(`boolean: ${mode} against ${models.length - 1} part(s)`);
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
   async function duplicateSelected() {
     if (!selected) return;
     try {
@@ -3067,6 +3091,35 @@ export function App() {
                       </button>
                     </>
                   )}
+                </div>
+                <div className="row boolean-row">
+                  <span className="boolean-label" title="One part against every other part on the plate">
+                    boolean
+                  </span>
+                  <button
+                    type="button"
+                    disabled={models.length < 2}
+                    title="Cut the chosen part with the others: keep only what they do not cover"
+                    onClick={() => void booleanSelected("subtract")}
+                  >
+                    subtract
+                  </button>
+                  <button
+                    type="button"
+                    disabled={models.length < 2}
+                    title="Fuse the chosen part and the others into one solid"
+                    onClick={() => void booleanSelected("union")}
+                  >
+                    union
+                  </button>
+                  <button
+                    type="button"
+                    disabled={models.length < 2}
+                    title="Keep only where the chosen part and the others overlap"
+                    onClick={() => void booleanSelected("common")}
+                  >
+                    common
+                  </button>
                 </div>
               </>
             )}

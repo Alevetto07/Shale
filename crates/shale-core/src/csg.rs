@@ -554,6 +554,49 @@ mod tests {
     }
 
     #[test]
+    fn two_cubes_overlapping_halfway() {
+        // The case a mesh boolean actually meets: two boxes sharing four
+        // faces. Every plane of one lies exactly on a plane of the other, so
+        // the coplanar rule is what decides whether the answer is solid or a
+        // shell with the middle missing.
+        let a = boxed([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]);
+        let b = boxed([5.0, 0.0, 0.0], [15.0, 10.0, 10.0]);
+
+        let difference = subtract(&a, &b);
+        let unioned = union(&a, &b);
+        let common = intersect(&a, &b);
+        println!(
+            "difference {:.2}, union {:.2}, common {:.2}; open edges {} {} {}",
+            volume(&difference),
+            volume(&unioned),
+            volume(&common),
+            open_edges(&difference),
+            open_edges(&unioned),
+            open_edges(&common)
+        );
+
+        assert!((volume(&difference) - 500.0).abs() < 5.0, "half the cube is left");
+        assert!((volume(&unioned) - 1500.0).abs() < 5.0, "the union is both minus the overlap");
+        assert!((volume(&common) - 500.0).abs() < 5.0, "the overlap is the shared half");
+        // Twelve seams, not a hole: BSP clipping splits a polygon without
+        // splitting its neighbour, so the surface is closed but does not pair
+        // edge-for-edge (see `open_edges`). A *large* count is the failure —
+        // these are the four shared planes' worth of T-junctions and nothing
+        // else, and the volume identity above is what proves the solid.
+        for (name, mesh) in [
+            ("difference", &difference),
+            ("union", &unioned),
+            ("common", &common),
+        ] {
+            assert!(
+                open_edges(mesh) <= 24,
+                "{name} has {} open edges, which is more seam than a box has",
+                open_edges(mesh)
+            );
+        }
+    }
+
+    #[test]
     fn a_pin_adds_its_own_volume() {
         let cube = boxed([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]);
         let pin = cylinder([5.0, 5.0, 10.0], [0.0, 0.0, 1.0], 2.0, 6.0, 48);

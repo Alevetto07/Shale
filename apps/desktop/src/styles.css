@@ -1955,6 +1955,21 @@ select {
 
 /* Pins: a small cluster under the cut row, because they are a property of the
    cut and not a tool of their own. */
+.boolean-row {
+  /* A verb, three answers: the label carries the word so the buttons stay one
+     word each and the row never wraps into the next section. */
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.boolean-label {
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-right: 0.2rem;
+}
+
 .cut-pins {
   gap: 0.4rem;
   align-items: center;

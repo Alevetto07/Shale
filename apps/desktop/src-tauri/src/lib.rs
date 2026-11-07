@@ -1252,6 +1252,90 @@ fn cut_model(
     Ok(views)
 }
 
+/// One part against the others: the boolean Bambu calls a mesh boolean.
+/// `mode` is `subtract` (the chosen part keeps only what the others do not
+/// cover), `union`, or `common`.
+#[tauri::command]
+fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Vec<ModelView>, String> {
+    let mut inner = lock(&state)?;
+    let index = inner
+        .models
+        .iter()
+        .position(|model| model.id == id)
+        .ok_or_else(|| "That model is no longer loaded".to_string())?;
+    if inner.models.len() < 2 {
+        return Err("A boolean needs a second part to work against".to_string());
+    }
+    if !matches!(mode.as_str(), "subtract" | "union" | "common") {
+        return Err("A boolean is subtract, union, or common".to_string());
+    }
+    // Both sides are baked into world space: a boolean of two parts that were
+    // merely dragged is a boolean of where they are, not of where they were.
+    let mut solid = shale_core::mesh::bake(&inner.models[index].mesh, &inner.models[index].transform);
+    let others: Vec<TriangleMesh> = inner
+        .models
+        .iter()
+        .enumerate()
+        .filter(|(position, _)| *position != index)
+        .map(|(_, model)| shale_core::mesh::bake(&model.mesh, &model.transform))
+        .collect();
+    for other in &others {
+        let next = match mode.as_str() {
+            "subtract" => shale_core::csg::subtract(&solid, other),
+            "union" => shale_core::csg::union(&solid, other),
+            _ => shale_core::csg::intersect(&solid, other),
+        };
+        // A boolean that empties the part is not a boolean: say so rather than
+        // leaving a plate with nothing on it.
+        if next.triangles.is_empty() || shale_core::cut::volume(&next).abs() < 0.01 {
+            return Err(format!(
+                "That {} leaves nothing of this part",
+                match mode.as_str() {
+                    "subtract" => "cut",
+                    "union" => "union",
+                    _ => "overlap",
+                }
+            ));
+        }
+        solid = next;
+    }
+    let model = &inner.models[index];
+    let name = model.name.clone();
+    let report = model.report.clone();
+    let settings = model.settings.clone();
+    let source_bytes = model.source_bytes.clone();
+    // Every part has been folded in: the cutters are cutlery now, not
+    // geometry, and leaving them behind would leave a plate printed twice.
+    inner.models.clear();
+    let (low, _) = shale_core::mesh::bounds(&solid);
+    let transform = Transform {
+        translation: [0.0, 0.0, -low[2]],
+        rotation_deg: [0.0, 0.0, 0.0],
+        scale: [1.0, 1.0, 1.0],
+    };
+    let report = ImportReport {
+        triangles: solid.triangles.len(),
+        ..report
+    };
+    let new_id = inner.next_id;
+    inner.next_id += 1;
+    let view = view_of(new_id, &name, &transform, &report, &settings, None);
+    inner.models.push(LoadedModel {
+        id: new_id,
+        name,
+        mesh: solid,
+        transform,
+        report,
+        source_bytes,
+        visible: true,
+        settings,
+        slot: None,
+    });
+    inner.toolpath = None;
+    inner.gcode_path = None;
+    Ok(vec![view])
+}
+
 #[tauri::command]
 fn drop_model(state: State<AppState>, id: u32) -> Result<Transform, String> {
     let mut inner = lock(&state)?;
@@ -3526,6 +3610,7 @@ pub fn run() {
             snap_measure,
             measure_span,
             cut_model,
+        boolean_model,
             calibration_tower,
             flow_coupon,
             pressure_tower,
