@@ -195,6 +195,9 @@ export const hostStatus = () => invoke<HostStatus>("host_status");
 export const hostSend = (bedType: string) =>
   invoke<{ remote: string; bytes: number }>("host_send", { bedType });
 
+export const sliceTools = () =>
+  invoke<{ tools: number[]; changes: number; file: string | null }>("slice_tools");
+
 export const hostControl = (command: "pause" | "resume" | "stop") =>
   invoke<void>("host_control", { command });
 
@@ -310,6 +313,13 @@ export const api = {
     qualityType: string | null,
     materialId: string | null
   ) => invoke<Record<string, string>>("profile_settings", { printerId, variantName, qualityType, materialId }),
+  // The definition's own sentence for a setting, so the sheet can say what a
+  // row means instead of leaving the label to carry it.
+  settingsHelp: (printerId: string, keys: string[]) =>
+    invoke<{ key: string; label: string | null; description: string | null }[]>("settings_help", {
+      printerId,
+      keys,
+    }),
   importModel: (
     path: string,
     printerId: string | null,

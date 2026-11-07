@@ -1595,3 +1595,27 @@ select {
   background-position: right 0.2rem center;
   padding-right: 1.15rem;
 }
+
+.device-confirm p.device-warn {
+  margin: 0.55rem 0 0;
+  max-width: 46ch;
+  color: var(--amber, #d9a441);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+/* The sheet's own footnote: what the setting under the hand does, in the
+   printer definition's words. Fixed height so hovering never shifts the rows. */
+.settings-help {
+  position: sticky;
+  bottom: 0;
+  margin: 0;
+  padding: 0.55rem 0.9rem 0.6rem;
+  min-height: 2.9rem;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(to bottom, transparent, var(--panel) 35%);
+  color: var(--ink-dim);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+.settings-help.idle { opacity: 0.55; font-style: italic; }

@@ -68,6 +68,31 @@ const FALLBACK_BED: Bed = {
 
 /// The plate a window opens with. A window always has one tab, so a plate
 /// always has somewhere to be put away.
+/// The machine and material the window was last left on. Bambu Studio comes
+/// back to what you were printing on; a slicer that resets to an Ender-3 every
+/// time it starts makes you choose again for no reason. Storage can be missing
+/// or full (a private window, a locked profile), so the read is total.
+type BootProfile = { printerId: string; variant: string | null; quality: string | null; material: string | null };
+
+function readBootProfile(): BootProfile | null {
+  try {
+    const raw = window.localStorage.getItem("shale.profile");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<BootProfile>;
+    if (typeof parsed.printerId !== "string" || !parsed.printerId) return null;
+    return {
+      printerId: parsed.printerId,
+      variant: typeof parsed.variant === "string" ? parsed.variant : null,
+      quality: typeof parsed.quality === "string" ? parsed.quality : null,
+      material: typeof parsed.material === "string" ? parsed.material : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const BOOT_PROFILE = readBootProfile();
+
 const FIRST_TAB: DocTab[] = [{ id: 1, name: "Untitled", path: null, scratch: null, dirty: false }];
 
 export function App() {
@@ -267,10 +292,24 @@ export function App() {
             setPreview(true);
             setShowModel(false);
           }
+          const remembered = BOOT_PROFILE
+            ? list.find((printer) => printer.id === BOOT_PROFILE.printerId)
+            : undefined;
           const preferred =
+            remembered ??
             list.find((printer) => printer.id === "creality_ender3") ??
             list.find((printer) => printer.id === "prusa_i3") ??
             list[0];
+          // The printer effect below picks the machine's own preferred variant,
+          // quality and material unless something is waiting in `restore`; a
+          // remembered choice has to be there before the printer id is set.
+          if (remembered && BOOT_PROFILE) {
+            restore.current = {
+              variant: BOOT_PROFILE.variant,
+              quality: BOOT_PROFILE.quality,
+              material: BOOT_PROFILE.material,
+            };
+          }
           if (preferred) setPrinterId(preferred.id);
           if (loaded.length > 0 || next.demo_model) {
             setScreen("slicer");
@@ -296,6 +335,19 @@ export function App() {
       void unlisten.then((off) => off());
     };
   }, []);
+
+  useEffect(() => {
+    if (!printerId || !variant || !quality) return;
+    try {
+      window.localStorage.setItem(
+        "shale.profile",
+        JSON.stringify({ printerId, variant, quality, material }),
+      );
+    } catch {
+      // A window that cannot write storage still slices; remembering is a
+      // convenience, not a precondition.
+    }
+  }, [printerId, variant, quality, material]);
 
   useEffect(() => {
     if (!printerId) return;
@@ -352,11 +404,11 @@ export function App() {
         setBed(next);
         const pending = restore.current;
         if (pending) {
-          setLayerHeight(pending.layerHeight);
-          setInfill(pending.infill);
-          setSupports(pending.supports);
-          setNozzle(pending.nozzle);
-          setBedTemp(pending.bedTemp);
+          if (pending.layerHeight !== undefined) setLayerHeight(pending.layerHeight);
+          if (pending.infill !== undefined) setInfill(pending.infill);
+          if (pending.supports !== undefined) setSupports(pending.supports);
+          if (pending.nozzle !== undefined) setNozzle(pending.nozzle);
+          if (pending.bedTemp !== undefined) setBedTemp(pending.bedTemp);
           restore.current = null;
           return;
         }
@@ -2990,11 +3042,14 @@ interface Restore {
   variant: string | null;
   quality: string | null;
   material: string | null;
-  layerHeight: number;
-  infill: number;
-  supports: boolean;
-  nozzle: number;
-  bedTemp: number;
+  // A project carries its numbers, so opening one restores all of them. The
+  // machine remembered across a restart carries only the choice of machine,
+  // quality and material — the numbers are the profile's, not a project's.
+  layerHeight?: number;
+  infill?: number;
+  supports?: boolean;
+  nozzle?: number;
+  bedTemp?: number;
 }
 
 function round3(value: number): number {

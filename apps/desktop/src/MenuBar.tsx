@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { api } from "./api";
 import type { MaterialInfo, PrinterInfo, QualityInfo, VariantInfo } from "./api";
 import { SETTING_GROUPS } from "./settings";
 import type { ViewStyle } from "./Viewport";
@@ -172,19 +173,57 @@ export function MenuBar(props: MenuBarProps) {
   // Bambu's sheet has a search field because nobody remembers which of eleven
   // tabs holds the setting they want. The hits are drawn by the same row
   // renderer as the tab, so they look and behave the same.
+  // What each row means, in the printer definition's own words. Fetched once
+  // per machine when the sheet opens: the sentences do not depend on values.
+  const [help, setHelp] = useState<Record<string, string>>({});
+  const [helpKey, setHelpKey] = useState<string | null>(null);
+  const printerId = props.printerId;
+  useEffect(() => {
+    if (open !== "settings" || !printerId) return;
+    const keys = Array.from(new Set(SETTING_GROUPS.flatMap((group) => group.fields.map((field) => field.key))));
+    let cancelled = false;
+    void (async () => {
+      try {
+        const entries = await api.settingsHelp(printerId, keys);
+        if (cancelled) return;
+        const next: Record<string, string> = {};
+        for (const entry of entries) {
+          if (entry.description) next[entry.key] = entry.description;
+        }
+        setHelp(next);
+      } catch {
+        // A sheet without sentences is still a usable sheet.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, printerId]);
+
+  const inspect = (event: { target: EventTarget | null }) => {
+    const node = event.target as HTMLElement | null;
+    const row = node?.closest?.("[data-key]") as HTMLElement | null;
+    setHelpKey(row?.getAttribute("data-key") ?? null);
+  };
+
   const hits = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return [];
     const found: { group: string; item: (typeof SETTING_GROUPS)[number]["fields"][number] }[] = [];
     for (const entry of SETTING_GROUPS) {
       for (const item of entry.fields) {
-        if (item.label.toLowerCase().includes(term) || item.key.toLowerCase().includes(term)) {
+        const sentence = (help[item.key] ?? "").toLowerCase();
+        if (
+          item.label.toLowerCase().includes(term) ||
+          item.key.toLowerCase().includes(term) ||
+          sentence.includes(term)
+        ) {
           found.push({ group: entry.label, item });
         }
       }
     }
     return found;
-  }, [search]);
+  }, [search, help]);
 
   const field = (item: (typeof SETTING_GROUPS)[number]["fields"][number]) => {
     const value = props.overrides[item.key] ?? "";
@@ -214,7 +253,7 @@ export function MenuBar(props: MenuBarProps) {
       // the resolver writes booleans lowercase ("true"), the sheet writes "True"
       const on = value === "" ? /^true$/i.test(profile) : value === "True";
       return (
-        <div className="menu-row" key={item.key}>
+        <div className="menu-row" key={item.key} data-key={item.key}>
           {name}
           <label className="menu-toggle">
             <input
@@ -229,7 +268,7 @@ export function MenuBar(props: MenuBarProps) {
     }
     if (item.kind === "choice") {
       return (
-        <div className="menu-row" key={item.key}>
+        <div className="menu-row" key={item.key} data-key={item.key}>
           {name}
           <select
             value={value === "" ? (options_has(item, profile) ? profile : "") : value}
@@ -246,7 +285,7 @@ export function MenuBar(props: MenuBarProps) {
       );
     }
     return (
-      <div className="menu-row" key={item.key}>
+      <div className="menu-row" key={item.key} data-key={item.key}>
         {name}
         <span className="menu-field">
           <input
@@ -529,7 +568,13 @@ export function MenuBar(props: MenuBarProps) {
           Slice settings
         </button>
         {open === "settings" && (
-          <div className="menu-sheet wide settings-sheet" role="menu">
+          <div
+            className="menu-sheet wide settings-sheet"
+            role="menu"
+            onMouseOver={inspect}
+            onFocus={inspect}
+            onMouseLeave={() => setHelpKey(null)}
+          >
             <div className="settings-scope">
               <span>Applies to</span>
               <select
@@ -657,6 +702,11 @@ export function MenuBar(props: MenuBarProps) {
             </div>
             </>
             )}
+            <p className={helpKey && help[helpKey] ? "settings-help" : "settings-help idle"}>
+              {helpKey && help[helpKey]
+                ? help[helpKey]
+                : "hover a setting to read what it does."}
+            </p>
           </div>
         )}
       </div>

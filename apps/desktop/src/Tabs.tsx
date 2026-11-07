@@ -188,6 +188,7 @@ export function DevicePane({
   const [status, setStatus] = useState<api.HostStatus | null>(null);
   const [sending, setSending] = useState(false);
   const [asking, setAsking] = useState(false);
+  const [tools, setTools] = useState<{ tools: number[]; changes: number } | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   useEffect(() => {
@@ -276,6 +277,18 @@ export function DevicePane({
     }
   }
 
+  // The confirmation is built from the file itself: how many spools the slice
+  // really uses, not how many the plate was configured with.
+  async function ask() {
+    setNote(null);
+    try {
+      setTools(await api.sliceTools());
+    } catch {
+      setTools(null);
+    }
+    setAsking(true);
+  }
+
   async function send() {
     setAsking(false);
     setSending(true);
@@ -346,6 +359,13 @@ export function DevicePane({
                 print <b>{job.layers > 0 ? `${job.layers} layers` : "the plate"}</b> for{" "}
                 <b>{clock(job.seconds)}</b> on the {bedType.replace(/_/g, " ")}?
               </p>
+              {tools && tools.tools.length > 1 ? (
+                <p className="device-warn">
+                  this slice uses {tools.tools.length} spools ({tools.changes} tool changes). Bambu takes a
+                  sliced 3MF with an AMS mapping for a multi-colour plate, and Shale sends plain G-code, so
+                  the machine will print this in one colour.
+                </p>
+              ) : null}
               <div>
                 <button type="button" className="device-go" onClick={send}>
                   print it
@@ -361,7 +381,7 @@ export function DevicePane({
                 type="button"
                 className="device-go"
                 disabled={!connected || !gcodeReady || sending || printing}
-                onClick={() => setAsking(true)}
+                onClick={ask}
               >
                 {sending ? "sending…" : "send & print"}
               </button>

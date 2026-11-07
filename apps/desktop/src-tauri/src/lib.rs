@@ -1815,6 +1815,27 @@ fn profile_settings(
     Ok(resolved.global.into_iter().collect())
 }
 
+/// What a setting is called and what it does, in the words of the printer's own
+/// definition. A label alone cannot say what "combing" or "ironing" means, and
+/// both Cura and Bambu Studio put the sentence somewhere near the row; the sheet
+/// shows it under the setting a hand is on.
+#[tauri::command]
+fn settings_help(
+    state: State<'_, AppState>,
+    printer_id: String,
+    keys: Vec<String>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut inner = lock(&state)?;
+    let catalogue = catalog(&mut inner).map_err(|error| error.to_string())?;
+    Ok(keys
+        .into_iter()
+        .map(|key| {
+            let (label, description) = catalogue.setting_text(&printer_id, &key);
+            serde_json::json!({ "key": key, "label": label, "description": description })
+        })
+        .collect())
+}
+
 #[tauri::command]
 async fn slice_model(
     app: AppHandle,
@@ -2116,6 +2137,43 @@ fn host_disconnect(host: State<PrinterHost>) -> Result<(), String> {
         link.close();
     }
     Ok(())
+}
+
+/// Which tools the slice that is about to be sent actually uses. A plate with
+/// more than one spool cannot be sent as plain G-code: the machine would print
+/// it in one colour. The window asks this before its confirmation so the press
+/// can say so instead of the printer doing it silently.
+#[tauri::command]
+fn slice_tools(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let path = {
+        let inner = state.0.lock().map_err(|_| "the plate lock is poisoned".to_string())?;
+        inner.gcode_path.clone()
+    };
+    let Some(path) = path else {
+        return Ok(serde_json::json!({ "tools": [], "changes": 0, "file": null }));
+    };
+    let text = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    let mut tools: Vec<i64> = Vec::new();
+    let mut changes = 0usize;
+    for line in text.lines() {
+        let Some(rest) = line.strip_prefix('T') else { continue };
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            continue;
+        }
+        if let Ok(tool) = digits.parse::<i64>() {
+            if !tools.contains(&tool) {
+                tools.push(tool);
+            }
+            changes += 1;
+        }
+    }
+    tools.sort_unstable();
+    Ok(serde_json::json!({
+        "tools": tools,
+        "changes": changes,
+        "file": std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()),
+    }))
 }
 
 #[tauri::command]
@@ -3134,6 +3192,7 @@ pub fn run() {
             scratch_path,
             app_status,
             profile_settings,
+            settings_help,
             set_engine,
             cancel_import,
             list_printers,
@@ -3175,6 +3234,7 @@ pub fn run() {
             host_status,
             host_send,
             host_control,
+            slice_tools,
             overhang_patches,
             paint_support,
             clear_paint,
