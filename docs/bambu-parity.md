@@ -78,6 +78,7 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Preview coloured by speed | yes | yes | The preview's colour switch has **type** and **speed**: the second colours every extrusion by the feedrate the file asked for, slow outer walls blue through green and yellow to red at full clip, with travel left dim because it is not a speed anything is printed at. The ramp is scaled to the plate on screen over extrusion only — this plate reads **13 to 67 mm/s** — and the legend swaps its kind swatches for that scale and its two numbers, rather than leaving colours on the plate with nothing to explain them |
 | Move / rotate / scale / mirror | yes | yes | typed, dragged, and one-click: *mirror X/Y/Z*, *turn 90°*, *Upright*. Every one of them turns about the part's centre, and a mirror flips the triangle winding when it bakes, so the solid does not come out inside out |
 | Duplicate | yes | yes | `Ctrl+D` |
+| Keys for the work | yes | yes | The keys the menu prints all work, and the plate has its own: **Delete** takes the selected part off, **F** frames it, **1 / 2 / 3** pick move, rotate, scale, and **[ / ]** step a layer in the preview. The delete key was the one advertised nowhere and bound nowhere; it now does what the bin beside an object row does |
 | Add a part | yes (right-click) | yes (File menu) | Four solids the core builds itself, 20 mm across and standing on z = 0: cube **12 triangles**, cylinder **256**, cone **128**, sphere **2944**. Each one lands on the first free patch rather than inside whatever is already there, so four in a row give four parts with four places. The volumes are pinned by unit tests — 20 × 30 × 10 mm gives 6000 mm³, and the round ones match πr²h, πr²h/3 and 4/3πr³ to within 2 %, which is what "closed and wound outward" means in practice |
 | Fill the plate | yes | yes | *Edit → Fill the plate* steps the selected part's own footprint across the bed from the corner inwards, 4 mm apart, skipping the patch the original stands on and anything else already there. On a 220 mm bed with the 20 mm cube it lays **40 copies** beside the original — 41 parts in all, x 10.0 to 202.0 and y 10.0 to 117.5 before the 40-copy stop — with **no two copies overlapping**, every one of them inside the bed and standing on z = 0. The plate then slices as one job: **100 layers** and **75.3303 m** of filament against the single cube's **1.4447 m** |
 | Undo / redo | yes | yes | Ctrl+Z / Ctrl+Shift+Z over a stack of plate snapshots; delete only hides a part, so undo never re-reads a file |
@@ -224,16 +225,17 @@ that matter, which is also how Bambu Studio's own speed page behaves.
 
 Shale now covers the settings a person actually turns on a Bambu machine, and
 proves it in the G-code. The workflows that make Bambu Studio feel like Bambu
-Studio have mostly arrived too: undo, arrange, per-object settings, the AMS,
-tree supports, support regions, a prime tower, several build plates and painted
-supports are all in, and each one was proved from the file rather than from a
-screenshot — the painting by the column it puts under one arm and under nothing
-else.
+Studio have arrived too: undo, arrange, per-object settings, the AMS, tree
+supports, support regions, a prime tower, several build plates, a job queue,
+mesh booleans between parts, and a free-hand brush that paints any triangle a
+mouse crosses — 149 faces over 2205 mm² became 587 lines of `;TYPE:SUPPORT` in
+a slice that had none. Each one was proved from the file rather than from a
+screenshot, and the brush carries its own undo.
 
-What is left is the free-hand brush. Painting paints the patches the analysis
-found, not any triangle a mouse crosses, it has no undo of its own, and seams
-are not painted at all. Then ear-shaped cuts, a native Bambu
-G-code flavour, and the flush accounting behind the tower.
+What is left: seams are not painted at all, re-cutting a part rotates a plane
+rather than describing a joint profile, the G-code that leaves the app is
+Marlin-flavoured rather than Bambu's, the flush volumes behind a multi-spool
+tower are not priced, and a multi-spool plate cannot be sent as a sliced 3MF.
 
 ## The host half
 

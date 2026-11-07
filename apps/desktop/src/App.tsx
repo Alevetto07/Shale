@@ -811,6 +811,14 @@ export function App() {
         event.preventDefault();
         setFrameToken((token) => token + 1);
       }
+      if (event.key === "Delete" || event.key === "Backspace") {
+        // The object list has a bin beside every row; the key that empties a
+        // plate should not need the mouse to find it.
+        if (selectedId != null) {
+          event.preventDefault();
+          void removeSelected();
+        }
+      }
       if (event.key === "Escape") {
         setMeasuring(false);
         clearMeasure();
@@ -823,7 +831,7 @@ export function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [layerCount, screen]);
+  }, [layerCount, screen, selectedId]);
 
   useEffect(() => {
     if (!chordTied) return;
