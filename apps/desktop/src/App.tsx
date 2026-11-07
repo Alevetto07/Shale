@@ -437,25 +437,41 @@ export function App() {
         setVariants(nextVariants);
         setQualities(nextQualities);
         setMaterials(nextMaterials);
+        // A remembered choice is only a choice if the machine still offers it.
+        // The profile used to be restored wholesale, so a null written into
+        // storage once — by a window that had not loaded the catalogue yet —
+        // left the nozzle and quality reading "none" for ever while the
+        // resolver quietly used the machine's own defaults.
         const pending = restore.current;
-        if (pending) {
-          setVariant(pending.variant);
-          setQuality(pending.quality);
-          setMaterial(pending.material);
-          return;
-        }
+        restore.current = null;
+        const known = <T,>(wanted: T | null | undefined, offers: (item: T) => boolean) =>
+          wanted != null && offers(wanted);
         const printer = printers.find((item) => item.id === printerId);
-        const nextVariant = nextVariants.some((item) => item.name === printer?.preferred_variant)
-          ? printer?.preferred_variant ?? nextVariants[0]?.name ?? null
-          : nextVariants[0]?.name ?? null;
-        const nextQuality = nextQualities.some((item) => item.quality_type === printer?.preferred_quality_type)
-          ? printer?.preferred_quality_type ?? nextQualities[0]?.quality_type ?? null
-          : nextQualities.find((item) => item.quality_type === "draft")?.quality_type ??
-            nextQualities[0]?.quality_type ??
-            null;
-        const nextMaterial = nextMaterials.some((item) => item.id === printer?.preferred_material)
-          ? printer?.preferred_material ?? nextMaterials[0]?.id ?? null
-          : nextMaterials.find((item) => item.id.startsWith("generic_pla"))?.id ?? nextMaterials[0]?.id ?? null;
+        const nextVariant = known(pending?.variant ?? null, (name) =>
+          nextVariants.some((item) => item.name === name),
+        )
+          ? (pending?.variant as string)
+          : nextVariants.some((item) => item.name === printer?.preferred_variant)
+            ? printer?.preferred_variant ?? nextVariants[0]?.name ?? null
+            : nextVariants[0]?.name ?? null;
+        const nextQuality = known(pending?.quality ?? null, (type) =>
+          nextQualities.some((item) => item.quality_type === type),
+        )
+          ? (pending?.quality as string)
+          : nextQualities.some((item) => item.quality_type === printer?.preferred_quality_type)
+            ? printer?.preferred_quality_type ?? nextQualities[0]?.quality_type ?? null
+            : nextQualities.find((item) => item.quality_type === "draft")?.quality_type ??
+              nextQualities[0]?.quality_type ??
+              null;
+        const nextMaterial = known(pending?.material ?? null, (id) =>
+          nextMaterials.some((item) => item.id === id),
+        )
+          ? (pending?.material as string)
+          : nextMaterials.some((item) => item.id === printer?.preferred_material)
+            ? printer?.preferred_material ?? nextMaterials[0]?.id ?? null
+            : nextMaterials.find((item) => item.id.startsWith("generic_pla"))?.id ??
+              nextMaterials[0]?.id ??
+              null;
         setVariant(nextVariant);
         setQuality(nextQuality);
         setMaterial(nextMaterial);
