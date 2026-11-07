@@ -1182,9 +1182,10 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   background: color-mix(in srgb, var(--accent) 24%, var(--panel));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
 }
-.mode-chip:disabled {
+.mode-chip.waiting {
   /* Preview before a slice is genuinely unavailable, not merely unselected:
-     dim enough to say so, bright enough to still be read as a word. */
+     dim enough to say so, bright enough to still be read as a word — and still
+     a button, because the click is what explains why. */
   color: var(--ink-3);
   opacity: 0.55;
 }

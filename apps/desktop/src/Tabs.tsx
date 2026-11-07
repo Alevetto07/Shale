@@ -103,16 +103,21 @@ export function TabBar({
       <div className="mode-bar">
         <div className="mode-chips" role="tablist" aria-label={`Workspace — ${printer}`}>
           {PANES.map((item) => {
-            const blocked = item.id === "preview" && !sliced;
+            // Dimmed, not disabled: a disabled chip swallows the click, so the
+            // one place a user needs an explanation is the one place that
+            // cannot give one.
+            const waiting = item.id === "preview" && !sliced;
             return (
               <button
                 key={item.id}
                 type="button"
                 role="tab"
                 aria-selected={pane === item.id}
-                className={pane === item.id ? "mode-chip active" : "mode-chip"}
-                disabled={blocked}
-                title={blocked ? "slice the plate first — there is no toolpath to show" : item.note}
+                aria-disabled={waiting || undefined}
+                className={
+                  pane === item.id ? "mode-chip active" : waiting ? "mode-chip waiting" : "mode-chip"
+                }
+                title={waiting ? "slice the plate first — there is no toolpath to show" : item.note}
                 onClick={() => onPane(item.id)}
               >
                 {item.label}

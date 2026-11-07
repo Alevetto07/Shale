@@ -220,14 +220,24 @@ function Framer({
   modelsRef.current = models;
   useEffect(() => {
     if (!controls?.target || !controls.update) return;
-    const selected = modelsRef.current.find((model) => model.selected);
-    if (frameToken > 0 && selected && selected.positions.length > 0) {
-      const box = modelBox(selected);
-      const size = box.getSize(new THREE.Vector3());
-      box.expandByScalar(Math.max(24, Math.max(size.x, size.y, size.z) * 0.8));
-      frameBox(camera, controls, box);
-      invalidate();
-      return;
+    // A frame request frames the part, not the machine. Falling back to the
+    // build volume meant `f` — and the frame the preview asks for after a
+    // slice — showed a plate with a speck on it while the toolpaths sat
+    // invisible at the distance that framing implies.
+    if (frameToken > 0) {
+      const chosen = modelsRef.current.find((model) => model.selected);
+      const parts = chosen ? [chosen] : modelsRef.current.filter((model) => model.positions.length > 0);
+      if (parts.length > 0) {
+        const box = new THREE.Box3();
+        for (const part of parts) box.union(modelBox(part));
+        const size = box.getSize(new THREE.Vector3());
+        // 24 mm of padding swamped a 60 mm part: framing should leave air for
+        // the skirt, not a third of the viewport.
+        box.expandByScalar(Math.max(10, Math.max(size.x, size.y, size.z) * 0.45));
+        frameBox(camera, controls, box);
+        invalidate();
+        return;
+      }
     }
     const x0 = centerIsZero ? -width / 2 : 0;
     const y0 = centerIsZero ? -depth / 2 : 0;

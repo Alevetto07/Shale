@@ -1300,6 +1300,9 @@ export function App() {
       setFilamentMetres(summary.filament_metres);
       setPreview(true);
       setShowModel(false);
+      // The toolpaths arrive at the camera the model was left under; frame
+      // them, the way pressing f would.
+      setFrameToken((token) => token + 1);
       setProgress({ fraction: 1, message: `${summary.layer_count} layers` });
     } catch (err) {
       setError(messageOf(err));
@@ -2337,11 +2340,19 @@ export function App() {
             setScreen("start");
             return;
           }
+          if (next === "preview" && layerCount === 0) {
+            setNotice("nothing to preview yet — press slice first");
+            return;
+          }
+          // A notice belongs to the workspace that raised it; carrying it into
+          // the next one is how a stale sentence ends up under a different page.
+          setNotice(null);
           setScreen("slicer");
           setPane(next);
           if (next === "preview") {
             setPreview(true);
             setShowModel(false);
+            setFrameToken((token) => token + 1);
           }
           if (next === "prepare") {
             setPreview(false);
