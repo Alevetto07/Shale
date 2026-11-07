@@ -538,7 +538,8 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   gap: 0.8rem;
   width: 100%;
   text-align: left;
-  padding: 0.18rem 0.1rem;
+  padding: 0.26rem 0.5rem;
+  border-radius: 3px;
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -572,13 +573,28 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   max-width: 100%;
 }
 .start-list button.recent.dim { color: var(--ink-3); }
+/* A recent row is a name, then what it was saved on: the date first, because
+   that is the part you are scanning for, then the machine, which is allowed to
+   shrink to an ellipsis so the date never does. */
+.start-list button.recent {
+  padding: 0.44rem 0.35rem 0.42rem;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+}
+.start-list button.recent:hover {
+  background: rgba(233, 232, 242, 0.045);
+  color: var(--ink);
+}
 .start-detail {
+  display: flex;
+  align-items: baseline;
   color: var(--ink-2);
   font-family: var(--prose);
   font-size: 12px;
   letter-spacing: 0;
   text-transform: none;
   max-width: 100%;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1814,3 +1830,15 @@ select {
 }
 .object-line:hover .object-drop { opacity: 0.7; }
 .object-drop:hover { opacity: 1; color: var(--accent); }
+
+.start-dot {
+  color: var(--ink-3);
+  margin: 0 0.32rem;
+  flex: none;
+}
+.start-machine {
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}

@@ -717,7 +717,9 @@ export function MenuBar(props: MenuBarProps) {
             <span className="menu-printer-name">
               {printer.manufacturer} {printer.name}
             </span>
-            {bambu && <span className="chip">Bambu</span>}
+            {/* The name already says Bambu Lab; the chip said it twice. The
+                fact that the machine is a Bambu is still visible where it
+                matters — the Device pane and the printer list. */}
           </>
         ) : (
           <span className="menu-printer-name">No printer</span>

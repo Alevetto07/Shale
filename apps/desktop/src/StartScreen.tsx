@@ -1,6 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { PrinterInfo, RecentProject } from "./api";
-import mark from "./brand/shale-mark-dark.svg";
 import { andromeda } from "./field/credit";
 import { PlateField } from "./field/PlateField";
 import { AsciiField, AsciiSelect } from "./widgets";
@@ -12,6 +11,9 @@ interface Item {
   label: string;
   hint: string;
   detail?: string;
+  /// The machine a recent project was saved on, kept apart from the date so a
+  /// long machine name cannot eat the date when the row is narrow.
+  machine?: string;
   dim?: boolean;
   run: () => void;
 }
@@ -147,10 +149,6 @@ export function StartScreen({
     <div className="start">
       <PlateField live={live} comet={live} />
       <nav className="start-menu" aria-label="Start">
-        <div className="brand">
-          <img className="brand-mark" src={mark} alt="" />
-          <p className="wordmark">Shale</p>
-        </div>
         {panel === "menu" && (
           <div className="start-list">
             {items.map((item, index) => (
@@ -177,7 +175,19 @@ export function StartScreen({
                   onFocus={() => setCursor(index)}
                 >
                   <span>{item.label}</span>
-                  {item.detail ? <span className="start-detail">{item.detail}</span> : null}
+                  {item.detail ? (
+                    <span className="start-detail">
+                      {item.detail}
+                      {item.machine ? (
+                        <>
+                          <span className="start-dot" aria-hidden="true">
+                            ·
+                          </span>
+                          <span className="start-machine">{item.machine}</span>
+                        </>
+                      ) : null}
+                    </span>
+                  ) : null}
                   {item.hint ? <span className="start-hint">{item.hint}</span> : null}
                 </button>
               </Fragment>
@@ -327,9 +337,8 @@ function menuItems({
       id: `recent-${recent.path}`,
       label: recent.name,
       hint: "",
-      detail: recent.missing
-        ? "missing"
-        : `${formatWhen(recent.saved_at_ms)}${recent.printer ? `  ${recent.printer}` : ""}`,
+      detail: recent.missing ? "missing" : formatWhen(recent.saved_at_ms),
+      machine: recent.missing ? "" : shortMachine(recent.printer),
       dim: recent.missing,
       run: () => onOpenRecent(recent.path),
     });
@@ -341,6 +350,21 @@ function menuItems({
     { id: "quit", label: "Quit", hint: "q", run: onQuit },
   );
   return items;
+}
+
+/// The name a machine is printed under in the recent list. Cura definitions
+/// carry a vendor and often a whole family in one entry —
+/// `Creality3D Creality Ender-3 / Ender-3 v2` — where the vendor repeats the
+/// name and the family lists machines the project was not saved on. The first
+/// name is the machine, and a vendor token that repeats the brand is dropped;
+/// "Bambu Lab A1" keeps its vendor, because that is what the machine is called.
+function shortMachine(name: string): string {
+  const first = name.split("/")[0].trim();
+  const words = first.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return first || name;
+  const vendorish = /3d|ultimaker|prusa/i.test(words[0]);
+  const rest = words.slice(1).join(" ");
+  return vendorish && rest ? rest : first;
 }
 
 function formatWhen(ms: number): string {

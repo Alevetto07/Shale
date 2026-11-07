@@ -101,7 +101,7 @@ export function TabBar({
       </div>
 
       <div className="mode-bar">
-        <div className="mode-chips" role="tablist" aria-label="Workspace">
+        <div className="mode-chips" role="tablist" aria-label={`Workspace — ${printer}`}>
           {PANES.map((item) => {
             const blocked = item.id === "preview" && !sliced;
             return (
@@ -120,9 +120,8 @@ export function TabBar({
             );
           })}
         </div>
-        <p className="mode-printer" title="the machine the plate is sliced for">
-          {printer}
-        </p>
+        {/* The menu bar names the machine 34 px above this row; printing it
+            twice made the strip look like it was repeating itself. */}
       </div>
     </div>
   );
