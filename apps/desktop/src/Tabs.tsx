@@ -151,6 +151,9 @@ export interface DevicePaneProps {
   bedHeight: number;
   nozzleSize: number;
   spools: Spool[];
+  /// Which bays a part on the plate is pointed at. A bay whose material was
+  /// never chosen is not the same as a bay nothing prints from.
+  baysInUse: number[];
   job: JobFacts;
   engineBackend: string;
   engineReady: boolean;
@@ -180,6 +183,7 @@ export function DevicePane({
   bedHeight,
   nozzleSize,
   spools,
+  baysInUse,
   job,
   engineBackend,
   engineReady,
@@ -370,9 +374,12 @@ export function DevicePane({
                   this slice uses {tools.tools.length} spools ({tools.changes} tool changes)
                   {tools.usage.length
                     ? ` — ${tools.usage
-                        // A tool and its figure belong on one line: "T2:" alone at the
-                        // end of a line reads as a stray token.
-                        .map((used) => `T${used.tool}:\u00a0${used.metres.toFixed(2)}\u00a0m`)
+                        // Bay N is extruder N-1, so the file's `T2` is the bay this
+                        // window calls T3 — and the row of bays below is what the
+                        // figure has to line up with. A tool and its figure also
+                        // belong on one line: "T3:" alone at the end reads as a
+                        // stray token.
+                        .map((used) => `T${used.tool + 1}:\u00a0${used.metres.toFixed(2)}\u00a0m`)
                         .join(", ")}`
                     : ""}
                   . Bambu takes a sliced 3MF with an AMS mapping for a multi-colour plate, and Shale sends
@@ -454,7 +461,9 @@ export function DevicePane({
           {spools.map((spool) => (
             <li key={spool.bay}>
               <span className="bay">T{spool.bay}</span>
-              <span className={spool.material ? "spool" : "spool empty"}>{spool.material || "empty bay"}</span>
+              <span className={spool.material ? "spool" : "spool empty"}>
+                {spool.material || (baysInUse.includes(spool.bay) ? "no material set" : "empty bay")}
+              </span>
             </li>
           ))}
         </ul>

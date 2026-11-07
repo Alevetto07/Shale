@@ -2271,6 +2271,7 @@ export function App() {
           bedHeight={bed.height}
           nozzleSize={bed.nozzle_size}
           spools={spoolsForDevice()}
+          baysInUse={models.map((model) => (model.slot ?? 0) + 1)}
           job={{
             layers: layerCount,
             seconds: printSeconds,
