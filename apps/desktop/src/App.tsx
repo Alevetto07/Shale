@@ -2258,7 +2258,14 @@ export function App() {
                     title={plate.name}
                     onClick={() => void showPlate(plate.index)}
                   >
-                    {plate.index + 1} {plate.name} ({plate.models})
+                    <span className="plate-name">Plate {plate.index + 1}</span>
+                    <span className="plate-count">
+                      {plate.models === 0
+                        ? "empty"
+                        : plate.models === 1
+                          ? "1 part"
+                          : `${plate.models} parts`}
+                    </span>
                   </button>
                   {plates.length > 1 && (
                     <button

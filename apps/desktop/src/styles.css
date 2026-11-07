@@ -912,14 +912,27 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 }
 
 .plate-tab {
+  display: grid;
+  gap: 0.05rem;
+  text-align: left;
+  line-height: 1.25;
   background: none;
   border: none;
   color: inherit;
   font: inherit;
-  padding: 3px 6px;
+  padding: 4px 7px 4px 6px;
   cursor: pointer;
   white-space: nowrap;
 }
+/* A plate is a name and a count, not `1 plate 1 (1)`: the number in front of a
+   name read as part of the name, and the bracketed count read as a footnote. */
+.plate-tab .plate-name { font-size: 12px; }
+.plate-tab .plate-count {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+}
+.plate-tab.active .plate-count { opacity: 0.7; }
 
 .plate-tab.active {
   background: var(--ink, #e8e6df);
@@ -1639,7 +1652,11 @@ select {
 
 /* The sheet's own footnote: what the setting under the hand does, in the
    printer definition's words. Fixed height so hovering never shifts the rows. */
+/* The sheet is a two-column grid (categories | rows). Without this the
+   footnote fell into the first column and read as a caption for the category
+   list; it belongs under all of it. */
 .settings-help {
+  grid-column: 1 / -1;
   position: sticky;
   bottom: 0;
   margin: 0;
