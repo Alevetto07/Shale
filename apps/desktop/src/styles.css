@@ -1721,3 +1721,73 @@ select {
   text-transform: uppercase;
   margin-right: 0.15rem;
 }
+
+/* The object list. Bambu has one above the settings, and it is the only way to
+   pick a part that is hidden behind another one — the viewport raycast cannot
+   reach it, and on a full plate most parts are behind something. */
+.objects {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.object-line {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+}
+.object-row {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.3rem 0.4rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.object-row:hover { background: rgba(233, 232, 242, 0.05); color: var(--ink); }
+.object-row.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--ink);
+}
+.object-index {
+  color: var(--ink-3);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 0.9em;
+}
+.object-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.object-slot {
+  color: var(--accent);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.object-drop {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 0.35rem;
+  cursor: pointer;
+  opacity: 0;
+}
+.object-line:hover .object-drop { opacity: 0.7; }
+.object-drop:hover { opacity: 1; color: var(--accent); }

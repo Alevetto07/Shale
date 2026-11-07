@@ -1147,6 +1147,19 @@ export function App() {
     }
   }
 
+  /// Delete by id, not by selection: a list of objects must be able to drop a
+  /// row you have not clicked, which is most of the point of having the list.
+  async function removeModel(id: number) {
+    try {
+      remember();
+      await api.removeModel(id);
+      setModels((current) => current.filter((model) => model.id !== id));
+      if (selectedId === id) setSelectedId(null);
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
   async function assignSlot(slot: number | null) {
     if (!selectedId) return;
     try {
@@ -2286,6 +2299,42 @@ export function App() {
             <p className="hint">
               each plate holds its own parts and is sliced on its own. a project saves every plate with it.
             </p>
+          </Frame>
+
+          <Frame title="objects">
+            {models.length === 0 ? (
+              <p className="hint">nothing on this plate yet. import a model and it is listed here.</p>
+            ) : (
+              <ul className="objects" role="listbox" aria-label="Objects on this plate">
+                {models.map((model, index) => (
+                  <li key={model.id} className="object-line">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={model.id === selectedId}
+                      className={model.id === selectedId ? "object-row active" : "object-row"}
+                      title={`${model.name} — ${model.triangles.toLocaleString()} triangles`}
+                      onClick={() => setSelectedId(model.id)}
+                    >
+                      <span className="object-index">{index + 1}</span>
+                      <span className="object-name">{model.name}</span>
+                      {model.slot != null && (
+                        <span className="object-slot">AMS {model.slot + 1}</span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="object-drop"
+                      aria-label={`delete ${model.name}`}
+                      title={`delete ${model.name}`}
+                      onClick={() => void removeModel(model.id)}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Frame>
 
           <Frame title="paint support">
