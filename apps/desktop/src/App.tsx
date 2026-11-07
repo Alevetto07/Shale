@@ -62,6 +62,7 @@ const FALLBACK_BED: Bed = {
   line_width: 0.4,
   adhesion_type: "skirt",
   speed_print: 50,
+  material_diameter: 1.75,
   warning_count: 0,
 };
 
@@ -700,6 +701,14 @@ export function App() {
       cancelled = true;
     };
   }, [preview, layer, busy]);
+
+  /** Cura ships every material in a 1.75 mm and a 2.85 mm cut, and the list used
+   * to offer both: picking the 2.85 mm PETG on a 1.75 mm machine left the sheet
+   * saying PETG while the resolver, unable to match a spool at that diameter,
+   * sliced the machine's own PLA. Only spools that fit the hotend are offered. */
+  const spools = materials.filter(
+    (item) => Math.abs(item.diameter - bed.material_diameter) < 0.1,
+  );
 
   const filteredPrinters = useMemo(() => {
     const query = printerQuery.trim().toLowerCase();
@@ -1738,7 +1747,7 @@ export function App() {
       // restoring a parked plate puts its models *on top of* what is loaded. So
       // the plate is emptied before the file is read, or switching tabs stacks
       // both plates and the old parts come back with the new one.
-      await resetPlate();
+      await emptyPlate();
       if (next.path != null) {
         await openProject(next.path);
       } else {
@@ -1874,6 +1883,31 @@ export function App() {
 
   /// Empty the plate without touching the tab bar: used when a tab is closed
   /// and when a tab that has never been saved is switched back to.
+  /** Empty the core's plate without touching the window's recipe. A tab switch
+   * needs the plate gone before the parked one is read, but it must not reset
+   * the printer, the material, or the name the incoming tab is about to adopt. */
+  async function emptyPlate() {
+    try {
+      await api.clearJob();
+    } catch (err) {
+      setError(messageOf(err));
+      return;
+    }
+    past.current = [];
+    future.current = [];
+    syncHistory();
+    setModels([]);
+    setSelectedId(null);
+    setInstructions([]);
+    setSupport(null);
+    setPreview(false);
+    setPaths([]);
+    setLayerCount(0);
+    setLayer(0);
+    forgetSlice();
+    setProgress(null);
+  }
+
   async function resetPlate() {
     setError(null);
     try {
@@ -2276,7 +2310,7 @@ export function App() {
               <AsciiSelect
                 label="material"
                 value={material ?? ""}
-                options={materials.map((item) => ({ value: item.id, label: item.label }))}
+                options={spools.map((item) => ({ value: item.id, label: item.label }))}
                 onChange={(next) => setMaterial(next || null)}
               />
             </label>

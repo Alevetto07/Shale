@@ -151,6 +151,7 @@ export interface Bed {
   line_width: number;
   adhesion_type: string;
   speed_print: number;
+  material_diameter: number;
   warning_count: number;
 }
 

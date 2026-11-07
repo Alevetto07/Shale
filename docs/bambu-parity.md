@@ -127,6 +127,23 @@ stated, reset to the profile between runs:
 | Z hop 0.4 | number | `;LAYER_COUNT` unchanged, 34 → 34 lift moves, `z_heights` gains the hop |
 | Filament weight | data | job card 3.7 m → 11 g on generic PLA (density read from the material's `<properties><density>`) |
 
+**A material is the material, not a label.** Three faults sat between the
+material menu and the nozzle, and any one of them made the choice cosmetic.
+`select_material_id` ran an exact id through the fuzzy "nearest diameter" pass,
+whose tie-break keeps the first material it meets — a 1.75 mm PLA — so every
+choice resolved to PLA. Cura's own definition links the machine's temperatures to
+the material's with a formula (`material_print_temperature` reads
+`default_material_print_temperature`); definitions are read here as data, so the
+link is now made explicit, or a material contributed its "print temperature"
+under a key nothing read. And a material used to overwrite `material_diameter`
+with its own, so a 2.85 mm spool on a 1.75 mm machine stretched every flow figure
+computed from it; the machine keeps its filament size, and the picker offers only
+spools that fit.
+
+Read back from `printer_bed` on the Ender-3: PLA **200 / 60**, PETG **240 / 85**,
+ABS **245 / 80** — three different materials, three different answers. Sliced:
+the PLA file's only tool temperature is 200 C, the PETG file's is 240 C.
+
 **A plate keeps its own machine and material, and its own name.** Bambu lets two
 tabs be two jobs — one plate on PETG, one on PLA. Shale was already most of the
 way there without anyone checking: a tab is parked to a file when you leave it

@@ -127,6 +127,10 @@ struct Bed {
     line_width: f64,
     adhesion_type: String,
     speed_print: f64,
+    /// The filament diameter the machine is built for. A material list that
+    /// ignores it offers 2.85 mm spools for a 1.75 mm hotend, and picking one
+    /// slices as whatever the resolver can find at the right diameter instead.
+    material_diameter: f64,
     warning_count: usize,
 }
 
@@ -2204,6 +2208,7 @@ fn bed_from(resolved: &shale_core::ResolvedSettings) -> Bed {
         line_width: summary.line_width,
         adhesion_type: summary.adhesion_type.clone(),
         speed_print: summary.speed_print,
+        material_diameter: summary.material_diameter,
         warning_count: resolved.warning_count,
     }
 }
