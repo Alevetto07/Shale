@@ -161,6 +161,7 @@ export function App() {
   /// The brush is a mode: while it is in hand a drag paints the surface under
   /// the cursor, and a click is not a selection.
   const [paintArmed, setPaintArmed] = useState(false);
+  const [faceArmed, setFaceArmed] = useState(false);
   const [paintRadius, setPaintRadius] = useState("6");
   /// The plates in this project. The one flagged `active` is the one `models`
   /// holds; the rest live in the backend until they are turned to.
@@ -666,6 +667,8 @@ export function App() {
   async function undo() {
     const entry = past.current.pop();
     if (!entry) return;
+    // Whatever the notice was describing has just been taken back.
+    setNotice(null);
     if (entry.kind === "settings") {
       future.current.push({ kind: "settings", overrides: { ...overridesRef.current } });
       setOverrides(entry.overrides);
@@ -708,6 +711,7 @@ export function App() {
   async function redo() {
     const entry = future.current.pop();
     if (!entry) return;
+    setNotice(null);
     if (entry.kind === "settings") {
       past.current.push({ kind: "settings", overrides: { ...overridesRef.current } });
       setOverrides(entry.overrides);
@@ -821,6 +825,7 @@ export function App() {
       }
       if (event.key === "Escape") {
         setMeasuring(false);
+        setFaceArmed(false);
         clearMeasure();
       }
       if (event.key === "1") setMode("translate");
@@ -1085,6 +1090,20 @@ export function App() {
       const transform = await api.autoOrient(selected.id);
       remember();
       setModels((current) => current.map((model) => (model.id === selected.id ? { ...model, transform } : model)));
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  /// Put the face under the click on the plate.
+  async function placeOnFace(id: number, normal: [number, number, number]) {
+    if (!selected) return;
+    try {
+      const transform = await api.placeOnFace(id, normal);
+      remember();
+      setModels((current) => current.map((model) => (model.id === id ? { ...model, transform } : model)));
+      setFaceArmed(false);
+      setNotice("resting on the face you clicked");
     } catch (err) {
       setError(messageOf(err));
     }
@@ -3029,6 +3048,15 @@ export function App() {
                   <button type="button" title="Stand the part on the face that needs least support" onClick={() => void autoOrient()}>
                     Auto orient
                   </button>
+                  <button
+                    type="button"
+                    className={`face-arm${faceArmed ? " on" : ""}`}
+                    aria-pressed={faceArmed}
+                    title="Then click the face you want on the plate"
+                    onClick={() => setFaceArmed((armed) => !armed)}
+                  >
+                    Place on face
+                  </button>
                   <button type="button" onClick={() => void resetTransform()}>
                     Upright
                   </button>
@@ -3303,11 +3331,18 @@ export function App() {
             measuring={measuring}
             marks={measureMarks}
             measureLabel={measureSpan ? `${measureSpan.distance_mm.toFixed(2)} mm` : null}
+            faceArmed={faceArmed}
+            onFace={(id, normal) => void placeOnFace(id, normal)}
             paintArmed={paintArmed}
             paintRadius={Math.max(0.5, Number(paintRadius) || 6)}
             onBrush={(id, points) => void paintStroke(id, points)}
             onMeasure={(id, point) => void addMeasurePoint(id, point)}
-            onSelect={(id) => setSelectedId(id < 0 ? null : id)}
+            onSelect={(id) => {
+              // An armed pick that outlives its panel is an armed pick nobody
+              // can see: the button lives in the selection's own row.
+              if (id < 0) setFaceArmed(false);
+              setSelectedId(id < 0 ? null : id);
+            }}
             onTransform={(id, transform) => void commitTransform(id, transform)}
           />
           {models.length === 0 && !preview && (

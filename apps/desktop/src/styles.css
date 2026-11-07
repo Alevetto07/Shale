@@ -1901,6 +1901,14 @@ select {
   background: var(--accent, #d9a441);
   font-weight: 600;
 }
+/* Armed for a pick: the button and the next click are one gesture, so the
+   button has to look held down until the click lands. */
+.face-arm.on {
+  color: #14131a;
+  border-color: var(--accent, #d9a441);
+  background: var(--accent, #d9a441);
+  font-weight: 600;
+}
 
 /* The queue, as rows you can drop one at a time. It sits below the live
    readouts because the machine is what you look at; the queue is what you set

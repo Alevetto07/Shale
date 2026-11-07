@@ -1119,6 +1119,27 @@ fn auto_orient(state: State<AppState>, id: u32) -> Result<Transform, String> {
     }
 }
 
+/// Rest the face the user clicked on the plate.
+///
+/// The viewport knows the normal of the triangle under the cursor in world
+/// space; the core turns the part so that normal points at the bed, keeps it
+/// where it stood in plan and drops it. Brute-force orientation picks the
+/// orientation that needs least support; this is the one the person asked for.
+#[tauri::command]
+fn place_on_face(state: State<AppState>, id: u32, normal: [f64; 3]) -> Result<Transform, String> {
+    let mut inner = lock(&state)?;
+    let model = inner
+        .models
+        .iter_mut()
+        .find(|model| model.id == id)
+        .ok_or_else(|| "That model is no longer loaded".to_string())?;
+    model.transform = shale_core::orient::face_rest(&model.mesh, &model.transform, normal);
+    let transform = model.transform.clone();
+    inner.support = None;
+    inner.support_model_id = None;
+    Ok(transform)
+}
+
 /// Where a click on a part should land once it is pulled onto the nearest
 /// vertex. `None` means the click was in the middle of a face and is better
 /// left where the ray put it.
@@ -3647,6 +3668,7 @@ pub fn run() {
             fill_plate,
             update_transform,
             auto_orient,
+            place_on_face,
             snap_measure,
             measure_span,
             cut_model,

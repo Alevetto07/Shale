@@ -52,6 +52,9 @@ interface ViewportProps {
   marks: Array<[number, number, number]>;
   measureLabel: string | null;
   onMeasure: (id: number, point: [number, number, number]) => void;
+  /// Armed by the 'place on face' button: the next click names a face.
+  faceArmed: boolean;
+  onFace: (id: number, normal: [number, number, number]) => void;
   onSelect: (id: number) => void;
   onTransform: (id: number, transform: Transform) => void;
   /// While armed, dragging over a part paints the triangles under the cursor
@@ -123,6 +126,8 @@ export function Viewport(props: ViewportProps) {
             onSelect={props.onSelect}
             onTransform={props.onTransform}
             paintArmed={props.paintArmed}
+            faceArmed={props.faceArmed}
+            onFace={props.onFace}
             paintRadius={props.paintRadius}
             onBrush={props.onBrush}
           />
@@ -343,6 +348,8 @@ function PrintModel({
   onSelect,
   onTransform,
   paintArmed,
+  faceArmed,
+  onFace,
   paintRadius,
   onBrush,
 }: {
@@ -351,6 +358,9 @@ function PrintModel({
   viewStyle: ViewStyle;
   measuring: boolean;
   onMeasure: (id: number, point: [number, number, number]) => void;
+  /// Armed by the 'place on face' button: the next click names a face.
+  faceArmed: boolean;
+  onFace: (id: number, normal: [number, number, number]) => void;
   onSelect: (id: number) => void;
   onTransform: (id: number, transform: Transform) => void;
   paintArmed: boolean;
@@ -443,6 +453,14 @@ function PrintModel({
           // While measuring, a click is a point on the part, not a selection.
           if (measuring) return;
           event.stopPropagation();
+          if (faceArmed && event.face) {
+            // The normal comes out of the geometry in its own space; the group
+            // above carries the part's rotation, so the matrix takes it out to
+            // the world the core measures in.
+            const normal = event.face.normal.clone().transformDirection(event.object.matrixWorld);
+            onFace(model.id, [normal.x, normal.y, normal.z]);
+            return;
+          }
           onSelect(model.id);
         }}
       >

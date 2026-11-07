@@ -185,6 +185,126 @@ pub fn orient(mesh: &TriangleMesh, transform: &Transform, angle_deg: f64) -> Tra
     next
 }
 
+/// Rest a chosen face on the plate.
+///
+/// Bambu Studio calls it *place on face*: you click a surface and that surface
+/// becomes the one lying on the bed. The rotation is the shortest arc from the
+/// clicked normal to straight down, composed with the rotation the part already
+/// has, and then the part is dropped and kept where it stood in plan — the same
+/// courtesy `orient` does, so the part does not jump across the plate because
+/// you asked which way up it goes.
+pub fn face_rest(mesh: &TriangleMesh, transform: &Transform, world_normal: [f64; 3]) -> Transform {
+    let length = (world_normal[0] * world_normal[0]
+        + world_normal[1] * world_normal[1]
+        + world_normal[2] * world_normal[2])
+        .sqrt();
+    if !length.is_finite() || length < 1e-9 {
+        return transform.clone();
+    }
+    let n = [
+        world_normal[0] / length,
+        world_normal[1] / length,
+        world_normal[2] / length,
+    ];
+    // Down is where the face has to end up.
+    let target = [0.0, 0.0, -1.0];
+    let dot = (n[0] * target[0] + n[1] * target[1] + n[2] * target[2]).clamp(-1.0, 1.0);
+    let axis_cross = [
+        n[1] * target[2] - n[2] * target[1],
+        n[2] * target[0] - n[0] * target[2],
+        n[0] * target[1] - n[1] * target[0],
+    ];
+    let sine = (axis_cross[0] * axis_cross[0] + axis_cross[1] * axis_cross[1] + axis_cross[2] * axis_cross[2]).sqrt();
+    let (axis, angle) = if sine < 1e-9 {
+        if dot > 0.0 {
+            // Already facing down: nothing to turn, only to drop.
+            ([1.0, 0.0, 0.0], 0.0)
+        } else {
+            // Straight up: a half turn, and any horizontal axis will do.
+            let pick = if n[0].abs() < 0.9 { [1.0, 0.0, 0.0] } else { [0.0, 1.0, 0.0] };
+            let cross = [
+                n[1] * pick[2] - n[2] * pick[1],
+                n[2] * pick[0] - n[0] * pick[2],
+                n[0] * pick[1] - n[1] * pick[0],
+            ];
+            let l = (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt();
+            ([cross[0] / l, cross[1] / l, cross[2] / l], std::f64::consts::PI)
+        }
+    } else {
+        (
+            [axis_cross[0] / sine, axis_cross[1] / sine, axis_cross[2] / sine],
+            sine.atan2(dot),
+        )
+    };
+
+    // Rodrigues, row-major.
+    let (s, c) = (angle.sin(), angle.cos());
+    let (x, y, z) = (axis[0], axis[1], axis[2]);
+    let turn = [
+        [c + x * x * (1.0 - c), x * y * (1.0 - c) - z * s, x * z * (1.0 - c) + y * s],
+        [y * x * (1.0 - c) + z * s, c + y * y * (1.0 - c), y * z * (1.0 - c) - x * s],
+        [z * x * (1.0 - c) - y * s, z * y * (1.0 - c) + x * s, c + z * z * (1.0 - c)],
+    ];
+    let held = rotation_matrix(&transform.rotation_deg);
+    let mut next = [[0.0; 3]; 3];
+    for row in 0..3 {
+        for column in 0..3 {
+            next[row][column] = (0..3).map(|k| turn[row][k] * held[k][column]).sum();
+        }
+    }
+
+    // Back out the three.js XYZ angles. The matrix is Rx·Ry·Rz, so m02 is sin y,
+    // and the other two fall out of the same two rows.
+    let rotation_deg = euler_from(&next);
+    let mut placed = Transform {
+        translation: transform.translation,
+        rotation_deg,
+        scale: transform.scale,
+    };
+    let (before_min, before_max) = shaped_bounds(mesh, transform);
+    let (after_min, after_max) = shaped_bounds(mesh, &placed);
+    placed.translation[0] +=
+        (before_min[0] + before_max[0]) * 0.5 - (after_min[0] + after_max[0]) * 0.5;
+    placed.translation[1] +=
+        (before_min[1] + before_max[1]) * 0.5 - (after_min[1] + after_max[1]) * 0.5;
+    placed.translation[2] = -after_min[2];
+    placed
+}
+
+/// The rotation half of `apply_transform`, as a row-major matrix.
+fn rotation_matrix(rotation_deg: &[f64; 3]) -> [[f64; 3]; 3] {
+    let (rx, ry, rz) = (
+        rotation_deg[0].to_radians(),
+        rotation_deg[1].to_radians(),
+        rotation_deg[2].to_radians(),
+    );
+    let (a, b) = (rx.cos(), rx.sin());
+    let (c, d) = (ry.cos(), ry.sin());
+    let (e, f) = (rz.cos(), rz.sin());
+    [
+        [c * e, -c * f, d],
+        [a * f + b * d * e, a * e - b * d * f, -b * c],
+        [b * f - a * d * e, b * e + a * d * f, a * c],
+    ]
+}
+
+/// Angles in degrees for a row-major rotation of the form Rx·Ry·Rz.
+fn euler_from(m: &[[f64; 3]; 3]) -> [f64; 3] {
+    let sin_y = m[0][2].clamp(-1.0, 1.0);
+    let y = sin_y.asin();
+    if sin_y.abs() > 1.0 - 1e-9 {
+        // Looking straight up or straight down: x and z describe the same turn,
+        // so put all of it in x.
+        let x = (-m[2][0] * sin_y.signum()).atan2(m[1][1]);
+        return [x.to_degrees(), y.to_degrees(), 0.0];
+    }
+    [
+        (-m[1][2]).atan2(m[2][2]).to_degrees(),
+        y.to_degrees(),
+        (-m[0][1]).atan2(m[0][0]).to_degrees(),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,5 +494,53 @@ mod tests {
         let moved_x = ((min_after[0] + max_after[0]) - (min_before[0] + max_before[0])) * 0.5;
         let moved_y = ((min_after[1] + max_after[1]) - (min_before[1] + max_before[1])) * 0.5;
         assert!(moved_x.abs() < 0.01 && moved_y.abs() < 0.01, "{moved_x} {moved_y}");
+    }
+
+    #[test]
+    fn a_clicked_face_ends_up_on_the_plate() {
+        let mesh = cube(10.0);
+        let before = Transform {
+            translation: [30.0, 40.0, 5.0],
+            rotation_deg: [30.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
+        };
+        // The +Y face of the cube, turned into the world by the part's rotation.
+        let tilted = apply_transform(
+            [0.0, 1.0, 0.0],
+            &Transform {
+                translation: [0.0, 0.0, 0.0],
+                rotation_deg: before.rotation_deg,
+                scale: [1.0, 1.0, 1.0],
+            },
+        );
+        let after = face_rest(&mesh, &before, tilted);
+        let baked = crate::mesh::bake(&mesh, &after);
+        // It sits on the plate.
+        let (min, _) = baked.bounds();
+        assert!(min[2].abs() < 1e-6, "min z {}", min[2]);
+        // The face that was clicked now looks straight down: the lowest face's
+        // normal is -Z.
+        let mut lowest = None;
+        for triangle in &baked.triangles {
+            let a = baked.vertices[triangle[0] as usize];
+            let b = baked.vertices[triangle[1] as usize];
+            let c = baked.vertices[triangle[2] as usize];
+            if (a[2] - min[2] as f32).abs() < 1e-4
+                && (b[2] - min[2] as f32).abs() < 1e-4
+                && (c[2] - min[2] as f32).abs() < 1e-4
+            {
+                lowest = Some([a, b, c]);
+            }
+        }
+        assert!(lowest.is_some(), "no face on the plate");
+        // The volume is unchanged: this is a rotation, not a reshape.
+        assert!((volume(&baked).abs() - 1000.0).abs() < 1.0, "{}", volume(&baked).abs());
+        // And it stayed where it stood in plan.
+        let (min_before, max_before) = crate::mesh::bake(&mesh, &before).bounds();
+        let (min_after, max_after) = baked.bounds();
+        let centre_before = ((min_before[0] + max_before[0]) * 0.5, (min_before[1] + max_before[1]) * 0.5);
+        let centre_after = ((min_after[0] + max_after[0]) * 0.5, (min_after[1] + max_after[1]) * 0.5);
+        assert!((centre_before.0 - centre_after.0).abs() < 1e-6);
+        assert!((centre_before.1 - centre_after.1).abs() < 1e-6);
     }
 }
