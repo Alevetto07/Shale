@@ -1970,3 +1970,26 @@ select {
   color: var(--ink);
   cursor: pointer;
 }
+
+/* The brush reach field sits with the brush, not with the model's numbers: it
+   is how wide the stroke is, and it changes nothing about the part. */
+.paint-radius {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+}
+
+.paint-radius input {
+  width: 2.9rem;
+  font-size: 0.72rem;
+  padding: 0.12rem 0.24rem;
+}
+
+.paint-hint {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--accent);
+  letter-spacing: 0.01em;
+}

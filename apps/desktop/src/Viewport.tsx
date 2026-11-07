@@ -1,6 +1,6 @@
 import { Html, OrbitControls, TransformControls } from "@react-three/drei";
 import { Canvas, useThree } from "@react-three/fiber";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { PreviewPath, SupportOverlay, Transform } from "./api";
 import { localCentre, rotateScale, translationForCentre, worldCentre } from "./coords";
@@ -54,6 +54,12 @@ interface ViewportProps {
   onMeasure: (id: number, point: [number, number, number]) => void;
   onSelect: (id: number) => void;
   onTransform: (id: number, transform: Transform) => void;
+  /// While armed, dragging over a part paints the triangles under the cursor
+  /// instead of selecting or moving it.
+  paintArmed: boolean;
+  /// How wide the brush reaches, in millimetres of model surface.
+  paintRadius: number;
+  onBrush: (id: number, points: Array<[number, number, number]>) => void;
 }
 
 /// The colour each kind of line is drawn in. Exported because the
@@ -116,6 +122,9 @@ export function Viewport(props: ViewportProps) {
             onMeasure={props.onMeasure}
             onSelect={props.onSelect}
             onTransform={props.onTransform}
+            paintArmed={props.paintArmed}
+            paintRadius={props.paintRadius}
+            onBrush={props.onBrush}
           />
         ))}
       {props.overlays.map((overlay) => (
@@ -323,6 +332,9 @@ function PrintModel({
   onMeasure,
   onSelect,
   onTransform,
+  paintArmed,
+  paintRadius,
+  onBrush,
 }: {
   model: SceneModel;
   mode: TransformMode;
@@ -331,6 +343,9 @@ function PrintModel({
   onMeasure: (id: number, point: [number, number, number]) => void;
   onSelect: (id: number) => void;
   onTransform: (id: number, transform: Transform) => void;
+  paintArmed: boolean;
+  paintRadius: number;
+  onBrush: (id: number, points: Array<[number, number, number]>) => void;
 }) {
   const geometry = useMemo(() => {
     const geo = new THREE.BufferGeometry();
@@ -346,6 +361,47 @@ function PrintModel({
     number,
   ];
   const pivot = worldCentre(model.positions, model.transform);
+
+  // A stroke is the path the cursor took over the surface, in the mesh's own
+  // frame — the same frame as `model.positions`, which is the frame the core
+  // counts triangles in. The faces themselves are chosen in the core, so the
+  // brush and the patch buttons cannot disagree about what a face is.
+  const path = useRef<Array<[number, number, number]>>([]);
+  const pressing = useRef(false);
+  const [brush, setBrush] = useState<[number, number, number] | null>(null);
+
+  const keepPoint = (local: THREE.Vector3) => {
+    // Points closer together than the brush itself would only repeat the same
+    // discs, and a path with a thousand of them is a path nobody needs.
+    const reach = Math.max(paintRadius * 0.35, 0.4);
+    const tail = path.current[path.current.length - 1];
+    if (tail) {
+      const dx = tail[0] - local.x;
+      const dy = tail[1] - local.y;
+      const dz = tail[2] - local.z;
+      if (dx * dx + dy * dy + dz * dz < reach * reach) return;
+    }
+    path.current.push([local.x, local.y, local.z]);
+  };
+
+  // A stroke ends where the button does, even if the cursor has left the part:
+  // the mesh only sees the pointer while it is over it.
+  useEffect(() => {
+    if (!paintArmed) return;
+    const finish = () => {
+      pressing.current = false;
+      if (path.current.length === 0) return;
+      const points = path.current;
+      path.current = [];
+      onBrush(model.id, points);
+    };
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+    return () => {
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+    };
+  }, [paintArmed, model.id, onBrush]);
 
   const publish = () => {
     if (!node) return;
@@ -384,13 +440,34 @@ function PrintModel({
           geometry={geometry}
           position={[-centre[0], -centre[1], -centre[2]]}
           onPointerDown={
-            measuring
+            paintArmed
               ? (event) => {
                   event.stopPropagation();
-                  onMeasure(model.id, [event.point.x, event.point.y, event.point.z]);
+                  path.current = [];
+                  // The button is what keeps a stroke going, not the event's own
+                  // `buttons` field: a pen, a touch and a mouse that has been
+                  // captured do not all report it the same way.
+                  pressing.current = true;
+                  keepPoint(event.object.worldToLocal(event.point.clone()));
+                  setBrush([event.point.x, event.point.y, event.point.z]);
+                }
+              : measuring
+                ? (event) => {
+                    event.stopPropagation();
+                    onMeasure(model.id, [event.point.x, event.point.y, event.point.z]);
+                  }
+                : undefined
+          }
+          onPointerMove={
+            paintArmed
+              ? (event) => {
+                  const local = event.object.worldToLocal(event.point.clone());
+                  if (pressing.current) keepPoint(local);
+                  setBrush([event.point.x, event.point.y, event.point.z]);
                 }
               : undefined
           }
+          onPointerOut={paintArmed ? () => setBrush(null) : undefined}
         >
           {viewStyle === "ascii" ? (
             <shaderMaterial vertexShader={ASCII_VERT} fragmentShader={ASCII_FRAG} side={THREE.DoubleSide} />
@@ -405,6 +482,26 @@ function PrintModel({
             />
           )}
         </mesh>
+        {paintArmed && brush && (
+          // The brush shows its own reach: a ring the size of the stroke, at the
+          // point on the surface it would paint.
+          <mesh
+            position={brush}
+            renderOrder={2}
+            // The preview must not eat the stroke: it sits exactly where the
+            // next press lands, so a solid sphere would take the press itself
+            // and the part would never see it.
+            raycast={() => null}
+          >
+            <sphereGeometry args={[Math.max(paintRadius, 0.4), 20, 12]} />
+            <meshBasicMaterial
+              color="#b9b3ff"
+              transparent
+              opacity={0.18}
+              depthWrite={false}
+            />
+          </mesh>
+        )}
       </group>
     </>
   );

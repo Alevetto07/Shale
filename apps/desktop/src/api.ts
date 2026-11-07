@@ -444,6 +444,12 @@ export const api = {
   supportPlan: () => invoke<SupportView | null>("current_support"),
   overhangPatches: (modelId: number) => invoke<OverhangPatch[]>("overhang_patches", { modelId }),
   /** `block` paints the faces as needing no support; the default holds them up. */
+  paintBrush: (
+    modelId: number,
+    points: Array<[number, number, number]>,
+    radius: number,
+    block = false,
+  ) => invoke<PaintView>("paint_brush", { modelId, points, radiusMm: radius, block }),
   paintSupport: (modelId: number, triangles: number[], block = false) =>
     invoke<PaintView>("paint_support", { modelId, triangles, block }),
   clearPaint: (modelId: number) => invoke<PaintView>("clear_paint", { modelId }),

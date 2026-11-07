@@ -141,6 +141,49 @@ pub fn paintable(mesh: &TriangleMesh, angle_deg: f64) -> Vec<usize> {
 /// Two triangles are neighbours when their centres are within `reach_mm` in the
 /// plane and their heights overlap. A cantilever whose underside is two
 /// triangles is one patch; the far cantilever is another.
+/// The triangles a round brush covers when it is pressed onto the surface at
+/// `point`, in the part's own frame.
+///
+/// Distance is measured to each triangle's centre rather than to its nearest
+/// corner, so a stroke is a disc of faces and not a jagged ring of them, and the
+/// point is the one the ray already found on the surface — no projection, no
+/// view direction, nothing that depends on where the camera is.
+pub fn brush_stroke(mesh: &TriangleMesh, point: [f64; 3], radius_mm: f64) -> Vec<usize> {
+    let reach = radius_mm.max(0.0);
+    let reach2 = reach * reach;
+    let mut stroke = Vec::new();
+    for (index, triangle) in mesh.triangles.iter().enumerate() {
+        let mut centre = [0.0f64; 3];
+        let mut okay = true;
+        for corner in triangle {
+            match mesh.vertices.get(*corner as usize) {
+                Some(vertex) => {
+                    centre[0] += vertex[0] as f64;
+                    centre[1] += vertex[1] as f64;
+                    centre[2] += vertex[2] as f64;
+                }
+                None => {
+                    okay = false;
+                    break;
+                }
+            }
+        }
+        if !okay {
+            continue;
+        }
+        centre[0] /= 3.0;
+        centre[1] /= 3.0;
+        centre[2] /= 3.0;
+        let dx = centre[0] - point[0];
+        let dy = centre[1] - point[1];
+        let dz = centre[2] - point[2];
+        if dx * dx + dy * dy + dz * dz <= reach2 {
+            stroke.push(index);
+        }
+    }
+    stroke
+}
+
 pub fn patches(mesh: &TriangleMesh, angle_deg: f64, reach_mm: f64) -> Vec<Patch> {
     let faces = paintable(mesh, angle_deg);
     if faces.is_empty() {
@@ -508,6 +551,45 @@ mod tests {
             vec![[0, 2, 1], [0, 3, 2]],
         );
         assert!(patches(&mesh, PAINT_ANGLE_DEG, PAINT_REACH_MM).is_empty());
+    }
+
+
+    #[test]
+    fn a_brush_covers_a_disc_of_faces_around_the_point() {
+        // A ten millimetre square, two triangles per side of a plane grid: the
+        // brush reaches the faces whose centres are inside it, and no others.
+        let mut vertices = Vec::new();
+        let mut triangles = Vec::new();
+        let step = 1.0;
+        let side = 10;
+        for row in 0..side {
+            for column in 0..side {
+                let base = vertices.len() as u32;
+                let (x0, y0) = (column as f32 * step, row as f32 * step);
+                vertices.push([x0, y0, 0.0]);
+                vertices.push([x0 + step, y0, 0.0]);
+                vertices.push([x0 + step, y0 + step, 0.0]);
+                vertices.push([x0, y0 + step, 0.0]);
+                triangles.push([base, base + 1, base + 2]);
+                triangles.push([base, base + 2, base + 3]);
+            }
+        }
+        let mesh = TriangleMesh { vertices, triangles };
+        let reach = 2.5;
+        let stroke = brush_stroke(&mesh, [5.0, 5.0, 0.0], reach);
+        assert!(!stroke.is_empty(), "a brush in the middle of a plane must paint");
+        assert!(stroke.len() < mesh.triangles.len(), "a brush must not paint the world");
+        // Two 1x1 mm triangles per square millimetre of the sheet, so the count
+        // is twice the area of the disc to within the cells on its rim.
+        let area = std::f64::consts::PI * reach * reach;
+        let expected = area * 2.0;
+        assert!(
+            (stroke.len() as f64 - expected).abs() < expected * 0.3,
+            "{} faces for {area:.1} mm2 of brush, expected about {expected:.1}",
+            stroke.len()
+        );
+        // And a brush pressed outside the part paints nothing at all.
+        assert!(brush_stroke(&mesh, [40.0, 40.0, 0.0], reach).is_empty());
     }
 
 }

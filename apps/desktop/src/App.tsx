@@ -158,6 +158,10 @@ export function App() {
   const [blocked, setBlocked] = useState(0);
   /// Which brush the next patch press uses.
   const [paintMode, setPaintMode] = useState<"enforce" | "block">("enforce");
+  /// The brush is a mode: while it is in hand a drag paints the surface under
+  /// the cursor, and a click is not a selection.
+  const [paintArmed, setPaintArmed] = useState(false);
+  const [paintRadius, setPaintRadius] = useState("6");
   /// The plates in this project. The one flagged `active` is the one `models`
   /// holds; the rest live in the backend until they are turned to.
   const [plates, setPlates] = useState<PlateView[]>([]);
@@ -1444,8 +1448,27 @@ export function App() {
   /** Paint one patch. Anything painted adds a column under that part on the
    * next slice, so the toolpath on screen is no longer what the plate would
    * print. */
-  async function paintPatch(triangles: number[]) {
-    if (paintTarget === null) {
+  /// What a paint edit costs the plate on screen, whichever way it was made.
+  function paintLanded(state: { painted: number; blocked: number }, block: boolean) {
+    setPainted(state.painted);
+    setBlocked(state.blocked);
+    // The plate would print differently now, so the toolpath on screen is
+    // stale: drop it rather than show support that is not there.
+    setPaths([]);
+    setLayer(0);
+    setLayerCount(0);
+    setLayerZ([]);
+    forgetSlice();
+    setPreview(false);
+    setNote(
+      block
+        ? `${state.blocked} faces kept clear: no support will grow under them`
+        : `${state.painted} faces held up: a column will grow under them`,
+    );
+  }
+
+  async function paintPatch(triangles: number[], target: number | null = paintTarget) {
+    if (target === null) {
       return;
     }
     const block = paintMode === "block";
@@ -1453,22 +1476,28 @@ export function App() {
       past.current.push({ kind: "paint" });
       future.current = [];
       syncHistory();
-      const state = await api.paintSupport(paintTarget, triangles, block);
-      setPainted(state.painted);
-      setBlocked(state.blocked);
-      // The plate would print differently now, so the toolpath on screen is
-      // stale: drop it rather than show support that is not there.
-      setPaths([]);
-      setLayer(0);
-      setLayerCount(0);
-      setLayerZ([]);
-      forgetSlice();
-      setPreview(false);
-      setNote(
-        block
-          ? `${state.blocked} faces kept clear: no support will grow under them`
-          : `${state.painted} faces held up: a column will grow under them`,
+      paintLanded(await api.paintSupport(target, triangles, block), block);
+    } catch (failure) {
+      setError(String(failure));
+    }
+  }
+
+  /// One drag of the brush. The whole path goes over the boundary together, so a
+  /// stroke is one edit on the undo stack and not thirty: taking a pen stroke
+  /// back should take back the stroke.
+  async function paintStroke(target: number, points: Array<[number, number, number]>) {
+    const block = paintMode === "block";
+    try {
+      past.current.push({ kind: "paint" });
+      future.current = [];
+      syncHistory();
+      const state = await api.paintBrush(
+        target,
+        points,
+        Math.max(0.5, Number(paintRadius) || 6),
+        block,
       );
+      paintLanded(state, block);
     } catch (failure) {
       setError(String(failure));
     }
@@ -2430,7 +2459,36 @@ export function App() {
                     </button>
                   ))}
                 </div>
+                <div className="row paint-brush" role="group" aria-label="brush reach">
+                  <button
+                    type="button"
+                    className={`paint-brush-button${paintArmed ? " on" : ""}`}
+                    aria-pressed={paintArmed}
+                    title="Drag over the part to paint the surface under the cursor"
+                    onClick={() => setPaintArmed((armed) => !armed)}
+                  >
+                    brush
+                  </button>
+                  <label className="paint-radius">
+                    <span>reach</span>
+                    <input
+                      aria-label="Brush reach in millimetres"
+                      type="number"
+                      min={1}
+                      max={40}
+                      step={1}
+                      value={paintRadius}
+                      onChange={(event) => setPaintRadius(event.target.value)}
+                    />
+                    <span>mm</span>
+                  </label>
+                </div>
                 <div className="row paint-patches">
+                  {paintArmed && (
+                    <p className="paint-hint">
+                      drag over the part — {paintMode === "block" ? "kept clear" : "held up"}
+                    </p>
+                  )}
                   {patches.map((patch, index) => (
                     <button
                       key={index}
@@ -3101,6 +3159,9 @@ export function App() {
             measuring={measuring}
             marks={measureMarks}
             measureLabel={measureSpan ? `${measureSpan.distance_mm.toFixed(2)} mm` : null}
+            paintArmed={paintArmed}
+            paintRadius={Math.max(0.5, Number(paintRadius) || 6)}
+            onBrush={(id, points) => void paintStroke(id, points)}
             onMeasure={(id, point) => void addMeasurePoint(id, point)}
             onSelect={(id) => setSelectedId(id < 0 ? null : id)}
             onTransform={(id, transform) => void commitTransform(id, transform)}

@@ -1742,19 +1742,16 @@ fn overhang_patches(
     ))
 }
 
-/// Paint these triangles as needing support. Painting is additive: a second
-/// patch on the same part adds to the first, the way a brush does.
-#[tauri::command]
-fn paint_support(
-    state: State<AppState>,
+/// Add triangles to a part's paint, and remember the plate as it was so the
+/// stroke can be taken back. Shared by the patch buttons and the brush: a
+/// stroke and a patch are the same instruction, differing only in how the
+/// triangles were chosen.
+fn add_paint(
+    inner: &mut Inner,
     model_id: u32,
     triangles: Vec<usize>,
-    block: Option<bool>,
+    block: bool,
 ) -> Result<PaintView, String> {
-    let mut inner = lock(&state)?;
-    if inner.slicing {
-        return Err("Wait for the slice to finish".into());
-    }
     let corners = {
         let model = inner
             .models
@@ -1772,7 +1769,7 @@ fn paint_support(
     let painting = inner.painted.entry(model_id).or_default();
     // A triangle painted one way is not painted both ways: the later stroke
     // wins, the way a second brush stroke over the first does.
-    let (paint, other) = if block.unwrap_or(false) {
+    let (paint, other) = if block {
         (&mut painting.block, &mut painting.enforce)
     } else {
         (&mut painting.enforce, &mut painting.block)
@@ -1788,6 +1785,60 @@ fn paint_support(
         painted: painting.enforce.len(),
         blocked: painting.block.len(),
     })
+}
+
+/// Paint these triangles as needing support. Painting is additive: a second
+/// patch on the same part adds to the first, the way a brush does.
+#[tauri::command]
+fn paint_support(
+    state: State<AppState>,
+    model_id: u32,
+    triangles: Vec<usize>,
+    block: Option<bool>,
+) -> Result<PaintView, String> {
+    let mut inner = lock(&state)?;
+    if inner.slicing {
+        return Err("Wait for the slice to finish".into());
+    }
+    add_paint(&mut inner, model_id, triangles, block.unwrap_or(false))
+}
+
+/// Paint with the brush: the frontend sends the point the ray found and the
+/// reach, and the triangles are chosen here, next to the mesh. A stroke is a few
+/// hundred triangles at most, so sending them one at a time over the boundary
+/// would be the wrong direction for the data to flow.
+#[tauri::command]
+fn paint_brush(
+    state: State<AppState>,
+    model_id: u32,
+    points: Vec<[f64; 3]>,
+    radius_mm: f64,
+    block: Option<bool>,
+) -> Result<PaintView, String> {
+    let mut inner = lock(&state)?;
+    if inner.slicing {
+        return Err("Wait for the slice to finish".into());
+    }
+    let reach = radius_mm.clamp(0.2, 200.0);
+    // The points arrive in the part's own frame, which is the frame the mesh is
+    // in: no transform is applied to them on either side. A stroke is a path, so
+    // the discs along it are merged into one set before anything is painted —
+    // one drag is one edit, and one thing to take back.
+    let stroke = {
+        let model = inner
+            .models
+            .iter()
+            .find(|model| model.id == model_id)
+            .ok_or("That model is no longer loaded")?;
+        let mut seen = std::collections::BTreeSet::new();
+        for point in points.iter().take(512) {
+            for triangle in shale_core::paint::brush_stroke(&model.mesh, *point, reach) {
+                seen.insert(triangle);
+            }
+        }
+        seen.into_iter().collect::<Vec<usize>>()
+    };
+    add_paint(&mut inner, model_id, stroke, block.unwrap_or(false))
 }
 
 /// Take the paint off a part. The columns go with it on the next slice.
@@ -3502,6 +3553,7 @@ pub fn run() {
             slice_tools,
             overhang_patches,
             paint_support,
+            paint_brush,
             clear_paint,
             undo_paint,
             redo_paint,
