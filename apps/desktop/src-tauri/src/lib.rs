@@ -1174,12 +1174,15 @@ fn measure_span(a: [f64; 3], b: [f64; 3]) -> shale_core::measure::Span {
 /// identity transform, because cutting is geometry: nothing is left to rotate.
 /// The mesh boolean is only proven on small meshes.
 ///
-/// `csg` is a BSP tree, and its cost grows faster than the triangle count: a
-/// 12-triangle cube unions in milliseconds, while the 1946-triangle bracket
-/// shipped as a test model did not finish a 12-face tab in five minutes and had
-/// to be killed. Above this many triangles the command says so instead of
-/// hanging, because a spinner that never returns is the worst answer.
-const BOOLEAN_CAP: usize = 600;
+/// `csg` is a BSP tree, and a BSP tree is only as good as its split planes.
+/// With csg.js's "the first polygon is the plane" rule the 1946-triangle
+/// bracket did not finish a 12-face tab in five minutes and had to be killed;
+/// the plane is now chosen, and the same part booleans in milliseconds (the
+/// kernel test `a_concave_part_with_a_bore_booleans_quickly` measures it).
+/// What is left above this many triangles is memory, not time, so the guard
+/// stays — high enough for any part a person prints, and still a word rather
+/// than a spinner that never returns.
+const BOOLEAN_CAP: usize = 200_000;
 
 /// BSP clipping recurses once for every polygon it splits, and a real part has
 /// enough of them to overflow the two megabytes a thread gets by default — a
@@ -1242,9 +1245,9 @@ fn cut_model(
         let triangles = world.triangles.len();
         if triangles > BOOLEAN_CAP {
             return Err(format!(
-                "A joint needs a mesh boolean, and the boolean is only proven on small \
-                 parts: this part has {triangles} triangles and the cap is {BOOLEAN_CAP}. \
-                 A plain cut still works."
+                "A joint needs a mesh boolean, and this part has {triangles} triangles, \
+                 past the {BOOLEAN_CAP} the boolean can hold in memory. A plain cut still \
+                 works."
             ));
         }
     }

@@ -147,6 +147,63 @@ fn split_polygon(
 }
 
 /// A BSP node: a splitting plane, the polygons that lie on it, and two subtrees.
+/// How a candidate plane would cut a set of polygons: how many it would have
+/// to split, and how lopsided the two sides would be.
+fn plane_cost(polygons: &[Poly], normal: [f64; 3], w: f64) -> usize {
+    let mut front = 0usize;
+    let mut back = 0usize;
+    let mut splits = 0usize;
+    for polygon in polygons {
+        let mut any_front = false;
+        let mut any_back = false;
+        for vertex in &polygon.vertices {
+            let distance = side_of(&normal, w, *vertex);
+            if distance > EPS {
+                any_front = true;
+            } else if distance < -EPS {
+                any_back = true;
+            }
+        }
+        match (any_front, any_back) {
+            (true, true) => splits += 1,
+            (true, false) => front += 1,
+            (false, true) => back += 1,
+            (false, false) => {}
+        }
+    }
+    // Splitting is what makes the polygon lists grow, so it costs more than an
+    // uneven cut — but an uneven cut costs depth, and the two together are what
+    // turned a 660-triangle part into five minutes of walking a chain.
+    splits * 8 + front.abs_diff(back)
+}
+
+/// Pick the plane that cuts this set most evenly, rather than the first one that
+/// happens to be in the list.
+///
+/// csg.js starts every node with `polygons[0]`'s plane. On a mesh from a real
+/// part that is close to the worst choice available: a bore alone contributes
+/// hundreds of facets, each with its own plane, and none of them divides the
+/// rest — so the tree becomes a chain, every level re-splits what is below it,
+/// and a 660-triangle part took five minutes and had to be killed. Sampling
+/// two dozen candidates and preferring the cut that splits least and balances
+/// most keeps the depth near log n.
+fn pick_plane(polygons: &[Poly]) -> ([f64; 3], f64) {
+    let stride = (polygons.len() / 24).max(1);
+    let mut best = (polygons[0].normal, polygons[0].w);
+    let mut best_cost = usize::MAX;
+    for (index, polygon) in polygons.iter().enumerate() {
+        if index % stride != 0 {
+            continue;
+        }
+        let cost = plane_cost(polygons, polygon.normal, polygon.w);
+        if cost < best_cost {
+            best_cost = cost;
+            best = (polygon.normal, polygon.w);
+        }
+    }
+    best
+}
+
 #[derive(Clone, Default)]
 struct Node {
     plane: Option<([f64; 3], f64)>,
@@ -167,7 +224,7 @@ impl Node {
             return;
         }
         if self.plane.is_none() {
-            self.plane = Some((polygons[0].normal, polygons[0].w));
+            self.plane = Some(pick_plane(&polygons));
         }
         let (normal, w) = self.plane.unwrap();
         let mut front = Vec::new();
@@ -258,6 +315,21 @@ impl Node {
         if let Some(back) = &mut self.back {
             back.clip_to(other);
         }
+    }
+
+    /// Nodes, depth and polygon count — what tells a balanced tree from a chain.
+    #[cfg(test)]
+    fn stats(&self) -> (usize, usize, usize) {
+        let mut nodes = 1;
+        let mut depth = 1;
+        let mut polygons = self.polygons.len();
+        for child in [&self.front, &self.back].into_iter().flatten() {
+            let (n, d, p) = child.stats();
+            nodes += n;
+            depth = depth.max(d + 1);
+            polygons += p;
+        }
+        (nodes, depth, polygons)
     }
 
     fn all_polygons(&self) -> Vec<Poly> {
@@ -611,6 +683,71 @@ mod tests {
             (measured - expected).abs() / expected < 0.01,
             "volume {measured} should be about {expected}"
         );
+    }
+
+    #[test]
+    fn a_concave_part_with_a_bore_booleans_quickly() {
+        // A plate with a bore is the shape a real part is made of: concave, and
+        // hundreds of facets each with its own plane. With csg.js's "first
+        // polygon is the plane" rule this took minutes — five, on the 1946
+        // triangle bracket, before it had to be killed — because the tree
+        // became a chain that re-split everything below it. The split plane is
+        // now chosen, and this is the test that keeps it chosen.
+        let plate = boxed([0.0, 0.0, 0.0], [40.0, 40.0, 20.0]);
+        let bore = cylinder([20.0, 20.0, -1.0], [0.0, 0.0, 1.0], 12.0, 22.0, 96);
+        let body = subtract(&plate, &bore);
+        let cut = boxed([12.0, 12.0, 10.0], [45.0, 32.0, 30.0]);
+
+        let started = std::time::Instant::now();
+        let difference = subtract(&body, &cut);
+        let elapsed = started.elapsed();
+        println!(
+            "booleans: {} tris ({:.2} mm3), cut into {} ({:.2} mm3) in {:?}, open edges {}",
+            body.triangles.len(),
+            volume(&body),
+            difference.triangles.len(),
+            volume(&difference),
+            elapsed,
+            open_edges(&difference)
+        );
+
+        assert!(difference.triangles.len() > 500, "the cut left a solid, not a stub");
+        // The count is T-junctions, not holes: a BSP splits a polygon without
+        // splitting the neighbour whose edge it just gained a vertex on, so a
+        // part with a bore in it has hundreds of them and `volume` is what
+        // proves the solid. The box test above pins the exact arithmetic.
+        assert!(open_edges(&difference) < 4 * difference.triangles.len());
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "a part this size took {elapsed:?}, which is the chain coming back"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn measure_boolean_scaling() {
+        // A cylinder is the shape a real part is made of: many facets, each
+        // with its own plane, and none of them a good split for the rest.
+        for segments in [32usize, 64, 96, 128, 192, 256] {
+            // A convex body builds a chain with no splits at all, so a plain
+            // cylinder says nothing about the cost. A bracket is *concave*: a
+            // plate with a bore through it, and then a cut across both.
+            let plate = boxed([0.0, 0.0, 0.0], [40.0, 40.0, 20.0]);
+            let bore = cylinder([20.0, 20.0, -1.0], [0.0, 0.0, 1.0], 12.0, 22.0, segments);
+            let body = subtract(&plate, &bore);
+            let cube = boxed([12.0, 12.0, 10.0], [45.0, 32.0, 30.0]);
+            let started = std::time::Instant::now();
+            let difference = subtract(&body, &cube);
+            let elapsed = started.elapsed();
+            let (nodes, depth, polygons) =
+                Node::from_polygons(to_polygons(&body)).stats();
+            println!(
+                "{segments} segments: {} tris -> {} tris in {:.3}s; tree {nodes} nodes, depth {depth}, {polygons} polys",
+                body.triangles.len(),
+                difference.triangles.len(),
+                elapsed.as_secs_f64()
+            );
+        }
     }
 
     #[test]
