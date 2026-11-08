@@ -72,7 +72,7 @@ triangles, 7967.74 mm³** — 8000 + pins (124.86) − holes (163.20) to within
 6 mm³, which is the clearance doing its job. The pinned plate slices as 100
 layers with no complaint from the engine about BSP T-junctions.
 
-## A dovetail, and the cap on the boolean
+## A dovetail, and why the boolean used to be capped
 
 A 30 mm cube cut through its middle with a dovetail of `root 6`: the lower half
 goes **20 triangles / 13500.00 mm³ → 48 triangles / 13824.00 mm³**, so the tab is
@@ -84,16 +84,37 @@ At the kernel, a 70 × 70 × 11 plate cut at 5.5 with an 8 mm root gains
 **432.00 mm³** and its tab stops at z **10.00**: the upper half is 5.5 mm thick,
 so the tab is held a millimetre short of coming out of its top.
 
-The 1946-triangle bracket is **refused**, not attempted:
+**The bracket, with a dovetail, now cuts in 0.01 s.** 1946 triangles in, 1864
+out, sliced to **47 layers / 0 h 26 m / 2.0 m / 6.1 g**. Before the split plane
+was chosen, the same cut ran five minutes and had to be killed, twice taking the
+window with it.
 
-> A joint needs a mesh boolean, and the boolean is only proven on small parts:
-> this part has 1946 triangles and the cap is 600. A plain cut still works.
+That earlier failure had two causes, both fixed:
 
-That is a limit, not a bug to be papered over. `csg` is a BSP tree and its cost
-climbs faster than the triangle count: before the cap existed, the same cut ran
-for five minutes and had to be killed, twice taking the whole window with it —
-BSP recursion over `main`'s two megabytes overflows the stack, so the geometry
-now runs on a thread with 256 MB.
+- **The tree was a chain.** `csg.js` starts every node with `polygons[0]`'s
+  plane. A bore contributes hundreds of facets, each with its own plane, and
+  none of them divides the rest — so the tree degrades to a list and every level
+  re-splits what is below it. Each node now samples two dozen candidates and
+  takes the lowest `splits * 8 + |front - back|`.
+- **The stack.** BSP clipping recurses once per split polygon; over `main`'s two
+  megabytes that killed the window with no message at all. Geometry that cuts a
+  mesh runs on a thread with 256 MB.
+
+Scaling, a plate with a bore (concave — the shape that used to explode) cut by a
+cube:
+
+| triangles | before | after |
+| --- | --- | --- |
+| 338 | 4 ms | 3 ms |
+| 654 | killed at 300 s | 9 ms |
+| 970 | — | 14 ms |
+| 1286 | — | 19 ms |
+| 1922 | — | 36 ms |
+| 2554 | — | 57 ms |
+
+`BOOLEAN_CAP` is **200 000** triangles now, where it was 600: what is left at
+that size is memory, not time. The kernel test
+`a_concave_part_with_a_bore_booleans_quickly` holds the ceiling at two seconds.
 
 ## Undo after a cut, and after a boolean
 

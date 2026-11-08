@@ -96,8 +96,9 @@ system theme whatever the app does.
   ear is a pair of hooks; Shale has the dovetail, which does the same job with
   one trapezoid: it is wider at its tip than at its root, so the halves press
   together and stay. What Shale does not have is Bambu's hook shape itself.
-  The mesh boolean behind both joints is capped at 600 triangles — see
-  [verification.md](verification.md) for the measurement and why.
+  The mesh boolean behind both joints used to be capped at 600 triangles; the
+  split plane is chosen now and the cap is a memory guard at 200 000, see
+  [verification.md](verification.md).
 - **Camera** — not implemented. `SHALE_PRINT_REMOVAL` stays off, sends no motion,
   and `will_move_printer` is false.
 - **Bambu-flavoured G-code** — the output is Marlin-flavoured, which the A1
@@ -111,10 +112,13 @@ system theme whatever the app does.
 - **A dovetail, and a cap on the boolean.** `cut_with_dovetail` puts a
   trapezoid tab across the seam and bores the same shape out of the other half;
   on a 30 mm cube with a 6 mm root that is **324.00 mm³** of tab reaching
-  **6.00 mm** past the plane. The BSP boolean behind it does not scale — the
-  1946-triangle bracket did not finish in five minutes — so joints now refuse
-  above **600 triangles** with a message that says so, and the geometry runs on
-  a 256 MB stack after a stack overflow killed the window outright.
+  **6.00 mm** past the plane. The BSP boolean behind it took `polygons[0]`'s
+  plane at every node, which on a bored part builds a chain: the 1946-triangle
+  bracket did not finish in five minutes. Every node now samples two dozen
+  candidate planes and takes the one that splits least and balances most, and
+  the same bracket cuts in **0.01 s** (1864 triangles out, 47 layers). The cap
+  is a memory guard at 200 000 triangles now, and the geometry runs on a 256 MB
+  stack after a stack overflow killed the window outright.
 - **A boolean between parts** — *subtract*, *union*, *common* in the model frame,
   both sides baked into world space, cutters consumed, and only parts whose
   bounds actually meet the chosen one taking part. Measured: two 20 mm cubes
