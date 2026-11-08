@@ -146,12 +146,22 @@ ffprobe -v error -show_entries format=duration,size \
   C:/Users/Alessio/Documents/shale-demo/shale-tour.mp4
 ```
 
-**2560 × 1558, 30 fps, 39.90 s, 1,864,360 bytes.** Pull frames every five
+**2560 × 1558, 30 fps, 40.10 s, 2,092,968 bytes.** Pull frames every five
 seconds and look at them: Home, Prepare with the brush armed, Preview at layer
 31 of 55 with a pause mark, Device with the host and the queue, then back to
 Home and Prepare. Every pane change in the tour is checked against the active
 chip before the step is allowed to count, because a silent no-op is how one take
 ended up labelled Prepare while showing preview controls.
+
+## The stills
+
+`C:/Users/Alessio/Documents/shale-demo/` holds `shale-final-{home,prepare,preview,
+device,settings}.png` and `shale-empty-{prepare,preview,device}.png`. They are
+taken in one run — import the bracket, slice it (**55 layers**), shoot the loaded
+panes, then clear the plate and shoot the empty ones — because an earlier set was
+shot against a plate that had nothing on it and every "loaded" image came out
+byte-identical to its empty counterpart. Each of the eight now has its own md5.
+The settings image is the sheet itself, not the window behind it.
 
 ## What is still not proved
 
