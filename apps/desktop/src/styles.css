@@ -1992,6 +1992,53 @@ select {
   flex-wrap: wrap;
 }
 
+/* Every tick box in the app, drawn rather than borrowed: a native checkbox
+   inside a near-black panel is a light square from another program. */
+input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  width: 0.78rem;
+  height: 0.78rem;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid rgba(233, 232, 242, 0.28);
+  border-radius: 2px;
+  background: rgba(6, 7, 11, 0.6);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  inset: 0.16rem;
+  transform: scale(0.2);
+  opacity: 0;
+  background: var(--accent, #d9a441);
+  clip-path: polygon(14% 44%, 0 62%, 40% 100%, 100% 18%, 84% 4%, 38% 66%);
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+
+input[type="checkbox"]:hover {
+  border-color: rgba(233, 232, 242, 0.5);
+}
+
+input[type="checkbox"]:checked {
+  border-color: var(--accent, #d9a441);
+  background: rgba(217, 164, 65, 0.14);
+}
+
+input[type="checkbox"]:checked::before {
+  transform: scale(1);
+  opacity: 1;
+}
+
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent, #d9a441);
+  outline-offset: 2px;
+}
+
 .cut-pin-toggle {
   display: inline-flex;
   align-items: center;
@@ -2014,9 +2061,20 @@ select {
   padding: 0.12rem 0.24rem;
 }
 
-.cut-joint-note {
-  font-size: 0.68rem;
-  color: var(--muted, var(--ink-3));
+/* `.row` is declared further down and would win a tie, hence both classes. */
+.row.cut-joint {
+  flex-wrap: wrap;
+  row-gap: 0.2rem;
+}
+
+/* What the tab becomes, under the control that decides it: on one line with
+   `dovetail  [root]  tip 12 · deep 6` the three numbers read as the same kind
+   of thing, and two of them are not for typing. */
+.row.cut-joint .cut-joint-note {
+  flex: 1 0 100%;
+  padding-left: 1.35rem;
+  font-size: 0.66rem;
+  color: var(--ink-3);
   letter-spacing: 0.02em;
 }
 
