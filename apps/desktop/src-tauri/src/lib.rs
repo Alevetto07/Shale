@@ -1283,9 +1283,10 @@ fn cut_model(
     let report = model.report.clone();
     let settings = model.settings.clone();
     let source_bytes = model.source_bytes.clone();
-    // The original is replaced rather than added beside, so the plate does not
-    // end up with a stale copy of what was just cut.
-    inner.models.remove(index);
+    // The original leaves the plate, but it does not leave the model list: undo
+    // restores by id, and `restore_models` can only bring back what it still
+    // has. Dropping it here is how Ctrl+Z after a cut emptied the plate.
+    inner.models[index].visible = false;
     let mut views = Vec::new();
     for (suffix, mesh) in pieces {
         let new_id = inner.next_id;
@@ -1345,9 +1346,12 @@ fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Boolea
     if inner.models.len() < 2 {
         return Err("A boolean needs a second part to work against".to_string());
     }
+    // Only what is on the plate: a part a previous cut or undo put away is
+    // still in the list, and its triangles are not the ones being booleaned.
     let triangles = inner
         .models
         .iter()
+        .filter(|model| model.visible)
         .map(|model| model.mesh.triangles.len())
         .sum::<usize>();
     if triangles > BOOLEAN_CAP {
@@ -1408,10 +1412,15 @@ fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Boolea
     let report = model.report.clone();
     let settings = model.settings.clone();
     let source_bytes = model.source_bytes.clone();
-    // The cutters are cutlery now, not geometry: leaving them behind would
-    // leave a plate printed twice. Everything they did not touch stays.
-    inner.models
-        .retain(|model| model.id != id && !others.iter().any(|(used, _)| *used == model.id));
+    // The cutters are cutlery now, not geometry: leaving them on the plate
+    // would leave it printed twice. They stay in the model list, invisible, so
+    // that undo can put them back — `restore_models` restores by id.
+    let spent: Vec<u32> = others.iter().map(|(used, _)| *used).collect();
+    for model in inner.models.iter_mut() {
+        if model.id == id || spent.contains(&model.id) {
+            model.visible = false;
+        }
+    }
     let (low, _) = shale_core::mesh::bounds(&solid);
     let transform = Transform {
         translation: [0.0, 0.0, -low[2]],

@@ -95,6 +95,22 @@ for five minutes and had to be killed, twice taking the whole window with it —
 BSP recursion over `main`'s two megabytes overflows the stack, so the geometry
 now runs on a thread with 256 MB.
 
+## Undo after a cut, and after a boolean
+
+Cut the bracket, keep the lower half, press **Ctrl+Z**: the plate goes back to
+`Arm.3mf` — one row, one part. Before the fix it went back to **nothing at
+all**, because the cut removed the original from the model list and
+`restore_models` can only restore what it still has; the command then hid every
+part it could not find, and the plate was empty with no way back.
+
+Two overlapping cubes (**30 mm** and **20 mm**, 5 mm into each other) and
+*subtract*: the plate holds one part of **55 triangles**, `consumed: 1`. **Ctrl+Z**
+brings back both cubes, 12 triangles each, two rows.
+
+The cutters are not deleted any more: they are made invisible, so undo and redo
+work entirely by id. A hidden part does not count towards the boolean's
+triangle cap, which counts only what is on the plate.
+
 ## Painting support
 
 A 60 mm sphere (2944 triangles) with one brush stroke: **149 faces / 2205 mm²**
