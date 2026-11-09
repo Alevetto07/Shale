@@ -62,6 +62,10 @@ struct Inner {
     queue_run: shale_core::queue::QueueRun,
     /// The printer this window is pointed at, when one has been connected.
     host_config: Option<shale_host::HostConfig>,
+    /// The printer the plate on screen was last resolved against. A send needs
+    /// to know which machine it is talking to before it decides whether the
+    /// G-code may go out at all.
+    printer_id: Option<String>,
     slicing: bool,
     cancel_import: Arc<AtomicBool>,
     engine_message: String,
@@ -160,6 +164,9 @@ struct SliceSummary {
     /// The parts the slice was made from. A job card may only describe the
     /// plate it was taken from.
     model_ids: Vec<u64>,
+    /// The slice was started by the machine's own sequence rather than Cura's
+    /// generic Marlin one. A Bambu machine may only be sent the former.
+    machine_gcode: bool,
 }
 
 #[derive(Serialize)]
@@ -2242,6 +2249,7 @@ async fn slice_model(
     }
     let (catalog_paths, engine, placed, painted, output) = {
         let mut inner = lock(&state)?;
+        inner.printer_id = Some(printer_id.clone());
         if inner.slicing {
             return Err("A slice is already running".into());
         }
@@ -2404,6 +2412,7 @@ async fn slice_model(
         warning_count: outcome.resolved.warning_count,
         gcode_path: outcome.gcode_path.display().to_string(),
         model_ids: inner.models.iter().map(|model| u64::from(model.id)).collect(),
+        machine_gcode: outcome.machine_gcode,
     };
     inner.gcode_path = Some(outcome.gcode_path);
     inner.toolpath = Some(outcome.toolpath);
@@ -2601,21 +2610,50 @@ fn host_status(host: State<PrinterHost>) -> Result<shale_host::Status, String> {
 /// Upload one file and tell the machine to print it. The send button and the
 /// queue both come through here, so a queued job takes exactly the same path as
 /// a pressed one — including the bed type and the sequence number.
+/// Does this G-code open with a machine's own start sequence? Bambu Studio
+/// writes `;===== machine: A1` and Cura's generic Marlin start says nothing of
+/// the kind, so the banner is the difference between a machine that wipes,
+/// levels and purges and one that moves cold.
+fn starts_with_machine_sequence(path: &std::path::Path) -> bool {
+    std::fs::read(path)
+        .map(|bytes| {
+            let head = &bytes[..bytes.len().min(8192)];
+            String::from_utf8_lossy(head).contains(";===== machine:")
+        })
+        .unwrap_or(false)
+}
+
 async fn send_file(
     state: &State<'_, AppState>,
     host: &State<'_, PrinterHost>,
     path: PathBuf,
     bed_type: String,
 ) -> Result<serde_json::Value, String> {
-    let config = {
-        let inner = lock(state)?;
-        inner.host_config.clone()
+    let (config, bambu) = {
+        let mut inner = lock(state)?;
+        let printer = inner.printer_id.clone();
+        let bambu = match (catalog(&mut inner), printer.as_deref()) {
+            (Ok(catalog), Some(id)) => catalog
+                .printers()
+                .iter()
+                .any(|printer| printer.id == id && printer.source == "bambu"),
+            _ => false,
+        };
+        (inner.host_config.clone(), bambu)
     };
     let config = config.ok_or_else(|| "Connect a printer first.".to_string())?;
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "shale.gcode".to_string());
+    if bambu && !starts_with_machine_sequence(&path) {
+        return Err(format!(
+            "Refusing to send `{name}`: it does not open with the machine's own start \
+             sequence, so the printer would not wipe its nozzle, level the bed or purge. \
+             Slice again with a nozzle whose Bambu profile carries one — the A1 ships one \
+             for 0.4 mm — or export the file and print it from Bambu Studio."
+        ));
+    }
     let upload = {
         let config = config.clone();
         let path = path.clone();
@@ -2918,6 +2956,7 @@ fn existing_slice(state: State<AppState>) -> Result<Option<SliceSummary>, String
         warning_count: 0,
         gcode_path: path.display().to_string(),
         model_ids: inner.models.iter().map(|model| u64::from(model.id)).collect(),
+        machine_gcode: starts_with_machine_sequence(&path),
     }))
 }
 
@@ -3831,6 +3870,7 @@ pub fn run() {
             queue: Vec::new(),
             queue_next_id: 1,
             queue_run: shale_core::queue::QueueRun::new(),
+            printer_id: None,
             queue_running: None,
             slicing: false,
             cancel_import: import_cancel,
@@ -3954,4 +3994,43 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("Shale failed to start");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::starts_with_machine_sequence;
+
+    fn temp(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("shale-gate-{name}.gcode"));
+        path
+    }
+
+    #[test]
+    fn a_machine_banner_is_recognised_and_a_marlin_start_is_not() {
+        let bambu = temp("bambu");
+        std::fs::write(
+            &bambu,
+            ";===== machine: A1 =========================\nM620 S0A\nG28 Z P0 T140\nG1 X10 Y10\n",
+        )
+        .unwrap();
+        assert!(starts_with_machine_sequence(&bambu));
+
+        let cura = temp("cura");
+        std::fs::write(
+            &cura,
+            ";FLAVOR:Marlin\n;TIME:1234\nM140 S60\nM104 S210\nG28 ;Start GCode\n",
+        )
+        .unwrap();
+        assert!(
+            !starts_with_machine_sequence(&cura),
+            "a Cura start must not count as a machine's own"
+        );
+
+        let missing = temp("missing");
+        let _ = std::fs::remove_file(&missing);
+        assert!(
+            !starts_with_machine_sequence(&missing),
+            "a file that cannot be read is not a machine sequence"
+        );
+    }
 }

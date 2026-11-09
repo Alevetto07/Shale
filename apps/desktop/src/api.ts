@@ -248,6 +248,11 @@ export interface SliceSummary {
    * description of some other plate: the shell must not show its numbers.
    */
   model_ids: number[];
+  /**
+   * The slice was started by the machine's own sequence, not by Cura's generic
+   * Marlin start. A Bambu machine refuses anything else.
+   */
+  machine_gcode: boolean;
 }
 
 export interface PreviewPath {

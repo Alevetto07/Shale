@@ -101,8 +101,10 @@ system theme whatever the app does.
   [verification.md](verification.md).
 - **Camera** — not implemented. `SHALE_PRINT_REMOVAL` stays off, sends no motion,
   and `will_move_printer` is false.
-- **Bambu-flavoured G-code** — the output is Marlin-flavoured, which the A1
-  accepts over the same `project_file` path, but it is not Bambu's own flavour.
+- **Bambu-flavoured G-code** — the moves are still CuraEngine's Marlin flavour,
+  but the machine's own start and end sequence now comes from the Bambu profile
+  and is filled in (wipe, bed scan, AMS handover, calibration, finish). A Bambu
+  machine refuses a file that does not open with that banner on the way out.
 - **Multi-spool send** — correctly refused rather than silently wrong.
 - **The video is not in the repo.** It is 1.6 MB of screen recording; it belongs
   in the PR description, not in a git object.

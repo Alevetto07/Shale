@@ -32,6 +32,7 @@ pub mod resolver;
 pub mod session;
 pub mod paint;
 pub mod supports;
+pub mod template;
 mod value;
 
 pub use cad::{suggest_chord_mm, ImportReport, ImportedMesh, TessellationTolerance};

@@ -125,10 +125,12 @@ per launch and takes well under a second.
 
 These files are data, like Cura's: Shale converts them into its own
 definition, instance, and material values and does not link or ship Bambu
-Studio. G-code is still CuraEngine's Marlin flavour, so a Bambu machine's own
-start and end sequences and AMS mapping are not reproduced. Treat the entries
-as machines and materials Shale can reason about, not as a Bambu Studio
-replacement.
+Studio. The moves and the feature types are still CuraEngine's Marlin flavour,
+but a Bambu machine's own start and end sequence is read from its profile and
+filled in, so the wipe, the bed scan, the AMS handover and the finish are the
+machine's own. AMS mapping for a multi-spool sliced 3MF is not written, so such
+a plate is refused rather than sent. Treat the entries as machines and materials
+Shale can reason about, not as a Bambu Studio replacement.
 
 ## Build CuraEngine
 

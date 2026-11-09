@@ -21,6 +21,9 @@ pub struct Material {
     pub name: String,
     pub color: String,
     pub diameter: f64,
+    /// `PLA`, `PETG`, … for a filament from an Orca-family library, which is
+    /// the only place the type is written down. Cura's materials never say.
+    pub filament_type: Option<String>,
     pub settings: HashMap<String, f64>,
     pub machines: Vec<MachineMaterial>,
 }
@@ -186,6 +189,7 @@ fn parse_material(id: &str, text: &str) -> Result<Material, String> {
         name,
         color,
         diameter,
+        filament_type: None,
         settings,
         machines,
     })

@@ -37,10 +37,50 @@ const MAX_MATERIALS: usize = 40;
 /// Depth guard for `inherits` chains; the deepest real chain is 3.
 const MAX_DEPTH: usize = 12;
 
+/// The machine's own start and end G-code, still holding its placeholders.
+/// Bambu Studio keeps them in files beside the machine profile rather than in
+/// the profile itself, and they are templates, not G-code: see
+/// `crate::template` for the filling.
+#[derive(Clone, Debug)]
+pub struct MachineGcode {
+    pub start: String,
+    pub end: String,
+}
+
+/// Read `<profile file> template machine_start_gcode.json` and its end
+/// counterpart. Either half missing is no template at all: half a sequence is
+/// worse than the flavour's defaults.
+fn machine_gcode(dir: &Path, profile_file: &str) -> Option<MachineGcode> {
+    let read = |kind: &str| -> Option<String> {
+        let path = dir.join(format!("{profile_file} template {kind}.json"));
+        let text = std::fs::read_to_string(path).ok()?;
+        let parsed: Json = serde_json::from_str(&text).ok()?;
+        let value = parsed.get(kind)?;
+        match value {
+            Json::String(text) => Some(text.clone()),
+            Json::Array(items) => Some(
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .collect::<Vec<_>>()
+                    .join(""),
+            ),
+            _ => None,
+        }
+    };
+    Some(MachineGcode {
+        start: read("machine_start_gcode")?,
+        end: read("machine_end_gcode")?,
+    })
+}
+
 pub struct Library {
     pub definitions: Vec<Definition>,
     pub instances: Vec<InstanceFile>,
     pub materials: Vec<Material>,
+    /// `(machine id, nozzle, gcode)`, one entry per nozzle the profile has a
+    /// template for.
+    pub gcode: Vec<(String, String, MachineGcode)>,
 }
 
 impl Library {
@@ -78,6 +118,7 @@ impl Library {
             definitions: Vec::new(),
             instances: Vec::new(),
             materials: Vec::new(),
+            gcode: Vec::new(),
         }
     }
 
@@ -131,6 +172,16 @@ impl Library {
                 .push(extruder_definition(&id, &model, base));
             for nozzle in &nozzles {
                 self.instances.push(variant_instance(&id, nozzle));
+            }
+            // The start and end sequences are templates in the machine folder,
+            // named after the profile they belong to. A vendor that ships none
+            // keeps the flavour's own defaults.
+            let machine_dir = dir.join("machine");
+            for profile in group {
+                if let Some(gcode) = machine_gcode(&machine_dir, &profile.file) {
+                    self.gcode
+                        .push((id.clone(), profile.nozzle.clone(), gcode));
+                }
             }
             self.instances
                 .extend(quality_instances(&processes, &id, &names, &base.default_quality));
@@ -601,6 +652,14 @@ fn filaments(
         if let Some(density) = values.get("filament_density").and_then(first_number) {
             settings.insert("material_density".to_string(), density);
         }
+        // The machine's own start sequence purges and calibrates at this rate,
+        // so it has to travel with the filament.
+        if let Some(speed) = values
+            .get("filament_max_volumetric_speed")
+            .and_then(first_number)
+        {
+            settings.insert("filament_max_volumetric_speed".to_string(), speed);
+        }
         let color = text(values.get("default_filament_colour"))
             .filter(|value| value.starts_with('#') && value.len() == 7)
             .unwrap_or_else(|| material_color(&kind).to_string());
@@ -610,6 +669,7 @@ fn filaments(
             name: short,
             color,
             diameter: 1.75,
+            filament_type: Some(kind.clone()),
             settings,
             machines: vec![MachineMaterial {
                 products: vec![printer.to_string(), model.to_string()],

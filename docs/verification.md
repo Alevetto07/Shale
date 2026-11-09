@@ -184,12 +184,71 @@ shot against a plate that had nothing on it and every "loaded" image came out
 byte-identical to its empty counterpart. Each of the eight now has its own md5.
 The settings image is the sheet itself, not the window behind it.
 
+## The queue never starts itself
+
+A print that finishes leaves its part on the bed, so a queue that advances by
+itself prints the second job on top of the first. The rule now lives in
+`shale_core::queue`, as five states — `idle`, `armed`, `printing`,
+`waiting_for_plate`, `stopped` — and the gate is in Rust:
+
+```
+idle ──press──▶ armed ──send ok──▶ printing ──finished──▶ waiting_for_plate
+                                            └──failed/error──▶ stopped
+```
+
+`QueueRun::observe` accepts machine reports and can never start a job: there is
+no method on it that starts one. `queue_start_next` refuses unless the run is
+`armed`, and only `queue_arm` (the press that starts the queue) or
+`queue_plate_cleared` (the press after each print) can arm it. The refusal text
+is "The queue is waiting for a plate-cleared press: nothing goes out from this
+bed". A failed or errored send stops the run instead of trying the next job.
+
+Proved at the command layer, not just the state machine: `queue_gate.py` drives
+the real `queue_start_next` through the window and gets that refusal back, then
+arms it and watches the send fail for want of a printer and the run stop.
+
+## The A1 starts the way the A1 starts
+
+`Bambu Lab A1 0.4 nozzle.json` carries `machine_start_gcode` and
+`machine_end_gcode` at zero length. The real text sits beside it, in
+`… template machine_start_gcode.json` and `… template machine_end_gcode.json`,
+as lists of lines. `bambu.rs` reads those, `Catalog` carries them per nozzle,
+and a slice for a Bambu machine renders them with the values the slice resolved.
+
+The template speaks Bambu's names, not Cura's, so `job::render_sequence` fills
+the gaps: `nozzle_temperature` from `material_print_temperature`,
+`bed_temperature_initial_layer_single` from the layer-0 bed temperature,
+`filament_type` from the filament profile, `spiral_mode` from `magic_spiralize`,
+`outer_wall_volumetric_speed` and `flush_volumetric_speeds` from the filament's
+volumetric limit, and the first layer's box from the placed models.
+
+What comes out, measured on the fixtures the A1 ships (0.4 mm, PLA, 10 mm cube):
+
+- Line 1 is `;===== machine: A1 =========================`, not `;FLAVOR:Marlin`.
+- `M620 S0A` hands the print to the AMS, `G28 Z P0 T140` homes Z against the
+  bed, `M983 F…` runs the machine's own extrusion calibration, `G29.1 Z-0.02
+  ; for Textured PEI Plate` scans the plate, and the purge block wipes and
+  shakes the nozzle. Cura's generic Marlin start does none of these.
+- The numbers are the slice's: 215 first layer, 210 after it, bed 60, nozzle
+  `H0.4`, `set_filament_type:PLA`.
+- The end sequence ends `M18 X Y Z`, `M400`,
+  `;M17 X0.8 Y0.8 Z0.5 ; lower motor current to 45% power`, and cuts the
+  motors' current before it stops.
+
+Placeholders are not best-effort: an unresolved name fails the slice with the
+name in the message (`unexpected none: nozzle_temperature_at_noon …`), and the
+renderer refuses to return text with a `{` left in it. A Bambu machine also
+refuses a file that does not open with its own banner — `send_file` reads the
+head of the G-code and will not send one that starts with anything else.
+
 ## What is still not proved
 
 - Seams are not painted, so there is nothing to compare against Bambu's seam
   painter.
-- The G-code is Marlin-flavoured. Bambu's own flavour (`M1002`, `M981`, the
-  AMS print sequence) is not emitted, and no machine here can run it.
+- The body of the G-code is Marlin-flavoured: CuraEngine writes the moves and
+  the types, so Bambu's own flavour (`M1002`, `M981`) does not appear. What is
+  Bambu's is the start and the end — the wipe, the bed scan, the AMS handover,
+  the calibration and the finish — and no machine here can run any of it.
 - Per-filament flush volumes are not priced; CuraEngine has no flush matrix.
 - A multi-spool plate is refused rather than sent, because the sliced 3MF needs
   an `ams_mapping` this app does not write.

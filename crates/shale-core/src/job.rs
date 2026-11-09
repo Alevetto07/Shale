@@ -16,6 +16,231 @@ use crate::mesh::{self, Transform, TriangleMesh};
 use crate::resolver::{ResolveRequest, ResolvedSettings, UserSettings};
 use crate::paint;
 use crate::supports::{self, SupportPlan};
+use crate::template::{self, Value, Values};
+
+/// Bambu's machine profiles keep the machine's own start and end sequence as a
+/// template beside the profile, and that sequence is where the machine wipes
+/// the nozzle, levels the bed and hands over to the AMS. Cura's generic Marlin
+/// start does none of it, so a Bambu machine gets its own or nothing.
+///
+/// `None` is a machine with no template of its own — every Cura printer, and a
+/// Bambu nozzle whose profile ships none — which keeps the start it had.
+fn machine_sequence(
+    catalog: &Catalog,
+    resolved: &ResolvedSettings,
+    models: &[PlacedModel],
+) -> Result<Option<(String, String)>, Error> {
+    let nozzle = resolved
+        .variant_name
+        .split_whitespace()
+        .next()
+        .unwrap_or("0.4");
+    let Some(gcode) = catalog.machine_gcode(&resolved.printer_id, nozzle) else {
+        return Ok(None);
+    };
+
+    // Filament type is not a Cura setting: it comes from the filament profile.
+    let filament_type = catalog
+        .materials
+        .iter()
+        .find(|material| material.id == resolved.material_id)
+        .and_then(|material| material.filament_type.clone())
+        .or_else(|| {
+            let name = resolved.material_id.to_ascii_uppercase();
+            ["PLA", "PETG", "ABS", "ASA", "TPU", "PC", "PVA", "HIPS"]
+                .into_iter()
+                .find(|kind| name.contains(kind))
+                .map(str::to_string)
+        })
+        .ok_or_else(|| {
+            Error::message(
+                "Bambu's start sequence needs the filament type, and this filament's \
+                 profile does not say which one it is"
+                    .to_string(),
+            )
+        })?;
+    render_sequence(gcode, &filament_type, resolved, models).map(Some)
+}
+
+/// Fill a machine's own start and end templates. Separated from the catalogue
+/// so a test can render the real A1 sequence from the fixtures without reading
+/// two thousand profiles first.
+pub fn render_sequence(
+    gcode: &crate::bambu::MachineGcode,
+    filament_type: &str,
+    resolved: &ResolvedSettings,
+    models: &[PlacedModel],
+) -> Result<(String, String), Error> {
+    // Every resolved setting, then the per-extruder lists Bambu writes with a
+    // subscript, then the names its templates use that Cura spells differently.
+    let mut values = Values::new();
+    for (key, value) in &resolved.global {
+        values.set_setting(key, value);
+    }
+    let mut lists: std::collections::BTreeMap<String, Vec<Value>> =
+        std::collections::BTreeMap::new();
+    for extruder in &resolved.extruders {
+        for (key, value) in extruder {
+            lists
+                .entry(key.clone())
+                .or_default()
+                .push(template::value_of(value));
+        }
+    }
+    for (key, list) in lists {
+        values.set_list(&key, list);
+    }
+
+    // `nozzle_temperature*` is Cura's `material_print_temperature*` under
+    // Bambu's name, once per extruder.
+    for (bambu, cura) in [
+        ("nozzle_temperature", "material_print_temperature"),
+        (
+            "nozzle_temperature_initial_layer",
+            "material_print_temperature_layer_0",
+        ),
+    ] {
+        let global = resolved
+            .global
+            .get(cura)
+            .or_else(|| resolved.global.get("material_print_temperature"));
+        let mut list: Vec<Value> = Vec::new();
+        for extruder in &resolved.extruders {
+            let text = extruder
+                .get(cura)
+                .or_else(|| extruder.get("material_print_temperature"))
+                .or(global);
+            match text {
+                Some(text) => list.push(template::value_of(text)),
+                None => {
+                    list.clear();
+                    break;
+                }
+            }
+        }
+        if list.is_empty() {
+            list = global.map(|text| vec![template::value_of(text)]).unwrap_or_default();
+        }
+        // Left unset when nothing resolved: the render then names the missing
+        // name and the slice stops, rather than starting a machine at 0 degrees.
+        if !list.is_empty() {
+            values.set_list(bambu, list);
+        }
+    }
+    // The machine's own bed-temperature name for the first layer.
+    if values.get("bed_temperature_initial_layer_single").is_none() {
+        if let Some(text) = resolved
+            .global
+            .get("material_bed_temperature_layer_0")
+            .or_else(|| resolved.global.get("material_bed_temperature"))
+        {
+            values.set_setting("bed_temperature_initial_layer_single", text);
+        }
+    }
+    // The purge rate and the calibration feed are quoted as volumetric speeds,
+    // which is how a Bambu filament profile writes its limit.
+    if values.get("flush_volumetric_speeds").is_none() {
+        if let Some(text) = resolved.global.get("filament_max_volumetric_speed") {
+            let rate = template::value_of(text);
+            let slots = resolved.extruders.len().max(1);
+            values.set_list("flush_volumetric_speeds", vec![rate; slots]);
+        }
+    }
+    // The A1 wipes and calibrates at the outer wall's volumetric rate; with only
+    // Cura's settings to hand, the filament's limit is the honest stand-in.
+    if values.get("outer_wall_volumetric_speed").is_none() {
+        if let Some(text) = resolved.global.get("filament_max_volumetric_speed") {
+            values.set_setting("outer_wall_volumetric_speed", text);
+        }
+    }
+
+    // The first layer's temperature is also what the flush uses.
+    if values.get("flush_temperatures").is_none() {
+        if let Some(list) = values.get("nozzle_temperature_initial_layer") {
+            let list = list.clone();
+            values.set("flush_temperatures", list);
+        }
+    }
+
+    if values.get("filament_type").is_none() {
+        let slots = resolved.extruders.len().max(1);
+        values.set_list(
+            "filament_type",
+            vec![Value::Text(filament_type.to_string()); slots],
+        );
+    }
+
+    // Cura's spellings.
+    if values.get("spiral_mode").is_none() {
+        let spiral = resolved
+            .global
+            .get("magic_spiralize")
+            .map(|text| text == "true" || text == "True")
+            .unwrap_or(false);
+        values.set("spiral_mode", Value::Flag(spiral));
+    }
+    if values.get("print_sequence").is_none() {
+        let sequence = resolved
+            .global
+            .get("print_sequence")
+            .cloned()
+            .unwrap_or_else(|| "all_at_once".into());
+        let sequence = match sequence.as_str() {
+            "one_at_a_time" => "by object",
+            _ => "all",
+        };
+        values.set("print_sequence", Value::Text(sequence.to_string()));
+    }
+    for name in ["initial_extruder", "initial_no_support_extruder"] {
+        if values.get(name).is_none() {
+            values.set(name, 0);
+        }
+    }
+    if values.get("nozzle_diameter").is_none() {
+        if let Some(text) = resolved.global.get("machine_nozzle_size") {
+            values.set_setting("nozzle_diameter", text);
+        }
+    }
+    if values.get("curr_bed_type").is_none() {
+        // The A1 ships with a textured PEI plate, and its template picks the bed
+        // scan routine by this name.
+        values.set("curr_bed_type", Value::Text("Textured PEI Plate".into()));
+    }
+
+    // Where the first layer sits, which the wipe and the bed scan both use.
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    for model in models {
+        let baked = mesh::bake(&model.mesh, &model.transform);
+        let (low, high) = mesh::bounds(&baked);
+        for axis in 0..3 {
+            min[axis] = min[axis].min(low[axis]);
+            max[axis] = max[axis].max(high[axis]);
+        }
+    }
+    if min[0].is_finite() {
+        values.set("max_layer_z", max[2]);
+        values.set_list(
+            "first_layer_print_min",
+            vec![Value::Num(min[0]), Value::Num(min[1])],
+        );
+        values.set_list(
+            "first_layer_print_size",
+            vec![Value::Num(max[0] - min[0]), Value::Num(max[1] - min[1])],
+        );
+        values.set_list(
+            "first_layer_center_no_wipe_tower",
+            vec![
+                Value::Num((min[0] + max[0]) / 2.0),
+                Value::Num((min[1] + max[1]) / 2.0),
+            ],
+        );
+    }
+
+    let start = template::render(&gcode.start, &values)?;
+    let end = template::render(&gcode.end, &values)?;
+    Ok((start, end))
+}
 
 #[derive(Clone, Debug)]
 pub struct PlacedModel {
@@ -39,6 +264,9 @@ pub struct SliceOutcome {
     pub filament_metres: f64,
     pub flavour: GcodeFlavour,
     pub log_tail: String,
+    /// The machine's own start and end sequence, filled in, was used for this
+    /// slice. `false` is Cura's generic Marlin start.
+    pub machine_gcode: bool,
 }
 
 pub fn slice(
@@ -250,6 +478,18 @@ pub fn slice(
         }
     }
 
+    // A machine that ships its own start sequence gets it, filled in, instead
+    // of Cura's generic Marlin one.
+    let machine_gcode = machine_sequence(catalog, &resolved, models)?;
+    if let Some((start, end)) = &machine_gcode {
+        resolved
+            .global
+            .insert("machine_start_gcode".into(), start.clone());
+        resolved
+            .global
+            .insert("machine_end_gcode".into(), end.clone());
+    }
+
     let output = engine.slice(
         &EngineRequest {
             global: resolved.global.clone(),
@@ -282,6 +522,7 @@ pub fn slice(
         print_time_seconds: output.print_time_seconds,
         filament_metres,
         flavour,
+        machine_gcode: machine_gcode.is_some(),
         log_tail: output.log_tail,
     })
 }

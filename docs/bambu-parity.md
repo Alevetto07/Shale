@@ -108,7 +108,7 @@ the schema needs a notion of "surface" before it can carry them honestly.
 | Project save | 3MF | `.shale` zip | round-trips models and settings |
 | STL export | yes | yes | `File → Export plate as STL…` merges the visible parts, world transforms baked |
 | 3MF export | yes | yes | `File → Export plate as 3MF…` keeps one named object per part |
-| G-code flavour | Bambu/Marlin | Marlin | see the caveat in README |
+| G-code flavour | Bambu/Marlin | Marlin body, Bambu machine start/end | the profile's own wipe, bed scan and AMS handover are used |
 
 ## Verified, not assumed
 
@@ -235,9 +235,10 @@ a slice that had none. Each one was proved from the file rather than from a
 screenshot, and the brush carries its own undo.
 
 What is left: seams are not painted at all, re-cutting a part rotates a plane
-rather than describing a joint profile, the G-code that leaves the app is
-Marlin-flavoured rather than Bambu's, the flush volumes behind a multi-spool
-tower are not priced, and a multi-spool plate cannot be sent as a sliced 3MF.
+rather than describing a joint profile, the body of the G-code is Marlin-flavoured
+rather than Bambu's (its start and end are the machine's own), the flush volumes
+behind a multi-spool tower are not priced, and a multi-spool plate cannot be sent
+as a sliced 3MF.
 
 ## The host half
 

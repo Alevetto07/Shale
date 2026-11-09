@@ -235,6 +235,9 @@ pub struct Catalog {
     /// Material ids from the same library, so a filament list can tell the two
     /// sources apart without guessing from the brand string.
     pub(crate) external_materials: std::collections::HashSet<String>,
+    /// Start and end templates from an Orca-family machine profile, by machine
+    /// id and nozzle.
+    pub(crate) gcode: Vec<(String, String, crate::bambu::MachineGcode)>,
     pub load_warnings: Vec<String>,
 }
 
@@ -310,6 +313,7 @@ impl Catalog {
         // so variants, qualities, materials and the resolver need no special
         // case; only the `source` tag differs.
         let library = crate::bambu::Library::load();
+        let gcode = library.gcode.clone();
         let mut external = std::collections::HashSet::new();
         for definition in library.definitions {
             external.insert(definition.id.clone());
@@ -347,6 +351,7 @@ impl Catalog {
             materials,
             external,
             external_materials,
+            gcode,
             load_warnings: warnings,
         })
     }
@@ -390,6 +395,18 @@ impl Catalog {
                 .then(a.name.cmp(&b.name))
         });
         printers
+    }
+
+    /// The machine's own start and end sequence for a nozzle, if its profile
+    /// library ships one. `None` is a machine whose start is Cura's, which is
+    /// right for a Cura printer and wrong for a Bambu one.
+    pub fn machine_gcode(&self, id: &str, nozzle: &str) -> Option<&crate::bambu::MachineGcode> {
+        self.gcode
+            .iter()
+            .find(|(machine, variant, _)| {
+                machine == id && (variant == nozzle || variant.starts_with(nozzle))
+            })
+            .map(|(_, _, gcode)| gcode)
     }
 
     pub fn printer(&self, id: &str) -> Option<&Definition> {
