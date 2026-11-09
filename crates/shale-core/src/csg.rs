@@ -69,6 +69,26 @@ fn side_of(normal: &[f64; 3], w: f64, point: [f64; 3]) -> f64 {
     dot(*normal, point) - w
 }
 
+
+/// Twice the area of a polygon, from Newell's method: the length of the sum of
+/// the edge cross products. Used only to recognise a fragment too small to be
+/// geometry.
+fn double_area(polygon: &Poly) -> f64 {
+    let mut normal = [0.0f64; 3];
+    for index in 0..polygon.vertices.len() {
+        let a = polygon.vertices[index];
+        let b = polygon.vertices[(index + 1) % polygon.vertices.len()];
+        normal[0] += (a[1] - b[1]) * (a[2] + b[2]);
+        normal[1] += (a[2] - b[2]) * (a[0] + b[0]);
+        normal[2] += (a[0] - b[0]) * (a[1] + b[1]);
+    }
+    dot(normal, normal).sqrt()
+}
+
+/// Anything below this is a sliver: a millionth of a square millimetre, which is
+/// four orders of magnitude under the resolution of any printer.
+const SLIVER_MM2: f64 = 1e-6;
+
 /// Split `polygon` by a plane, dropping each piece into the list it belongs to.
 fn split_polygon(
     normal: [f64; 3],
@@ -131,14 +151,23 @@ fn split_polygon(
                     }
                 }
             }
+            // A spatial plane lands on arbitrary coordinates, so splitting can
+            // leave a sliver with no area. Pushed into the tree it would be
+            // split again at the next plane, and again — the shape a stack
+            // overflow takes. A millionth of a square millimetre is not a
+            // surface, so it is not carried.
             if front_vertices.len() >= 3 {
                 if let Some(piece) = Poly::new(front_vertices) {
-                    front.push(piece);
+                    if double_area(&piece) > SLIVER_MM2 {
+                        front.push(piece);
+                    }
                 }
             }
             if back_vertices.len() >= 3 {
                 if let Some(piece) = Poly::new(back_vertices) {
-                    back.push(piece);
+                    if double_area(&piece) > SLIVER_MM2 {
+                        back.push(piece);
+                    }
                 }
             }
         }
@@ -146,9 +175,13 @@ fn split_polygon(
 }
 
 /// A BSP node: a splitting plane, the polygons that lie on it, and two subtrees.
-/// How a candidate plane would cut a set of polygons: how many it would have
-/// to split, and how lopsided the two sides would be.
-fn plane_cost(polygons: &[Poly], normal: [f64; 3], w: f64) -> usize {
+/// How a plane divides this set: how much falls on each side, and how many
+/// polygons it has to cut in two to do it.
+fn cut_of<'a>(
+    polygons: impl IntoIterator<Item = &'a Poly>,
+    normal: [f64; 3],
+    w: f64,
+) -> (usize, usize, usize) {
     let mut front = 0usize;
     let mut back = 0usize;
     let mut splits = 0usize;
@@ -170,34 +203,124 @@ fn plane_cost(polygons: &[Poly], normal: [f64; 3], w: f64) -> usize {
             (false, false) => {}
         }
     }
-    // Splitting is what makes the polygon lists grow, so it costs more than an
-    // uneven cut — but an uneven cut costs depth, and the two together are what
-    // turned a 660-triangle part into five minutes of walking a chain.
-    splits * 8 + front.abs_diff(back)
+    (front, back, splits)
 }
 
-/// Pick the plane that cuts this set most evenly, rather than the first one that
-/// happens to be in the list.
+/// The coordinate that puts half the sample on each side along `axis`.
+fn median_centroid(sample: &[&Poly], axis: usize) -> f64 {
+    let mut values: Vec<f64> = sample
+        .iter()
+        .map(|polygon| {
+            let sum: f64 = polygon
+                .vertices
+                .iter()
+                .map(|vertex| vertex[axis] as f64)
+                .sum();
+            sum / polygon.vertices.len() as f64
+        })
+        .collect();
+    let middle = values.len() / 2;
+    let (_, median, _) = values.select_nth_unstable_by(middle, f64::total_cmp);
+    *median
+}
+
+/// Pick the plane that divides this set, rather than the first one in the list.
 ///
 /// csg.js starts every node with `polygons[0]`'s plane. On a mesh from a real
 /// part that is close to the worst choice available: a bore alone contributes
 /// hundreds of facets, each with its own plane, and none of them divides the
 /// rest — so the tree becomes a chain, every level re-splits what is below it,
-/// and a 660-triangle part took five minutes and had to be killed. Sampling
-/// two dozen candidates and preferring the cut that splits least and balances
-/// most keeps the depth near log n.
+/// and a 660-triangle part took five minutes and had to be killed.
+///
+/// A face plane is right whenever one of them resolves the set: a box's face
+/// plane leaves six triangles on the plane and six in front, so the recursion
+/// ends at the root, and every real part is mostly such planes. That is the
+/// first test below — how much of the set a candidate takes out of the
+/// recursion altogether — and while a face plane passes it, nothing else is
+/// considered.
+///
+/// Face planes are never enough on a convex body, though, and the reason is
+/// geometry rather than tuning: every plane in the set is a facet plane, and a
+/// facet plane of a convex hull leaves one facet behind and the entire rest of
+/// the body in front of it. No choice among them can balance, so the tree is a
+/// chain as deep as the mesh has facets — 7 820 triangles became 4 449 nodes at
+/// depth 4 264, five seconds of work and more stack than a thread has. When no
+/// face plane resolves the set, the three axis-aligned planes through the median
+/// centroid are candidates instead: they cut polygons a facet plane would leave
+/// whole, which is the price, and they halve the set, which is what depth is
+/// made of.
+///
+/// Everything here is scored on a sample of at most 96 polygons. A plane is
+/// chosen by the shape of the set, not by every polygon in it: scoring each
+/// candidate against every polygon is O(n) per node, which over n nodes is the
+/// quadratic term that made the old chooser the slow part of a Boolean that was
+/// supposed to be the fast part.
 fn pick_plane(polygons: &[Poly]) -> ([f64; 3], f64) {
-    let stride = (polygons.len() / 24).max(1);
-    let mut best = (polygons[0].normal, polygons[0].w);
-    let mut best_cost = usize::MAX;
-    for (index, polygon) in polygons.iter().enumerate() {
-        if index % stride != 0 {
+    // A handful of polygons is cheaper to take apart than to measure: the first
+    // polygon's own plane always terminates, and a spatial plane would keep
+    // splitting a few triangles for no gain.
+    if polygons.len() <= 8 {
+        return (polygons[0].normal, polygons[0].w);
+    }
+
+    let stride = (polygons.len() / 96).max(1);
+    let sample: Vec<&Poly> = polygons.iter().step_by(stride).collect();
+    let total = sample.len();
+
+    // The best face plane on the sample, by the rule that has served every part
+    // with a real face on it: cut little, balance what is left.
+    let mut face = (polygons[0].normal, polygons[0].w);
+    let mut face_cost = usize::MAX;
+    let mut face_cut = (0usize, 0usize, 0usize);
+    let face_stride = (sample.len() / 12).max(1);
+    for (index, polygon) in sample.iter().enumerate() {
+        if index % face_stride != 0 {
             continue;
         }
-        let cost = plane_cost(polygons, polygon.normal, polygon.w);
-        if cost < best_cost {
-            best_cost = cost;
-            best = (polygon.normal, polygon.w);
+        let cut = cut_of(sample.iter().copied(), polygon.normal, polygon.w);
+        let cost = cut.2 * 8 + cut.0.abs_diff(cut.1);
+        if cost < face_cost {
+            face_cost = cost;
+            face = (polygon.normal, polygon.w);
+            face_cut = cut;
+        }
+    }
+
+    // A small set is cheaper to take apart than to measure: a box's tree is six
+    // nodes deep because its six face planes each empty it, and a spatial plane
+    // would cut those faces in two and leave a T-junction on every neighbour.
+    // Sixteen polygons is a chain of at most sixteen nodes, which costs nothing.
+    if polygons.len() <= 64 {
+        return face;
+    }
+
+    // A face plane is accepted when it resolves a third of the set at this
+    // level: polygons on the plane stop here, and the smaller side stops here
+    // too. Below that, the plane is a peel, and a peel is a chain.
+    let coplanar = total.saturating_sub(face_cut.0 + face_cut.1 + face_cut.2);
+    if (face_cut.0.min(face_cut.1) + coplanar) * 3 >= total {
+        return face;
+    }
+
+    // Otherwise this set has no plane that resolves it — a convex body, where
+    // every facet plane peels one facet and leaves the rest in front — and
+    // balance is the only thing that matters. A polygon that straddles a plane
+    // lands on both sides of it, so it is charged to both: a plane that every
+    // polygon straddles has not balanced anything, it has doubled the mesh.
+    let mut best = face;
+    let mut best_sides = (face_cut.0 + face_cut.2).max(face_cut.1 + face_cut.2);
+    for axis in 0..3 {
+        let mut normal = [0.0f64; 3];
+        normal[axis] = 1.0;
+        let w = median_centroid(&sample, axis);
+        let cut = cut_of(sample.iter().copied(), normal, w);
+        if cut.0 + cut.1 + cut.2 == 0 {
+            continue;
+        }
+        let sides = (cut.0 + cut.2).max(cut.1 + cut.2);
+        if sides < best_sides {
+            best_sides = sides;
+            best = (normal, w);
         }
     }
     best
@@ -219,7 +342,21 @@ impl Node {
     }
 
     fn build(&mut self, polygons: Vec<Poly>) {
+        self.build_at(polygons, 0);
+    }
+
+    /// The deepest a tree may go before it stops subdividing. With the plane
+    /// choice below a measured part of any size builds about a dozen levels, so
+    /// this is a ceiling that a pathological mesh hits instead of the thread's
+    /// stack: past it, polygons stay at the node they reached.
+    const MAX_DEPTH: usize = 200;
+
+    fn build_at(&mut self, polygons: Vec<Poly>, depth: usize) {
         if polygons.is_empty() {
+            return;
+        }
+        if depth >= Self::MAX_DEPTH {
+            self.polygons.extend(polygons);
             return;
         }
         if self.plane.is_none() {
@@ -247,12 +384,12 @@ impl Node {
         if !front.is_empty() {
             self.front
                 .get_or_insert_with(|| Box::new(Node::default()))
-                .build(front);
+                .build_at(front, depth + 1);
         }
         if !back.is_empty() {
             self.back
                 .get_or_insert_with(|| Box::new(Node::default()))
-                .build(back);
+                .build_at(back, depth + 1);
         }
     }
 
@@ -406,8 +543,7 @@ pub fn union(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
     right.invert();
     right.clip_to(&left);
     right.invert();
-    left.build(right.all_polygons());
-    to_mesh(&left.all_polygons())
+    merged(&left, &right, false)
 }
 
 /// Everything in `a` that is not in `b`.
@@ -420,9 +556,7 @@ pub fn subtract(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
     right.invert();
     right.clip_to(&left);
     right.invert();
-    left.build(right.all_polygons());
-    left.invert();
-    to_mesh(&left.all_polygons())
+    merged(&left, &right, true)
 }
 
 /// Everything in both.
@@ -434,9 +568,32 @@ pub fn intersect(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
     right.invert();
     left.clip_to(&right);
     right.clip_to(&left);
-    left.build(right.all_polygons());
-    left.invert();
-    to_mesh(&left.all_polygons())
+    merged(&left, &right, true)
+}
+
+/// The surface both trees hold, as a mesh.
+///
+/// csg.js ends every Boolean by merging the two polygon sets into a new tree
+/// and then walking it: `left.build(right.all_polygons())`. The merge buys
+/// nothing — a Boolean's answer is a surface, and `all_polygons` visits exactly
+/// the polygons that were put in — but it is the most expensive step in the
+/// operation, because building a tree over every fragment of the result means
+/// choosing planes and splitting polygons again. On 7 800 triangles that single
+/// step was most of a seven-second subtract.
+///
+/// `invert()` on a tree flips its planes and its polygons and swaps its
+/// subtrees; for a caller that only wants the polygons, flipping them is the
+/// whole of it. Subtraction and intersection end with that flip; a union does
+/// not.
+fn merged(left: &Node, right: &Node, flip: bool) -> TriangleMesh {
+    let mut polygons = left.all_polygons();
+    polygons.extend(right.all_polygons());
+    if flip {
+        for polygon in &mut polygons {
+            polygon.flip();
+        }
+    }
+    to_mesh(&polygons)
 }
 
 /// A closed cylinder whose base sits at `start` and whose axis runs to `start +
@@ -599,6 +756,7 @@ mod tests {
             triangles: faces.iter().map(|face| [face[0] as u32, face[1] as u32, face[2] as u32]).collect(),
         }
     }
+
 
     #[test]
     fn a_triangle_has_a_plane() {
@@ -816,35 +974,29 @@ mod tests {
     }
 
 
-    /// The release-build ladder: 3 000, 4 900 and 7 800 triangles. Ignored by default because it is a stopwatch, not a check; run
-    /// it with `cargo test -p shale-core --release -- --ignored --nocapture`.
+    /// The release-build ladder: 8 000, 33 000 and 80 000 triangles. Ignored by
+    /// default because it is a stopwatch, not a check; run it with
+    /// `cargo test -p shale-core --release boolean_timings -- --ignored --nocapture`.
     ///
-    /// Every rung builds its tree, which is the part of a Boolean that can be
-    /// timed at any size. Only a rung whose tree is shallower than
-    /// `SHALLOW_ENOUGH` is subtracted as well, because on a convex body this
-    /// kernel's tree is a chain — every candidate plane is a face plane, and a
-    /// face plane of a convex hull leaves the whole body in front of it — so the
-    /// recursion is deeper than any thread's stack. The fifteen- and thirty
-    /// thousand rungs were measured at 4.7 s for 7 820 and do not finish: the
-    /// chooser is quadratic on a chain, so those sizes need a different kernel,
-    /// not a bigger stack.
+    /// Every rung builds its tree and subtracts, because the point of the rung
+    /// is the whole operation. The 256 MB stack is belt and braces: with a
+    /// balanced tree the recursion is a dozen levels deep, and the depth is
+    /// printed so that claim is checked rather than assumed.
     #[test]
     #[ignore = "timing ladder: run in release with --ignored --nocapture"]
     fn boolean_timings_at_eight_thirty_and_eighty_thousand() {
-        const SHALLOW_ENOUGH: usize = 1_500;
         std::thread::Builder::new()
             .stack_size(256 * 1024 * 1024)
             .spawn(|| {
-                for (rings, segments) in [(16, 100), (20, 130), (24, 170)] {
+                for (rings, segments) in [(40, 100), (66, 250), (100, 400)] {
                     let a = lattice_sphere(rings, segments, 20.0);
                     let mut b = lattice_sphere(rings, segments, 20.0);
                     for vertex in &mut b.vertices {
                         vertex[0] += 8.0;
                         vertex[1] += 3.0;
                     }
-                    let polygons = to_polygons(&a);
                     let started = std::time::Instant::now();
-                    let node = Node::from_polygons(polygons);
+                    let node = Node::from_polygons(to_polygons(&a));
                     let built = started.elapsed().as_secs_f64() * 1000.0;
                     let (nodes, depth, kept) = node.stats();
                     println!(
@@ -852,22 +1004,17 @@ mod tests {
                          {kept} polygons",
                         a.triangles.len()
                     );
+                    drop(node);
 
-                    if depth <= SHALLOW_ENOUGH {
-                        let started = std::time::Instant::now();
-                        let out = subtract(&a, &b);
-                        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
-                        println!(
-                            "        subtract: {:>6} out, {elapsed:>10.2} ms, {:.0} mm3, {} open edges",
-                            out.triangles.len(),
-                            crate::cut::volume(&out),
-                            open_edges(&out)
-                        );
-                    } else {
-                        println!(
-                            "        subtract skipped: a tree {depth} deep is a chain, and the                              recursion would not fit a stack"
-                        );
-                    }
+                    let started = std::time::Instant::now();
+                    let out = subtract(&a, &b);
+                    let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+                    println!(
+                        "        subtract: {:>6} out, {elapsed:>10.2} ms, {:.0} mm3, {} open edges",
+                        out.triangles.len(),
+                        crate::cut::volume(&out),
+                        open_edges(&out)
+                    );
                 }
             })
             .expect("a thread with a big stack")

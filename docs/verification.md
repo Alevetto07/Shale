@@ -265,34 +265,57 @@ The ramp was first drawn without gaps and read as one wash at a glance; the five
 bands are separated by a 1 px gap showing the panel behind them, so the stops
 can be told apart in a sidebar 200 px wide.
 
-## A boolean at three sizes, and the wall it hits
+## A boolean at three sizes, and the wall it moves
 
 `boolean_timings_at_eight_thirty_and_eighty_thousand` in `csg.rs` builds a
-lattice sphere at three sizes and reports the tree before subtracting anything.
-Release build, one run:
+lattice sphere at 7 800, 32 500 and 79 200 triangles, then subtracts a smaller
+sphere from it. Release build, one run:
 
-| triangles | tree built | nodes | depth |
-|---|---|---|---|
-| 3 000 | 575 ms | 1 792 | 1 696 |
-| 4 940 | 1 653 ms | 2 803 | 2 700 |
-| 7 820 | 5 090 ms | 4 449 | 4 264 |
+| triangles | tree built | nodes | depth | polygons in the tree | subtract | polygons out |
+|---|---|---|---|---|---|---|
+| 7 800 | 67 ms | 8 054 | 108 | 13 335 | 5 114 ms | 33 728 |
+| 32 500 | 366 ms | 34 670 | 135 | 58 663 | 215 565 ms | 145 928 |
+| 79 200 | 924 ms | 85 585 | 195 | 146 304 | not timed | — |
 
-The cost grows as the square of the triangle count and the depth grows with the
-count, not with its logarithm. Both come from the same fact: on a **convex**
-body every candidate split plane is a face plane, and a face plane of a convex
-hull leaves the entire body in front of it, so each node peels one face and the
-tree is a chain. No choice of plane among the faces fixes that, which is why
-`pick_plane` did fix the concave case and cannot fix this one.
+Two changes moved this. Neither cracks it.
 
-That is why the ladder stops at 7 820: the thirty- and eighty-thousand rungs do
-not finish, and a tree 4 264 deep exhausts even the 256 MB thread the desktop's
-Boolean runs on. What is proved is the concave case that parts are actually made
-of — the bracket (1 946 triangles, 0.01 s, 1 864 out) and a plate with a bore
-(2 554 triangles, 57 ms). A Boolean on a coarse convex body is fine; a finely tessellated one would sit on
-a spinner for minutes, so `BOOLEAN_CAP` is 12 000 triangles and the refusal is a
-sentence rather than a hang. That cap is a property of this kernel, not of the
-printer: lifting it needs a build that splits on planes of its own choosing, or
-an iterative one, not a bigger stack.
+**The plane chooser samples and balances.** `pick_plane` used to score every
+face plane against every polygon and take the cheapest: quadratic, and on a
+convex body every face plane scores the same, because a face plane of a convex
+hull leaves the whole body in front of it. It now reads at most 96 polygons,
+scores each candidate on that sample, and above the third of the set that a face
+plane cannot resolve it tries the three axis-aligned planes through the sample's
+median centroids, charging a straddling polygon to both sides because it becomes
+a polygon on both sides. A plane that bisects every polygon is not a balanced
+cut, it is a way to double the mesh. The tree at 7 800 triangles went from
+5 090 ms and a depth of 4 264 to 67 ms and a depth of 108.
+
+**A Boolean does not need a tree at the end.** Every operation ended in the
+csg.js way: `left.build(right.all_polygons())` merges both halves into a fresh
+tree, and the caller then walks that tree to collect the same polygons. On
+7 800 triangles that one step was most of a seven-second subtract. `merged()`
+concatenates the two polygon lists and applies the final flip, which is all
+`invert()` means to a caller that only wants polygons. Subtraction and
+intersection end with that flip; a union does not.
+
+**What is still true.** The depth is no longer 4 264, but the tree is not
+balanced either: at 32 500 triangles it is 135 deep against a log₂ of 15, and
+the polygon count has grown by 1.8× before a single clip, because a plane
+through a sphere cuts a third of its triangles in two. Clipping is charged per
+polygon per level, so the subtract at 32 500 triangles takes 3½ minutes and the
+subtract at 79 200 was not waited for. The wall is now polygon growth rather
+than depth, and it has the same shape: on a finely tessellated convex body a
+BSP-based Boolean is quadratic whatever the plane chooser does.
+
+**So the cap stays at 12 000 triangles.** These numbers do not justify raising
+it: 32 500 takes three and a half minutes, and the climb is steep enough that
+12 000 is already slower than a person will sit through on a convex body. The
+concave case that parts are actually made of is fast — the bracket (1 946
+triangles, 0.01 s, 1 864 out) and a plate with a bore (2 554 triangles, 57 ms).
+Lifting the cap needs a different algorithm, not a better tree: a bounding-volume
+hierarchy plus exact clipping inside the overlapping boxes, which never cuts a
+triangle that no boundary passes through. That is a piece of work on its own,
+and it is under Open in `docs/STATUS-v0.1.md`.
 
 ## The access code is not in the profile
 
