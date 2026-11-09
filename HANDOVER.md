@@ -4,10 +4,27 @@
 > (2026-11-03) and is kept as written, because it explains how the tree got
 > here. For what is true now — what is finished, what each commit is, what is
 > still open — read [docs/STATUS-v0.1.md](docs/STATUS-v0.1.md) and
-> [docs/verification.md](docs/verification.md). Since this was written: the
-> queue no longer advances itself, a Bambu machine's own start and end
-> sequence is used, the Boolean kernel picks its split plane, undo after a cut
-> restores the part, and parts can be joined with pegs or a dovetail.
+> [docs/verification.md](docs/verification.md).
+>
+> As of 2026-11-10 the branch is ninety-three commits past that snapshot and
+> `docs/STATUS-v0.1.md` is the status page. Since this was written: the queue
+> no longer advances itself; a Bambu machine's own start and end sequence is
+> used, with the engine's heat prelude stripped so the machine's sequence is
+> the first thing in the file; the Boolean kernel picks its split plane and no
+> longer peels a convex body face by face (30 k triangles still exceed the
+> 12 000-triangle cap); undo after a cut restores the part; parts can be
+> joined with pegs or a dovetail; the access code lives in the Windows
+> Credential Manager rather than in the window's storage; a printer's
+> certificate is pinned on first sighting, a changed one is refused with a
+> sentence and a press, and a printer can now be forgotten outright; a Bambu
+> double in the repo, bound to 127.0.0.1, proves the host end to end without
+> touching a printer; and every file carries the bounding box it actually has.
+>
+> At the head: `cargo test --workspace --locked` 173 passed / 0 failed /
+> 3 ignored, `cargo clippy --workspace --all-targets -- -D warnings` clean, an
+> NSIS installer at `target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe`
+> (4 675 455 bytes) that has never been run and is not signed. Nothing has been
+> pushed, merged, tagged or published, and no real printer has been contacted.
 
 This file is for the next agent. It describes the repository as of commit `38729ab` on `cursor/deep-field-75ee` (2026-11-03). That commit is unfinished work on top of pull request #8. Nothing in this stack is merged. Do not merge, do not push to `main`, and do not publish a release.
 
