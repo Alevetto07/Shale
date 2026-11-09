@@ -224,11 +224,27 @@ impl Default for Dovetail {
 /// whole of it — tip included, plus clearance — lands inside that face. A part
 /// too narrow to hold one is cut plain, because a tab hanging over an edge is
 /// not a joint, it is a burr.
-pub fn cut_with_dovetail(mesh: &TriangleMesh, plane: &Plane, dovetail: Dovetail) -> Halves {
+/// A cut that may or may not have carried a tab.
+///
+/// `tab_mm3` is `None` when the face had no room for one, which is a different
+/// answer from "the tab was this big" — the caller has to be able to say which
+/// happened, because a control that silently does nothing is a control that
+/// lies.
+pub struct JointCut {
+    pub halves: Halves,
+    pub tab_mm3: Option<f64>,
+}
+
+pub fn cut_with_dovetail(mesh: &TriangleMesh, plane: &Plane, dovetail: Dovetail) -> JointCut {
     let mut halves = cut(mesh, plane);
-    if halves.is_empty() || dovetail.root <= 0.0 || dovetail.tip <= dovetail.root {
-        return halves;
+    let plain = JointCut {
+        halves,
+        tab_mm3: None,
+    };
+    if plain.halves.is_empty() || dovetail.root <= 0.0 || dovetail.tip <= dovetail.root {
+        return plain;
     }
+    let mut halves = plain.halves;
     let segments = cross_section(mesh, plane);
     let rings = loops(&segments);
     let up = normalise(plane.normal);
@@ -251,7 +267,7 @@ pub fn cut_with_dovetail(mesh: &TriangleMesh, plane: &Plane, dovetail: Dovetail)
         }
     }
     let Some((ring, u, v)) = biggest else {
-        return halves;
+        return JointCut { halves, tab_mm3: None };
     };
     let flat = |point: [f64; 3]| [dot(point, u), dot(point, v)];
     let polygon: Vec<[f64; 2]> = ring.iter().map(|point| flat(*point)).collect();
@@ -311,7 +327,7 @@ pub fn cut_with_dovetail(mesh: &TriangleMesh, plane: &Plane, dovetail: Dovetail)
         }
     }
     let Some((root, tip, thickness)) = chosen else {
-        return halves;
+        return JointCut { halves, tab_mm3: None };
     };
 
     // A tab that comes out of the far side of the other half is a spike, not a
@@ -344,7 +360,10 @@ pub fn cut_with_dovetail(mesh: &TriangleMesh, plane: &Plane, dovetail: Dovetail)
         depth + dovetail.clearance * 2.0,
     );
     halves.above = csg::subtract(&halves.above, &slot);
-    halves
+    JointCut {
+        halves,
+        tab_mm3: Some(volume(&tab)),
+    }
 }
 
 /// A trapezoid prism: `root` wide where it meets the face, `tip` wide at the
@@ -995,7 +1014,8 @@ mod tests {
             thickness: 8.0,
             clearance: 0.2,
         };
-        let halves = cut_with_dovetail(&cube, &plane, dovetail);
+        let joint = cut_with_dovetail(&cube, &plane, dovetail);
+        let halves = &joint.halves;
         let plain = cut(&cube, &plane);
         let lower = volume(&halves.below);
         let upper = volume(&halves.above);
@@ -1020,6 +1040,8 @@ mod tests {
         // It really is a dovetail: the tab reaches past the plane it was cut on.
         let (_, top) = halves.below.bounds();
         assert!((top[2] as f64 - 14.0).abs() < 1e-3, "the tab is 4 mm proud: {top:?}");
+        let reported = joint.tab_mm3.expect("a tab was cut, so it has a volume");
+        assert!((reported - 192.0).abs() < 1.0, "the tab reports 192 mm3: {reported}");
     }
 
     #[test]
@@ -1032,8 +1054,14 @@ mod tests {
         let plate = boxed([0.0, 0.0, 0.0], [70.0, 70.0, 11.0]);
         let plane = Plane::new([0.0, 0.0, 5.5], [0.0, 0.0, 1.0]);
         let plain = cut(&plate, &plane);
-        let halves = cut_with_dovetail(&plate, &plane, Dovetail::from_root(8.0));
+        let joint = cut_with_dovetail(&plate, &plane, Dovetail::from_root(8.0));
+        let halves = &joint.halves;
         let gained = volume(&halves.below) - volume(&plain.below);
+        assert!(
+            (joint.tab_mm3.expect("the plate takes a tab") - 432.0).abs() < 2.0,
+            "the plate reports the tab it took: {:?}",
+            joint.tab_mm3
+        );
         assert!((gained - 432.0).abs() < 2.0, "the tab should add 432 mm3: {gained}");
         let (_, top) = halves.below.bounds();
         assert!((top[2] as f64 - 10.0).abs() < 1e-3, "the tab stops 1 mm under the surface: {top:?}");
@@ -1046,7 +1074,7 @@ mod tests {
         let thin = boxed([0.0, 0.0, 0.0], [6.0, 6.0, 20.0]);
         let plane = Plane::new([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]);
         let plain = cut(&thin, &plane);
-        let halves = cut_with_dovetail(
+        let joint = cut_with_dovetail(
             &thin,
             &plane,
             Dovetail {
@@ -1057,10 +1085,18 @@ mod tests {
                 clearance: 0.2,
             },
         );
+        let halves = &joint.halves;
         assert!(
             (volume(&halves.below) - volume(&plain.below)).abs() < 1e-2,
             "a tab that does not fit must not be forced in: {}",
             volume(&halves.below)
+        );
+        // And the caller can say so: a refinement that was asked for and could
+        // not be honoured is not the same answer as one that was.
+        assert!(
+            joint.tab_mm3.is_none(),
+            "a plain cut reports no tab, not a zero one: {:?}",
+            joint.tab_mm3
         );
         assert!(is_closed(&halves.below) && is_closed(&halves.above));
     }

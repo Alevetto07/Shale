@@ -1140,6 +1140,38 @@ fn place_on_face(state: State<AppState>, id: u32, normal: [f64; 3]) -> Result<Tr
     Ok(transform)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MeshHealth {
+    triangles: usize,
+    open_edges: usize,
+    volume_mm3: f64,
+}
+
+/// What the part is, measured: how many triangles, how much material, and
+/// whether its surface closes.
+///
+/// A slicer assumes a closed surface. Zero open edges means the part came in
+/// clean; a cut leaves a seam of T-junctions where the BSP split one polygon
+/// without splitting its neighbour, and that shows as a non-zero count without
+/// being a hole — so the number is shown, and the panel does not call it an
+/// error.
+#[tauri::command]
+fn mesh_health(state: State<AppState>, id: u32) -> Result<MeshHealth, String> {
+    let inner = lock(&state)?;
+    let model = inner
+        .models
+        .iter()
+        .find(|model| model.id == id)
+        .ok_or_else(|| "That model is no longer loaded".to_string())?;
+    let world = shale_core::mesh::bake(&model.mesh, &model.transform);
+    Ok(MeshHealth {
+        triangles: world.triangles.len(),
+        open_edges: shale_core::csg::open_edges(&world),
+        volume_mm3: shale_core::cut::volume(&world),
+    })
+}
+
 /// Where a click on a part should land once it is pulled onto the nearest
 /// vertex. `None` means the click was in the middle of a face and is better
 /// left where the ray put it.
@@ -1214,7 +1246,7 @@ fn cut_model(
     pin_radius: Option<f64>,
     pin_height: Option<f64>,
     dovetail: Option<f64>,
-) -> Result<Vec<ModelView>, String> {
+) -> Result<CutResult, String> {
     let mut inner = lock(&state)?;
     let index = inner
         .models
@@ -1256,20 +1288,33 @@ fn cut_model(
         height: pin_height.unwrap_or(5.0).clamp(0.6, 40.0),
         clearance: 0.2,
     };
+    // What the cut actually did, so the caller can say it: a joint that was
+    // asked for and could not be fitted is not the same answer as one that was.
+    let mut joint: Option<String> = None;
     let halves = with_big_stack(|| match pins {
         0 if dovetail > 0.0 => {
             // A dovetail is what stops the seam opening: the tab is wider than
             // the way out of its own slot.
-            shale_core::cut::cut_with_dovetail(
+            let cut = shale_core::cut::cut_with_dovetail(
                 &world,
                 &plane,
                 shale_core::cut::Dovetail::from_root(dovetail.clamp(2.0, 40.0)),
-            )
+            );
+            joint = cut
+                .tab_mm3
+                .map(|tab| format!("a dovetail tab of {tab:.0} mm³"));
+            cut.halves
         }
         0 => shale_core::cut::cut(&world, &plane),
         // Pins are what makes the cut reversible: the halves come off the
         // plate and go back together in the same place.
-        count => shale_core::cut::cut_with_pins(&world, &plane, pin, count as usize),
+        count => {
+            joint = Some(match count {
+                1 => "1 peg".to_string(),
+                _ => format!("{count} pegs"),
+            });
+            shale_core::cut::cut_with_pins(&world, &plane, pin, count as usize)
+        }
     })?;
     let keep = keep.unwrap_or_else(|| "both".to_string());
     let mut pieces: Vec<(&str, TriangleMesh)> = Vec::new();
@@ -1324,7 +1369,15 @@ fn cut_model(
     }
     inner.toolpath = None;
     inner.gcode_path = None;
-    Ok(views)
+    Ok(CutResult { views, joint })
+}
+
+/// What a cut left behind: the parts, and the joint it managed to carry — or
+/// nothing, when the face had no room for the tab that was asked for.
+#[derive(Serialize)]
+struct CutResult {
+    views: Vec<ModelView>,
+    joint: Option<String>,
 }
 
 /// One part against the others: the boolean Bambu calls a mesh boolean.
@@ -3742,6 +3795,7 @@ pub fn run() {
             update_transform,
             auto_orient,
             place_on_face,
+            mesh_health,
             snap_measure,
             measure_span,
             cut_model,

@@ -372,6 +372,9 @@ export const api = {
   updateTransform: (id: number, transform: Transform) => invoke<void>("update_transform", { id, transform }),
   autoOrient: (id: number) => invoke<Transform>("auto_orient", { id }),
   /// Rest the chosen face on the plate. The normal is in world space.
+  /** What the part is now: triangles, material, and whether it closes. */
+  meshHealth: (id: number) =>
+    invoke<{ triangles: number; openEdges: number; volumeMm3: number }>("mesh_health", { id }),
   placeOnFace: (id: number, normal: [number, number, number]) =>
     invoke<Transform>("place_on_face", { id, normal }),
   cut: (
@@ -384,7 +387,16 @@ export const api = {
     pinHeight = 5,
     dovetail = 0,
   ) =>
-    invoke<ModelView[]>("cut_model", { id, axis, offset, keep, pins, pinRadius, pinHeight, dovetail }),
+    invoke<{ views: ModelView[]; joint: string | null }>("cut_model", {
+      id,
+      axis,
+      offset,
+      keep,
+      pins,
+      pinRadius,
+      pinHeight,
+      dovetail,
+    }),
   /* One part against the others: subtract keeps what the others do not cover,
      union and common are the other two answers to the same question. */
   boolean: (id: number, mode: "subtract" | "union" | "common") =>

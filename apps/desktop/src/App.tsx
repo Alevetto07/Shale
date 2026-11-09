@@ -175,6 +175,14 @@ export function App() {
   /// Which part the settings sheet writes to: "all" for the plate, or a part id.
   const [scope, setScope] = useState<string>("all");
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  /// What the selected part measures right now: triangles, volume, and whether
+  /// its surface closes. Re-measured whenever the plate changes, because a cut
+  /// or a boolean changes all three.
+  const [health, setHealth] = useState<{
+    triangles: number;
+    openEdges: number;
+    volumeMm3: number;
+  } | null>(null);
   const [mode, setMode] = useState<TransformMode>("translate");
   /// The cut plane: which axis it faces, how far from the part's centre, and
   /// whether to keep both halves or one.
@@ -911,6 +919,25 @@ export function App() {
 
   const selected = models.find((model) => model.id === selectedId) ?? null;
 
+  useEffect(() => {
+    if (selectedId == null) {
+      setHealth(null);
+      return;
+    }
+    let live = true;
+    void api
+      .meshHealth(selectedId)
+      .then((measured) => {
+        if (live) setHealth(measured);
+      })
+      .catch(() => {
+        if (live) setHealth(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [selectedId, models]);
+
   /**
    * Everything that goes to the engine as an `extra` override: the quick fields
    * the side panel mirrors, then whatever the settings menu has been told.
@@ -1176,7 +1203,7 @@ export function App() {
   async function cutSelected() {
     if (!selected) return;
     try {
-      const halves = await api.cut(
+      const { views: halves, joint } = await api.cut(
         selected.id,
         cutAxis,
         Number(cutOffset) || 0,
@@ -1190,6 +1217,17 @@ export function App() {
       setModels((current) => [...current.filter((model) => model.id !== selected.id), ...halves]);
       setSelectedId(halves[0]?.id ?? null);
       setPreview(false);
+      // Say what the cut did, not just that it happened: a dovetail that could
+      // not be fitted leaves a plain cut, and the control that asked for it has
+      // to admit that rather than stay silent.
+      const shapes = `${halves.length} ${halves.length === 1 ? "part" : "parts"}`;
+      if (joint) {
+        setNotice(`cut: ${shapes}, with ${joint}`);
+      } else if (cutDovetail > 0) {
+        setNotice(`cut: ${shapes} — no room for a ${cutDovetail} mm tab on that face, so it was cut plain`);
+      } else {
+        setNotice(`cut: ${shapes}`);
+      }
     } catch (err) {
       setError(messageOf(err));
     }
@@ -3234,6 +3272,11 @@ export function App() {
             {selected && (
               <p className="hint">
                 {selected.source}  {selected.triangles} tris
+                {health && selected.id === selectedId
+                  ? `  ${(health.volumeMm3 / 1000).toFixed(2)} cm³  ${
+                      health.openEdges === 0 ? "closed" : `${health.openEdges} seams`
+                    }`
+                  : ""}
                 {selected.max_deviation_mm != null
                   ? `  ${selected.max_deviation_mm.toFixed(3)} mm off the curve`
                   : ""}
