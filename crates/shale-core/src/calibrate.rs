@@ -226,8 +226,21 @@ pub fn step_bands(gcode: &str, bands: &[Band], step: Step) -> (String, Vec<Injec
     }
     // First pass: which height is each layer printed at? CuraEngine writes the
     // layer header, then the first move of the layer carries the Z.
+    //
+    // The end sequence is not a layer. It arrives after the last extrusion —
+    // `G1 E-2 Z0.2` is a retract-and-drop, not the top of the print — so a Z
+    // read after the last move that pushed filament would file the whole end
+    // sequence into the top layer and step it back to band 0.
+    let lines: Vec<&str> = gcode.lines().collect();
+    let last_extrusion = lines
+        .iter()
+        .rposition(|line| extrusion(line).is_some())
+        .unwrap_or(lines.len());
     let mut layer_z: Vec<f64> = Vec::new();
-    for line in gcode.lines() {
+    for (index, line) in lines.iter().enumerate() {
+        if index > last_extrusion {
+            break;
+        }
         if line.starts_with(";LAYER:") {
             layer_z.push(f64::NAN);
             continue;
@@ -328,6 +341,24 @@ pub fn step_bands(gcode: &str, bands: &[Band], step: Step) -> (String, Vec<Injec
         out = with_banner;
     }
     (out, injected)
+}
+
+/// The E value a `G0`/`G1` line pushes, if it pushes any. A retract moves E
+/// backwards, which is not an extrusion, so only a positive move counts.
+fn extrusion(line: &str) -> Option<f64> {
+    if !(line.starts_with("G0") || line.starts_with("G1")) {
+        return None;
+    }
+    for token in line.split_whitespace() {
+        if let Some(value) = token.strip_prefix('E') {
+            if let Ok(e) = value.parse::<f64>() {
+                if e > 0.0 {
+                    return Some(e);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn parse_z(line: &str) -> Option<f64> {
@@ -450,6 +481,57 @@ mod tests {
         let original: Vec<&str> = gcode.lines().filter(|l| l.starts_with("G1")).collect();
         let rewritten: Vec<&str> = out.lines().filter(|l| l.starts_with("G1")).collect();
         assert_eq!(original, rewritten);
+    }
+
+
+    #[test]
+    fn the_end_sequence_is_not_a_layer() {
+        // Cura's end sequence retracts and drops the bed: `G1 E-2 Z0.2`. A
+        // tower's last layer carries no Z of its own when the height has not
+        // changed since the layer before it, so the first Z after the last
+        // `;LAYER:` used to be that `Z0.2` — which filed the whole top of the
+        // print into band 0 and dropped it 200 degrees.
+        let gcode = "\
+;FLAVOR:Marlin\n\
+;LAYER:0\n\
+G0 F6000 X10 Y10 Z0.20\n\
+G1 F1800 X20 Y20 E0.5\n\
+;LAYER:1\n\
+G0 F6000 X10 Y10 Z5.20\n\
+G1 F1800 X20 Y20 E1.0\n\
+;LAYER:2\n\
+G0 F6000 X10 Y10 Z10.20\n\
+G1 F1800 X20 Y20 E1.5\n\
+;LAYER:3\n\
+G0 F6000 X10 Y10\n\
+G1 F1800 X20 Y20 E2.0\n\
+;TIME_ELAPSED:60.0\n\
+G1 F1500 E0\n\
+M140 S0\n\
+M104 S0\n\
+G1 E-2 Z0.2\n\
+M84\n";
+        let bands = vec![
+            Band { index: 0, z_mm: 0.0, value: 230.0 },
+            Band { index: 1, z_mm: 5.0, value: 220.0 },
+            Band { index: 2, z_mm: 10.0, value: 210.0 },
+        ];
+        let (out, injected) = step_temperatures(gcode, &bands);
+        // Band 2 starts at z=10, so it is written once, at the layer that first
+        // reaches it; the layer above it needs no line because 210 still holds.
+        let last = injected.last().expect("a band for every layer it reached");
+        assert_eq!((last.layer, last.value), (2, 210.0), "injected: {injected:?}");
+        // The temperature in force at the last layer is the top band's, not the
+        // first one's: the end sequence's Z0.2 is not a height.
+        let before_end = out.split(";TIME_ELAPSED").next().expect("an end");
+        let in_force = before_end
+            .lines()
+            .rev()
+            .find(|line| line.starts_with("M104 S"))
+            .expect("a temperature");
+        assert!(in_force.contains("210"), "the top layer ran at {in_force}");
+        assert_eq!(out.matches("M104 S230").count(), 1, "out: {out}");
+        assert!(out.contains(";SHALE-CALIBRATION band 2 from z=10.00 at 210C"));
     }
 
     #[test]
