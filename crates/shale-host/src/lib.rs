@@ -38,6 +38,14 @@ pub struct HostConfig {
     /// Where uploads are written. The A1 exposes its storage as `/`.
     #[serde(default = "default_dir")]
     pub remote_dir: String,
+    /// MQTT over TLS. 8883 is what a Bambu machine listens on; a test double
+    /// binds an ephemeral port instead, because a test must not need to be
+    /// administrator to bind the real one.
+    #[serde(default = "default_mqtt_port")]
+    pub mqtt_port: u16,
+    /// Implicit FTPS. 990 on a printer; ephemeral in a test.
+    #[serde(default = "default_ftps_port")]
+    pub ftps_port: u16,
 }
 
 fn default_bed() -> String {
@@ -46,6 +54,14 @@ fn default_bed() -> String {
 
 fn default_dir() -> String {
     "cache".to_string()
+}
+
+fn default_mqtt_port() -> u16 {
+    8883
+}
+
+fn default_ftps_port() -> u16 {
+    990
 }
 
 impl HostConfig {
@@ -365,7 +381,7 @@ fn session(
     commands: &Receiver<String>,
     alive: &Arc<AtomicBool>,
 ) -> Result<()> {
-    let mut wire = Wire::open(&config.host, 8883)?;
+    let mut wire = Wire::open(&config.host, config.mqtt_port)?;
 
     // MQTT 3.1.1 CONNECT: clean session, username and password, 60 s keepalive.
     let mut body = Vec::new();
@@ -525,7 +541,7 @@ fn absorb(value: &serde_json::Value, status: &Arc<Mutex<Status>>) {
 /// data connection is opened to the address in the `227` reply.
 pub fn upload(config: &HostConfig, local: &std::path::Path, name: &str) -> Result<usize> {
     let bytes = std::fs::read(local)?;
-    let mut control = Wire::open(&config.host, 990)?;
+    let mut control = Wire::open(&config.host, config.ftps_port)?;
     expect(&mut control, "220")?;
     send_cmd(&mut control, &format!("USER {}", "bblp"), "331")?;
     send_cmd(&mut control, &format!("PASS {}", config.code), "230")?;
@@ -623,6 +639,67 @@ fn pasv(wire: &mut Wire) -> Result<std::net::SocketAddr> {
     let addr = format!("{ip}:{port}");
     addr.parse()
         .map_err(|_| HostError::Bad(format!("bad address {addr}")))
+}
+
+
+// --------------------------------------------------------------- the file gate
+
+/// Whether a G-code file starts with a machine's own sequence.
+///
+/// A Bambu machine's start writes a banner as its first line —
+/// `;===== machine: A1 ====…` — before any heat or motion. A file that begins
+/// with Cura's `;FLAVOR:Marlin` was started by the generic Marlin sequence and
+/// must not be sent to a Bambu printer: the machine would run it, and the wipe,
+/// the bed scan and the AMS handover that the profile asks for would be missing.
+///
+/// The check reads the head of the file rather than the whole of it, because a
+/// sliced plate can be tens of megabytes.
+pub fn starts_with_machine_sequence(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = [0u8; 4096];
+    let Ok(read) = file.read(&mut head) else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&head[..read]);
+    for line in text.lines().take(40) {
+        let line = line.trim_start();
+        if line.starts_with(";===== machine:") {
+            return true;
+        }
+        // Cura's own first line; stop looking once the file has begun to move.
+        if line.starts_with(";FLAVOR:") || line.starts_with("G0 ") || line.starts_with("G1 ") {
+            return false;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::starts_with_machine_sequence;
+
+    #[test]
+    fn a_machine_banner_is_recognised_and_a_marlin_start_is_not() {
+        let dir = std::env::temp_dir().join("shale-gate-test");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let good = dir.join("a1.gcode");
+        std::fs::write(
+            &good,
+            ";===== machine: A1 =========================\n;A1 0.4 nozzle\nM620 S0A\nG28 Z P0 T140\nG1 X10 Y10\n",
+        )
+        .unwrap();
+        assert!(starts_with_machine_sequence(&good));
+
+        let cura = dir.join("cura.gcode");
+        std::fs::write(&cura, ";FLAVOR:Marlin\n;TIME:1234\nM140 S60\nM104 S210\nG28 ;Start GCode\n").unwrap();
+        assert!(!starts_with_machine_sequence(&cura));
+
+        assert!(!starts_with_machine_sequence(&dir.join("missing.gcode")));
+    }
 }
 
 // ------------------------------------------------------------- the commands

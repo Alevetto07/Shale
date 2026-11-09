@@ -20,6 +20,26 @@ pub enum Machine {
     Failed,
 }
 
+impl Machine {
+    /// What the machine's own `gcode_state` means to the queue.
+    ///
+    /// Bambu reports a state name rather than an enum: `IDLE`, `PREPARE`,
+    /// `RUNNING`, `PAUSE`, `FINISH`, `FAILED`. Anything else — a state a
+    /// firmware adds later, or a report that carries none — is `None`, and the
+    /// caller must not turn a `None` into a guess: an unknown state is not a
+    /// failure, and it is certainly not a licence to start the next job.
+    pub fn from_report(state: &str) -> Option<Machine> {
+        match state.trim().to_ascii_uppercase().as_str() {
+            "IDLE" => Some(Machine::Idle),
+            "PREPARE" | "PREPARING" | "SLICING" => Some(Machine::Preparing),
+            "RUNNING" | "PAUSE" | "PAUSED" => Some(Machine::Running),
+            "FINISH" | "FINISHED" => Some(Machine::Finished),
+            "FAILED" | "FAIL" => Some(Machine::Failed),
+            _ => None,
+        }
+    }
+}
+
 /// Where the run has got to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunState {
@@ -238,6 +258,19 @@ mod tests {
         assert_eq!(update.state, RunState::Stopped);
         assert!(update.note.unwrap().contains("nothing left"));
         assert!(!run.may_start());
+    }
+
+    #[test]
+    fn the_machine_s_state_names_map_onto_the_queue_s() {
+        assert_eq!(Machine::from_report("RUNNING"), Some(Machine::Running));
+        assert_eq!(Machine::from_report("pause"), Some(Machine::Running));
+        assert_eq!(Machine::from_report(" PREPARE "), Some(Machine::Preparing));
+        assert_eq!(Machine::from_report("FINISH"), Some(Machine::Finished));
+        assert_eq!(Machine::from_report("FAILED"), Some(Machine::Failed));
+        assert_eq!(Machine::from_report("IDLE"), Some(Machine::Idle));
+        // A state this build has never heard of is not an event.
+        assert_eq!(Machine::from_report("HEATING"), None);
+        assert_eq!(Machine::from_report(""), None);
     }
 
     #[test]

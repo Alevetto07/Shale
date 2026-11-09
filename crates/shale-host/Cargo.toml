@@ -11,3 +11,13 @@ rustls-pki-types = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
+
+[dev-dependencies]
+# The test double is a TLS server and speaks JSON, so it needs the same two
+# crates the client uses. Both are already in the lockfile through this crate's
+# own dependencies: nothing new is downloaded to run the tests.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1"
+serde_json = "1"
+# The queue's state machine is the other half of the wiring under test.
+shale-core = { path = "../shale-core" }

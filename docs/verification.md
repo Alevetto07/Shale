@@ -322,6 +322,39 @@ test result: ok. 1 passed; 0 failed
 Which asserts write, read-back, delete, and that the deleted entry reads as
 `None`. Nothing in `apps/` or `crates/` names a real access code.
 
+## The host, against a printer that exists only on loopback
+
+`crates/shale-host/tests/support/fake_printer.rs` is a Bambu machine in a test:
+MQTT over TLS and implicit FTPS, both bound to `127.0.0.1` on ephemeral ports, so
+no administrator rights and no network. It answers CONNECT/SUBSCRIBE/PUBLISH/
+PINGREQ, collects what the host publishes on `device/<serial>/request`, pushes
+reports a test asks for on `device/<serial>/report`, and reads a `STOR` payload
+over a second TLS channel. Its certificate is a committed fixture
+(`tests/fixtures/fake-tls/`), because a certificate generated at start could not
+be pinned by a test, and pinning is the point of the second fixture.
+
+One command runs all of it:
+
+```
+cargo test -p shale-host --test wiring
+```
+
+Four tests, all driving the same code the window drives:
+
+| Test | What it proves |
+|---|---|
+| `an_a1_file_uploads_and_the_start_command_arrives` | 1.2 kB of G-code reaches `/cache/plate.gcode` intact over FTPS, then `gcode_file` arrives on the request topic with the right path and bed |
+| `a_cura_started_file_is_refused_before_it_is_sent` | the A1 sequence passes the gate; a Cura start fails it **even with the banner quoted in a later comment**, which the old rule accepted |
+| `a_finished_print_parks_the_queue_until_the_plate_is_cleared` | RUNNING then FINISH over the wire → `WaitingForPlate`, `may_start()` false, and only a plate-cleared press arms one more job |
+| `a_failed_report_stops_the_run` | FAILED with an error number → `Stopped`, the number kept, nothing revivable |
+
+The run takes 0.30 s. Two things it forced into the open: `HostConfig` had the
+protocol's port numbers written into the client, so a test could not bind them
+(`mqtt_port`/`ftps_port` are fields now, defaulting to 8883/990), and the gate
+lived in the window's crate and read the whole file into memory while matching
+the banner anywhere in it. The rule is in `shale-host` now, reads 4 kB, and stops
+looking at the first motion — one rule, one test, next to the upload it protects.
+
 ## What is still not proved
 
 - Seams are not painted, so there is nothing to compare against Bambu's seam

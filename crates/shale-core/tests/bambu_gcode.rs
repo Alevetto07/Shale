@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use shale_core::bambu::MachineGcode;
 use shale_core::job::{render_sequence, PlacedModel};
-use shale_core::mesh::{Transform, TriangleMesh};
+use shale_core::mesh::{Transform};
 use shale_core::primitives;
 use shale_core::resolver::ProfileSummary;
 use shale_core::resolver::ResolvedSettings;

@@ -2614,18 +2614,11 @@ fn host_status(host: State<PrinterHost>) -> Result<shale_host::Status, String> {
 /// Upload one file and tell the machine to print it. The send button and the
 /// queue both come through here, so a queued job takes exactly the same path as
 /// a pressed one — including the bed type and the sequence number.
-/// Does this G-code open with a machine's own start sequence? Bambu Studio
-/// writes `;===== machine: A1` and Cura's generic Marlin start says nothing of
-/// the kind, so the banner is the difference between a machine that wipes,
-/// levels and purges and one that moves cold.
-fn starts_with_machine_sequence(path: &std::path::Path) -> bool {
-    std::fs::read(path)
-        .map(|bytes| {
-            let head = &bytes[..bytes.len().min(8192)];
-            String::from_utf8_lossy(head).contains(";===== machine:")
-        })
-        .unwrap_or(false)
-}
+// Does this G-code open with a machine's own start sequence? The rule lives in
+// the protocol crate, next to the upload it protects: it used to read the whole
+// file here (a sliced plate is tens of megabytes) and it matched the banner
+// anywhere in it, so a Cura file with the string in a comment was accepted.
+use shale_host::starts_with_machine_sequence;
 
 async fn send_file(
     state: &State<'_, AppState>,
@@ -2857,14 +2850,10 @@ fn queue_arm(state: State<'_, AppState>) -> Result<QueueRunView, String> {
 /// `failed`. It can stop the run or park it, never start a job.
 #[tauri::command]
 fn queue_observe(state: State<'_, AppState>, machine: String) -> Result<QueueRunView, String> {
-    let machine = match machine.to_ascii_lowercase().as_str() {
-        "idle" => shale_core::queue::Machine::Idle,
-        "prepare" | "preparing" => shale_core::queue::Machine::Preparing,
-        "running" | "printing" => shale_core::queue::Machine::Running,
-        "finish" | "finished" => shale_core::queue::Machine::Finished,
-        "failed" | "fail" => shale_core::queue::Machine::Failed,
-        other => return Err(format!("{other} is not a machine state the queue knows")),
-    };
+    // One mapping, in the crate that owns the state machine: a report's
+    // `gcode_state` and this command's argument are the same words.
+    let machine = shale_core::queue::Machine::from_report(&machine)
+        .ok_or_else(|| format!("{machine} is not a machine state the queue knows"))?;
     let mut inner = lock(&state)?;
     let update = inner.queue_run.observe(machine);
     Ok(run_view(update))
@@ -4026,7 +4015,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::starts_with_machine_sequence;
+    use shale_host::starts_with_machine_sequence;
 
     fn temp(name: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!("shale-gate-{name}.gcode"));
