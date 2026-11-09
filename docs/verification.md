@@ -648,7 +648,8 @@ The installer was built three times as the night went on — 4 651 432 bytes aft
 the lint pass, 4 657 574 once the UI pass had changed two strings in the window
 and given About its version, and 4 675 455 after the last two fixes (the
 bounding box and the forget press). The last one is the one that ships, and it is
-built from the branch head, not from a working tree with notes in it.
+built from the branch head, not from a working tree with notes in it — the
+two commits after the one it was built from touch only these documents.
 
 Versions are 0.1.0 in all four crates, `apps/desktop/package.json` and
 `apps/desktop/src-tauri/tauri.conf.json`. Nothing was tagged, and the installer
