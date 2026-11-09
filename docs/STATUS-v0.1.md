@@ -156,11 +156,14 @@ looking at a picture.
 
 Three things were fixed, the first two found by reading what the window said:
 
-- `app_status` reported "Printer resources are loaded." for the whole 35.9 s of a
-  cold catalogue read, with an empty printer list underneath, and `catalog()`'s
+- `app_status` reported "Printer resources are loaded." for the whole of a cold
+  catalogue read, with an empty printer list underneath, and `catalog()`'s
   comment promised a wait the code did not do. Both strings now describe the
   state they are in, and a command that arrives mid-read is told the profiles are
-  still being read rather than that they are missing (`626796e`).
+  still being read rather than that they are missing (`626796e`). The read itself
+  turned out to be 4.1 s in a debug build and 1.8 s in release when the machine
+  is idle; the half-minute I first timed it at was measured while `cargo` was
+  using every core. The status page said 36 s for a while and that was wrong.
 - About credited a photograph and three fonts and never named the application or
   its version. It now reads "Shale 0.1.0 — a desktop slicer…", with the number
   taken from `env!("CARGO_PKG_VERSION")` so the window cannot drift from
@@ -245,12 +248,14 @@ not themed — they are the system's.
 3. **Nothing is pushed.** `git push` cannot read a username in this shell
    (`terminal prompts disabled`) and both batches forbid it. Every commit is
    local; the remote tip is still `0b2e3e4`.
-4. **`HANDOVER.md` still describes `38729ab`** by design, with a banner saying so.
-5. **The catalogue takes about 36 s to load on a cold run.** Measured tonight
-   from a freshly built binary: 655 printers, engine ready, `resources_ok` false
-   for 35.9 s while the JSON is read single-threaded. The window says what it is
-   doing now and retries every 700 ms, but the first half-minute of a session has
-   no printer list. Reading the definitions lazily, or in parallel, is the fix.
-6. **Remaining Bambu parity is blocked outside Shale** — seam painting,
+4. **A second launch dies without a word.** Start Shale while a WebView2 child
+   from an earlier run still holds `%LOCALAPPDATA%\dev.shale.desktop\EBWebView`
+   and setup panics: `failed to create webview: WebView2 error:
+   WindowsError(Error { code: HRESULT(0x800700AA), message: "The requested
+   resource is in use." })`, then the process exits. No window, no sentence, no
+   hint that Shale is already running. The probes provoke it by `terminate`-ing
+   the app; a user would provoke it by double-clicking the icon twice. A
+   single-instance guard, or an error box, would fix it.
+5. **Remaining Bambu parity is blocked outside Shale** — seam painting,
    per-filament flush volumes and multi-spool sliced 3MF need CuraEngine 5.13
    support it does not offer; camera and AMS mapping need a machine.

@@ -567,6 +567,34 @@ The run, with the pin from an earlier session still in the vault:
    certificate pin`.
 3. A reload: the Device pane comes back with empty fields, not the old address.
 
+## How long the catalogue takes, when nothing else is running
+
+The first window cannot list printers until Cura's resources are read: 706
+definition files, then 6 011 quality profiles, 1 741 variant files and 641
+intent files under `share/cura/resources`. That read was timed for a while at
+half a minute, which was wrong — those runs happened while `cargo` had every
+core. The app now says which half of the wait it is in when `SHALE_TRACE` is
+set:
+
+```sh
+SHALE_TRACE=1 SHALE_CURA_DIR=... SHALE_MATERIALS_DIR=... SHALE_CURAENGINE=... \
+  ./target/release/shale-desktop.exe
+# [shale] resources discovered: 111.6µs
+# [shale] catalogue read: 1.7906967s
+```
+
+| binary | finding Cura | reading it | `app_status` ready |
+|---|---|---|---|
+| release | 0.1 ms | **1.79 s** | — |
+| debug | 0.27 ms | **4.09 s** | **4.9 s**, 655 printers |
+| `shale-mcp` (release, stdio) | — | — | 1.6 s to the `initialize` reply |
+
+The window figure is from `catalog_window.py`, which polls `app_status` on an
+isolated WebView2 profile (`WEBVIEW2_USER_DATA_FOLDER`), so no earlier instance
+can confuse it. Nothing here needs a cache or a thread pool: two seconds for
+655 printers is a fair price for a fresh read, and the honest fix to the
+complaint was the message, not the loader.
+
 ## A project that comes back
 
 `.shale` is the only format Shale owns, and it holds the whole plate — the

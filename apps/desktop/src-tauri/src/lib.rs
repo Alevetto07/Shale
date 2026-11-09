@@ -3964,13 +3964,26 @@ pub fn run() {
     // window from opening. Commands wait for it through `catalog()`.
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let read = match ResourcePaths::discover() {
+        // Two steps, timed separately under `SHALE_TRACE`: finding Cura is a
+        // directory walk and reading it is eight thousand JSON files, and when
+        // the first window takes a minute it matters which one it is.
+        let traced = std::env::var_os("SHALE_TRACE").is_some();
+        let step = std::time::Instant::now();
+        let discovered = ResourcePaths::discover();
+        if traced {
+            eprintln!("[shale] resources discovered: {:?}", step.elapsed());
+        }
+        let step = std::time::Instant::now();
+        let read = match discovered {
             Ok(paths) => match Catalog::open(paths) {
                 Ok(catalog) => Ok(catalog),
                 Err(err) => Err(err.to_string()),
             },
             Err(err) => Err(err.to_string()),
         };
+        if traced {
+            eprintln!("[shale] catalogue read: {:?}", step.elapsed());
+        }
         let _ = tx.send(read);
     });
     // The demo state is dev-only and slices at startup, so it waits here.
