@@ -5,6 +5,17 @@ edition = "2021"
 description = "Bambu LAN host for Shale: MQTT status, FTPS upload, print control"
 publish = false
 
+[features]
+# Builds the loopback printer as a runnable binary, so a window can be pointed
+# at a machine that exists. Off by default: a release build has no use for it,
+# and `cargo build --workspace --release` should not put a printer on disk.
+fake-printer = []
+
+[[bin]]
+name = "shale-fake-printer"
+path = "src/bin/fake_printer.rs"
+required-features = ["fake-printer"]
+
 [dependencies]
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pki-types = "1"

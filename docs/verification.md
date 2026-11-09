@@ -502,6 +502,33 @@ the loopback double started with either of two committed certificates:
 | `the_upload_channel_is_guarded_by_the_same_pin` | nothing is uploaded to a machine that cannot be identified |
 | `a_hex_pin_survives_a_round_trip` | a pin stored with colons, as `openssl` prints it, is read back |
 
+And once in the window, which is the half a test cannot reach. The double is a
+binary as well as a module:
+
+```
+cargo run -p shale-host --features fake-printer --bin shale-fake-printer -- --cert a
+cargo run -p shale-host --features fake-printer --bin shale-fake-printer -- --cert b
+```
+
+It binds 127.0.0.1 on 8883 and 990 — the ports the Device tab's `connect` uses —
+so the form can be filled and pressed like a person would. Run against `a`,
+then killed and restarted as `b`, the Device tab showed, in this order:
+
+1. `offline · 0%` and the keyring holding `61acc0ae…6f11`: a first sighting
+   recorded what it was offered.
+2. After `b` answered: `not connected — unexpected error: the printer's
+   certificate changed: this machine was pinned to 61acc0ae… and now presents
+   633d1a33…. If the printer was factory reset or its board replaced, that is
+   expected; otherwise something else is answering on its address.` — plus the
+   block and its single press, both in the dark palette, the hashes wrapping
+   inside their box rather than overflowing.
+3. One press on `trust the new certificate`: the block gone, the keyring now
+   `633d1a33…0ebd`, the link re-established against the machine that was there.
+
+The pin is never auto-accepted; the only path from a refusal to a connection is
+that press.
+
+
 ## What is still not proved
 
 - Seams are not painted, so there is nothing to compare against Bambu's seam

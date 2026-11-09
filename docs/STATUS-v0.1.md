@@ -15,7 +15,7 @@ ignored tests are two stopwatches (`boolean_timings_…`,
 | # | Item | Commit | State |
 |---|---|---|---|
 | 1 | Fake printer, rewritten and in the repo | Batch 2 commit 1 | done |
-| 2 | TOFU certificate pinning | Batch 2 commit 2 | done; the window's mismatch path not driven |
+| 2 | TOFU certificate pinning | Batch 2 commit 2, `0b82fcb`+ | done, refusal and press proved in the window |
 | 3 | The boolean wall | `5a54e5b` | moved, not cracked — cap stays 12 000 |
 | 4 | End-to-end slice for the A1 | `905e8f1` | done on both surfaces; found and fixed a prelude defect |
 | 5 | Release readiness | `26e2d75` | clippy clean, release build, installer; numbers below |
@@ -53,6 +53,18 @@ that forgets the pin so the next connection records what it is offered.
 Both channels compare the same pin, because a file sent to an impostor hands over
 the model, the settings and the access code at once. `upload` keeps the old
 permissive behaviour for callers that hold no pin.
+
+Proved twice. `cargo test -p shale-host --test pinning` does it in Rust against
+two committed certificates, and the window does it against the same machine run
+as a binary — `cargo run -p shale-host --features fake-printer --bin
+shale-fake-printer -- --cert b`, on 127.0.0.1:8883 and :990, the ports the
+Device tab's own connect uses. With `a` the first sighting recorded `61acc0ae…`;
+restarted as `b`, the pane read "not connected — unexpected error: the printer's
+certificate changed: this machine was pinned to 61acc0ae… and now presents
+633d1a33…. If the printer was factory reset or its board replaced, that is
+expected; otherwise something else is answering on its address.", with the block
+and its one press below it; the press left the keyring at `633d1a33…` and the
+link up. `docs/verification.md` carries the same run in full.
 
 ### 3. The boolean wall moved; the cap stays
 
@@ -205,31 +217,26 @@ not themed — they are the system's.
    body above it needs a bounding-volume hierarchy with exact clipping inside
    overlapping boxes. Until then a 30 k-triangle convex part takes minutes if it
    is attempted at all, which the cap prevents.
-2. **The pin-mismatch path has never been driven in the window.** The Rust tests
-   prove both channels refuse a changed certificate, and `Tabs.tsx` has the block
-   and the press, but no probe has shown the message on screen: the fake printer
-   lives inside the test crate and the app cannot be pointed at it without a
-   window-level host override.
-3. **`MINX`/`MAXY` in the G-code header read `2.14748e+06`** (`f32::MAX`).
+2. **`MINX`/`MAXY` in the G-code header read `2.14748e+06`** (`f32::MAX`).
    CuraEngine writes them from bounds Shale did not pass; nothing reads them and
    Bambu firmware ignores them, but a slicer should not print a bounding box two
    million millimetres wide.
-4. **Not proved on hardware.** Every host claim — MQTT, FTPS upload, pinning, the
+3. **Not proved on hardware.** Every host claim — MQTT, FTPS upload, pinning, the
    `;===== machine:` gate end to end — is proved against the loopback double.
    Nothing has been sent to a real A1, by rule.
-5. **Nothing is pushed.** `git push` cannot read a username in this shell
+4. **Nothing is pushed.** `git push` cannot read a username in this shell
    (`terminal prompts disabled`) and both batches forbid it. Every commit is
    local; the remote tip is still `0b2e3e4`.
-6. **`HANDOVER.md` still describes `38729ab`** by design, with a banner saying so.
-7. **The catalogue takes about 36 s to load on a cold run.** Measured tonight
+5. **`HANDOVER.md` still describes `38729ab`** by design, with a banner saying so.
+6. **The catalogue takes about 36 s to load on a cold run.** Measured tonight
    from a freshly built binary: 655 printers, engine ready, `resources_ok` false
    for 35.9 s while the JSON is read single-threaded. The window says what it is
    doing now and retries every 700 ms, but the first half-minute of a session has
    no printer list. Reading the definitions lazily, or in parallel, is the fix.
-8. **The Device tab remembers a host and a serial once typed, and offers
+7. **The Device tab remembers a host and a serial once typed, and offers
    DISCONNECT but not FORGET.** On this machine it still holds the fake printer's
    `127.0.0.1` / `FAKE01A000000001` from earlier probing — that is the profile's
    `localStorage`, not the repository, and no access code is there.
-9. **Remaining Bambu parity is blocked outside Shale** — seam painting,
+8. **Remaining Bambu parity is blocked outside Shale** — seam painting,
    per-filament flush volumes and multi-spool sliced 3MF need CuraEngine 5.13
    support it does not offer; camera and AMS mapping need a machine.

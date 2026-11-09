@@ -62,15 +62,18 @@ pub struct FakePrinter {
 }
 
 impl FakePrinter {
-    pub fn start(cert: &[u8], key: &[u8]) -> Self {
+    /// A machine on the ports a test wants: 0 asks the system for a free one,
+    /// which is what a test does so it never needs a privileged port or a free
+    /// one that another run of itself is holding.
+    pub fn start_on(mqtt_port: u16, ftps_port: u16, cert: &[u8], key: &[u8]) -> Self {
         let config = Arc::new(server_config(cert, key));
         let commands = Arc::new(Mutex::new(Vec::new()));
         let uploads = Arc::new(Mutex::new(Vec::new()));
         let outboxes: Arc<Mutex<Vec<Arc<Mutex<Vec<u8>>>>>> = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
 
-        let mqtt = TcpListener::bind("127.0.0.1:0").expect("a loopback MQTT port");
-        let ftps = TcpListener::bind("127.0.0.1:0").expect("a loopback FTPS port");
+        let mqtt = TcpListener::bind(("127.0.0.1", mqtt_port)).expect("a loopback MQTT port");
+        let ftps = TcpListener::bind(("127.0.0.1", ftps_port)).expect("a loopback FTPS port");
         let mqtt_port = mqtt.local_addr().unwrap().port();
         let ftps_port = ftps.local_addr().unwrap().port();
 
@@ -122,6 +125,11 @@ impl FakePrinter {
             outboxes,
             stop,
         }
+    }
+
+    /// The ephemeral-port machine every wiring test uses.
+    pub fn start(cert: &[u8], key: &[u8]) -> Self {
+        Self::start_on(0, 0, cert, key)
     }
 
     /// The configuration the host would use to reach this machine.
