@@ -379,6 +379,10 @@ pub fn slice(
     let layer_height = resolved.summary.layer_height.max(0.05);
     let mut estimated_layers = 1u32;
     let mut baked_paths = Vec::new();
+    // The header's bounding box, measured on the same meshes the engine is
+    // handed. CuraEngine fills it with `f32::MAX` when it is given bare files.
+    let mut scene_min = [f64::INFINITY; 3];
+    let mut scene_max = [f64::NEG_INFINITY; 3];
     let model_dir = output_path.with_extension("models");
     fs::create_dir_all(&model_dir)?;
     for (index, model) in models.iter().enumerate() {
@@ -395,6 +399,11 @@ pub fn slice(
             resolved.summary.machine_depth,
             resolved.summary.machine_center_is_zero,
         );
+        let (engine_min, engine_max) = mesh::bounds(&baked);
+        for axis in 0..3 {
+            scene_min[axis] = scene_min[axis].min(engine_min[axis] as f64);
+            scene_max[axis] = scene_max[axis].max(engine_max[axis] as f64);
+        }
         let path = model_dir.join(format!("model-{index}.stl"));
         mesh::write_binary_stl(&path, &baked)?;
         baked_paths.push(EngineMesh {
@@ -517,6 +526,7 @@ pub fn slice(
     } else {
         gcode
     };
+    let gcode = crate::bambu::rewrite_header_bounds(&gcode, scene_min, scene_max);
     let filament_metres = gcode::filament_length_metres(&gcode);
     fs::write(&output.gcode_path, &gcode)?;
     let toolpath = gcode::parse_toolpaths(&gcode);

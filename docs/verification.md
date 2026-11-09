@@ -543,6 +543,38 @@ that press.
 - Camera and timelapse need a printer; the printer is not on this network.
 
 
+## The bounding box the engine does not know
+
+CuraEngine writes six header lines describing the scene: `;MINX`, `;MINY`,
+`;MINZ`, `;MAXX`, `;MAXY`, `;MAXZ`. Handed bare STL files — which is how Shale
+calls it — it fills them with `f32::MAX` and its negation:
+
+```
+;MINX:2.14748e+06
+;MAXX:-2.14748e+06
+```
+
+A file whose every move sits inside a 256 mm plate claimed a box two million
+millimetres wide. Cura's own header describes the scene in the coordinates the
+moves use, and `job::slice` already bakes and shifts each mesh into exactly
+those coordinates, so `bambu::rewrite_header_bounds` now replaces the six lines
+with the union of the baked meshes' bounds. Nothing else in the file is touched;
+a header without those lines, or a set of models that measured to infinities, is
+returned unchanged.
+
+Sliced again for the A1 through `shale-mcp`, the same model that used to say
+`2.14748e+06` says:
+
+```
+;MINX:-45.392   ;MAXY:24.392
+;MINY:-45.392   ;MAXZ:11
+;MINZ:0         ;MAXX:24.392
+```
+
+69.8 mm square and 11 mm tall, in the bed-centre frame the moves already use —
+which is the Arm. Three unit tests cover the rewrite, the untouched header and
+the unmeasured box.
+
 ## The release build
 
 ```

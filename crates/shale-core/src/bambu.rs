@@ -1009,6 +1009,112 @@ pub fn strip_engine_prelude(gcode: &str) -> String {
     text
 }
 
+/// Replace the bounds CuraEngine puts at the top of a file.
+///
+/// The engine writes `;MINX:2.14748e+06` and `;MAXX:-2.14748e+06` — `f32::MAX`
+/// and its negation — when it is handed bare STL files instead of a scene it
+/// built itself, which is how Shale calls it. The numbers claim a bounding box
+/// two million millimetres wide, in a file whose every move is inside the plate.
+/// Cura's own header describes the scene's bounds in the coordinates the moves
+/// use, and Shale knows those exactly: the baked, engine-space meshes it just
+/// wrote out. So the six lines are rewritten from that union and nothing else in
+/// the file is touched.
+///
+/// A file without those lines is returned unchanged: a generic Marlin header
+/// has no bounds to correct.
+pub fn rewrite_header_bounds(gcode: &str, min: [f64; 3], max: [f64; 3]) -> String {
+    const KEYS: [(&str, usize, bool); 6] = [
+        (";MINX:", 0, false),
+        (";MINY:", 1, false),
+        (";MINZ:", 2, false),
+        (";MAXX:", 0, true),
+        (";MAXY:", 1, true),
+        (";MAXZ:", 2, true),
+    ];
+    // A bounding box of infinities would mean no model was measured, and
+    // writing that into a file is no better than leaving the engine's sentinel.
+    if min.iter().chain(max.iter()).any(|value| !value.is_finite()) {
+        return gcode.to_string();
+    }
+    let mut out = String::with_capacity(gcode.len());
+    let mut done = [false; 6];
+    for line in gcode.split_inclusive('\n') {
+        let bare = line.trim_end_matches(['\r', '\n']);
+        let mut replaced = None;
+        for (slot, (key, axis, upper)) in KEYS.iter().enumerate() {
+            if done[slot] || bare.len() <= key.len() || !bare.starts_with(key) {
+                continue;
+            }
+            let value = if *upper { max[*axis] } else { min[*axis] };
+            replaced = Some(format!("{key}{}", trim(value)));
+            done[slot] = true;
+            break;
+        }
+        match replaced {
+            Some(text) => {
+                out.push_str(&text);
+                out.push_str(&line[bare.len()..]);
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
+/// Three decimals, trailing zeros gone: `90.5`, not `90.500`, and not the
+/// exponent Cura prints when the number it holds is a sentinel.
+fn trim(value: f64) -> String {
+    let text = format!("{value:.3}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    if text == "-0" {
+        "0".to_string()
+    } else {
+        text.to_string()
+    }
+}
+
+#[cfg(test)]
+mod header_bounds_tests {
+    use super::rewrite_header_bounds;
+
+    #[test]
+    fn the_engines_sentinel_is_replaced_with_the_real_box() {
+        let file = concat!(
+            ";FLAVOR:Marlin\n",
+            ";MINX:2.14748e+06\n",
+            ";MINY:2.14748e+06\n",
+            ";MINZ:2.14748e+06\n",
+            ";MAXX:-2.14748e+06\n",
+            ";MAXY:-2.14748e+06\n",
+            ";MAXZ:-2.14748e+06\n",
+            ";LAYER_COUNT:54\n",
+            "G28\n",
+        );
+        let out = rewrite_header_bounds(file, [-20.0, -15.5, 0.2], [20.0, 15.5, 12.4]);
+        assert!(out.contains(";MINX:-20\n"), "{out}");
+        assert!(out.contains(";MINY:-15.5\n"), "{out}");
+        assert!(out.contains(";MINZ:0.2\n"), "{out}");
+        assert!(out.contains(";MAXX:20\n"), "{out}");
+        assert!(out.contains(";MAXY:15.5\n"), "{out}");
+        assert!(out.contains(";MAXZ:12.4\n"), "{out}");
+        assert!(out.ends_with("G28\n"), "the moves are untouched");
+        assert_eq!(out.lines().count(), file.lines().count());
+    }
+
+    #[test]
+    fn a_header_without_bounds_is_left_alone() {
+        let file = ";FLAVOR:Marlin\nG28\n";
+        assert_eq!(rewrite_header_bounds(file, [0.0; 3], [1.0; 3]), file);
+    }
+
+    #[test]
+    fn an_unmeasured_box_does_not_overwrite_a_file() {
+        let file = ";MINX:1\n";
+        let out = rewrite_header_bounds(file, [f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        assert_eq!(out, file);
+    }
+}
+
 #[cfg(test)]
 mod prelude_tests {
     use super::strip_engine_prelude;

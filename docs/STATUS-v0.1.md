@@ -154,7 +154,7 @@ looking at a picture.
   Settings (backend `cli`, BINARY and LIBS fields, CHECK ENGINE), About. The
   recent list carried five projects with dates and machine names.
 
-Two things were fixed, both found by reading what the window said:
+Three things were fixed, the first two found by reading what the window said:
 
 - `app_status` reported "Printer resources are loaded." for the whole 35.9 s of a
   cold catalogue read, with an empty printer list underneath, and `catalog()`'s
@@ -165,6 +165,14 @@ Two things were fixed, both found by reading what the window said:
   its version. It now reads "Shale 0.1.0 — a desktop slicer…", with the number
   taken from `env!("CARGO_PKG_VERSION")` so the window cannot drift from
   `Cargo.toml` (`84cc721`).
+
+- Every file the slicer wrote claimed a bounding box two million millimetres
+  wide: CuraEngine fills `;MINX`…`;MAXZ` with `f32::MAX` when it is handed bare
+  STL files, and it is. `bambu::rewrite_header_bounds` now measures the meshes it
+  just baked and replaces the six lines; a re-slice of the same model says
+  `;-45.392 … 24.392` by `0 … 11`, which is the Arm. Three unit tests, and the
+  real slice in `docs/verification.md`. This one is item 4 territory as much as
+  item 6's — it was found reading a header, not a window.
 
 Not re-driven tonight: the window's own import flow ends in an OS file dialog,
 which a probe cannot press. Calling `import_model` over CDP loads the model in
@@ -217,26 +225,22 @@ not themed — they are the system's.
    body above it needs a bounding-volume hierarchy with exact clipping inside
    overlapping boxes. Until then a 30 k-triangle convex part takes minutes if it
    is attempted at all, which the cap prevents.
-2. **`MINX`/`MAXY` in the G-code header read `2.14748e+06`** (`f32::MAX`).
-   CuraEngine writes them from bounds Shale did not pass; nothing reads them and
-   Bambu firmware ignores them, but a slicer should not print a bounding box two
-   million millimetres wide.
-3. **Not proved on hardware.** Every host claim — MQTT, FTPS upload, pinning, the
+2. **Not proved on hardware.** Every host claim — MQTT, FTPS upload, pinning, the
    `;===== machine:` gate end to end — is proved against the loopback double.
    Nothing has been sent to a real A1, by rule.
-4. **Nothing is pushed.** `git push` cannot read a username in this shell
+3. **Nothing is pushed.** `git push` cannot read a username in this shell
    (`terminal prompts disabled`) and both batches forbid it. Every commit is
    local; the remote tip is still `0b2e3e4`.
-5. **`HANDOVER.md` still describes `38729ab`** by design, with a banner saying so.
-6. **The catalogue takes about 36 s to load on a cold run.** Measured tonight
+4. **`HANDOVER.md` still describes `38729ab`** by design, with a banner saying so.
+5. **The catalogue takes about 36 s to load on a cold run.** Measured tonight
    from a freshly built binary: 655 printers, engine ready, `resources_ok` false
    for 35.9 s while the JSON is read single-threaded. The window says what it is
    doing now and retries every 700 ms, but the first half-minute of a session has
    no printer list. Reading the definitions lazily, or in parallel, is the fix.
-7. **The Device tab remembers a host and a serial once typed, and offers
+6. **The Device tab remembers a host and a serial once typed, and offers
    DISCONNECT but not FORGET.** On this machine it still holds the fake printer's
    `127.0.0.1` / `FAKE01A000000001` from earlier probing — that is the profile's
    `localStorage`, not the repository, and no access code is there.
-8. **Remaining Bambu parity is blocked outside Shale** — seam painting,
+7. **Remaining Bambu parity is blocked outside Shale** — seam painting,
    per-filament flush volumes and multi-spool sliced 3MF need CuraEngine 5.13
    support it does not offer; camera and AMS mapping need a machine.
