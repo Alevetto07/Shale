@@ -1,5 +1,14 @@
 # Handover
 
+> **Where this file is now out of date.** It is a snapshot of `38729ab`
+> (2026-11-03) and is kept as written, because it explains how the tree got
+> here. For what is true now — what is finished, what each commit is, what is
+> still open — read [docs/STATUS-v0.1.md](docs/STATUS-v0.1.md) and
+> [docs/verification.md](docs/verification.md). Since this was written: the
+> queue no longer advances itself, a Bambu machine's own start and end
+> sequence is used, the Boolean kernel picks its split plane, undo after a cut
+> restores the part, and parts can be joined with pegs or a dovetail.
+
 This file is for the next agent. It describes the repository as of commit `38729ab` on `cursor/deep-field-75ee` (2026-11-03). That commit is unfinished work on top of pull request #8. Nothing in this stack is merged. Do not merge, do not push to `main`, and do not publish a release.
 
 Shale's own source licence is still undecided. See [LICENSING.md](LICENSING.md).

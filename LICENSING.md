@@ -40,6 +40,30 @@ The wordmark is Space Grotesk, weight 600. Panels and controls are Geist Mono. L
 
 Shale tessellates STEP boundary representation itself, instead of asking for an STL. The kernel is [truck](https://github.com/ricosjp/truck): `truck-stepio`, `truck-modeling`, `truck-meshalgo`, and `truck-topology`, all Apache-2.0. The STEP parser underneath (`ruststep`) is Apache-2.0. The constrained Delaunay step uses `spade`, which is MIT OR Apache-2.0. Cargo fetches them. Their source is not copied into this repository. Shale's own code is still unlicensed, as stated at the top of this file.
 
+## The libraries the host brought in
+
+The printer host (`crates/shale-host`) speaks MQTT over TLS and FTPS without a
+TLS stack of its own, so it links:
+
+- **rustls 0.23** — Apache-2.0 OR MIT (ISC for some files);
+- **ring** (through rustls' `ring` backend) — ISC-style, with its own
+  per-file notices;
+- **rustls-pki-types** and **untrusted** — MIT OR Apache-2.0, both ISC-compatible
+  in the parts rustls uses;
+- **windows-sys** on Windows — MIT OR Apache-2.0.
+
+None of these is copyleft, and all have terms that permit redistribution in a
+binary provided the notices travel with it. A release build should ship their
+licence texts; this file is a pointer, not the texts themselves.
+
+## The BSP kernel is csg.js's
+
+`crates/shale-core/src/csg.rs` is a port of **csg.js** by Evan Wallace, which is
+MIT licensed (Copyright (c) 2011 Evan Wallace). The polygon splitting, the node
+structure and the union/subtract/intersect operations are that design; the
+split-plane choice and the open-edge accounting here are Shale's. Keep the MIT
+notice with any redistribution of that file.
+
 Open CASCADE (OCCT) was the other candidate. It is LGPL-2.1 with an additional exception. The exception lets a program use an unmodified OCCT under terms other than the LGPL, provided OCCT stays replaceable: if you modify OCCT, those changes must be released under LGPL-2.1 plus the same exception, and a combined binary still has to let a recipient swap in their own OCCT. Shipping Shale linked to OCCT would mean shipping that licence, offering OCCT's source, and keeping the library separable. That is a real distribution obligation, so Shale does not link OCCT. truck covers the STEP files this version tessellates (planes, cylinders, spheres, NURBS shells). Files that only a boolean kernel can rebuild are reported as unsupported rather than sent through OCCT.
 
 ## MCP SDK (Apache-2.0)
