@@ -526,9 +526,14 @@ cd apps/desktop && npm run tauri build                           # exit 0
 
 | artefact | bytes | size |
 |---|---|---|
-| `target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe` | 4 651 432 | 4.44 MiB |
-| `target/release/shale-desktop.exe` | 17 901 056 | 17.1 MiB |
+| `target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe` | 4 657 574 | 4.44 MiB |
+| `target/release/shale-desktop.exe` | 17 862 144 | 17.0 MiB |
 | `target/release/shale-mcp.exe` | 10 733 056 | 10.2 MiB |
+
+The installer was built twice: once for the lint pass (4 651 432 bytes) and
+again once the UI pass had changed two strings in the window and the About
+panel had gained the version, which is the size above. The second build is the
+one that ships.
 
 Versions are 0.1.0 in all four crates, `apps/desktop/package.json` and
 `apps/desktop/src-tauri/tauri.conf.json`. Nothing was tagged, and the installer

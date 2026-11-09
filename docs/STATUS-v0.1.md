@@ -18,8 +18,8 @@ ignored tests are two stopwatches (`boolean_timings_…`,
 | 2 | TOFU certificate pinning | Batch 2 commit 2 | done; the window's mismatch path not driven |
 | 3 | The boolean wall | `5a54e5b` | moved, not cracked — cap stays 12 000 |
 | 4 | End-to-end slice for the A1 | `905e8f1` | done on both surfaces; found and fixed a prelude defect |
-| 5 | Release readiness | this commit | build, clippy and bundle; numbers below |
-| 6 | Last UI pass | this commit | three fixes; the rest is under Open |
+| 5 | Release readiness | `26e2d75` | clippy clean, release build, installer; numbers below |
+| 6 | Last UI pass | `626796e`, `84cc721` | two dishonest strings and a nameless About fixed; the rest is under Open |
 
 ### 1. A Bambu printer that exists only on loopback
 
@@ -124,15 +124,54 @@ any banner is still refused, and both cases have tests.
 
 ### 6. Last UI pass
 
-Fixed in Batch 2: the pin-mismatch block's wording and its single press, and the
-settings panel's gradient footnote. Whatever the final pass found that was too big
-to fix tonight is under Open rather than half-done here.
+Driven page by page with CDP against a debug build, reading the DOM rather than
+looking at a picture.
+
+- **Theme.** Every element on Home, Prepare, Preview and Device was read for its
+  computed `backgroundColor`. Nothing is light: the only element over a crude
+  brightness test on Prepare, Preview and Device is `rgb(185, 179, 255)` — the
+  accent span itself. Zero `✓` characters and zero pictographic glyphs in the
+  body text; the menu hints are plain letters.
+- **Star field** is `canvas.plate-field`, and it exists on Home only. Prepare and
+  Preview carry an unclassed canvas — the viewport — and no field.
+- **Menus** open on a real pointer press; a synthetic `.click()` does nothing,
+  which is why the first probe saw nothing. File has 14 items, Edit 8, View 6,
+  Printer is the machine list itself (101HERO onward, sorted), Slice settings has
+  11 groups with real fields, and Slice is the accent button, not a menu.
+- **The three pages behind the start menu**: Printers (655 machines, BACK, sort),
+  Settings (backend `cli`, BINARY and LIBS fields, CHECK ENGINE), About. The
+  recent list carried five projects with dates and machine names.
+
+Two things were fixed, both found by reading what the window said:
+
+- `app_status` reported "Printer resources are loaded." for the whole 35.9 s of a
+  cold catalogue read, with an empty printer list underneath, and `catalog()`'s
+  comment promised a wait the code did not do. Both strings now describe the
+  state they are in, and a command that arrives mid-read is told the profiles are
+  still being read rather than that they are missing (`626796e`).
+- About credited a photograph and three fonts and never named the application or
+  its version. It now reads "Shale 0.1.0 — a desktop slicer…", with the number
+  taken from `env!("CARGO_PKG_VERSION")` so the window cannot drift from
+  `Cargo.toml` (`84cc721`).
+
+Not re-driven tonight: the window's own import flow ends in an OS file dialog,
+which a probe cannot press. Calling `import_model` over CDP loads the model in
+Rust and the plate stays empty, because the plate updates from the menu's own
+handler — so the model-on-plate and sliced-preview screenshots remain Batch 1's,
+and the files sliced through the window for item 4 were produced the same way,
+through the commands the menu calls.
 
 ## Build
 
 The release numbers are recorded in `docs/verification.md` under "The release
-build", with the commands that produced them. Short version: `npm run tauri build`
-produced a release binary and an installer whose path and size are written there.
+build", with the commands that produced them. Short version: clippy clean,
+`cargo build --workspace --release` in 4m 49s, and `npm run tauri build` producing
+
+    target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe   4 657 574 B, 4.44 MiB
+
+built a second time after the UI pass changed the window. Versions are 0.1.0 in
+four crates, `package.json` and `tauri.conf.json`; nothing was tagged, the
+installer was never run, and it is unsigned.
 
 ## Batch 1 (kept for reference)
 
