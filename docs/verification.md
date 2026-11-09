@@ -355,6 +355,55 @@ lived in the window's crate and read the whole file into memory while matching
 the banner anywhere in it. The rule is in `shale-host` now, reads 4 kB, and stops
 looking at the first motion — one rule, one test, next to the upload it protects.
 
+## A printer whose certificate changed
+
+Bambu printers present a self-signed certificate, so a chain of trust cannot say
+whether the machine on `192.168.x.y` is the one you bought. Two things can: trust
+on first use, and the pin that trust leaves behind.
+
+The first connection to a printer has nothing to compare against, by definition,
+so it accepts what arrives — the access code is what authorises the session — and
+records the certificate's SHA-256. Every later connection must present the same
+fingerprint. The pin is keyed by the printer's **serial**, falling back to its
+address when no serial was recorded, so two printers on one network never
+overwrite each other.
+
+Where it is stored: **the Windows keyring**, next to the access code, under
+`Shale/pin/<serial>`. Not in the app config, because the pin's whole job is to
+detect something interfering with the connection, and a plain file next to the
+app is exactly what such a thing would rewrite. It is not a secret — a
+fingerprint is public — but it is only worth anything if it cannot be edited
+casually, and the keyring is the one store on this machine with a defined
+boundary per entry.
+
+Both channels are guarded, not just one: the MQTT link and the FTPS upload go
+through the same verifier. A file sent to an impostor is the model, the settings
+and the access code at once.
+
+When it fires, the link stops rather than reconnecting — a changed certificate is
+a question, not a flaky socket — and the Device pane shows the sentence with
+both fingerprints and one press:
+
+> The machine on this address presented a different certificate. A printer that
+> was factory reset, or had its board replaced, does this; anything else
+> answering in its place does too. Trust the new one only if you know why it
+> changed.
+>
+> `trust the new certificate`
+
+That press deletes the pin and reconnects, which is a fresh first sighting.
+
+Proved by `cargo test -p shale-host --test pinning`, five tests, 0.33 s against
+the loopback double started with either of two committed certificates:
+
+| Test | What it proves |
+|---|---|
+| `the_first_connection_records_the_certificate_it_was_offered` | the recorded pin is `61acc0ae…6f11`, the SHA-256 of the fixture, and the window is told |
+| `the_same_printer_connects_again_under_its_pin` | a matching certificate is let in |
+| `a_changed_certificate_stops_the_link_and_says_why` | a different certificate (`633d1a33…0ebd`) leaves the link disconnected with a sentence naming both fingerprints, and it stays refused |
+| `the_upload_channel_is_guarded_by_the_same_pin` | nothing is uploaded to a machine that cannot be identified |
+| `a_hex_pin_survives_a_round_trip` | a pin stored with colons, as `openssl` prints it, is read back |
+
 ## What is still not proved
 
 - Seams are not painted, so there is nothing to compare against Bambu's seam

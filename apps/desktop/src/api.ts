@@ -245,6 +245,14 @@ export const queueRunState = () => invoke<QueueRun>("queue_run_state");
 export const hostControl = (command: "pause" | "resume" | "stop") =>
   invoke<void>("host_control", { command });
 
+/** Forget this printer's certificate pin. The "trust the new certificate"
+ *  action: the next connection accepts and records what it is offered. */
+export const hostForgetPin = () => invoke<void>("host_forget_pin");
+
+/** The pin this printer is held to, or null when the next connection is a
+ *  first sighting. */
+export const hostPin = () => invoke<string | null>("host_pin");
+
 export interface SliceSummary {
   layer_count: number;
   layers: { index: number; z: number }[];

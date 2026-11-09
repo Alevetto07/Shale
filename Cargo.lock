@@ -3611,6 +3611,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "sha2",
  "shale-core",
  "thiserror 1.0.69",
 ]

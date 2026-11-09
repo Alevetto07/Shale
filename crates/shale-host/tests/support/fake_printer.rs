@@ -32,19 +32,15 @@ use rustls::{ServerConfig, ServerConnection, StreamOwned};
 
 pub const CERT_A: &[u8] = include_bytes!("../fixtures/fake-tls/cert-a.der");
 pub const KEY_A: &[u8] = include_bytes!("../fixtures/fake-tls/key-a.der");
-// The second pair exists so the pin test can put a different certificate in
-// front of a client that has already seen the first one. Unused until then.
-#[allow(dead_code)]
+// The second pair is what the pin test puts in front of a client that has
+// already accepted the first.
 pub const CERT_B: &[u8] = include_bytes!("../fixtures/fake-tls/cert-b.der");
-#[allow(dead_code)]
 pub const KEY_B: &[u8] = include_bytes!("../fixtures/fake-tls/key-b.der");
 
 /// SHA-256 of the certificate each fixture carries, lower-case hex. Written
 /// down here so a test can name the pin without hashing anything.
-#[allow(dead_code)]
 pub const FINGERPRINT_A: &str =
     "61acc0aeb5255c5d0548b5c3afefd8ec58c5a512a9672de9f4495fe1b3a26f11";
-#[allow(dead_code)]
 pub const FINGERPRINT_B: &str =
     "633d1a33fbe0a3cbe323f936f4e143dc31591aa8c2ebe5d86fe5ed970b810ebd";
 

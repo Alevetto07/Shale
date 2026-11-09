@@ -330,6 +330,20 @@ export function DevicePane({
     }
   }
 
+  // The printer is answering with a certificate this machine was not pinned to.
+  // Forgetting the pin is the whole action: the next connection has nothing to
+  // compare against, accepts what arrives and records it.
+  async function trustPin() {
+    setNote(null);
+    try {
+      await api.hostForgetPin();
+      setStatus(null);
+      await connect();
+    } catch (err) {
+      setNote(String(err));
+    }
+  }
+
   async function disconnect() {
     setNote(null);
     try {
@@ -511,6 +525,18 @@ export function DevicePane({
               ? `not connected — ${statusOf.note}`
               : "no printer connected"}
         </p>
+        {statusOf?.note?.includes("certificate changed") ? (
+          <div className="device-pin">
+            <p>
+              The machine on this address presented a different certificate. A printer that was
+              factory reset, or had its board replaced, does this; anything else answering in its
+              place does too. Trust the new one only if you know why it changed.
+            </p>
+            <button type="button" onClick={trustPin}>
+              trust the new certificate
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <section className="device-live">

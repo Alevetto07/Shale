@@ -2489,6 +2489,10 @@ fn read_head(path: &std::path::Path, limit: usize) -> String {
 struct PrinterHost {
     link: Mutex<Option<shale_host::Link>>,
     sequence: std::sync::atomic::AtomicU64,
+    /// The keyring entry this link's certificate pin lives under, and whether
+    /// the pin that is there now came from a handshake we watched.
+    pin_key: Mutex<String>,
+    pin_stored: std::sync::atomic::AtomicBool,
 }
 
 impl PrinterHost {
@@ -2530,10 +2534,31 @@ fn host_connect(
     if let Some(old) = slot.take() {
         old.close();
     }
-    let link = shale_host::Link::spawn(config.clone());
+    // A printer is identified by its serial; an address is the fallback for a
+    // machine that was recorded without one. The key is per printer, so two
+    // printers on one network do not overwrite each other's pin.
+    let pin_key = format!(
+        "pin/{}",
+        if config.serial.trim().is_empty() {
+            &config.host
+        } else {
+            &config.serial
+        }
+    );
+    let stored = secrets::get(&pin_key)?;
+    let pin = stored.as_deref().and_then(shale_host::parse_hex);
+    let link = shale_host::Link::spawn_pinned(config.clone(), pin);
     let status = link.status();
     *slot = Some(link);
     drop(slot);
+    *host
+        .pin_key
+        .lock()
+        .map_err(|_| "the pin lock is poisoned".to_string())? = pin_key;
+    host.pin_stored.store(
+        stored.is_some(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     // Uploads read the same config back out of the plate state.
     lock(&state)?.host_config = Some(config);
     Ok(status)
@@ -2602,10 +2627,78 @@ fn host_status(host: State<PrinterHost>) -> Result<shale_host::Status, String> {
         .link
         .lock()
         .map_err(|_| "the printer lock is poisoned".to_string())?;
-    Ok(match slot.as_ref() {
+    let status = match slot.as_ref() {
         Some(link) => link.status(),
         None => shale_host::Status::default(),
-    })
+    };
+    drop(slot);
+
+    // Trust on first use, written down: the first status after a connection
+    // carries the fingerprint that was accepted, and it is stored against this
+    // printer so the next connection can refuse anything else. A mismatch never
+    // reaches here — the link does not connect — so this cannot overwrite a pin
+    // with the certificate that failed the pin.
+    if status.connected
+        && !status.fingerprint.is_empty()
+        && !host.pin_stored.load(std::sync::atomic::Ordering::Relaxed)
+    {
+        let key = host
+            .pin_key
+            .lock()
+            .map_err(|_| "the pin lock is poisoned".to_string())?
+            .clone();
+        if !key.is_empty() {
+            secrets::set(&key, &status.fingerprint)?;
+            host.pin_stored
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    Ok(status)
+}
+
+/// Forget this printer's certificate pin. This is the "trust the new
+/// certificate" action: the next connection has nothing to compare against, so
+/// it accepts what it is offered and records it — which is right when a board
+/// was replaced or a printer factory reset, and is a deliberate press, not
+/// something that happens by itself.
+#[tauri::command]
+fn host_forget_pin(host: State<PrinterHost>) -> Result<(), String> {
+    let key = host
+        .pin_key
+        .lock()
+        .map_err(|_| "the pin lock is poisoned".to_string())?
+        .clone();
+    if key.is_empty() {
+        return Err("Connect a printer first.".to_string());
+    }
+    secrets::clear(&key)?;
+    host.pin_stored
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    // The link on screen is still the refused one; closing it makes the next
+    // Connect a fresh handshake rather than a reconnect into the old pin.
+    let mut slot = host
+        .link
+        .lock()
+        .map_err(|_| "the printer lock is poisoned".to_string())?;
+    if let Some(link) = slot.take() {
+        link.close();
+    }
+    Ok(())
+}
+
+/// The pin this printer is held to, or `None` when the next connection will be
+/// its first sighting.
+#[tauri::command]
+fn host_pin(host: State<PrinterHost>) -> Result<Option<String>, String> {
+    let key = host
+        .pin_key
+        .lock()
+        .map_err(|_| "the pin lock is poisoned".to_string())?
+        .clone();
+    if key.is_empty() {
+        return Ok(None);
+    }
+    secrets::get(&key)
 }
 
 /// Upload the plate that was just sliced and hand the machine the command to
@@ -2619,6 +2712,18 @@ fn host_status(host: State<PrinterHost>) -> Result<shale_host::Status, String> {
 // file here (a sliced plate is tens of megabytes) and it matched the banner
 // anywhere in it, so a Cura file with the string in a comment was accepted.
 use shale_host::starts_with_machine_sequence;
+
+
+/// The pin this printer is held to, if one has been recorded. Shared by the
+/// status link and the upload so both are guarded by the same value.
+fn stored_pin(serial: &str, host: &str) -> Option<shale_host::Pin> {
+    let key = format!(
+        "pin/{}",
+        if serial.trim().is_empty() { host } else { serial }
+    );
+    let stored = secrets::get(&key).ok().flatten()?;
+    shale_host::parse_hex(&stored)
+}
 
 async fn send_file(
     state: &State<'_, AppState>,
@@ -2655,7 +2760,10 @@ async fn send_file(
         let config = config.clone();
         let path = path.clone();
         let name = name.clone();
-        tauri::async_runtime::spawn_blocking(move || shale_host::upload(&config, &path, &name))
+        let pin = stored_pin(&config.serial, &config.host);
+        tauri::async_runtime::spawn_blocking(move || {
+            shale_host::upload_with(&shale_host::Trust::new(pin), &config, &path, &name)
+        })
             .await
             .map_err(|err| err.to_string())?
             .map_err(|err| err.to_string())?
@@ -3971,6 +4079,8 @@ pub fn run() {
             host_connect,
             host_disconnect,
             host_status,
+            host_forget_pin,
+            host_pin,
             host_send,
             host_control,
             queue_add,

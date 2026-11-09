@@ -19,9 +19,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, SignatureScheme, StreamOwned};
+use rustls::pki_types::ServerName;
+use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use serde::{Deserialize, Serialize};
 
 /// Everything needed to reach one printer on the LAN.
@@ -94,6 +93,9 @@ pub struct Status {
     pub error: i64,
     /// The last thing that went wrong in this process, for the window to show.
     pub note: String,
+    /// The certificate fingerprint the machine presented, hex. Empty until a
+    /// handshake has completed.
+    pub fingerprint: String,
     pub reports: u64,
     pub updated_at: f64,
 }
@@ -114,63 +116,162 @@ pub enum HostError {
     Tls(#[from] rustls::Error),
     #[error("{0}")]
     Bad(String),
+    /// The certificate is not the one that was accepted last time. Retrying
+    /// cannot fix this: a person has to decide whether the new one is expected.
+    #[error("{note}")]
+    Pin { note: String },
 }
 
 type Result<T> = std::result::Result<T, HostError>;
 
+/// `complete_io` reports a handshake failure as an `io::Error` whose text is
+/// the TLS alert. A pin refusal hides in there; lifting it out is what lets the
+/// caller stop retrying and ask a person instead.
+fn handshake_error(err: io::Error) -> HostError {
+    let text = err.to_string();
+    if text.contains("certificate changed") {
+        HostError::Pin { note: text }
+    } else {
+        HostError::Io(err)
+    }
+}
+
 // ---------------------------------------------------------------- transport
 
-/// The printer presents a self-signed certificate. Accepting it is what makes
-/// the connection possible at all; the access code is the thing that authorises.
-#[derive(Debug)]
-struct AcceptAny;
+/// A certificate's SHA-256. Thirty-two bytes, which is what gets compared and
+/// what gets stored; the window and the docs show it as hex.
+pub type Pin = [u8; 32];
 
-impl ServerCertVerifier for AcceptAny {
+/// The fingerprint of a certificate, as a person reads one.
+pub fn hex(pin: &Pin) -> String {
+    pin.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Read a fingerprint back from the form it is stored in.
+pub fn parse_hex(text: &str) -> Option<Pin> {
+    let clean: String = text.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if clean.len() != 64 {
+        return None;
+    }
+    let mut pin = [0u8; 32];
+    for (index, slot) in pin.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&clean[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(pin)
+}
+
+/// The printer presents a self-signed certificate, so the usual chain cannot
+/// say whether this is the machine it claims to be. Two things can: trust on
+/// first use, and the pin that trust leaves behind.
+///
+/// The first time Shale reaches a printer it has no pin, and it accepts
+/// whatever arrives — the access code is what authorises the session, and a
+/// certificate nobody has seen cannot be checked against anything. The
+/// fingerprint is recorded. Every later connection must present the same one:
+/// a printer whose certificate changed is either a printer that was factory
+/// reset or something else answering on that address, and the difference
+/// matters enough to stop and ask a person.
+#[derive(Debug)]
+struct Pinning {
+    /// What this connection has been offered, written down as it arrives.
+    seen: Arc<Mutex<Option<Pin>>>,
+    /// What was accepted last time, if anything.
+    expected: Option<Pin>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for Pinning {
     fn verify_server_cert(
         &self,
-        _end: &CertificateDer<'_>,
-        _ints: &[CertificateDer<'_>],
-        _name: &ServerName<'_>,
+        end_entity: &rustls_pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+        _server_name: &rustls_pki_types::ServerName<'_>,
         _ocsp: &[u8],
-        _now: UnixTime,
-    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
+        _now: rustls_pki_types::UnixTime,
+    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        use sha2::Digest;
+        let digest = sha2::Sha256::digest(end_entity.as_ref());
+        let mut pin = [0u8; 32];
+        pin.copy_from_slice(&digest);
+        *self.seen.lock().unwrap() = Some(pin);
+
+        match self.expected {
+            // Trust on first use: nothing to compare against, so record and go.
+            None => Ok(rustls::client::danger::ServerCertVerified::assertion()),
+            Some(expected) if expected == pin => {
+                Ok(rustls::client::danger::ServerCertVerified::assertion())
+            }
+            Some(expected) => Err(rustls::Error::General(format!(
+                "the printer's certificate changed: this machine was pinned to {} and now \
+                 presents {}. If the printer was factory reset or its board replaced, that is \
+                 expected; otherwise something else is answering on its address.",
+                hex(&expected),
+                hex(&pin)
+            ))),
+        }
     }
 
     fn verify_tls12_signature(
         &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
+        message: &[u8],
+        cert: &rustls_pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        let algorithms = rustls::crypto::ring::default_provider().signature_verification_algorithms;
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &algorithms)
     }
 
     fn verify_tls13_signature(
         &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
+        message: &[u8],
+        cert: &rustls_pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        let algorithms = rustls::crypto::ring::default_provider().signature_verification_algorithms;
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &algorithms)
     }
 
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
         rustls::crypto::ring::default_provider()
             .signature_verification_algorithms
             .supported_schemes()
     }
 }
 
-fn tls_config() -> Arc<ClientConfig> {
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let config = ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .expect("the ring provider offers default protocol versions")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAny))
-        .with_no_client_auth();
-    Arc::new(config)
+/// The client side of the printer's TLS: one verifier, and the fingerprint it
+/// has been offered. Every connection Shale opens to a printer — the MQTT link
+/// and the FTPS data channel alike — goes through one of these, because a pin
+/// that only guards one of the two guards nothing.
+#[derive(Clone)]
+pub struct Trust {
+    config: Arc<ClientConfig>,
+    seen: Arc<Mutex<Option<Pin>>>,
+}
+
+impl Trust {
+    /// `pin` is what was accepted last time; `None` means this is the first
+    /// sighting and the certificate is recorded rather than checked.
+    pub fn new(pin: Option<Pin>) -> Self {
+        let seen = Arc::new(Mutex::new(None));
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .expect("the ring provider offers default protocol versions")
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(Pinning {
+                seen: Arc::clone(&seen),
+                expected: pin,
+            }))
+            .with_no_client_auth();
+        Self {
+            config: Arc::new(config),
+            seen,
+        }
+    }
+
+    /// The fingerprint the machine presented on the last handshake.
+    pub fn seen(&self) -> Option<Pin> {
+        *self.seen.lock().unwrap()
+    }
 }
 
 /// A TCP connection with TLS on top, plus the byte buffer the MQTT framing needs.
@@ -180,7 +281,7 @@ struct Wire {
 }
 
 impl Wire {
-    fn open(host: &str, port: u16) -> Result<Self> {
+    fn open(trust: &Trust, host: &str, port: u16) -> Result<Self> {
         let addr = (host, port)
             .to_socket_addrs()?
             .next()
@@ -190,11 +291,13 @@ impl Wire {
         sock.set_read_timeout(Some(Duration::from_millis(250)))?;
         let name = ServerName::try_from(host.to_string())
             .map_err(|_| HostError::Bad(format!("{host} is not a server name")))?;
-        let conn = ClientConnection::new(tls_config(), name)?;
+        let conn = ClientConnection::new(Arc::clone(&trust.config), name)?;
         let mut stream = StreamOwned::new(conn, sock);
         // Drive the handshake now, so a wrong host or a closed port fails here
-        // with a readable error instead of on the first packet.
-        stream.conn.complete_io(&mut stream.sock)?;
+        // with a readable error instead of on the first packet. A pin refusal
+        // arrives as a TLS alert carrying the verifier's sentence; it is pulled
+        // out here so the caller can tell it apart from a busy port.
+        stream.conn.complete_io(&mut stream.sock).map_err(handshake_error)?;
         Ok(Self {
             stream,
             buffered: Vec::new(),
@@ -303,12 +406,22 @@ pub struct Link {
     status: Arc<Mutex<Status>>,
     commands: Sender<String>,
     alive: Arc<AtomicBool>,
+    trust: Trust,
 }
 
 impl Link {
-    /// Start a background session. It reconnects on its own for as long as the
-    /// link is alive; `status()` always answers, connected or not.
+    /// Start a background session with no pin: the certificate is recorded,
+    /// not checked. This is what a first connection to a printer is.
     pub fn spawn(config: HostConfig) -> Self {
+        Self::spawn_pinned(config, None)
+    }
+
+    /// Start a background session that expects `pin` — the fingerprint accepted
+    /// the last time this printer was reached. It reconnects on its own for as
+    /// long as the link is alive, except after a pin refusal, which is a
+    /// question for a person rather than a network blip.
+    pub fn spawn_pinned(config: HostConfig, pin: Option<Pin>) -> Self {
+        let trust = Trust::new(pin);
         let status = Arc::new(Mutex::new(Status {
             note: "connecting".to_string(),
             ..Status::default()
@@ -318,17 +431,23 @@ impl Link {
         {
             let status = Arc::clone(&status);
             let alive = Arc::clone(&alive);
+            let trust = trust.clone();
             thread::Builder::new()
                 .name("shale-printer".into())
                 .spawn(move || {
                     while alive.load(Ordering::Relaxed) {
-                        match session(&config, &status, &rx, &alive) {
+                        match session(&config, &trust, &status, &rx, &alive) {
                             Ok(()) => break,
                             Err(err) => {
                                 {
                                     let mut guard = status.lock().unwrap();
                                     guard.connected = false;
                                     guard.note = err.to_string();
+                                }
+                                // A changed certificate is not a flaky socket:
+                                // retrying it forever would bury the question.
+                                if matches!(err, HostError::Pin { .. }) {
+                                    break;
                                 }
                                 if !alive.load(Ordering::Relaxed) {
                                     break;
@@ -344,7 +463,13 @@ impl Link {
             status,
             commands: tx,
             alive,
+            trust,
         }
+    }
+
+    /// The certificate fingerprint this link has been offered.
+    pub fn pin(&self) -> Option<Pin> {
+        self.trust.seen()
     }
 
     pub fn status(&self) -> Status {
@@ -377,11 +502,12 @@ fn now_epoch() -> f64 {
 
 fn session(
     config: &HostConfig,
+    trust: &Trust,
     status: &Arc<Mutex<Status>>,
     commands: &Receiver<String>,
     alive: &Arc<AtomicBool>,
 ) -> Result<()> {
-    let mut wire = Wire::open(&config.host, config.mqtt_port)?;
+    let mut wire = Wire::open(trust, &config.host, config.mqtt_port)?;
 
     // MQTT 3.1.1 CONNECT: clean session, username and password, 60 s keepalive.
     let mut body = Vec::new();
@@ -405,6 +531,7 @@ fn session(
         let mut guard = status.lock().unwrap();
         guard.connected = true;
         guard.note = String::new();
+        guard.fingerprint = trust.seen().map(|pin| hex(&pin)).unwrap_or_default();
     }
 
     let mut last_ping = Instant::now();
@@ -540,8 +667,20 @@ fn absorb(value: &serde_json::Value, status: &Arc<Mutex<Status>>) {
 /// Bambu's FTP server wants `PBSZ 0` and `PROT P` before the transfer, and the
 /// data connection is opened to the address in the `227` reply.
 pub fn upload(config: &HostConfig, local: &std::path::Path, name: &str) -> Result<usize> {
+    upload_with(&Trust::new(None), config, local, name)
+}
+
+/// Upload under an existing trust. The same pin guards this channel as the
+/// status channel: a file sent to an impostor is the model, the settings and
+/// the access code all at once.
+pub fn upload_with(
+    trust: &Trust,
+    config: &HostConfig,
+    local: &std::path::Path,
+    name: &str,
+) -> Result<usize> {
     let bytes = std::fs::read(local)?;
-    let mut control = Wire::open(&config.host, config.ftps_port)?;
+    let mut control = Wire::open(trust, &config.host, config.ftps_port)?;
     expect(&mut control, "220")?;
     send_cmd(&mut control, &format!("USER {}", "bblp"), "331")?;
     send_cmd(&mut control, &format!("PASS {}", config.code), "230")?;
@@ -568,9 +707,9 @@ pub fn upload(config: &HostConfig, local: &std::path::Path, name: &str) -> Resul
     data.set_write_timeout(Some(Duration::from_secs(20)))?;
     let name_tls = ServerName::try_from(config.host.clone())
         .map_err(|_| HostError::Bad("the printer host is not a server name".into()))?;
-    let conn = ClientConnection::new(tls_config(), name_tls)?;
+    let conn = ClientConnection::new(Arc::clone(&trust.config), name_tls)?;
     let mut secure = StreamOwned::new(conn, data);
-    secure.conn.complete_io(&mut secure.sock)?;
+    secure.conn.complete_io(&mut secure.sock).map_err(handshake_error)?;
 
     secure.write_all(&bytes)?;
     secure.flush()?;
