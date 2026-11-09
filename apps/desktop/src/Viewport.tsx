@@ -13,10 +13,10 @@ export type ViewStyle = "solid" | "wire" | "ascii";
 /// print that looks wrong actually asks. Bambu's preview offers the same choice.
 export type ColourMode = "type" | "speed";
 
-/// Slow to fast, in the same reading as a thermal camera: blue is a slow
-/// outer wall, red is infill moving at full clip. Five stops is enough for a
-/// line to be placed in the ramp by eye.
-export const SPEED_STOPS = ["#2f6fb5", "#3fa87a", "#d9c34a", "#d97b3a", "#c0442f"];
+/// Slow to fast in one hue: the theme has a single accent, so the ramp runs
+/// from a dim grey to that accent rather than through a thermal camera's
+/// colours. Five stops is enough for a line to be placed by eye.
+export const SPEED_STOPS = ["#474a5e", "#625d7e", "#7b74a3", "#9a93d2", "#b9b3ff"];
 
 export function speedColour(feed: number, low: number, high: number): string {
   if (!(high > low)) return SPEED_STOPS[SPEED_STOPS.length - 1];
@@ -617,12 +617,12 @@ function MeasureMarks({
       {marks.map((mark, index) => (
         <mesh key={index} position={mark}>
           <sphereGeometry args={[0.9, 14, 14]} />
-          <meshBasicMaterial color="#f4ef9a" />
+          <meshBasicMaterial color="#b9b3ff" />
         </mesh>
       ))}
       {line && (
         <lineSegments geometry={line}>
-          <lineBasicMaterial color="#f4ef9a" depthTest={false} transparent opacity={0.9} />
+          <lineBasicMaterial color="#b9b3ff" depthTest={false} transparent opacity={0.9} />
         </lineSegments>
       )}
       {middle && label && (

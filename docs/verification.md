@@ -241,6 +241,30 @@ renderer refuses to return text with a `{` left in it. A Bambu machine also
 refuses a file that does not open with its own banner — `send_file` reads the
 head of the G-code and will not send one that starts with anything else.
 
+## The theme, after a pass
+
+Four leftovers from a light theme and a broader palette were found by looking,
+and each is now measured rather than eyeballed:
+
+| Where | Was | Is |
+| --- | --- | --- |
+| View menu, checked row | `✓` glyph in a `<kbd>` | 2 px accent rule at the left, `rgb(185, 179, 255)` |
+| Speed legend | five thermal-camera colours | five stops in one hue, `#474a5e → #b9b3ff`, `13` to `71` mm/s |
+| Settings footnote | `linear-gradient(transparent, panel)` | flat `var(--panel)` |
+| Device warning | `var(--amber, #d9a441)` | `var(--accent)` |
+| Active plate chip | ink behind, paper in front — a white tile | 10 % accent over the panel, accent underline |
+
+Probed in the running window (`probe/theme_take.py`): the checked row reports
+`width: 2px`, `background: rgb(185, 179, 255)`, the page contains **zero** `✓`
+characters, and the legend's five swatches read back as
+`rgb(71, 74, 94)`, `rgb(98, 93, 126)`, `rgb(123, 116, 163)`,
+`rgb(154, 147, 210)`, `rgb(185, 179, 255)`, with the ends taken from the slice
+itself: `13` to `71` mm/s on one plate, `10` to `67` on another.
+
+The ramp was first drawn without gaps and read as one wash at a glance; the five
+bands are separated by a 1 px gap showing the panel behind them, so the stops
+can be told apart in a sidebar 200 px wide.
+
 ## What is still not proved
 
 - Seams are not painted, so there is nothing to compare against Bambu's seam

@@ -448,7 +448,6 @@ export function MenuBar(props: MenuBarProps) {
                 onClick={pick(() => props.onViewStyle(value))}
               >
                 <span>{label}</span>
-                {props.viewStyle === value && <kbd>✓</kbd>}
               </button>
             ))}
             <hr />
@@ -458,7 +457,6 @@ export function MenuBar(props: MenuBarProps) {
               onClick={pick(() => props.onShowModel(!props.showModel))}
             >
               <span>Show model</span>
-              {props.showModel && <kbd>✓</kbd>}
             </button>
             <button
               type="button"
@@ -467,7 +465,6 @@ export function MenuBar(props: MenuBarProps) {
               onClick={pick(() => props.onPreview(!props.preview))}
             >
               <span>Show toolpaths</span>
-              {props.preview && <kbd>✓</kbd>}
             </button>
             <hr />
             <button type="button" onClick={pick(props.onFrame)}>

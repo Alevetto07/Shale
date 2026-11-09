@@ -701,6 +701,7 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 }
 
 .menu-sheet button {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -718,6 +719,20 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 
 .menu-sheet button.checked {
   color: var(--ink);
+}
+/* State is the accent rule at the left, not a tick in the corner: the theme has
+   one accent and no icons. */
+.menu-sheet button.checked {
+  padding-left: 0.9rem;
+}
+.menu-sheet button.checked::before {
+  content: "";
+  position: absolute;
+  left: 0.35rem;
+  top: 0.45rem;
+  bottom: 0.45rem;
+  width: 2px;
+  background: var(--accent);
 }
 
 .menu-sheet button:disabled {
@@ -980,9 +995,13 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 }
 .plate-tab.active .plate-count { opacity: 0.7; }
 
+/* The active plate was written as an inverted chip — ink behind, paper in front —
+   which is a light-theme habit: on this background it read as a white tile. It is
+   a tinted panel with the accent under it now. */
 .plate-tab.active {
-  background: var(--ink, #e8e6df);
-  color: var(--paper, #101010);
+  background: rgba(185, 179, 255, 0.1);
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .plate-drop {
@@ -1712,7 +1731,7 @@ select {
 .device-confirm p.device-warn {
   margin: 0.55rem 0 0;
   max-width: 46ch;
-  color: var(--amber, #d9a441);
+  color: var(--accent);
   font-size: 0.78rem;
   line-height: 1.45;
 }
@@ -1730,7 +1749,7 @@ select {
   padding: 0.55rem 0.9rem 0.6rem;
   min-height: 2.9rem;
   border-top: 1px solid var(--line);
-  background: linear-gradient(to bottom, transparent, var(--panel) 35%);
+  background: var(--panel);
   color: var(--ink-dim);
   font-size: 0.74rem;
   line-height: 1.35;
@@ -1753,12 +1772,16 @@ select {
 }
 .legend-ramp {
   display: flex;
-  height: 0.42rem;
+  gap: 1px;
+  height: 0.55rem;
   margin: 0.3rem 0 0.18rem;
   border-radius: 2px;
   overflow: hidden;
+  /* The gaps show the panel behind them, so the five stops read as five bands
+     rather than one smooth wash. */
+  background: var(--panel);
 }
-.legend-ramp i { flex: 1; }
+.legend-ramp i { flex: 1; min-width: 0; }
 .legend-scale-ends {
   display: flex;
   justify-content: space-between;
