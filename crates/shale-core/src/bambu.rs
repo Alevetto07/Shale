@@ -966,3 +966,86 @@ mod tests {
         assert_eq!(slug("--PLA--"), "pla");
     }
 }
+
+/// Drop the engine's heat prelude from a file that carries a machine's own
+/// start sequence.
+///
+/// CuraEngine emits `M140`/`M190`/`M104`/`M109` before the start G-code it was
+/// given, whatever that G-code says. On a Bambu machine those lines are both
+/// wrong and in the wrong place: the A1's own sequence heats to the standby
+/// temperature, runs its macros, levels and then heats to print temperature,
+/// and a file that has already commanded 220 °C before the machine's macro does
+/// not describe the same print. The engine's numbers come from the same profile
+/// as the template's, so dropping the prelude loses nothing.
+///
+/// Only the lines before the first `;===== machine:` are touched. Everything
+/// after it is the machine's sequence and the print.
+pub fn strip_engine_prelude(gcode: &str) -> String {
+    const HEAT: [&str; 5] = ["M104", "M109", "M140", "M190", "M105"];
+    let Some(banner) = gcode
+        .lines()
+        .position(|line| line.trim_start().starts_with(";===== machine:"))
+    else {
+        return gcode.to_owned();
+    };
+    let mut kept: Vec<&str> = Vec::with_capacity(banner);
+    for line in gcode.lines().take(banner) {
+        let trimmed = line.trim_start();
+        let is_heat = HEAT.iter().any(|code| {
+            trimmed
+                .strip_prefix(code)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(' ') || rest.starts_with('\t'))
+        });
+        if !is_heat {
+            kept.push(line);
+        }
+    }
+    let mut text = kept.join("\n");
+    text.push('\n');
+    text.push_str(&gcode.lines().skip(banner).collect::<Vec<_>>().join("\n"));
+    if gcode.ends_with('\n') {
+        text.push('\n');
+    }
+    text
+}
+
+#[cfg(test)]
+mod prelude_tests {
+    use super::strip_engine_prelude;
+
+    #[test]
+    fn the_engines_heat_is_dropped_and_the_machine_sequence_is_not() {
+        let file = concat!(
+            ";FLAVOR:Marlin\n",
+            ";TARGET_MACHINE.NAME:Bambu Lab A1\n",
+            "M140 S65\n",
+            "M105\n",
+            "M190 S65\n",
+            "M104 S220\n",
+            "M109 S220\n",
+            ";===== machine: A1 =========================\n",
+            "M104 S140\n",
+            "M140 S65\n",
+            "M109 S220\n",
+        );
+        let out = strip_engine_prelude(file);
+        assert_eq!(
+            out,
+            concat!(
+                ";FLAVOR:Marlin\n",
+                ";TARGET_MACHINE.NAME:Bambu Lab A1\n",
+                ";===== machine: A1 =========================\n",
+                "M104 S140\n",
+                "M140 S65\n",
+                "M109 S220\n",
+            ),
+            "only the prelude went"
+        );
+    }
+
+    #[test]
+    fn a_file_without_a_machine_sequence_is_left_alone() {
+        let file = "M140 S60\nM104 S210\nG28\n";
+        assert_eq!(strip_engine_prelude(file), file);
+    }
+}

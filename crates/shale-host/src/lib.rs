@@ -808,10 +808,14 @@ pub fn starts_with_machine_sequence(path: &std::path::Path) -> bool {
         if line.starts_with(";===== machine:") {
             return true;
         }
-        // Cura's own first line; stop looking once the file has begun to move.
-        if line.starts_with(";FLAVOR:") || line.starts_with("G0 ") || line.starts_with("G1 ") {
-            return false;
+        // Comments may come first — CuraEngine writes its `;FLAVOR:` header
+        // before the start G-code it was handed — but no command may. A file
+        // that heats or homes before its machine sequence is not this
+        // machine's file.
+        if line.is_empty() || line.starts_with(';') {
+            continue;
         }
+        return false;
     }
     false
 }
@@ -832,6 +836,28 @@ mod gate_tests {
         )
         .unwrap();
         assert!(starts_with_machine_sequence(&good));
+
+        // CuraEngine's header, then the sequence, and nothing that moves.
+        let commented = dir.join("commented.gcode");
+        std::fs::write(
+            &commented,
+            ";FLAVOR:Marlin\n;TARGET_MACHINE.NAME:Bambu Lab A1\n\n;===== machine: A1 ====\nM104 S140\n",
+        )
+        .unwrap();
+        assert!(starts_with_machine_sequence(&commented));
+
+        // Heat before the sequence: the machine would be heated by Cura's
+        // numbers, not its own.
+        let heated = dir.join("heated.gcode");
+        std::fs::write(
+            &heated,
+            ";FLAVOR:Marlin\nM140 S65\nM190 S65\n;===== machine: A1 ====\n",
+        )
+        .unwrap();
+        assert!(
+            !starts_with_machine_sequence(&heated),
+            "heat before the sequence is not the machine's sequence"
+        );
 
         let cura = dir.join("cura.gcode");
         std::fs::write(&cura, ";FLAVOR:Marlin\n;TIME:1234\nM140 S60\nM104 S210\nG28 ;Start GCode\n").unwrap();

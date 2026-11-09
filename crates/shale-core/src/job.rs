@@ -511,6 +511,12 @@ pub fn slice(
             .unwrap_or(""),
     );
     let gcode = instructions::apply(&gcode, instructions, flavour)?;
+    // A machine with its own sequence must not be heated by the engine first.
+    let gcode = if machine_gcode.is_some() {
+        crate::bambu::strip_engine_prelude(&gcode)
+    } else {
+        gcode
+    };
     let filament_metres = gcode::filament_length_metres(&gcode);
     fs::write(&output.gcode_path, &gcode)?;
     let toolpath = gcode::parse_toolpaths(&gcode);

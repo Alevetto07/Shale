@@ -206,3 +206,51 @@ fn a_failed_report_stops_the_run() {
     assert!(update.note.unwrap_or_default().contains("failed"));
     assert!(!run.may_start());
 }
+
+/// A file that was actually sliced, up to the fake printer.
+///
+/// The four tests above use files written by hand. This one takes whatever
+/// `shale-mcp` or the window produced and puts it through the same gate and the
+/// same upload, so the proof is about the slicer's output rather than about a
+/// fixture that agrees with the test:
+///
+///     SHALE_SLICED_GCODE=C:/Users/Alessio/probe/mcp-a1.gcode \
+///         cargo test -p shale-host --test wiring a_sliced_file -- --ignored --nocapture
+#[test]
+#[ignore]
+fn a_sliced_file_reaches_the_fake_printer() {
+    let Ok(path) = std::env::var("SHALE_SLICED_GCODE") else {
+        eprintln!("set SHALE_SLICED_GCODE to a sliced A1 file; nothing to check");
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+    let text = std::fs::read_to_string(&path).expect("the sliced file");
+
+    assert!(
+        shale_host::starts_with_machine_sequence(&path),
+        "the gate refuses the slicer's own output"
+    );
+    assert!(
+        !text.contains('{'),
+        "a placeholder survived the slice"
+    );
+    let head: String = text.chars().take(8_192).collect();
+    for line in [";===== machine: A1", "M1002 gcode_claim_action : 2", "M1002 set_filament_type:PLA"] {
+        assert!(head.contains(line), "the A1's own start is missing {line}");
+    }
+    let skip = text.chars().count().saturating_sub(4_096);
+    let tail: String = text.chars().skip(skip).collect();
+    assert!(
+        tail.contains("lower motor current to 45% power"),
+        "the A1's own end sequence is missing"
+    );
+
+    let printer = FakePrinter::start(CERT_A, KEY_A);
+    let sent = shale_host::upload(&printer.config(), &path, "plate.gcode").expect("the upload");
+    let landed = printer.wait_for(WAIT, || printer.uploads().first().cloned());
+    let (name, bytes) = landed.expect("the printer received the file");
+    assert_eq!(name, "/cache/plate.gcode");
+    assert_eq!(bytes.len(), sent, "the whole file arrived");
+    assert_eq!(bytes, std::fs::read(&path).unwrap(), "byte for byte");
+    println!("{sent} bytes of sliced G-code arrived at the fake printer");
+}

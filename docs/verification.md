@@ -317,6 +317,81 @@ hierarchy plus exact clipping inside the overlapping boxes, which never cuts a
 triangle that no boundary passes through. That is a piece of work on its own,
 and it is under Open in `docs/STATUS-v0.1.md`.
 
+## A plate sliced for the A1, from both ends of the app
+
+Two surfaces, one slicer. The window and `shale-mcp` (JSON-RPC over stdio, the
+headless interface) were pointed at `Arm.3mf`, printer `bambu_lab_a1`, variant
+`0.4 mm`, quality `0_20mm_standard_bbl_a1`, material `bambu_lab_pla_basic`:
+
+| surface | layers | filament | `machine_gcode` | file |
+|---|---|---|---|---|
+| `shale-mcp` over stdio | 54 | 2.1942 m | true | 515 971 bytes |
+| the window (`import_model` → `slice_model` → `export_gcode`) | 54 | 2.1943 m | true | 522 285 bytes |
+
+Both files open like this — comments first, then the machine's own sequence, and
+nothing that heats or moves before it:
+
+```
+;FLAVOR:Marlin
+;TIME:1378
+;Filament used: 2.1943m
+;Layer height: 0.2
+;TARGET_MACHINE.NAME:Bambu Lab A1
+
+;Generated with Cura_SteamEngine 5.13.0
+;===== machine: A1 =========================
+;===== date: 20250822 ==================
+G392 S0
+M9833.2
+;M400
+;M73 P1.717
+
+;===== start to heat heatbead&hotend==========
+M1002 gcode_claim_action : 2
+M1002 set_filament_type:PLA
+M104 S140
+M140 S65
+```
+
+and end with the A1's own finish sequence, not Cura's:
+
+```
+;=====printer finish  sound=========
+
+;M17 X0.8 Y0.8 Z0.5 ; lower motor current to 45% power
+M400
+M18 X Y Z
+```
+
+Neither file contains a `{`. Both pass `starts_with_machine_sequence`, and both
+were uploaded byte for byte to the fake printer by
+
+```
+SHALE_SLICED_GCODE=<the file> cargo test -p shale-host --test wiring a_sliced_file -- --ignored --nocapture
+```
+
+which also checks the head for `;===== machine: A1`,
+`M1002 gcode_claim_action : 2` and `M1002 set_filament_type:PLA`, and the tail
+for the finish sequence above. It printed `522285 bytes of sliced G-code
+arrived at the fake printer`.
+
+**Two defects this found.** The first attempt failed the gate on Shale's own
+output: CuraEngine writes `M140`/`M190`/`M104`/`M109` *before* the start G-code
+it is given, so the A1's file heated to 220 °C before the machine's macro had
+said how, and the old rule — "stop looking at `;FLAVOR:`" — refused the file
+outright. `bambu::strip_engine_prelude` now drops the engine's heat lines from a
+file that carries a machine sequence: the template heats to standby, levels, and
+then heats to print temperature, which is the machine's own order. The gate was
+relaxed by exactly one line's worth of meaning — comments may precede the
+banner, no command may — so a Cura file that heats first is still refused, and
+the test for that case is in `gate_tests`.
+
+`MINX`/`MAXY` in the header read `2.14748e+06`, which is `f32::MAX`. Those
+comments are written by CuraEngine from the model's bounds and are wrong for a
+model placed by Shale; nothing reads them, and Bambu's own firmware ignores
+them, but a slicer should not write a bounding box that says the part is two
+million millimetres wide. It is under Open.
+
 ## The access code is not in the profile
 
 A Bambu LAN access code is the printer's MQTT password. It used to sit in the
