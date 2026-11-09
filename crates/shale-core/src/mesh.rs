@@ -277,9 +277,9 @@ fn parse_binary_stl_records<R: Read>(
             ))
         })?;
         let mut tri = [0; 3];
-        for corner in 0..3 {
+        for (corner, slot) in tri.iter_mut().enumerate() {
             let offset = 12 + corner * 12;
-            tri[corner] = vertices.len() as u32;
+            *slot = vertices.len() as u32;
             vertices.push([
                 f32::from_le_bytes(record[offset..offset + 4].try_into().unwrap()),
                 f32::from_le_bytes(record[offset + 4..offset + 8].try_into().unwrap()),
@@ -354,7 +354,7 @@ fn parse_ascii_stl(bytes: &[u8]) -> Result<TriangleMesh, Error> {
         facet.push([x, y, z]);
         if facet.len() == 3 {
             let base = vertices.len() as u32;
-            vertices.extend(facet.drain(..));
+            vertices.append(&mut facet);
             triangles.push([base, base + 1, base + 2]);
         }
     }
@@ -532,7 +532,7 @@ pub fn split_objects(mesh: &TriangleMesh) -> Vec<TriangleMesh> {
 
     // Union-find over the welded corners: a triangle joins the corners it uses.
     let mut parent: Vec<u32> = (0..ids.len() as u32).collect();
-    fn find(parent: &mut Vec<u32>, mut node: u32) -> u32 {
+    fn find(parent: &mut [u32], mut node: u32) -> u32 {
         while parent[node as usize] != node {
             let grand = parent[parent[node as usize] as usize];
             parent[node as usize] = grand;
@@ -540,7 +540,7 @@ pub fn split_objects(mesh: &TriangleMesh) -> Vec<TriangleMesh> {
         }
         node
     }
-    for triangle in corner.chunks_exact(3) {
+    for triangle in corner.as_chunks::<3>().0 {
         let a = find(&mut parent, triangle[0]);
         let b = find(&mut parent, triangle[1]);
         let c = find(&mut parent, triangle[2]);
@@ -555,7 +555,7 @@ pub fn split_objects(mesh: &TriangleMesh) -> Vec<TriangleMesh> {
 
     // Group the triangles by the root of their first corner.
     let mut groups: std::collections::HashMap<u32, Vec<usize>> = std::collections::HashMap::new();
-    for (index, triangle) in corner.chunks_exact(3).enumerate() {
+    for (index, triangle) in corner.as_chunks::<3>().0.iter().enumerate() {
         let root = find(&mut parent, triangle[0]);
         groups.entry(root).or_default().push(index);
     }
@@ -585,7 +585,7 @@ pub fn split_objects(mesh: &TriangleMesh) -> Vec<TriangleMesh> {
         pieces.push(TriangleMesh { vertices, triangles });
     }
 
-    pieces.sort_by(|left, right| right.triangles.len().cmp(&left.triangles.len()));
+    pieces.sort_by_key(|piece| std::cmp::Reverse(piece.triangles.len()));
     pieces
 }
 

@@ -413,7 +413,7 @@ impl Session {
             &printer_id,
             self.variant_name.clone(),
             self.quality_type.clone(),
-            &[self.material_id.clone()],
+            std::slice::from_ref(&self.material_id),
             self.settings.clone(),
             &placed,
             &instructions,

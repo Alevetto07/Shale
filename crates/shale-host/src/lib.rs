@@ -584,13 +584,12 @@ fn handle_packet(bytes: &[u8], status: &Arc<Mutex<Status>>) {
                 absorb(&value, status);
             }
         }
-        4 => {
+        4
             // CONNACK: byte 0 is the session flags, byte 1 the return code.
-            if payload.len() >= 2 && payload[1] != 0 {
+            if payload.len() >= 2 && payload[1] != 0 => {
                 let mut guard = status.lock().unwrap();
                 guard.note = format!("the printer refused the connection (code {})", payload[1]);
             }
-        }
         _ => {}
     }
 }
@@ -650,7 +649,7 @@ fn absorb(value: &serde_json::Value, status: &Arc<Mutex<Status>>) {
         guard.file = name;
     }
     // `chamber_light` and friends are noise here; a raise is what matters.
-    if flag("pause") == false && guard.state.is_empty() {
+    if !flag("pause") && guard.state.is_empty() {
         guard.state = "IDLE".to_string();
     }
     guard.reports += 1;
@@ -717,7 +716,7 @@ pub fn upload_with(
     // Say so with a close_notify and read the rest of the stream first: closing
     // with the server's last records unread resets the connection, and the
     // upload is lost with it.
-    let _ = secure.conn.send_close_notify();
+    secure.conn.send_close_notify();
     let _ = secure.flush();
     let mut drain = [0u8; 512];
     for _ in 0..16 {

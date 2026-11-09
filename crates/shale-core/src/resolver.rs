@@ -1389,8 +1389,8 @@ mod golden {
                     continue;
                 }
                 checked += 1;
-                if item.get("match").and_then(|value| value.as_bool()) != Some(true) {
-                    if mismatches.len() < 25 {
+                if item.get("match").and_then(|value| value.as_bool()) != Some(true)
+                    && mismatches.len() < 25 {
                         mismatches.push(format!(
                             "{printer} {}: shale {:?} cura {:?}",
                             item.get("key")
@@ -1400,7 +1400,6 @@ mod golden {
                             item.get("cura")
                         ));
                     }
-                }
             }
         }
         let allowed = mismatches.len();

@@ -1028,8 +1028,10 @@ mod tests {
             .any(|region| { region.role == RegionRole::Block && covers(region, 16.0, 4.0, 20.0) }));
         assert!(plan.comparison.everywhere_volume_mm3 > plan.comparison.proposed_volume_mm3 + 50.0);
 
-        let mut short = SupportParams::default();
-        short.max_bridge_mm = 5.0;
+        let short = SupportParams {
+            max_bridge_mm: 5.0,
+            ..SupportParams::default()
+        };
         let forced = propose(&bridge(), &short);
         assert!(forced.spans.iter().any(|span| span.kind.wants_support()));
         assert!(!enforcers(&forced).is_empty());

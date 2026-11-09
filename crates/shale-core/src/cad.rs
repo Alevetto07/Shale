@@ -135,7 +135,7 @@ pub fn import_step(bytes: &[u8], tolerance: &TessellationTolerance) -> Result<Im
             angular_deg: tolerance.angular_deg.max(HEAVY_ANGULAR_DEG),
         }
     } else {
-        tolerance.clone()
+        *tolerance
     };
     let passes = if heavy { 2 } else { 5 };
     let mut vertices = Vec::new();
@@ -454,7 +454,7 @@ mod tests {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../examples")
                 .join(format!("{name}.step"));
-            std::fs::write(&path, &step).unwrap();
+            std::fs::write(&path, step).unwrap();
         }
         let imported = import_step(step.as_bytes(), &tolerance).unwrap_or_else(|err| {
             panic!("{name}: {err}");

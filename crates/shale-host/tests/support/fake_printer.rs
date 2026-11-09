@@ -1,3 +1,8 @@
+// The protocol tables this double speaks are maps of tuples — a topic to a set
+// of commands, a certificate to a fingerprint — and naming each shape would add
+// types that say nothing a reader cannot see in place.
+#![allow(clippy::type_complexity)]
+
 //! A Bambu printer that exists only on 127.0.0.1.
 //!
 //! The host code was written against a machine on the other end of a cable, and
@@ -388,7 +393,7 @@ fn serve_ftps(
                 }
                 // Push the last records back so the client's close_notify is
                 // answered, which is what makes it read `226` instead of a reset.
-                let _ = dstream.conn.send_close_notify();
+                dstream.conn.send_close_notify();
                 let _ = dstream.flush();
                 uploads.lock().unwrap().push((name, file));
                 tls.write_all(b"226 file received\r\n")?;

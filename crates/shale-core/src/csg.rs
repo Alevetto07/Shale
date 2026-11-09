@@ -214,7 +214,7 @@ fn median_centroid(sample: &[&Poly], axis: usize) -> f64 {
             let sum: f64 = polygon
                 .vertices
                 .iter()
-                .map(|vertex| vertex[axis] as f64)
+                .map(|vertex| vertex[axis])
                 .sum();
             sum / polygon.vertices.len() as f64
         })

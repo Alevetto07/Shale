@@ -63,23 +63,22 @@ pub async fn serve_http(server: ShaleMcp, address: SocketAddr) -> anyhow::Result
 }
 
 pub fn http_address(args: &[String]) -> anyhow::Result<Option<SocketAddr>> {
-    let mut args = args.iter();
-    while let Some(arg) = args.next() {
-        if arg == "--http" {
-            let value = args
-                .next()
-                .context("--http needs an address, for example 127.0.0.1:7337")?;
-            let address: SocketAddr = value
-                .parse()
-                .with_context(|| format!("could not parse HTTP address {value}"))?;
-            if !address.ip().is_loopback() {
-                anyhow::bail!("refusing non-loopback HTTP address {address}");
-            }
-            return Ok(Some(address));
-        }
+    let Some(arg) = args.first() else {
+        return Ok(None);
+    };
+    if arg != "--http" {
         anyhow::bail!("unknown argument {arg}. Usage: shale-mcp [--http 127.0.0.1:7337]");
     }
-    Ok(None)
+    let value = args
+        .get(1)
+        .context("--http needs an address, for example 127.0.0.1:7337")?;
+    let address: SocketAddr = value
+        .parse()
+        .with_context(|| format!("could not parse HTTP address {value}"))?;
+    if !address.ip().is_loopback() {
+        anyhow::bail!("refusing non-loopback HTTP address {address}");
+    }
+    Ok(Some(address))
 }
 
 #[cfg(test)]

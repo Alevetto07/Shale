@@ -1384,6 +1384,99 @@ impl<'a> Parser<'a> {
 }
 
 #[cfg(test)]
+fn walk_formulas(dir: &std::path::Path, visit: &mut dyn FnMut(&str, &str)) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_formulas(&path, visit);
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if name.ends_with(".def.json") {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                    collect_json_formulas(&json, &path.display().to_string(), visit);
+                }
+            }
+        } else if name.ends_with(".inst.cfg") {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                collect_cfg_formulas(&text, &path.display().to_string(), visit);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn collect_json_formulas(
+    json: &serde_json::Value,
+    origin: &str,
+    visit: &mut dyn FnMut(&str, &str),
+) {
+    let Some(object) = json.as_object() else {
+        if let Some(items) = json.as_array() {
+            for item in items {
+                collect_json_formulas(item, origin, visit);
+            }
+        }
+        return;
+    };
+    const KEYS: &[&str] = &[
+        "value",
+        "resolve",
+        "minimum_value",
+        "maximum_value",
+        "minimum_value_warning",
+        "maximum_value_warning",
+        "enabled",
+    ];
+    for key in KEYS {
+        if let Some(source) = object.get(*key).and_then(|value| value.as_str()) {
+            let source = source.trim();
+            if !source.is_empty() {
+                visit(origin, source);
+            }
+        }
+    }
+    for (key, value) in object {
+        if KEYS.contains(&key.as_str()) {
+            continue;
+        }
+        collect_json_formulas(value, origin, visit);
+    }
+}
+
+#[cfg(test)]
+fn collect_cfg_formulas(text: &str, origin: &str, visit: &mut dyn FnMut(&str, &str)) {
+    let mut in_values = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_values = line == "[values]";
+            continue;
+        }
+        if !in_values || line.is_empty() || line.starts_with('#') || !line.contains('=') {
+            continue;
+        }
+        let Some((_, raw)) = line.split_once('=') else {
+            continue;
+        };
+        let raw = raw.trim();
+        let Some(formula) = raw.strip_prefix('=') else {
+            continue;
+        };
+        let formula = formula.trim();
+        if !formula.is_empty() {
+            visit(origin, formula);
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
@@ -1593,98 +1686,5 @@ mod tests {
             "formula parse failures ({parsed} checked):\n{}",
             failures.join("\n")
         );
-    }
-}
-
-#[cfg(test)]
-fn walk_formulas(dir: &std::path::Path, visit: &mut dyn FnMut(&str, &str)) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            walk_formulas(&path, visit);
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if name.ends_with(".def.json") {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                    collect_json_formulas(&json, &path.display().to_string(), visit);
-                }
-            }
-        } else if name.ends_with(".inst.cfg") {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                collect_cfg_formulas(&text, &path.display().to_string(), visit);
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-fn collect_json_formulas(
-    json: &serde_json::Value,
-    origin: &str,
-    visit: &mut dyn FnMut(&str, &str),
-) {
-    let Some(object) = json.as_object() else {
-        if let Some(items) = json.as_array() {
-            for item in items {
-                collect_json_formulas(item, origin, visit);
-            }
-        }
-        return;
-    };
-    const KEYS: &[&str] = &[
-        "value",
-        "resolve",
-        "minimum_value",
-        "maximum_value",
-        "minimum_value_warning",
-        "maximum_value_warning",
-        "enabled",
-    ];
-    for key in KEYS {
-        if let Some(source) = object.get(*key).and_then(|value| value.as_str()) {
-            let source = source.trim();
-            if !source.is_empty() {
-                visit(origin, source);
-            }
-        }
-    }
-    for (key, value) in object {
-        if KEYS.contains(&key.as_str()) {
-            continue;
-        }
-        collect_json_formulas(value, origin, visit);
-    }
-}
-
-#[cfg(test)]
-fn collect_cfg_formulas(text: &str, origin: &str, visit: &mut dyn FnMut(&str, &str)) {
-    let mut in_values = false;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_values = line == "[values]";
-            continue;
-        }
-        if !in_values || line.is_empty() || line.starts_with('#') || !line.contains('=') {
-            continue;
-        }
-        let Some((_, raw)) = line.split_once('=') else {
-            continue;
-        };
-        let raw = raw.trim();
-        let Some(formula) = raw.strip_prefix('=') else {
-            continue;
-        };
-        let formula = formula.trim();
-        if !formula.is_empty() {
-            visit(origin, formula);
-        }
     }
 }

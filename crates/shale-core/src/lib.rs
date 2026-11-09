@@ -5,6 +5,18 @@
 //! depends on Tauri or on Cura's Uranium / Qt frontend. CuraEngine itself stays
 //! a separate unmodified process behind [`engine::SlicingEngine`].
 
+// The kernel's signatures carry the geometry they need. A slice is honestly
+// described by thirteen parameters (catalog, engine, printer, variant, quality,
+// materials, settings, models, instructions, output …); folding them into a
+// builder struct for one internal call would hide more than it explains, and the
+// alternative — a `Slice` object with setters — is the same information with
+// more places to be wrong.
+#![allow(clippy::too_many_arguments)]
+// Tuples are the currency of the mesh code: `(vertex, normal, patch)` and
+// `(index, face, patch)`. Naming every shape would add types that say nothing a
+// reader does not already see at the call site.
+#![allow(clippy::type_complexity)]
+
 pub mod bambu;
 pub mod cad;
 pub mod calibrate;

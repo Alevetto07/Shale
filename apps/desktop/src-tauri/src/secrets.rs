@@ -44,7 +44,7 @@ mod platform {
     pub fn set(key: &str, value: &str) -> Result<(), String> {
         let name = wide(&target(key));
         let mut blob = value.as_bytes().to_vec();
-        let mut credential = CREDENTIALW {
+        let credential = CREDENTIALW {
             Flags: 0,
             Type: CRED_TYPE_GENERIC,
             TargetName: name.as_ptr() as *mut u16,
@@ -63,7 +63,7 @@ mod platform {
         };
         // SAFETY: the struct and both buffers outlive the call, the blob length is
         // the real length, and nothing is handed back to be freed.
-        let ok = unsafe { CredWriteW(&mut credential, 0) };
+        let ok = unsafe { CredWriteW(&credential, 0) };
         if ok == 0 {
             return Err(error("saving the printer's access code"));
         }

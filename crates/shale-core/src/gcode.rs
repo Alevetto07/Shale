@@ -406,7 +406,7 @@ impl MotionState {
                     };
                 }
                 if let Some(value) = word(line, 'F') {
-                    self.feed = (value / 60.0).max(0.0) as f32;
+                    self.feed = (value / 60.0).max(0.0);
                 }
                 let mut extruding = false;
                 if let Some(value) = word(line, 'E') {

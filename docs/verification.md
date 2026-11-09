@@ -514,3 +514,31 @@ the loopback double started with either of two committed certificates:
 - A multi-spool plate is refused rather than sent, because the sliced 3MF needs
   an `ams_mapping` this app does not write.
 - Camera and timelapse need a printer; the printer is not on this network.
+
+
+## The release build
+
+```
+cargo clippy --workspace --all-targets --locked -- -D warnings   # clean
+cargo build --workspace --release --locked                       # finished in 4m 49s
+cd apps/desktop && npm run tauri build                           # exit 0
+```
+
+| artefact | bytes | size |
+|---|---|---|
+| `target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe` | 4 651 432 | 4.44 MiB |
+| `target/release/shale-desktop.exe` | 17 901 056 | 17.1 MiB |
+| `target/release/shale-mcp.exe` | 10 733 056 | 10.2 MiB |
+
+Versions are 0.1.0 in all four crates, `apps/desktop/package.json` and
+`apps/desktop/src-tauri/tauri.conf.json`. Nothing was tagged, and the installer
+was not run: it exists, it is the right size, and it is not signed.
+
+The lint pass was mechanical in the main (borrowed values, needless casts,
+`sort_by(|a, b| …)` turned into `sort_by_key`, a `while let` that never looped,
+an index loop over three corners, `&mut Vec<u32>` narrowed to `&mut [u32]`, a
+`Default` followed by one assignment turned into struct update). Three lints are
+allowed rather than obeyed, each with its reason in the source: `too_many_arguments`
+and `type_complexity` in `shale-core` and the desktop crate, and
+`type_complexity` in the fake printer. A slice is thirteen parameters because a
+slice has thirteen inputs; the mesh code passes tuples of primitives.

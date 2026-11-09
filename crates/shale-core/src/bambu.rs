@@ -535,7 +535,7 @@ fn quality_instances(
 ) -> Vec<InstanceFile> {
     let mut out = Vec::new();
     for (stem, values) in processes {
-        if !applies_to(&values, machine_names) {
+        if !applies_to(values, machine_names) {
             continue;
         }
         let Some(layer_height) = values.get("layer_height").and_then(number_value) else {
@@ -567,12 +567,12 @@ fn quality_instances(
                 if support { "True" } else { "False" }.to_string(),
             );
         }
-        let name = pretty_quality(&stem);
+        let name = pretty_quality(stem);
         out.push(InstanceFile {
             name,
             definition: printer.to_string(),
             type_name: "quality".to_string(),
-            quality_type: Some(slug(&stem)),
+            quality_type: Some(slug(stem)),
             variant: None,
             material: None,
             global_quality: true,

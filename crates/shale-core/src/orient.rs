@@ -149,7 +149,7 @@ pub fn best_orientation(mesh: &TriangleMesh, angle_deg: f64) -> Orientation {
                     height_mm: max[2] - min[2],
                     footprint_mm2: (max[0] - min[0]) * (max[1] - min[1]),
                 };
-                if best.map_or(true, |current| candidate.better_than(&current)) {
+                if best.is_none_or(|current| candidate.better_than(&current)) {
                     best = Some(candidate);
                 }
             }
@@ -525,9 +525,9 @@ mod tests {
             let a = baked.vertices[triangle[0] as usize];
             let b = baked.vertices[triangle[1] as usize];
             let c = baked.vertices[triangle[2] as usize];
-            if (a[2] - min[2] as f32).abs() < 1e-4
-                && (b[2] - min[2] as f32).abs() < 1e-4
-                && (c[2] - min[2] as f32).abs() < 1e-4
+            if (a[2] - min[2]).abs() < 1e-4
+                && (b[2] - min[2]).abs() < 1e-4
+                && (c[2] - min[2]).abs() < 1e-4
             {
                 lowest = Some([a, b, c]);
             }

@@ -1,6 +1,15 @@
 //! Tauri shell. All slicing behaviour lives in `shale-core`; this file only
 //! holds window state and translates commands into that API.
 
+// A Tauri command is a function of the arguments the window passes and the
+// state it reads; the long ones (a slice, a queue job, a host connection) are
+// honestly that wide, and a struct to hold them would move the same list one
+// level away from the command that documents it.
+#![allow(clippy::too_many_arguments)]
+// The preview and settings payloads are tuples of primitives between here and
+// `shale-core`; naming each one would add a type per call site.
+#![allow(clippy::type_complexity)]
+
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1128,7 +1137,7 @@ fn auto_orient(state: State<AppState>, id: u32) -> Result<Transform, String> {
         let transform = model.transform.clone();
         inner.support = None;
         inner.support_model_id = None;
-        return Ok(transform);
+        Ok(transform)
     }
 }
 
@@ -3057,7 +3066,7 @@ fn existing_slice(state: State<AppState>) -> Result<Option<SliceSummary>, String
         warning_count: 0,
         gcode_path: path.display().to_string(),
         model_ids: inner.models.iter().map(|model| u64::from(model.id)).collect(),
-        machine_gcode: starts_with_machine_sequence(&path),
+        machine_gcode: starts_with_machine_sequence(path),
     }))
 }
 
@@ -4024,7 +4033,10 @@ pub fn run() {
                     }
                     inner.catalog_loading = false;
                 }
-                drop(state);
+                // The guard is not a resource with its own Drop: letting it fall
+                // here ends the borrow, and the emit below cannot wake a listener
+                // that wants the lock.
+                let _ = state;
                 let _ = handle.emit("catalogue", ());
             });
             Ok(())

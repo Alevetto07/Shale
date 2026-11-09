@@ -511,7 +511,7 @@ fn turning_cooling_off_takes_the_fan_speeds_with_it() {
     // The fixture profile carries no fan speed of its own; the engine would use
     // its built-in hundred percent. What matters is that the off switch writes a
     // speed of zero over whatever the profile said.
-    assert!(on.global.get("cool_fan_speed").is_none());
+    assert!(!on.global.contains_key("cool_fan_speed"));
     assert_eq!(speed(&off), Some(0.0), "cooling off means the fan is off");
     assert_eq!(
         off.global.get("cool_fan_speed_max").map(String::as_str),

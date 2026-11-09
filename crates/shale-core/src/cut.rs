@@ -481,7 +481,7 @@ fn pin_centres(rings: &[Vec<[f64; 3]>], plane: &Plane, pin: Pin, count: usize) -
     let spacing = reach * 2.0;
     let mut candidates: Vec<[f64; 3]> = Vec::new();
     let mut rings_sorted: Vec<&Vec<[f64; 3]>> = rings.iter().filter(|ring| ring.len() >= 3).collect();
-    rings_sorted.sort_by(|a, b| b.len().cmp(&a.len()));
+    rings_sorted.sort_by_key(|ring| std::cmp::Reverse(ring.len()));
     for ring in rings_sorted {
         let polygon: Vec<[f64; 2]> = ring.iter().map(|point| flat(*point)).collect();
         let centre = ring
@@ -504,8 +504,8 @@ fn pin_centres(rings: &[Vec<[f64; 3]>], plane: &Plane, pin: Pin, count: usize) -
     let mut chosen: Vec<[f64; 3]> = Vec::new();
     // The middle of the biggest face first, then whatever is far enough away.
     candidates.sort_by(|a, b| {
-        let da = distance_to(*a, &rings, plane);
-        let db = distance_to(*b, &rings, plane);
+        let da = distance_to(*a, rings, plane);
+        let db = distance_to(*b, rings, plane);
         da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
     });
     for candidate in candidates {
@@ -711,17 +711,14 @@ fn loops(segments: &[([f64; 3], [f64; 3])]) -> Vec<Vec<[f64; 3]>> {
     }
     let mut used: std::collections::HashSet<(i64, i64, i64)> = std::collections::HashSet::new();
     let mut out = Vec::new();
-    for (start, _) in adjacency.iter() {
+    for start in adjacency.keys() {
         if used.contains(start) {
             continue;
         }
         let mut loop_keys = vec![*start];
         used.insert(*start);
         let mut current = *start;
-        loop {
-            let Some(neighbours) = adjacency.get(&current) else {
-                break;
-            };
+        while let Some(neighbours) = adjacency.get(&current) {
             // Prefer an edge that has not been walked, so shared corners do not
             // swallow the loop.
             let next = neighbours.iter().find(|n| !used.contains(n)).or_else(|| {

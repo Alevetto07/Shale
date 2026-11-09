@@ -423,8 +423,8 @@ pub fn slice(
         // Straight down has to mean straight down on the bed, so the part is
         // placed first and the prisms are dropped from where it really is. A
         // turned part would otherwise grow columns along its own axis.
-        let mut placed = model.mesh.clone();
-        mesh::bake(&mut placed, &model.transform);
+        let placed = model.mesh.clone();
+        mesh::bake(&placed, &model.transform);
         let mut prisms = paint::prism_mesh(&placed, &patch.triangles, 0.0);
         if prisms.triangles.is_empty() {
             continue;
@@ -558,7 +558,7 @@ pub fn compare_support(
         printer_id,
         variant_name.clone(),
         quality_type.clone(),
-        &[material_id.clone()],
+        std::slice::from_ref(&material_id),
         smart_settings,
         models,
         &[],
@@ -575,7 +575,7 @@ pub fn compare_support(
         printer_id,
         variant_name,
         quality_type,
-        &[material_id.clone()],
+        std::slice::from_ref(&material_id),
         everywhere_settings,
         models,
         &[],

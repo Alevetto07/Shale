@@ -212,7 +212,7 @@ fn polygon_kind(value: i32) -> &'static str {
 
 fn xy_points(z: f32, bytes: &[u8]) -> Vec<[f32; 3]> {
     bytes
-        .chunks_exact(8)
+        .as_chunks::<8>().0.iter()
         .map(|chunk| {
             let x = f32::from_le_bytes(chunk[0..4].try_into().unwrap());
             let y = f32::from_le_bytes(chunk[4..8].try_into().unwrap());
@@ -223,7 +223,7 @@ fn xy_points(z: f32, bytes: &[u8]) -> Vec<[f32; 3]> {
 
 fn xyz_points(bytes: &[u8]) -> Vec<[f32; 3]> {
     bytes
-        .chunks_exact(12)
+        .as_chunks::<12>().0.iter()
         .map(|chunk| {
             [
                 f32::from_le_bytes(chunk[0..4].try_into().unwrap()),
