@@ -401,8 +401,8 @@ pub fn slice(
         );
         let (engine_min, engine_max) = mesh::bounds(&baked);
         for axis in 0..3 {
-            scene_min[axis] = scene_min[axis].min(engine_min[axis] as f64);
-            scene_max[axis] = scene_max[axis].max(engine_max[axis] as f64);
+            scene_min[axis] = scene_min[axis].min(engine_min[axis]);
+            scene_max[axis] = scene_max[axis].max(engine_max[axis]);
         }
         let path = model_dir.join(format!("model-{index}.stl"));
         mesh::write_binary_stl(&path, &baked)?;

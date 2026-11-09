@@ -2592,6 +2592,36 @@ fn host_disconnect(host: State<PrinterHost>) -> Result<(), String> {
     Ok(())
 }
 
+/// Forget the machine: drop the link and delete what the vault holds for it.
+///
+/// A pin outlives a print on purpose — that is what pinning is — but it has to be
+/// possible to say "this is not my printer any more" without editing the Windows
+/// Credential Manager by hand, which until now was the only way. Both keys the
+/// connection writes go: the certificate pin and the access code. The address and
+/// serial are the window's (localStorage), so the window clears them.
+#[tauri::command]
+fn host_forget(link: State<PrinterHost>, serial: String, address: String) -> Result<(), String> {
+    {
+        let mut slot = link
+            .link
+            .lock()
+            .map_err(|_| "the printer lock is poisoned".to_string())?;
+        if let Some(open) = slot.take() {
+            open.close();
+        }
+    }
+    let identifier = if serial.trim().is_empty() {
+        address.trim()
+    } else {
+        serial.trim()
+    };
+    if !identifier.is_empty() {
+        let _ = secrets::clear(&format!("pin/{identifier}"));
+    }
+    let _ = secrets::clear("device.code");
+    Ok(())
+}
+
 /// Which tools the slice that is about to be sent actually uses. A plate with
 /// more than one spool cannot be sent as plain G-code: the machine would print
 /// it in one colour. The window asks this before its confirmation so the press
@@ -4097,6 +4127,7 @@ pub fn run() {
             host_defaults,
             host_connect,
             host_disconnect,
+            host_forget,
             host_status,
             host_forget_pin,
             host_pin,

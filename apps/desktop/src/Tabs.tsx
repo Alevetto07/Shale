@@ -354,6 +354,25 @@ export function DevicePane({
     }
   }
 
+  /// Forget the machine, not just hang up on it: the pin is a claim about who
+  /// this printer is, and a person needs a way to withdraw it — after a board
+  /// swap, after typing the wrong address once, after borrowing a friend's.
+  /// The window's half is the address and serial; the vault's half is the pin
+  /// and the access code, which Rust deletes.
+  async function forget() {
+    setNote(null);
+    try {
+      await api.hostForget(serial, host);
+      setHost("");
+      setSerial("");
+      setCode("");
+      setStatus(null);
+      setNote("forgotten — the address, the serial, the access code and the certificate pin");
+    } catch (err) {
+      setNote(String(err));
+    }
+  }
+
   // The confirmation is built from the file itself: how many spools the slice
   // really uses, not how many the plate was configured with.
   async function ask() {
@@ -682,6 +701,14 @@ export function DevicePane({
           <button type="button" disabled={!connected} onClick={disconnect}>
             disconnect
           </button>
+          <button
+            type="button"
+            disabled={!host && !serial}
+            onClick={forget}
+            title="forget this printer: clear the address, serial, access code and pin"
+          >
+            forget
+          </button>
           <span className="device-note">
             {connected
               ? `${statusOf?.reports ?? 0} reports received`
@@ -689,7 +716,7 @@ export function DevicePane({
           </span>
         </div>
         <p className="device-note">
-          the access code is kept in this profile's storage, never in the repository. the link is read-write:
+          the access code is kept in the windows credential manager, never in the repository. the link is read-write:
           send, pause, resume and stop all go to the machine over its own local interface.
         </p>
       </section>

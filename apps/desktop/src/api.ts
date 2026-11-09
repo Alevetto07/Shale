@@ -202,6 +202,12 @@ export const hostConnect = (config: HostConfig) => invoke<HostStatus>("host_conn
 
 export const hostDisconnect = () => invoke<void>("host_disconnect");
 
+/// Forget the machine: drop the link and delete what the vault holds for it —
+/// the certificate pin and the access code. The address and serial are the
+/// window's own (localStorage), so the window clears them.
+export const hostForget = (serial: string, address: string) =>
+  invoke<void>("host_forget", { serial, address });
+
 export const hostStatus = () => invoke<HostStatus>("host_status");
 
 export const hostSend = (bedType: string) =>

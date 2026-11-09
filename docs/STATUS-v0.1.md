@@ -174,8 +174,22 @@ Three things were fixed, the first two found by reading what the window said:
   real slice in `docs/verification.md`. This one is item 4 territory as much as
   item 6's — it was found reading a header, not a window.
 
-Not re-driven tonight: the window's own import flow ends in an OS file dialog,
-which a probe cannot press. Calling `import_model` over CDP loads the model in
+- **A `forget` press on the Device pane.** Pinning meant a machine that changed
+  its certificate was refused for ever, with no way out but the Credential
+  Manager; `forget` now drops the link, deletes the pin and the access code from
+  the vault, and clears the address and serial the window kept. Driven with a
+  real press: the pin left by an earlier session met a different certificate and
+  was refused, `forget` emptied every field and both vault keys, and a reload
+  came back empty.
+- **The .shale round trip**, on the Arm rather than a fixture: saved through
+  `save_project` (26 515 bytes), read back as 1 946 triangles with the A1 job
+  intact, and then reopened *in the window* by pressing its entry in the start
+  screen's recent list — tab `roundtrip`, Plate 1, the part on the plate, the
+  painted support patch still attached. That path needs no dialog, so it is the
+  one a probe can take.
+
+Not re-driven tonight: the window's own import and Save As flows end in an OS file
+dialog, which a probe cannot press. Calling `import_model` over CDP loads the model in
 Rust and the plate stays empty, because the plate updates from the menu's own
 handler — so the model-on-plate and sliced-preview screenshots remain Batch 1's,
 and the files sliced through the window for item 4 were produced the same way,
@@ -187,9 +201,9 @@ The release numbers are recorded in `docs/verification.md` under "The release
 build", with the commands that produced them. Short version: clippy clean,
 `cargo build --workspace --release` in 4m 49s, and `npm run tauri build` producing
 
-    target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe   4 657 574 B, 4.44 MiB
+    target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe   4 675 442 B, 4.46 MiB
 
-built a second time after the UI pass changed the window. Versions are 0.1.0 in
+rebuilt after the bounding-box fix, which is the last change to the library. Versions are 0.1.0 in
 four crates, `package.json` and `tauri.conf.json`; nothing was tagged, the
 installer was never run, and it is unsigned.
 
@@ -237,10 +251,6 @@ not themed — they are the system's.
    for 35.9 s while the JSON is read single-threaded. The window says what it is
    doing now and retries every 700 ms, but the first half-minute of a session has
    no printer list. Reading the definitions lazily, or in parallel, is the fix.
-6. **The Device tab remembers a host and a serial once typed, and offers
-   DISCONNECT but not FORGET.** On this machine it still holds the fake printer's
-   `127.0.0.1` / `FAKE01A000000001` from earlier probing — that is the profile's
-   `localStorage`, not the repository, and no access code is there.
-7. **Remaining Bambu parity is blocked outside Shale** — seam painting,
+6. **Remaining Bambu parity is blocked outside Shale** — seam painting,
    per-filament flush volumes and multi-spool sliced 3MF need CuraEngine 5.13
    support it does not offer; camera and AMS mapping need a machine.

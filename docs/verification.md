@@ -543,6 +543,61 @@ that press.
 - Camera and timelapse need a printer; the printer is not on this network.
 
 
+## Forgetting a printer
+
+Pinning has an obvious consequence nobody wants to discover the hard way: a
+machine that legitimately changed its certificate — a replaced board, a factory
+reset, a printer borrowed and returned — is refused for ever, and the only way
+out was to edit the Windows Credential Manager. The Device pane now has a
+`forget` press beside `connect` and `disconnect`, enabled whenever an address or
+serial is present. It drops the link, deletes `pin/<serial or address>` and
+`device.code` from the vault, and clears the address and serial the window keeps
+in `localStorage`.
+
+The run, with the pin from an earlier session still in the vault:
+
+1. `connect` against a printer offering a different certificate:
+   `not connected — unexpected error: the printer's certificate changed: this
+   machine was pinned to 633d1a33… and now presents 61acc0ae….` The pin had
+   outlived the process, which is the point of a pin and the first proof that it
+   lives in the credential manager rather than in memory.
+2. `forget`: address, serial and code fields empty; `localStorage` empty;
+   `host_pin` null; `device.code` absent from the vault; status `no printer
+   connected`; note `forgotten — the address, the serial, the access code and the
+   certificate pin`.
+3. A reload: the Device pane comes back with empty fields, not the old address.
+
+## A project that comes back
+
+`.shale` is the only format Shale owns, and it holds the whole plate — the
+original file bytes, every transform, the settings, the painted support patches —
+so a round trip is worth checking on real data rather than a fixture. The Arm was
+imported into the A1 job and saved through `save_project` (26 515 bytes), then
+`open_project` read it back as one model, `Arm.3mf`, 1 946 triangles, printer
+`bambu_lab_a1`, material `bambu_lab_pla_basic`.
+
+The half that matters is the window, and the recent list is the one path to a
+project that needs no OS dialog. Launched fresh, the start screen listed five
+projects, newest first:
+
+```
+roundtrip    10 Nov 2026 · Bambu Lab A1
+Untitled      9 Nov 2026 · Bambu Lab A1
+Untitled      7 Nov 2026 · Bambu Lab A1
+blockers      7 Nov 2026 · Bambu Lab A1
+per-object    7 Nov 2026 · Bambu Lab A1
+```
+
+Pressing `roundtrip` closed the start screen, named the tab `roundtrip`, and
+brought back Plate 1 with one part: `Arm.3mf` on the plate, the A1 / 0.4 mm /
+0.20 Standard / PLA Basic job intact, and the painted support patch still
+attached to the underside (`1 patches`, 36 mm²). Not sliced, which is what was
+saved.
+
+What this does not cover: the Save As and Open dialogs themselves. They are the
+OS's, a probe cannot press them, and the commands they hand a path to are what
+was exercised.
+
 ## The bounding box the engine does not know
 
 CuraEngine writes six header lines describing the scene: `;MINX`, `;MINY`,
@@ -585,14 +640,15 @@ cd apps/desktop && npm run tauri build                           # exit 0
 
 | artefact | bytes | size |
 |---|---|---|
-| `target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe` | 4 657 574 | 4.44 MiB |
-| `target/release/shale-desktop.exe` | 17 862 144 | 17.0 MiB |
-| `target/release/shale-mcp.exe` | 10 733 056 | 10.2 MiB |
+| `target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe` | 4 675 442 | 4.46 MiB |
+| `target/release/shale-desktop.exe` | 17 863 680 | 17.0 MiB |
+| `target/release/shale-mcp.exe` | 10 735 104 | 10.2 MiB |
 
-The installer was built twice: once for the lint pass (4 651 432 bytes) and
-again once the UI pass had changed two strings in the window and the About
-panel had gained the version, which is the size above. The second build is the
-one that ships.
+The installer was built three times as the night went on — 4 651 432 bytes after
+the lint pass, 4 657 574 once the UI pass had changed two strings in the window
+and given About its version, and 4 675 442 after the bounding-box fix. The last
+one is the one that ships, and it is built from the branch head, not from a
+working tree with notes in it.
 
 Versions are 0.1.0 in all four crates, `apps/desktop/package.json` and
 `apps/desktop/src-tauri/tauri.conf.json`. Nothing was tagged, and the installer
