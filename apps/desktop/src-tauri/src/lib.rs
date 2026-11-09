@@ -56,6 +56,10 @@ struct Inner {
     queue_next_id: u64,
     /// The queued job the machine is on, so the pane can say which of how many.
     queue_running: Option<String>,
+    /// What the run is allowed to do. The rules live in `shale_core::queue`
+    /// and are enforced here rather than in the pane, so a screen that forgot
+    /// to ask cannot send a second job onto a bed that still holds the first.
+    queue_run: shale_core::queue::QueueRun,
     /// The printer this window is pointed at, when one has been connected.
     host_config: Option<shale_host::HostConfig>,
     slicing: bool,
@@ -1981,12 +1985,6 @@ struct Paint {
     block: Vec<usize>,
 }
 
-impl Paint {
-    fn is_empty(&self) -> bool {
-        self.enforce.is_empty() && self.block.is_empty()
-    }
-}
-
 /// What is painted on a part.
 #[derive(Serialize)]
 struct PaintView {
@@ -2721,6 +2719,7 @@ fn queue_remove(state: State<'_, AppState>, id: u64) -> Result<Vec<QueueView>, S
 #[tauri::command]
 fn queue_clear(state: State<'_, AppState>) -> Result<Vec<QueueView>, String> {
     let mut inner = lock(&state)?;
+    inner.queue_run.stop("queue cleared");
     for job in inner.queue.drain(..) {
         let _ = fs::remove_file(&job.path);
     }
@@ -2742,11 +2741,22 @@ async fn queue_start_next(
         if inner.queue.is_empty() {
             return Err("The queue is empty.".to_string());
         }
+        // The one gate that matters. A screen can ask to start a job as often
+        // as it likes; only a press that armed the run, or a plate cleared by
+        // hand, puts it in a state where a job may leave.
+        if !inner.queue_run.may_start() {
+            return Err(
+                "The queue is waiting for a plate-cleared press: nothing goes out from this bed \
+                 until someone says the last print has been taken off it."
+                    .to_string(),
+            );
+        }
         inner.queue.remove(0)
     };
     match send_file(&state, &host, job.path.clone(), bed_type).await {
         Ok(sent) => {
             let mut inner = lock(&state)?;
+            inner.queue_run.started();
             inner.queue_running = Some(job.name.clone());
             Ok(serde_json::json!({
                 "name": job.name,
@@ -2756,12 +2766,94 @@ async fn queue_start_next(
             }))
         }
         Err(err) => {
-            // Nothing is lost: the job goes back to the head of the queue.
+            // Nothing is lost: the job goes back to the head of the queue, and
+            // the run stops. An error is not a reason to try the next one.
             let mut inner = lock(&state)?;
             inner.queue.insert(0, job);
+            inner.queue_run.stop("queue stopped — the host refused the job");
             Err(err)
         }
     }
+}
+
+/// What the run is allowed to do next, flattened for the pane.
+#[derive(Serialize)]
+struct QueueRunView {
+    /// idle | armed | printing | waiting_for_plate | stopped
+    state: String,
+    note: Option<String>,
+}
+
+fn run_state_name(state: shale_core::queue::RunState) -> &'static str {
+    use shale_core::queue::RunState;
+    match state {
+        RunState::Idle => "idle",
+        RunState::Armed => "armed",
+        RunState::Printing => "printing",
+        RunState::WaitingForPlate => "waiting_for_plate",
+        RunState::Stopped => "stopped",
+    }
+}
+
+fn run_view(update: shale_core::queue::Update) -> QueueRunView {
+    QueueRunView {
+        state: run_state_name(update.state).to_string(),
+        note: update.note,
+    }
+}
+
+/// The press that authorises the list. It authorises the first job; every job
+/// after it needs `queue_plate_cleared`.
+#[tauri::command]
+fn queue_arm(state: State<'_, AppState>) -> Result<QueueRunView, String> {
+    let mut inner = lock(&state)?;
+    let update = inner.queue_run.arm();
+    Ok(run_view(update))
+}
+
+/// A report from the machine: `idle`, `preparing`, `running`, `finish`,
+/// `failed`. It can stop the run or park it, never start a job.
+#[tauri::command]
+fn queue_observe(state: State<'_, AppState>, machine: String) -> Result<QueueRunView, String> {
+    let machine = match machine.to_ascii_lowercase().as_str() {
+        "idle" => shale_core::queue::Machine::Idle,
+        "prepare" | "preparing" => shale_core::queue::Machine::Preparing,
+        "running" | "printing" => shale_core::queue::Machine::Running,
+        "finish" | "finished" => shale_core::queue::Machine::Finished,
+        "failed" | "fail" => shale_core::queue::Machine::Failed,
+        other => return Err(format!("{other} is not a machine state the queue knows")),
+    };
+    let mut inner = lock(&state)?;
+    let update = inner.queue_run.observe(machine);
+    Ok(run_view(update))
+}
+
+/// The operator has taken the finished print off the bed. This is the only way
+/// the run goes back to being allowed to send a job.
+#[tauri::command]
+fn queue_plate_cleared(state: State<'_, AppState>) -> Result<QueueRunView, String> {
+    let mut inner = lock(&state)?;
+    let update = inner.queue_run.plate_cleared();
+    Ok(run_view(update))
+}
+
+/// Stop the run, with a reason the pane will show.
+#[tauri::command]
+fn queue_stop(state: State<'_, AppState>, why: Option<String>) -> Result<QueueRunView, String> {
+    let mut inner = lock(&state)?;
+    let why = why.unwrap_or_else(|| "queue stopped".to_string());
+    let update = inner.queue_run.stop(&why);
+    Ok(run_view(update))
+}
+
+/// Where the run stands, for a pane that has just opened.
+#[tauri::command]
+fn queue_run_state(state: State<'_, AppState>) -> Result<QueueRunView, String> {
+    let inner = lock(&state)?;
+    Ok(QueueRunView {
+        state: run_state_name(inner.queue_run.state()).to_string(),
+        note: None,
+    })
 }
 
 /// The machine has stopped printing the queued job, so the pane stops calling
@@ -3738,6 +3830,7 @@ pub fn run() {
             gcode_path,
             queue: Vec::new(),
             queue_next_id: 1,
+            queue_run: shale_core::queue::QueueRun::new(),
             queue_running: None,
             slicing: false,
             cancel_import: import_cancel,
@@ -3827,6 +3920,11 @@ pub fn run() {
             queue_list,
             queue_remove,
             queue_clear,
+            queue_arm,
+            queue_observe,
+            queue_plate_cleared,
+            queue_stop,
+            queue_run_state,
             queue_start_next,
             queue_release,
             slice_tools,

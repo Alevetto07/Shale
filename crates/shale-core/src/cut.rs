@@ -236,7 +236,7 @@ pub struct JointCut {
 }
 
 pub fn cut_with_dovetail(mesh: &TriangleMesh, plane: &Plane, dovetail: Dovetail) -> JointCut {
-    let mut halves = cut(mesh, plane);
+    let halves = cut(mesh, plane);
     let plain = JointCut {
         halves,
         tab_mm3: None,

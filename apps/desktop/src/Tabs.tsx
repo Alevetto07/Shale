@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import * as api from "./api";
 
@@ -210,13 +210,9 @@ export function DevicePane({
   const [note, setNote] = useState<string | null>(null);
   const [queue, setQueue] = useState<api.QueueJob[]>([]);
   const [queueAsking, setQueueAsking] = useState(false);
-  /// Set only by the one press that names every queued job, and cleared when the
-  /// queue empties. Nothing else may start a print.
-  const [queueRunning, setQueueRunning] = useState(false);
-  /// A job counts as finished only after the machine has reported RUNNING for
-  /// it: the IDLE report that precedes a start would otherwise advance the
-  /// queue before the first job laid a layer.
-  const queueSeenRunning = useRef(false);
+  /// What the run is allowed to do. The rules are in `shale_core::queue` and
+  /// the gate is in Rust; this is only what the pane was told last.
+  const [queueRun, setQueueRun] = useState("idle");
 
   useEffect(() => {
     localStorage.setItem("shale.device.host", host);
@@ -343,12 +339,12 @@ export function DevicePane({
     }
   }
 
-  // The queue moves itself forward — but only because one press named every job
-  // in it. `advance` is reached from that press and from this effect, nowhere
-  // else.
-  async function advance() {
+  // The queue never moves itself forward. `startNext` is reached from two
+  // presses and nowhere else: the one that arms the list, and the one that says
+  // the plate has been cleared.
+  async function startNext() {
     if (queue.length === 0) {
-      setQueueRunning(false);
+      setQueueRun("stopped");
       setNote("queue done — nothing left to print");
       try {
         setQueue(await api.queueRelease());
@@ -369,33 +365,37 @@ export function DevicePane({
       );
     } catch (err) {
       setNote(String(err));
-      setQueueRunning(false);
+      // An error is not a reason to try the next job: the run stops.
+      try {
+        const stopped = await api.queueStop(String(err));
+        setQueueRun(stopped.state);
+      } catch {
+        setQueueRun("stopped");
+      }
     } finally {
       setSending(false);
     }
   }
 
+  // The machine's own reports go to the run, which can park it or stop it —
+  // never start anything. A finish parks it until someone says the plate is
+  // clear, because the bed still holds the part that was just printed.
   useEffect(() => {
-    if (!queueRunning || sending) return;
-    if (state === "RUNNING" || state === "PREPARE") {
-      queueSeenRunning.current = true;
-      return;
-    }
-    if (!queueSeenRunning.current) return;
-    // A failure is not a finish: plastic is on the bed, and starting the next
-    // job from a queue nobody is watching is how a bad print becomes three.
-    if (state === "FAILED") {
-      setQueueRunning(false);
-      queueSeenRunning.current = false;
-      setNote("queue stopped — the machine reported a failed print");
-      return;
-    }
-    if (state !== "FINISH" && state !== "IDLE") return;
-    queueSeenRunning.current = false;
-    void advance();
-    // `advance` closes over the queue it was written against, so the effect
-    // lists the queue's length rather than the function.
-  }, [queueRunning, sending, state, queue.length]);
+    let live = true;
+    void api
+      .queueObserve(state)
+      .then((update) => {
+        if (!live) return;
+        setQueueRun(update.state);
+        if (update.note) setNote(update.note);
+      })
+      .catch(() => {
+        undefined;
+      });
+    return () => {
+      live = false;
+    };
+  }, [state]);
 
   async function queueThis() {
     setNote(null);
@@ -420,17 +420,36 @@ export function DevicePane({
   async function clearQueue() {
     try {
       setQueue(await api.queueClear());
-      setQueueRunning(false);
+      setQueueRun("stopped");
     } catch (err) {
       setNote(String(err));
     }
   }
 
+  /** The press that authorises the list. It authorises the first job only. */
   async function beginQueue() {
     setQueueAsking(false);
-    queueSeenRunning.current = false;
-    setQueueRunning(true);
-    await advance();
+    try {
+      const armed = await api.queueArm();
+      setQueueRun(armed.state);
+    } catch (err) {
+      setNote(String(err));
+      return;
+    }
+    await startNext();
+  }
+
+  /** The press that says the finished print is off the bed. */
+  async function plateCleared() {
+    try {
+      const cleared = await api.queuePlateCleared();
+      setQueueRun(cleared.state);
+      if (cleared.note) setNote(cleared.note);
+    } catch (err) {
+      setNote(String(err));
+      return;
+    }
+    await startNext();
   }
 
   async function control(command: "pause" | "resume" | "stop") {
@@ -659,11 +678,11 @@ export function DevicePane({
               {queue.map((row) => row.name).join(", ")}?
               {queue.length === 1
                 ? " it starts on the machine as soon as you press."
-                : " each one starts when the machine goes idle."}
+                : " the first starts now; after each print you will be asked to confirm the plate is clear before the next one goes."}
             </p>
             <p className="device-warn">
-              this is the only place a print can start without you pressing for it, and this press
-              is what authorises every job in the list.
+              this press authorises the first job. Nothing else starts on its own: a finished print
+              stays on the bed until you say it is off.
             </p>
             <div>
               <button type="button" className="device-go" onClick={beginQueue}>
@@ -679,14 +698,25 @@ export function DevicePane({
             <button type="button" disabled={!gcodeReady} onClick={queueThis}>
               queue this slice
             </button>
-            <button
-              type="button"
-              className="device-go"
-              disabled={!connected || queue.length === 0 || queueRunning}
-              onClick={() => setQueueAsking(true)}
-            >
-              {queueRunning ? "queue running" : "start queue"}
-            </button>
+            {queueRun === "waiting_for_plate" ? (
+              <button type="button" className="device-go" onClick={plateCleared}>
+                the plate is clear — start the next
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="device-go"
+                disabled={
+                  !connected ||
+                  queue.length === 0 ||
+                  queueRun === "armed" ||
+                  queueRun === "printing"
+                }
+                onClick={() => setQueueAsking(true)}
+              >
+                {queueRun === "armed" || queueRun === "printing" ? "queue running" : "start queue"}
+              </button>
+            )}
             <button type="button" disabled={queue.length === 0} onClick={clearQueue}>
               clear
             </button>

@@ -62,7 +62,6 @@ enum Side {
     Coplanar,
     Front,
     Back,
-    Spanning,
 }
 
 /// Which side of the plane `dot(normal, x) = w` a point is on.
@@ -474,7 +473,7 @@ pub fn cylinder(start: [f64; 3], axis: [f64; 3], radius: f64, height: f64, segme
     let near_ring = rim(start);
     let far_ring = rim(far);
 
-    let mut push = |mesh: &mut TriangleMesh, corners: [[f64; 3]; 3]| {
+    let push = |mesh: &mut TriangleMesh, corners: [[f64; 3]; 3]| {
         let base = mesh.vertices.len() as u32;
         for corner in corners {
             mesh.vertices

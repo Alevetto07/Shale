@@ -222,6 +222,15 @@ export const queueClear = () => invoke<QueueJob[]>("queue_clear");
 export const queueRelease = () => invoke<QueueJob[]>("queue_release");
 export const queueStartNext = (bedType: string) =>
   invoke<{ name: string; remaining: number; queue: QueueJob[] }>("queue_start_next", { bedType });
+/* The run's rules live in shale-core and are enforced in Rust: the pane can ask
+   to start as often as it likes, and a refusal is the answer when nobody has
+   cleared the plate. */
+export type QueueRun = { state: string; note: string | null };
+export const queueArm = () => invoke<QueueRun>("queue_arm");
+export const queueObserve = (machine: string) => invoke<QueueRun>("queue_observe", { machine });
+export const queuePlateCleared = () => invoke<QueueRun>("queue_plate_cleared");
+export const queueStop = (why?: string) => invoke<QueueRun>("queue_stop", { why: why ?? null });
+export const queueRunState = () => invoke<QueueRun>("queue_run_state");
 
 export const hostControl = (command: "pause" | "resume" | "stop") =>
   invoke<void>("host_control", { command });
