@@ -199,7 +199,7 @@ export function DevicePane({
 }: DevicePaneProps) {
   const [host, setHost] = useState(() => localStorage.getItem("shale.device.host") ?? "");
   const [serial, setSerial] = useState(() => localStorage.getItem("shale.device.serial") ?? "");
-  const [code, setCode] = useState(() => localStorage.getItem("shale.device.code") ?? "");
+  const [code, setCode] = useState("");
   const [bedType, setBedType] = useState(
     () => localStorage.getItem("shale.device.bed") ?? "textured_plate",
   );
@@ -220,11 +220,38 @@ export function DevicePane({
   useEffect(() => {
     localStorage.setItem("shale.device.serial", serial);
   }, [serial]);
-  // The access code is a password for the machine. It stays in this profile's
-  // storage and never in the repository or a log line.
+  // The access code is a password for the machine, so it is kept in the Windows
+  // Credential Manager rather than the WebView profile — which is a plain file
+  // that anything running as this user can read. `codeReady` keeps the first
+  // render, which has not read the vault yet, from writing an empty string over
+  // the stored one.
+  const [codeReady, setCodeReady] = useState(false);
   useEffect(() => {
-    localStorage.setItem("shale.device.code", code);
-  }, [code]);
+    let live = true;
+    api
+      .secretGet("device.code")
+      .catch(() => null)
+      .then((stored) => {
+        if (!live) return;
+        // A code left in the old place is moved and the old place cleared, once.
+        const legacy = localStorage.getItem("shale.device.code");
+        const value = stored ?? legacy ?? "";
+        if (value) setCode(value);
+        if (legacy !== null) {
+          api.secretSet("device.code", legacy).catch(() => undefined);
+          localStorage.removeItem("shale.device.code");
+        }
+        setCodeReady(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!codeReady) return;
+    const write = code ? api.secretSet("device.code", code) : api.secretClear("device.code");
+    write.catch(() => undefined);
+  }, [code, codeReady]);
   useEffect(() => {
     localStorage.setItem("shale.device.bed", bedType);
   }, [bedType]);

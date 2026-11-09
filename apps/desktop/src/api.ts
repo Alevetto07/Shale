@@ -184,6 +184,16 @@ export interface HostConfig {
   remoteDir: string;
 }
 
+/** The printer's access code is a password, so it lives in the OS keyring rather
+ * than the WebView profile — which is a plain file anything running as this user
+ * can read, and which is backed up with the profile. */
+export const secretSet = (key: string, value: string) =>
+  invoke<void>("secret_set", { key, value });
+
+export const secretGet = (key: string) => invoke<string | null>("secret_get", { key });
+
+export const secretClear = (key: string) => invoke<void>("secret_clear", { key });
+
 export const hostDefaults = () =>
   invoke<{ host: string; serial: string; code: string; bedType: string }>("host_defaults");
 
@@ -342,6 +352,10 @@ export interface SliceSettings {
 }
 
 export const api = {
+  secretSet,
+  secretGet,
+  secretClear,
+
   status: () => invoke<Status>("app_status"),
   setEngine: (path: string, libDir: string, backend: string) =>
     invoke<boolean>("set_engine", { path, libDir: libDir || null, backend }),
