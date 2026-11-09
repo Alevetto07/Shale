@@ -28,6 +28,7 @@ export function StartScreen({
   enginePath,
   libDir,
   backend,
+  version,
   onReturn,
   onNew,
   onOpen,
@@ -51,6 +52,7 @@ export function StartScreen({
   enginePath: string;
   libDir: string;
   backend: string;
+  version: string;
   onReturn: () => void;
   onNew: () => void;
   onOpen: () => void;
@@ -261,6 +263,12 @@ export function StartScreen({
             <button type="button" className="start-back" onClick={() => setPanel("menu")}>
               Back
             </button>
+            <p className="credit">
+              Shale {version} — a desktop slicer. Slicing is done by an unmodified
+              CuraEngine process; printer definitions, quality profiles and materials
+              are Cura's, read as data, and the application's own licence is still
+              undecided (see LICENSING.md).
+            </p>
             <p className="credit">
               {andromeda.name} ({andromeda.object}), {andromeda.credit}. Released {andromeda.release}.{" "}
               {andromeda.licence}.

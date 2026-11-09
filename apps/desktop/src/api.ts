@@ -12,6 +12,7 @@ export interface Status {
   demo_model?: string | null;
   /** The profile library is still being read; the window is usable meanwhile. */
   catalog_loading?: boolean;
+  version: string;
 }
 
 export interface LiveLayer {

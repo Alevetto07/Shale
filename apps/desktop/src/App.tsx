@@ -2476,6 +2476,7 @@ export function App() {
             enginePath={enginePath}
             libDir={libDir}
             backend={backend}
+            version={status?.version ?? "0.1.0"}
             onReturn={() => {
               setScreen("slicer");
               setPane("prepare");

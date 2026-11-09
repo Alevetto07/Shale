@@ -123,6 +123,9 @@ struct Status {
     /// True while the profile library is still being read. The window is up
     /// and usable; the printer list arrives when this goes false.
     catalog_loading: bool,
+    /// The version this binary was built as, so the window never has to
+    /// hold a copy that can drift from Cargo.toml.
+    version: String,
 }
 
 #[derive(Serialize)]
@@ -242,6 +245,7 @@ fn app_status(state: State<AppState>) -> Result<Status, String> {
         printer_count,
         demo_model: std::env::var("SHALE_DEMO_MODEL").ok(),
         catalog_loading: inner.catalog.is_none() && inner.catalog_error.is_none(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }
 
