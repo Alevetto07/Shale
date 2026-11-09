@@ -201,14 +201,15 @@ fn lock(state: &AppState) -> Result<std::sync::MutexGuard<'_, Inner>, String> {
         .map_err(|_| "Shale state was poisoned".to_string())
 }
 
-/// Lend out the catalogue, waiting for the background read the first time a
-/// command asks for it.
+/// Lend out the catalogue, or say honestly why it is not there yet. The read
+/// runs on a thread of its own because it takes a second or two from a cold
+/// disk, and a command that arrives before it finishes must not claim the
+/// profiles are missing — they are still being read.
 fn catalog(inner: &mut Inner) -> Result<&Catalog, String> {
     inner.catalog.as_ref().ok_or_else(|| {
-        inner
-            .catalog_error
-            .clone()
-            .unwrap_or_else(|| "reading the printer and material profiles".into())
+        inner.catalog_error.clone().unwrap_or_else(|| {
+            "the printer and material profiles are still being read — try again in a moment".into()
+        })
     })
 }
 
@@ -216,10 +217,12 @@ fn catalog(inner: &mut Inner) -> Result<&Catalog, String> {
 fn app_status(state: State<AppState>) -> Result<Status, String> {
     let mut inner = lock(&state)?;
     let loaded = catalog(&mut inner).is_ok();
-    let resources_message = inner
-        .catalog_error
-        .clone()
-        .unwrap_or_else(|| "Printer resources are loaded.".into());
+    let resources_message = match (&inner.catalog, &inner.catalog_error) {
+        (Some(_), _) => "Printer resources are loaded.".to_string(),
+        (None, Some(error)) => error.clone(),
+        // Not loaded and not failed: the background read is still running.
+        (None, None) => "Reading the printer and material profiles…".to_string(),
+    };
     let printer_count = inner.catalog.as_ref().map(|c| c.printers().len()).unwrap_or(0);
     let engine_ok = inner.engine.available();
     Ok(Status {
