@@ -15,6 +15,8 @@ use shale_core::{
     RecentEntry, ResourcePaths, StoredInstruction, SupportOverlay, SupportParams, SupportPlan,
     TessellationTolerance, Toolpath, Transform, TriangleMesh, UserSettings, VariantInfo,
 };
+mod secrets;
+
 use tauri::{AppHandle, Emitter, Manager, State};
 
 struct Inner {
@@ -1215,17 +1217,19 @@ fn measure_span(a: [f64; 3], b: [f64; 3]) -> shale_core::measure::Span {
 /// `axis` is the plane's normal (0 = X, 1 = Y, 2 = Z) and `offset` slides the
 /// plane from the part's own centre. Both halves arrive in world space with an
 /// identity transform, because cutting is geometry: nothing is left to rotate.
-/// The mesh boolean is only proven on small meshes.
+/// The mesh boolean is only proven on small meshes, and the limit is measured.
 ///
 /// `csg` is a BSP tree, and a BSP tree is only as good as its split planes.
-/// With csg.js's "the first polygon is the plane" rule the 1946-triangle
-/// bracket did not finish a 12-face tab in five minutes and had to be killed;
-/// the plane is now chosen, and the same part booleans in milliseconds (the
-/// kernel test `a_concave_part_with_a_bore_booleans_quickly` measures it).
-/// What is left above this many triangles is memory, not time, so the guard
-/// stays — high enough for any part a person prints, and still a word rather
-/// than a spinner that never returns.
-const BOOLEAN_CAP: usize = 200_000;
+/// Choosing the plane fixed the concave case: a plate with a bore (2 554
+/// triangles) booleans in 57 ms and the 1946-triangle bracket in 0.01 s. It does
+/// not fix a **convex** body, where every candidate plane is a face plane and
+/// each node peels one face, so the tree is a chain — 7 820 triangles come out
+/// 4 264 deep and cost 5.1 s to build, and the cost grows as the square of the
+/// count (see `boolean_timings_at_eight_thirty_and_eighty_thousand`). A part
+/// over this size would sit on a spinner for minutes rather than fail, so the
+/// guard is a word instead. It is a limit on the kernel, not on the printer:
+/// raising it needs an iterative build, not a bigger stack.
+const BOOLEAN_CAP: usize = 12_000;
 
 /// BSP clipping recurses once for every polygon it splits, and a real part has
 /// enough of them to overflow the two megabytes a thread gets by default — a
@@ -3787,6 +3791,27 @@ fn trace(step: &str, started: &std::time::Instant) {
     }
 }
 
+/// Store the printer's LAN access code in the Windows Credential Manager.
+///
+/// The value is a password on the machine's MQTT connection; it must not be
+/// written to the WebView profile, a log line, or a saved project.
+#[tauri::command]
+fn secret_set(key: String, value: String) -> Result<(), String> {
+    secrets::set(&key, &value)
+}
+
+/// Read a stored secret, or `None` when nothing is stored under that key.
+#[tauri::command]
+fn secret_get(key: String) -> Result<Option<String>, String> {
+    secrets::get(&key)
+}
+
+/// Forget a stored secret. Clearing an absent key succeeds.
+#[tauri::command]
+fn secret_clear(key: String) -> Result<(), String> {
+    secrets::clear(&key)
+}
+
 pub fn run() {
     let started = std::time::Instant::now();
     let engine = Engine::from_env();
@@ -3908,6 +3933,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            secret_set,
+            secret_get,
+            secret_clear,
             scratch_path,
             app_status,
             profile_settings,

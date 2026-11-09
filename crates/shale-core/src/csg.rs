@@ -782,4 +782,96 @@ mod tests {
         assert!((volume(&lower) - (1000.0 - std::f64::consts::PI * 2.2f64.powi(2) * 4.3)).abs() < 5.0);
         assert!(volume(&upper) > 1000.0);
     }
+
+    /// A lattice sphere whose triangle count is set by its rings, so the timing
+    /// ladder can be aimed at 8k, 33k and 80k triangles exactly.
+    fn lattice_sphere(rings: usize, segments: usize, radius: f64) -> TriangleMesh {
+        let mut vertices = Vec::with_capacity((rings + 1) * segments);
+        for ring in 0..=rings {
+            let phi = std::f64::consts::PI * ring as f64 / rings as f64;
+            for segment in 0..segments {
+                let theta = std::f64::consts::TAU * segment as f64 / segments as f64;
+                vertices.push([
+                    (radius * phi.sin() * theta.cos()) as f32,
+                    (radius * phi.sin() * theta.sin()) as f32,
+                    (radius * phi.cos()) as f32,
+                ]);
+            }
+        }
+        let at = |ring: usize, segment: usize| (ring * segments + segment % segments) as u32;
+        let mut triangles = Vec::with_capacity(2 * rings * segments);
+        for ring in 0..rings {
+            for segment in 0..segments {
+                let (a, b) = (at(ring, segment), at(ring, segment + 1));
+                let (c, d) = (at(ring + 1, segment), at(ring + 1, segment + 1));
+                if ring > 0 {
+                    triangles.push([a, b, d]);
+                }
+                if ring + 1 < rings {
+                    triangles.push([a, d, c]);
+                }
+            }
+        }
+        TriangleMesh { vertices, triangles }
+    }
+
+
+    /// The release-build ladder: 3 000, 4 900 and 7 800 triangles. Ignored by default because it is a stopwatch, not a check; run
+    /// it with `cargo test -p shale-core --release -- --ignored --nocapture`.
+    ///
+    /// Every rung builds its tree, which is the part of a Boolean that can be
+    /// timed at any size. Only a rung whose tree is shallower than
+    /// `SHALLOW_ENOUGH` is subtracted as well, because on a convex body this
+    /// kernel's tree is a chain — every candidate plane is a face plane, and a
+    /// face plane of a convex hull leaves the whole body in front of it — so the
+    /// recursion is deeper than any thread's stack. The fifteen- and thirty
+    /// thousand rungs were measured at 4.7 s for 7 820 and do not finish: the
+    /// chooser is quadratic on a chain, so those sizes need a different kernel,
+    /// not a bigger stack.
+    #[test]
+    #[ignore = "timing ladder: run in release with --ignored --nocapture"]
+    fn boolean_timings_at_eight_thirty_and_eighty_thousand() {
+        const SHALLOW_ENOUGH: usize = 1_500;
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(|| {
+                for (rings, segments) in [(16, 100), (20, 130), (24, 170)] {
+                    let a = lattice_sphere(rings, segments, 20.0);
+                    let mut b = lattice_sphere(rings, segments, 20.0);
+                    for vertex in &mut b.vertices {
+                        vertex[0] += 8.0;
+                        vertex[1] += 3.0;
+                    }
+                    let polygons = to_polygons(&a);
+                    let started = std::time::Instant::now();
+                    let node = Node::from_polygons(polygons);
+                    let built = started.elapsed().as_secs_f64() * 1000.0;
+                    let (nodes, depth, kept) = node.stats();
+                    println!(
+                        "{:>6} triangles: tree in {built:>10.2} ms — {nodes} nodes, depth {depth}, \
+                         {kept} polygons",
+                        a.triangles.len()
+                    );
+
+                    if depth <= SHALLOW_ENOUGH {
+                        let started = std::time::Instant::now();
+                        let out = subtract(&a, &b);
+                        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+                        println!(
+                            "        subtract: {:>6} out, {elapsed:>10.2} ms, {:.0} mm3, {} open edges",
+                            out.triangles.len(),
+                            crate::cut::volume(&out),
+                            open_edges(&out)
+                        );
+                    } else {
+                        println!(
+                            "        subtract skipped: a tree {depth} deep is a chain, and the                              recursion would not fit a stack"
+                        );
+                    }
+                }
+            })
+            .expect("a thread with a big stack")
+            .join()
+            .expect("the ladder ran");
+    }
 }

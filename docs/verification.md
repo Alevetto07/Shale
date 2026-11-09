@@ -265,6 +265,63 @@ The ramp was first drawn without gaps and read as one wash at a glance; the five
 bands are separated by a 1 px gap showing the panel behind them, so the stops
 can be told apart in a sidebar 200 px wide.
 
+## A boolean at three sizes, and the wall it hits
+
+`boolean_timings_at_eight_thirty_and_eighty_thousand` in `csg.rs` builds a
+lattice sphere at three sizes and reports the tree before subtracting anything.
+Release build, one run:
+
+| triangles | tree built | nodes | depth |
+|---|---|---|---|
+| 3 000 | 575 ms | 1 792 | 1 696 |
+| 4 940 | 1 653 ms | 2 803 | 2 700 |
+| 7 820 | 5 090 ms | 4 449 | 4 264 |
+
+The cost grows as the square of the triangle count and the depth grows with the
+count, not with its logarithm. Both come from the same fact: on a **convex**
+body every candidate split plane is a face plane, and a face plane of a convex
+hull leaves the entire body in front of it, so each node peels one face and the
+tree is a chain. No choice of plane among the faces fixes that, which is why
+`pick_plane` did fix the concave case and cannot fix this one.
+
+That is why the ladder stops at 7 820: the thirty- and eighty-thousand rungs do
+not finish, and a tree 4 264 deep exhausts even the 256 MB thread the desktop's
+Boolean runs on. What is proved is the concave case that parts are actually made
+of — the bracket (1 946 triangles, 0.01 s, 1 864 out) and a plate with a bore
+(2 554 triangles, 57 ms). A Boolean on a coarse convex body is fine; a finely tessellated one would sit on
+a spinner for minutes, so `BOOLEAN_CAP` is 12 000 triangles and the refusal is a
+sentence rather than a hang. That cap is a property of this kernel, not of the
+printer: lifting it needs a build that splits on planes of its own choosing, or
+an iterative one, not a bigger stack.
+
+## The access code is not in the profile
+
+A Bambu LAN access code is the printer's MQTT password. It used to sit in the
+WebView's `localStorage`, which is a plain file in the profile directory, read by
+anything running as this user and backed up with the profile.
+
+It is now stored in the Windows Credential Manager under `Shale/<key>`, through
+`apps/desktop/src-tauri/src/secrets.rs`:
+
+- `secret_set`, `secret_get`, `secret_clear` are Tauri commands; `get` returns
+  `None` when nothing is stored rather than an error, and `clear` on an absent key
+  succeeds.
+- The password is never logged, never written to a project file, and never
+  returned by a list command.
+- On first launch the code left in `localStorage` is moved to the vault once and
+  the old key deleted.
+
+Proved by a test that uses the real vault, not a mock —
+`cargo test -p shale-desktop --locked secret`:
+
+```
+test secrets::tests::a_password_survives_a_round_trip_and_a_clear ... ok
+test result: ok. 1 passed; 0 failed
+```
+
+Which asserts write, read-back, delete, and that the deleted entry reads as
+`None`. Nothing in `apps/` or `crates/` names a real access code.
+
 ## What is still not proved
 
 - Seams are not painted, so there is nothing to compare against Bambu's seam
