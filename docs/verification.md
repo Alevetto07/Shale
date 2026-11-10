@@ -265,6 +265,53 @@ The ramp was first drawn without gaps and read as one wash at a glance; the five
 bands are separated by a 1 px gap showing the panel behind them, so the stops
 can be told apart in a sidebar 200 px wide.
 
+## The wall, cracked by a library instead of a rewrite
+
+Manifold 3.5.3 (Apache-2.0) is compiled into `shale-core` through `manifold3d`
+0.4.1 and `manifold-csg-sys` 3.5.105. `csg::boolean` asks it first and falls
+back to the BSP only when it refuses the input, reporting which engine answered.
+
+The ladder, release build, one run each (`cargo test -p shale-core --release
+--locked boolean_timings -- --ignored --nocapture`):
+
+```
+7800 triangles: tree in      44.28 ms — 8054 nodes, depth 108, 13335 polygons
+        subtract:   8772 out,      37.54 ms, 10559 mm3, 0 open edges (0 by position), Manifold
+32500 triangles: tree in     212.09 ms — 34670 nodes, depth 135, 58663 polygons
+        subtract:  34660 out,      83.76 ms, 10569 mm3, 0 open edges (12 by position), Manifold
+79200 triangles: tree in     521.29 ms — 85585 nodes, depth 195, 146304 polygons
+        subtract:  82632 out,     180.11 ms, 10571 mm3, 0 open edges (50 by position), Manifold
+```
+
+The BSP tree is still built by the same ladder, because it is still the measure
+of what the fallback would cost — 0.2 s at 32 500 triangles for the tree alone,
+before a single clip.
+
+Two numbers need explaining rather than quoting. `open_edges` counts by
+**position**, rounded to a thousandth of a millimetre, because the BSP returns a
+polygon soup whose triangles carry their own copies of the corners. Manifold
+returns an **indexed** mesh, and keeps vertices distinct that are one ten-
+thousandth of a millimetre apart, so two of them rounding to the same key makes
+an edge look unshared: that is the 12 and the 50. `open_edges_topological`
+counts by vertex index, which is the question an indexed surface should be
+asked, and answers 0 at all three sizes. A watertight mesh has every edge in
+exactly two triangles; anything else is a hole to a slicer.
+
+The arithmetic, on a shape small enough to divide by hand
+(`a_cube_minus_a_pillar_through_it_is_still_closed`): a 10 mm cube with a 4 mm
+bore through it now reports **874.69 mm³** against 874.34 predicted by
+1000 − π·4·10 — the difference is the 48-sided polygon inscribing the bore, not
+error — and **0 open edges**, where the BSP left 462.
+
+The brief's 30 000-triangle case, in a debug build
+(`a_thirty_thousand_triangle_convex_subtract_is_watertight`):
+
+```
+30k convex: 32448 in, 31350 out, 874.538 mm3 of 874.538, 0 open edges, Manifold
+```
+
+32448 triangles in, the exact volume out, nothing left open, 0.10 s.
+
 ## A boolean at three sizes, and the wall it moves
 
 `boolean_timings_at_eight_thirty_and_eighty_thousand` in `csg.rs` builds a
@@ -810,6 +857,18 @@ Sliced again for the A1 through `shale-mcp`, the same model that used to say
 69.8 mm square and 11 mm tall, in the bed-centre frame the moves already use —
 which is the Arm. Three unit tests cover the rewrite, the untouched header and
 the unmeasured box.
+
+## What the installer carries
+
+`Shale_0.1.0_x64-setup.exe` is **4 977 093 B** (4.75 MiB), built from the code now at `50434eb`
+with `npm run tauri build`. NSIS was told to install
+
+    File /a "/oname=THIRD-PARTY-NOTICES.md" "...\THIRD-PARTY-NOTICES.md"
+
+and the result was opened afterwards with 7-Zip to check the claim rather than
+the intention: `THIRD-PARTY-NOTICES.md` is in the archive. The binary it carries
+is 19 180 032 B against Batch 3's 17 874 944 — 1.3 MB of Manifold and oneTBB
+linked in, which is the price of an exact boolean and the only one it charged.
 
 ## The release build
 

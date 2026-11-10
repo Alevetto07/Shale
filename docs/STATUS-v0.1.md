@@ -1,17 +1,118 @@
-# Shale v0.1 — Batch 3 status
+# Shale v0.1 — Batch 4 status
 
 Branch `cursor/deep-field-75ee`. Nothing was pushed, merged, tagged, released or
 published; no PR was opened or changed. The A1 at 192.168.1.11 was never
 contacted and no network was scanned — the fake printer binds to 127.0.0.1.
 
-Workspace at this commit: **182 passed, 0 failed, 3 ignored**, and
-`cargo clippy --workspace --all-targets -- -D warnings` is clean. The run was at
-`14b9561`; everything after it changes only this page and `docs/verification.md`. The three ignored tests are
-the two boolean stopwatches (`boolean_timings_at_eight_thirty_and_eighty_thousand`
-and `measure_boolean_scaling`) and one check that takes a file
-(`a_sliced_file_reaches_the_fake_printer`, which reads `SHALE_SLICED_GCODE`).
-Batch 2 closed at 173; the nine new tests are the three message tests, the
-refusal-sentence test and the five garbage-input tests.
+Workspace at this commit: **186 passed, 0 failed, 3 ignored**, and
+`cargo clippy --workspace --all-targets -- -D warnings` is clean, also with
+`-p shale-host --features fake-printer`. The run was at `50434eb`; everything
+after it changes only this page, `docs/verification.md` and
+`THIRD-PARTY-NOTICES.md`. Batch 3 closed at 182; Batch 4 adds the round-trip
+tests in `manifold_csg.rs` and the 30 000-triangle case in `csg.rs`.
+
+## Batch 4 items
+
+| # | Item | Commit | State |
+|---|---|---|---|
+| 1 | Evaluate, then integrate a mesh-boolean library | `40850f0` | Manifold 3.5.3 (Apache-2.0) through `manifold3d` 0.4.1; builds here in 3m16s; the BSP is now the fallback |
+| 2 | Watertight on the existing cases, library first | `40850f0` | **0 open edges** at 7 800 / 32 500 / 79 200 triangles, counted by index; the 30 k convex case is a test |
+| 3 | Measure, raise the cap, tell the truth | `40850f0` | 37.5 / 83.8 / 180.1 ms; `MANIFOLD_CAP` 200 000, `BSP_CAP` 12 000; the refusal sentence no longer says "minutes" |
+| 4 | Final check | this page | **186/0/3** at `50434eb`; installer **4 977 093 B** built from the same code |
+
+### 1. A proven engine instead of a new one
+
+The brief's first choice was Manifold through a maintained Rust binding, and it
+was the first choice here too. `manifold3d` 0.4.1 wraps `manifold-csg` 0.4.1,
+which wraps `manifold-csg-sys` 3.5.105: three crates, all **Apache-2.0 OR MIT**,
+compiling the pinned upstream source of **Manifold v3.5.3** (Apache-2.0,
+Copyright Emmett Lalish and the Manifold contributors) plus oneTBB 2021.13.0.
+
+It built on this machine with the toolchain already here — `rustc 1.99.0`
+(MSVC), Visual Studio 2019 Build Tools, CMake 4.3.1 — in **3 m 16 s** from a cold
+target directory, well inside the half hour the brief allowed, so no pure-Rust
+substitute was needed. One Windows fact is worth recording because it will bite
+the next person: `manifold-csg-sys` fetches oneTBB through CMake's
+`FetchContent`, and the paths inside TBB's `rfcs/` directory are longer than
+`MAX_PATH`. The clone fails with `Filename too long` unless git is allowed long
+paths (`git config --global core.longpaths true`, or `GIT_CONFIG_*` in the
+environment of the build). Nothing else was needed.
+
+The rejected option, recorded so the decision is auditable: `csgrs` 0.20.1 is
+pure Rust and permissively licensed, but it depends on `bevy_asset` and a dozen
+CAD-format readers — pulling a game engine into a slicer's core to avoid a C++
+dependency would have been the worse trade.
+
+### 2. Watertight, and what the number means
+
+Manifold guarantees 2-manifold output, and the measurements agree. The ladder is
+the same one Batch 3 ran, on the same lattice spheres:
+
+| triangles | BSP (Batch 3) | Manifold | open edges, by index | by position |
+|---|---|---|---|---|
+| 7 800 | 2 914 ms | **37.5 ms** | **0** | 0 |
+| 32 500 | 141 181 ms | **83.8 ms** | **0** | 12 |
+| 79 200 | 1 601 108 ms | **180.1 ms** | **0** | 50 |
+
+The position column is the artefact that had to be understood before it could be
+quoted. `open_edges` exists because the BSP returns a polygon soup — its
+triangles carry their own copies of the corners, so position is the only handle
+on "the same corner" — and it rounds to a thousandth of a millimetre. Manifold
+returns an indexed mesh, where two corners are the same corner because they are
+the same index, and it keeps vertices distinct that are a ten-thousandth of a
+millimetre apart. Rounding those to the same key makes an edge look unshared.
+`open_edges_topological` asks the index-level question, which is the one that
+matters for a watertight surface, and gets **0** at every size.
+
+The volumes are unchanged to the cubic millimetre (10 559 / 10 569 / 10 571), so
+none of the speed came from a coarser answer.
+
+The brief's case is now a test rather than a stopwatch:
+`a_thirty_thousand_triangle_convex_subtract_is_watertight` builds a 32 448-
+triangle subdivided box, bores a 64-sided hole through it, and asserts the
+engine is Manifold, the volume is **874.538 mm³** against the arithmetic
+874.538, and the open edges are **0** — in 0.10 s in a debug build.
+
+### 3. The cap, and the sentence that replaces "minutes"
+
+Two limits, because they bound different things:
+
+* `MANIFOLD_CAP = 200 000` — what the window will hand the library. It is a
+  guard against a mistake in the plate (a boolean asked for inside a loop, a
+  plate of a thousand copies), not a polygon budget: 32 448 triangles take a
+  tenth of a second.
+* `BSP_CAP = 12 000` — what the fallback will take. That one is about time, and
+  it is unchanged, because the BSP has not become any faster.
+
+So the refusal sentence lost its "minutes" claim and now says what it is: a
+boolean on N triangles is more than Shale will attempt at once, the engine is
+given at most 200 000, that is not a memory limit, and it is the size at which a
+boolean is more likely a mistake in the plate than a part. The unit test that
+pins the sentence now also forbids the word "minutes", for the same reason the
+Batch 3 test forbade "memory": a sentence that outlives its measurement is a
+lie with a timestamp.
+
+### 4. Final check
+
+Every commit of Batch 4, and the numbers at the tip:
+
+| commit | what |
+|---|---|
+| `40850f0` | booleans through Manifold; caps; notices; installer ships them |
+| `50434eb` | the refusal says bytes, not memory; `as_chunks`; the two things the first green run caught |
+| this page | the Batch 4 section, `docs/verification.md`, and the manifest facts above |
+
+* `cargo test --workspace --locked` — **186 passed, 0 failed, 3 ignored**
+  (Batch 3's 182, plus the three round-trip tests in `manifold_csg.rs` and the
+  30 000-triangle case)
+* `cargo clippy --workspace --all-targets --locked -- -D warnings` — clean
+* the same with `-p shale-host --features fake-printer` — clean
+* `npm --prefix apps/desktop run build` — clean
+* `cargo build --workspace --release --locked` — clean
+* `npm run tauri build` — installer **4 977 093 B** (4.75 MiB), built from
+  the code now at `50434eb`; `shale-desktop.exe` **19 180 032 B**, `shale-mcp.exe` **11 016 192 B**.
+  The installer was opened with 7-Zip afterwards: `THIRD-PARTY-NOTICES.md` is
+  inside it, at the install root.
 
 ## Batch 3 items
 
@@ -345,6 +446,22 @@ rebuilt after each fix, the last time at branch head. Versions are 0.1.0 in four
 crates, `package.json` and `tauri.conf.json`; nothing was tagged, the installer
 was never run, and it is unsigned.
 
+Two build facts changed in Batch 4, both from compiling C++:
+
+* **The first build now takes longer.** `manifold-csg-sys` clones the pinned
+  Manifold source and oneTBB, then builds them with CMake: 3 m 16 s cold on this
+  machine (Visual Studio 2019 Build Tools, CMake 4.3.1). After that it is a
+  cached build script.
+* **Git needs long paths on Windows.** TBB's `rfcs/` directory contains a path
+  over `MAX_PATH`, and `FetchContent`'s clone fails with `Filename too long`
+  without `core.longpaths`. Set it for the build
+  (`git config --global core.longpaths true`) rather than for one shell, or the
+  next clean checkout fails the same way.
+
+The installer also ships `THIRD-PARTY-NOTICES.md`, which carries the versions and
+licences of Manifold, its Rust bindings and the rest of the compiled-in
+dependencies.
+
 ## Batch 1 (kept for reference)
 
 Seven commits on top of `0b2e3e4`, closed at `b2e1234` with **157 passed, 0
@@ -373,14 +490,16 @@ not themed — they are the system's.
 
 ## Open
 
-1. **The boolean wall is bounded and slower, not cracked.** `BOOLEAN_CAP` =
-   12 000. Batch 3 removed a per-polygon allocation and measured 1.75× at 7 800
-   triangles and 1.53× at 32 500 — which is 2 914 ms and 141 181 ms, so a 30 k
-   convex part still takes minutes and the cap still refuses it, now with one
-   honest sentence instead of two misleading ones. What would crack it is a new
-   Boolean engine: a bounding-volume hierarchy prunes the plane tests, but the
-   cap surface still needs classification against the other solid and a
-   watertight answer at the T-junctions.
+1. **The BSP fallback is still quadratic, and is held to 12 000 triangles.**
+   The wall itself is gone: Manifold answers booleans at 32 500 in 84 ms and at
+   79 200 in 180 ms, watertight. What remains slow is the path taken when
+   Manifold refuses a mesh — holes, several shells that touch, an unresolvable
+   self-intersection — because the old engine is still the old engine. Above
+   12 000 triangles in that situation the window refuses rather than grind: the
+   refusal names the limit. Closing this means either repairing non-manifold
+   input before it reaches Manifold (its `MeshGL::merge` and `Simplify` cover
+   some of it, not all) or replacing the fallback with a second exact engine,
+   which is a bigger piece of work than v0.1 has room for.
 2. **Not proved on hardware.** Every host claim — MQTT, FTPS upload, pinning, the
    `;===== machine:` gate end to end — is proved against the loopback double.
    Nothing has been sent to a real A1, by rule.
