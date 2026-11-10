@@ -858,19 +858,61 @@ Sliced again for the A1 through `shale-mcp`, the same model that used to say
 which is the Arm. Three unit tests cover the rewrite, the untouched header and
 the unmeasured box.
 
+## A part the engine made, sliced
+
+The boolean tests stop at the mesh. `crates/shale-core/tests/boolean_to_gcode.rs`
+carries two of the same parts through the resolver and into CuraEngine, for the
+A1 profile (`bambu_lab_a1`, `0.4 mm`, `0_20mm_standard_bbl_a1`,
+`bambu_lab_pla_basic`, 0.2 mm layers), and reads the file back:
+
+| part | triangles | layers | filament | estimate | bytes | `;===== machine:` |
+|---|---|---|---|---|---|---|
+| 10 mm cube, 4 mm bore | 12 and a 96-sided cylinder in | 50 | 0.434 m | 5.9 min | 245 298 | line 14 |
+| 32 448-triangle box, same bore | 32 448 and the same cylinder in | 50 | 0.439 m | 6.0 min | 208 339 | line 14 |
+
+Both assert, in the order the host applies them: the marker is present inside
+the first 40 lines, and no line before it commands the machine. Both also assert
+the layer count is 50 ± 2 for a 10 mm part at 0.2 mm, and the filament length is
+between 0.05 m and 5 m.
+
+Two things this found, which is why it was worth writing:
+
+* **The part sat at the corner.** With the model left at the origin, `job::slice`
+  baked a zero transform and then subtracted half the 256 mm bed, so the header
+  read `;MINX:-133 ;MAXX:-123`. The app never does this — it calls
+  `place_on_bed` on import — but the test now does the same and asserts the
+  bounds are −5…5 mm, so a regression in that call shows up as a failed slice
+  rather than a print in the air.
+* **The estimate was lost, then wrong.** `job::slice` reported
+  `output.print_time_seconds`, which was `None` for this profile even though the
+  file's header carried a time. Reading the header back took CuraEngine's
+  `;TIME:6666` placeholder as 6666 seconds — 111.1 minutes for a 10 mm cube.
+  `gcode::header_facts` now rejects `6666` (it is the sentinel the code already
+  replaces), and the summary is read back after `annotate_header`.
+
+The timings under `boolean_timings` are still the release-build ladder; these two
+tests run in the ordinary suite in about six seconds, and skip when
+`SHALE_CURAENGINE`, `SHALE_CURA_DIR` and `SHALE_MATERIALS_DIR` are unset.
+
 ## What the installer carries
 
-`Shale_0.1.0_x64-setup.exe` is **4 977 093 B** (4.75 MiB), built from the code now at `50434eb`
-with `npm run tauri build`. NSIS was told to install
+`Shale_0.1.0_x64-setup.exe` is **4 979 275 B** (4.75 MiB), built with
+`npm run tauri build` from the v0.1 tip. NSIS was told to install
 
     File /a "/oname=THIRD-PARTY-NOTICES.md" "...\THIRD-PARTY-NOTICES.md"
 
 and the result was opened afterwards with 7-Zip to check the claim rather than
-the intention: `THIRD-PARTY-NOTICES.md` is in the archive. The binary it carries
-is 19 180 032 B against Batch 3's 17 874 944 — 1.3 MB of Manifold and oneTBB
-linked in, which is the price of an exact boolean and the only one it charged.
+the intention: `THIRD-PARTY-NOTICES.md` is in the archive, 15 838 B, and its
+entry timestamp matches the file on disk — so what the installer carries is the
+version that names oneTBB 2022.3.0 and adds Clipper2, not the one that went
+before. The binary it carries is 19 152 896 B against Batch 3's 17 874 944 —
+1.2 MB of Manifold, oneTBB and Clipper2 linked in, which is the price of an
+exact boolean and the only one it charged. `shale-mcp.exe` is 11 019 264 B.
 
 ## The release build
+
+The table below is Batch 2's, kept so the growth is visible; the numbers that
+describe v0.1 are in the section above.
 
 ```
 cargo clippy --workspace --all-targets --locked -- -D warnings   # clean

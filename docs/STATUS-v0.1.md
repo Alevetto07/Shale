@@ -1,15 +1,99 @@
-# Shale v0.1 — Batch 4 status
+# Shale v0.1 — status
+
+Batch 5 was the last one: what follows is the state of v0.1 as a whole, with the
+batches below kept because each records a decision and the numbers behind it.
 
 Branch `cursor/deep-field-75ee`. Nothing was pushed, merged, tagged, released or
 published; no PR was opened or changed. The A1 at 192.168.1.11 was never
 contacted and no network was scanned — the fake printer binds to 127.0.0.1.
 
-Workspace at this commit: **186 passed, 0 failed, 3 ignored**, and
+Workspace at this commit: **188 passed, 0 failed, 3 ignored**, and
 `cargo clippy --workspace --all-targets -- -D warnings` is clean, also with
-`-p shale-host --features fake-printer`. The run was at `50434eb`; everything
-after it changes only this page, `docs/verification.md` and
-`THIRD-PARTY-NOTICES.md`. Batch 3 closed at 182; Batch 4 adds the round-trip
-tests in `manifold_csg.rs` and the 30 000-triangle case in `csg.rs`.
+`-p shale-host --features fake-printer`. Batch 3 closed at 182, Batch 4 at 186;
+Batch 5 adds the two slicer tests in `tests/boolean_to_gcode.rs` and no others.
+The three ignored tests are the two boolean timing ladders (they run for
+minutes on purpose) and the fake-printer wiring test (it needs a running
+double).
+
+## Batch 5 items
+
+The last batch, and the shortest: carry the new engine's output through the real
+slicer, check that the installer's notices cover what it links, and leave this
+page reading as one status rather than five.
+
+| # | Item | Commit | State |
+|---|---|---|---|
+| 1 | A Manifold part through CuraEngine, for the A1 | Batch 5 tip | `tests/boolean_to_gcode.rs`: 50 layers, 0.434 m, 5.9 min, `;===== machine:` at line 14, bounds −5…5 mm; the 32 448-triangle part slices to 50 layers, 0.439 m |
+| 2 | The notices cover what is statically linked | Batch 5 tip | oneTBB corrected to **2022.3.0** and **Clipper2 2.0.1** (BSL-1.0) added; `Clipper2.lib` and `tbb12.lib` are inside `shale-desktop.exe` |
+| 3 | This page reads as one v0.1 status | Batch 5 tip | retitled, counts at the top, a "what to test by hand" section, Open list re-read |
+| 4 | Re-test only because the code changed | Batch 5 tip | the print-time fix below is code, so tests, both clippy runs, the release build and the installer were all re-run |
+
+### 1. The part the engine made, sliced
+
+Two tests in `crates/shale-core/tests/boolean_to_gcode.rs`, both skipping
+quietly when Cura is not on the machine:
+
+* a 10 mm cube with a 4 mm bore — the part the watertightness test already knows
+  the volume of — slices to **50 layers, 0.434 m of filament, 5.9 minutes**,
+  a 245 298-byte file whose `;===== machine:` line is **14**, with the plate's
+  own start and end;
+* the brief's **32 448-triangle** subdivided box with the same bore slices to
+  **50 layers, 0.439 m, 6.0 minutes**, 208 339 bytes.
+
+Both assert the marker is inside the first forty lines **and before any
+command**, which is the gate `shale-host` applies before it will send a file —
+so what the host would refuse is checked here, on the file, not assumed from the
+mesh. Layer count is the height over the layer height, and the filament length
+is measured from the file's own extrusion, not from the engine's claim.
+
+Two real defects came out of writing them, both now fixed:
+
+* **The part was sliced 128 mm off the corner.** `job::slice` bakes the model's
+  transform and then subtracts half the bed; a part handed in at the origin is
+  not at the plate's middle. The first run produced `;MINX:-133 ;MAXX:-123`. The
+  test now places the part the way the app does (`place_on_bed`) and asserts the
+  bounds are −5…5 mm, so the corner cannot come back unnoticed.
+* **"No estimate" was reported for a file that had one, and then 111 minutes.**
+  CuraEngine writes `;TIME:6666` when it has not worked the time out, and writes
+  the real figure into the file header when it has. `job::slice` reported only
+  the engine's own `Option`, which was `None` here, and a first attempt at
+  reading the file back took `6666` at face value — 111.1 minutes for a 10 mm
+  cube. `gcode::header_facts` now rejects the placeholder, and the summary is
+  read back from the file *after* `annotate_header` has filled it from the last
+  `;TIME_ELAPSED:`. The test asserts minutes, so a placeholder cannot pass
+  again.
+
+### 2. What the installer links
+
+`manifold-csg-sys` fetches three things with CMake and links all three
+statically: Manifold 3.5.3 (Apache-2.0), oneTBB (Apache-2.0) and Clipper2
+(BSL-1.0). The notices page had oneTBB at **2021.13.0**, which is not what is
+built — the tag is **v2022.3.0** — and did not mention Clipper2 at all, although
+`Clipper2.lib` is compiled and linked (the `CrossSection` engine comes with
+Manifold whether or not Shale asks for 2D work). Both are corrected in
+`THIRD-PARTY-NOTICES.md`, with the BSL-1.0 text added in full, and the built
+artefacts confirm it: `tbb12.lib`, `tbbmalloc.lib`, `Clipper2.lib`, `manifold.lib`
+and `manifoldc.lib` are all in the build's output and inside `shale-desktop.exe`.
+
+### 3. What to test by hand
+
+Nothing below is claimed as done; each is something only a person at the machine
+can settle.
+
+1. **Install from `Shale_0.1.0_x64-setup.exe`** on Windows, on a machine that has
+   never run Shale. Check that it starts, that `THIRD-PARTY-NOTICES.md` is beside
+   `Shale.exe`, and that About shows `0.1.0`.
+2. **Open a `.shale` project, slice, and look at the preview.** The plate should
+   be centred, the toolpaths should be visible in all three colour modes, and
+   the estimate should be a number of minutes.
+3. **A supervised A1 print.** Point Shale at the real printer's address and
+   access code (Windows Credential Manager), accept the certificate on first
+   sighting, then start one small part from the Device tab, watching the printer.
+   This is the only step that exercises the network at all — everything in this
+   repository was proved against the loopback double, and nothing was sent to
+   192.168.1.11 by rule.
+4. **Kill Shale while a window is open, then start it again.** The second launch
+   should bring the existing window forward rather than fail.
 
 ## Batch 4 items
 
@@ -26,13 +110,15 @@ The brief's first choice was Manifold through a maintained Rust binding, and it
 was the first choice here too. `manifold3d` 0.4.1 wraps `manifold-csg` 0.4.1,
 which wraps `manifold-csg-sys` 3.5.105: three crates, all **Apache-2.0 OR MIT**,
 compiling the pinned upstream source of **Manifold v3.5.3** (Apache-2.0,
-Copyright Emmett Lalish and the Manifold contributors) plus oneTBB 2021.13.0.
+Copyright Emmett Lalish and the Manifold contributors), oneTBB 2022.3.0
+(Apache-2.0) and Clipper2 at the commit Manifold pins, twelve after the 2.0.1
+tag (BSL-1.0). All three are linked statically into `shale-desktop.exe`.
 
 It built on this machine with the toolchain already here — `rustc 1.99.0`
 (MSVC), Visual Studio 2019 Build Tools, CMake 4.3.1 — in **3 m 16 s** from a cold
 target directory, well inside the half hour the brief allowed, so no pure-Rust
 substitute was needed. One Windows fact is worth recording because it will bite
-the next person: `manifold-csg-sys` fetches oneTBB through CMake's
+the next person: `manifold-csg-sys` fetches oneTBB and Clipper2 through CMake's
 `FetchContent`, and the paths inside TBB's `rfcs/` directory are longer than
 `MAX_PATH`. The clone fails with `Filename too long` unless git is allowed long
 paths (`git config --global core.longpaths true`, or `GIT_CONFIG_*` in the
@@ -515,6 +601,17 @@ not themed — they are the system's.
    sentence through unit tests. If the real refusal says something other than
    `0x800700AA`, the box quotes the error instead of guessing, which is the safe
    half of the same fix.
-5. **Remaining Bambu parity is blocked outside Shale** — seam painting,
+5. **The resolver's golden file is stale against Cura 5.13.0, and is skipped in
+   the ordinary suite.** `resolver::golden::sample_printers_match_the_golden_file`
+   reads `SHALE_CURA_DIR`; without it, it returns early, which is why the count
+   above is green. With Cura 5.13.0 configured it fails on one key:
+   `creality_ender3 material_bed_temperature` resolves to **60** against the
+   golden's **50**. The app is not affected — it resolves at run time and never
+   reads the golden — but the check is not currently a check. Settling it means
+   deciding whether the golden is what should move (regenerate it with
+   `SHALE_WRITE_GOLDEN=1` against a named Cura version) or whether the resolver
+   is picking the wrong ancestor for that key; that is a decision about what the
+   golden is for, so it is left open rather than quietly regenerated.
+6. **Remaining Bambu parity is blocked outside Shale** — seam painting,
    per-filament flush volumes and multi-spool sliced 3MF need CuraEngine 5.13
    support it does not offer; camera and AMS mapping need a machine.
