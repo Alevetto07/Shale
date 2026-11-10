@@ -4,21 +4,23 @@ Branch `cursor/deep-field-75ee`. Nothing was pushed, merged, tagged, released or
 published; no PR was opened or changed. The A1 at 192.168.1.11 was never
 contacted and no network was scanned — the fake printer binds to 127.0.0.1.
 
-Workspace at this commit: **173 passed, 0 failed, 3 ignored**, and
+Workspace at this commit: **182 passed, 0 failed, 3 ignored**, and
 `cargo clippy --workspace --all-targets -- -D warnings` is clean. The run was at
-`729b074`; everything after it changes only this page and `docs/verification.md`. The three
-ignored tests are two stopwatches (`boolean_timings_…`,
-`a_curved_part_does_not_become_a_chain`) and one check that takes a file
+`14b9561`; everything after it changes only this page. The three ignored tests are
+the two boolean stopwatches (`boolean_timings_at_eight_thirty_and_eighty_thousand`
+and `measure_boolean_scaling`) and one check that takes a file
 (`a_sliced_file_reaches_the_fake_printer`, which reads `SHALE_SLICED_GCODE`).
+Batch 2 closed at 173; the nine new tests are the three message tests, the
+refusal-sentence test and the five garbage-input tests.
 
 ## Batch 3 items
 
 | # | Item | Commit | State |
 |---|---|---|---|
 | 1 | The surviving WebView2 crash | `f92c3c5` | done; the box says "an earlier Shale is still closing", one retry, exit 0 |
-| 2 | The boolean wall, timeboxed | — | in progress |
-| 3 | Clean-slate pass | — | in progress |
-| 4 | Final check | — | in progress |
+| 2 | The boolean wall, timeboxed | `c52172c` | moved again, not cracked — 1.5× at 32 500, cap stays 12 000, refusal sentence rewritten |
+| 3 | Clean-slate pass | `cc9bc4c` | done; two reachable panics and two untrue strings fixed, the rest listed with reasons |
+| 4 | Final check | this page | 182/0/3 at `14b9561`; clippy clean twice; installer 4 674 836 B built from `14b9561` |
 
 ### 1. The window that could not be made
 
@@ -42,6 +44,94 @@ live window — not from a screenshot — with the exit code checked after a
 sentence, exit 0. Three unit tests pin the wording. `docs/verification.md` has the
 transcripts and says plainly that the handling is proved while the provocation is
 not.
+
+### 2. The boolean wall, and the sentence it earns
+
+The timebox went into the measured answer rather than the hoped-for one. The
+brief's target was a bounding-volume hierarchy with exact clipping only inside
+overlapping boxes, so that a 30 000-triangle convex part finishes in seconds. It
+was scoped on paper and not landed: pruning the plane tests is half of a Boolean.
+The other half is the cap surface — B's skin inside A — which needs a second BSP
+or a ray-cast inside test, and whatever it produces has to stay watertight at the
+T-junctions pruned clipping leaves behind. That is a new Boolean engine with its
+own correctness proof, not a change of this one, and the tree build is already
+fast (0.3 s at 32 500): every second after it is clipping and polygon growth.
+
+What did land is a real, measured win. `split_polygon` collected a `Vec<Side>` for
+every polygon at every plane — at 32 500 triangles that is a polygon through 135
+levels, millions of allocations for three bytes each. It now computes the flag it
+needs and re-reads a side per edge when it has to cut.
+
+| triangles | tree (before → after) | subtract (before → after) |
+|---|---|---|
+| 7 800 | 67 → 45 ms | 5 114 → **2 914 ms** (1.75×) |
+| 32 500 | 366 → 300 ms | 215 565 → **141 181 ms** (1.53×) |
+| 79 200 | 924 → 673 ms | not timed |
+
+So `BOOLEAN_CAP` stays 12 000. Two and a quarter minutes at 32 500 is not
+"seconds", and the climb is steep enough that the cap is already optimistic on a
+convex body. The concave parts people actually make stay fast: a 1 946-triangle
+bracket booleans in 0.01 s and a 2 554-triangle plate with a bore in 57 ms.
+
+The refusal now tells the truth in one sentence, in both places it can be raised:
+the triangle count, that a boolean there would take minutes, the cap, and what
+still works (a plain cut). It used to say the cap was what "the boolean can hold
+in memory" and, at the other call site, that the boolean was "only proven on small
+parts" — one untrue, the other useless. A unit test holds the wording and rejects
+the word "memory". The item stays Open with the numbers above.
+
+### 3. A clean-slate pass
+
+Nothing to fix in three places, which is worth writing down: no `TODO`, `FIXME`,
+`XXX`, `unimplemented!` or `todo!()` anywhere in the tree; no `unwrap`/`expect`
+outside tests in the desktop crate or the MCP server; and `with_big_stack` already
+answers `Err` when its thread cannot start or when the job panics, so a cut that
+dies says so instead of taking the window with it.
+
+Fixed: an `unreachable!` in `formula.rs` for `and`/`or` reaching the arithmetic
+evaluator (a profile's formula is data; it now answers with an error naming the
+lost short-circuit); an `unwrap()` on a positional expression while parsing a
+comprehension; `self.plane.unwrap()` in `csg.rs` became an `expect` that names its
+invariant; and the `App.tsx` comment that still claimed the catalogue takes
+"twenty-odd seconds" (it is 1.79 s in release) now says a couple of seconds.
+
+Added: `crates/shale-core/tests/garbage_inputs.rs`, five tests that feed empty,
+truncated, ASCII-with-no-facets, non-zip and junk-STEP files to `load_stl`,
+`load_mesh`, `read_project` and `import_step` and require `Err` rather than a
+panic. All five passed on the first run — the loaders were already honest, and now
+they cannot quietly stop being.
+
+Left, with reasons: the `try_into().unwrap()` calls in `proto.rs` and `mesh.rs`
+convert fixed-length chunks and a four-byte slice of `[0u8; 84]`, so they cannot
+fail and a `match` would be noise; `template.rs`'s `expect`s are guarded three
+lines above; test modules keep their unwraps because a failing assertion is the
+point; and `removal.rs` still reports `will_move_printer: false` and still sends
+no motion, which is a gate rather than an unfinished string.
+
+### 4. Final check
+
+At the tip of Batch 3, built from `14b9561`: **182 passed, 0 failed, 3 ignored**,
+`cargo clippy --workspace --all-targets -- -D warnings` clean, the same for
+`shale-host` with `--features fake-printer`, `npm run build` clean,
+`cargo build --workspace --release --locked` clean, and
+`npm run tauri build` produced `Shale_0.1.0_x64-setup.exe` at **4 674 836 bytes**
+(4.46 MiB), with `shale-desktop.exe` at **17 874 944** and `shale-mcp.exe` at
+**10 735 104**.
+
+Every commit of Batch 3, in order:
+
+| commit | what |
+|---|---|
+| `f92c3c5` | the window that could not be made says why, once, then exits 0 (item 1) |
+| `906e03e` | the status page names that commit |
+| `c52172c` | the boolean stops allocating a list of sides; refusal sentence rewritten; five garbage-input tests (item 2) |
+| `cc9bc4c` | clean-slate pass: two panics and two untrue strings fixed, the rest listed (item 3) |
+| `14b9561` | the `Side` enum the boolean no longer collects |
+| (this page) | the status page itself (item 4) |
+
+Nothing was pushed, merged, tagged or published, and no PR was touched. The A1 at
+192.168.1.11 was never contacted; no network was scanned; the fake printer binds
+to 127.0.0.1. Fusion 360 was not touched.
 
 ## Batch 2 items (kept for reference)
 
@@ -280,10 +370,14 @@ not themed — they are the system's.
 
 ## Open
 
-1. **The boolean wall is bounded, not cracked.** `BOOLEAN_CAP` = 12 000; a convex
-   body above it needs a bounding-volume hierarchy with exact clipping inside
-   overlapping boxes. Until then a 30 k-triangle convex part takes minutes if it
-   is attempted at all, which the cap prevents.
+1. **The boolean wall is bounded and slower, not cracked.** `BOOLEAN_CAP` =
+   12 000. Batch 3 removed a per-polygon allocation and measured 1.75× at 7 800
+   triangles and 1.53× at 32 500 — which is 2 914 ms and 141 181 ms, so a 30 k
+   convex part still takes minutes and the cap still refuses it, now with one
+   honest sentence instead of two misleading ones. What would crack it is a new
+   Boolean engine: a bounding-volume hierarchy prunes the plane tests, but the
+   cap surface still needs classification against the other solid and a
+   watertight answer at the T-junctions.
 2. **Not proved on hardware.** Every host claim — MQTT, FTPS upload, pinning, the
    `;===== machine:` gate end to end — is proved against the loopback double.
    Nothing has been sent to a real A1, by rule.
