@@ -160,13 +160,7 @@ mod tests {
     #[test]
     fn two_spools_are_two_lines_that_sum_to_the_total() {
         let settings = CostSettings::default();
-        let estimate = estimate(
-            &[(0, 10.0), (1, 5.0)],
-            1.75,
-            1.24,
-            Some(3600.0),
-            &settings,
-        );
+        let estimate = estimate(&[(0, 10.0), (1, 5.0)], 1.75, 1.24, Some(3600.0), &settings);
         assert_eq!(estimate.spools.len(), 2, "one line per spool");
         assert_eq!(estimate.spools[0].slot, 0);
         assert_eq!(estimate.spools[1].slot, 1);

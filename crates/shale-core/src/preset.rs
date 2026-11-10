@@ -92,13 +92,7 @@ impl Preset {
         self.values
             .iter()
             .filter(|(key, next)| current.get(*key) != Some(*next))
-            .map(|(key, next)| {
-                (
-                    key.clone(),
-                    current.get(key).cloned(),
-                    next.clone(),
-                )
-            })
+            .map(|(key, next)| (key.clone(), current.get(key).cloned(), next.clone()))
             .collect()
     }
 }
@@ -131,7 +125,8 @@ fn io(err: std::io::Error) -> PresetError {
 
 fn read(dir: &Path, name: &str) -> Result<Preset, PresetError> {
     let path = dir.join(format!("{}.json", slug(name)));
-    let text = std::fs::read_to_string(&path).map_err(|_| PresetError::NotFound(name.to_string()))?;
+    let text =
+        std::fs::read_to_string(&path).map_err(|_| PresetError::NotFound(name.to_string()))?;
     serde_json::from_str(&text).map_err(|err| PresetError::Json(err.to_string()))
 }
 
@@ -158,7 +153,7 @@ pub fn list(dir: &Path) -> Result<Vec<Preset>, PresetError> {
             out.push(preset);
         }
     }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|preset| preset.name.to_lowercase());
     Ok(out)
 }
 
@@ -169,7 +164,8 @@ pub fn save(dir: &Path, preset: &Preset) -> Result<(), PresetError> {
     if path.exists() {
         return Err(PresetError::Exists(preset.name.clone()));
     }
-    let text = serde_json::to_string_pretty(preset).map_err(|err| PresetError::Json(err.to_string()))?;
+    let text =
+        serde_json::to_string_pretty(preset).map_err(|err| PresetError::Json(err.to_string()))?;
     std::fs::write(&path, text).map_err(io)
 }
 
@@ -177,7 +173,8 @@ pub fn save(dir: &Path, preset: &Preset) -> Result<(), PresetError> {
 pub fn overwrite(dir: &Path, preset: &Preset) -> Result<(), PresetError> {
     std::fs::create_dir_all(dir).map_err(io)?;
     let path = dir.join(format!("{}.json", slug(&preset.name)));
-    let text = serde_json::to_string_pretty(preset).map_err(|err| PresetError::Json(err.to_string()))?;
+    let text =
+        serde_json::to_string_pretty(preset).map_err(|err| PresetError::Json(err.to_string()))?;
     std::fs::write(&path, text).map_err(io)
 }
 
@@ -193,7 +190,8 @@ pub fn rename(dir: &Path, from: &str, to: &str) -> Result<Preset, PresetError> {
     }
     let _ = std::fs::remove_file(dir.join(format!("{}.json", slug(from))));
     preset.name = to.to_string();
-    let text = serde_json::to_string_pretty(&preset).map_err(|err| PresetError::Json(err.to_string()))?;
+    let text =
+        serde_json::to_string_pretty(&preset).map_err(|err| PresetError::Json(err.to_string()))?;
     std::fs::write(&target, text).map_err(io)?;
     Ok(preset)
 }
@@ -212,7 +210,8 @@ pub fn delete(dir: &Path, name: &str) -> Result<(), PresetError> {
 /// Write a preset somewhere the user chose, as the same JSON the folder holds.
 pub fn export(dir: &Path, name: &str, to: &Path) -> Result<(), PresetError> {
     let preset = read(dir, name)?;
-    let text = serde_json::to_string_pretty(&preset).map_err(|err| PresetError::Json(err.to_string()))?;
+    let text =
+        serde_json::to_string_pretty(&preset).map_err(|err| PresetError::Json(err.to_string()))?;
     std::fs::write(to, text).map_err(io)
 }
 
@@ -229,17 +228,15 @@ pub fn import(dir: &Path, from: &Path) -> Result<Preset, PresetError> {
     std::fs::create_dir_all(dir).map_err(io)?;
     let mut attempt = preset.clone();
     let mut counter = 2;
-    while dir
-        .join(format!("{}.json", slug(&attempt.name)))
-        .exists()
-    {
+    while dir.join(format!("{}.json", slug(&attempt.name))).exists() {
         attempt.name = format!("{} {}", preset.name, counter);
         counter += 1;
         if counter > 99 {
             return Err(PresetError::Exists(preset.name));
         }
     }
-    let text = serde_json::to_string_pretty(&attempt).map_err(|err| PresetError::Json(err.to_string()))?;
+    let text =
+        serde_json::to_string_pretty(&attempt).map_err(|err| PresetError::Json(err.to_string()))?;
     std::fs::write(dir.join(format!("{}.json", slug(&attempt.name))), text).map_err(io)?;
     Ok(attempt)
 }
@@ -324,7 +321,11 @@ mod tests {
         let renamed = rename(&dir, "Fine walls", "Fine walls 2").expect("rename");
         assert_eq!(renamed.name, "Fine walls 2");
         assert_eq!(renamed.values, sample().values);
-        let names: Vec<String> = list(&dir).expect("list").into_iter().map(|p| p.name).collect();
+        let names: Vec<String> = list(&dir)
+            .expect("list")
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
         assert_eq!(names, vec!["Fine walls 2".to_string()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
