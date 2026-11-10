@@ -1,4 +1,4 @@
-# Shale v0.1 — Batch 2 status
+# Shale v0.1 — Batch 3 status
 
 Branch `cursor/deep-field-75ee`. Nothing was pushed, merged, tagged, released or
 published; no PR was opened or changed. The A1 at 192.168.1.11 was never
@@ -11,7 +11,39 @@ ignored tests are two stopwatches (`boolean_timings_…`,
 `a_curved_part_does_not_become_a_chain`) and one check that takes a file
 (`a_sliced_file_reaches_the_fake_printer`, which reads `SHALE_SLICED_GCODE`).
 
-## Batch 2 items
+## Batch 3 items
+
+| # | Item | Commit | State |
+|---|---|---|---|
+| 1 | The surviving WebView2 crash | `HEAD-1` | done; the box says "an earlier Shale is still closing", one retry, exit 0 |
+| 2 | The boolean wall, timeboxed | — | in progress |
+| 3 | Clean-slate pass | — | in progress |
+| 4 | Final check | — | in progress |
+
+### 1. The window that could not be made
+
+Batch 2's Open item 4 is closed. `run()` used to call `Builder::run`, which
+panics with a bare HRESULT when the window cannot be made; it now calls
+`builder.build(...)` and matches on the error, so the failure is a value with a
+sentence attached to it. An in-use refusal (`HRESULT(0x800700AA)`, WebView2
+holding `EBWebView` for a process that has not finished exiting) is retried
+**once** as a fresh process 1.5 s later — the mutex is released first so the child
+can take it, and the child carries `SHALE_START_RETRIED=1` so it cannot retry in
+turn. If that also fails, a native box says, in plain words, that an earlier Shale
+is still closing and to try again in a moment; the process then exits 0.
+
+The refusal itself could not be provoked on demand tonight: killing the app leaves
+no orphan, a directly-launched `msedgewebview2` exits at once, holding
+`EBWebView\Default\LOCK` exclusive does not block it, and pointing the profile at
+a file does not either. So the branch is driven by `SHALE_START_FAILS` (a
+diagnostic like `SHALE_TRACE`) and the box's caption and text were read out of the
+live window — not from a screenshot — with the exit code checked after a
+`WM_CLOSE`: caption `Shale did not start`, the Static control carrying the closing
+sentence, exit 0. Three unit tests pin the wording. `docs/verification.md` has the
+transcripts and says plainly that the handling is proved while the provocation is
+not.
+
+## Batch 2 items (kept for reference)
 
 | # | Item | Commit | State |
 |---|---|---|---|
@@ -258,15 +290,15 @@ not themed — they are the system's.
 3. **Nothing is pushed.** `git push` cannot read a username in this shell
    (`terminal prompts disabled`) and both batches forbid it. Every commit is
    local; the remote tip is still `0b2e3e4`.
-4. **A webview that outlives a crash still blocks the next launch.** The
-   single-instance guard covers the second *Shale process*; it cannot cover a
-   surviving `msedgewebview2` child holding
-   `%LOCALAPPDATA%\dev.shale.desktop\EBWebView` with no Shale running. Then the
-   mutex is free, setup runs, and it panics: `failed to create webview: WebView2
-   error: WindowsError(Error { code: HRESULT(0x800700AA), message: "The
-   requested resource is in use." })` — no window, no sentence. Provoked twice
-   tonight by `terminate`-ing probes. Catching `Builder::build()`'s error and
-   saying something would fix it; the mutex cannot.
+4. **The webview lock is handled but not provokable.** A `msedgewebview2` child
+   that outlives a crash no longer kills the next launch silently: `build()`'s
+   error becomes a box that says an earlier Shale is still closing, after one
+   retry as a fresh process. What is unproved is the provocation — four ways of
+   holding `%LOCALAPPDATA%\dev.shale.desktop\EBWebView` from outside all failed
+   to reproduce it, so the branch is exercised through `SHALE_START_FAILS` and the
+   sentence through unit tests. If the real refusal says something other than
+   `0x800700AA`, the box quotes the error instead of guessing, which is the safe
+   half of the same fix.
 5. **Remaining Bambu parity is blocked outside Shale** — seam painting,
    per-filament flush volumes and multi-spool sliced 3MF need CuraEngine 5.13
    support it does not offer; camera and AMS mapping need a machine.

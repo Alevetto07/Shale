@@ -598,9 +598,82 @@ actually rising to the front: the probes run on a desktop the Shale windows do
 not occupy, so a screen capture sees neither the app nor the box. The calls are
 the documented ones and the second process's exit is the observable.
 
-The other case is untouched and still Open: a webview child that outlives a
-crash keeps the profile directory, and then there is no window to focus and no
-mutex to lose — the next launch panics in setup.
+## A window that could not be made
+
+The case above leaves one hole: a `msedgewebview2` child that outlives a crash
+keeps the profile directory, and then there is no window to focus and no mutex to
+lose. That refusal arrived twice tonight by accident, as `failed to create
+webview: WebView2 error: WindowsError(Error { code: HRESULT(0x800700AA), message:
+"The requested resource is in use." })`, and `Builder::run` turned it into a
+panic: no window, no sentence, the process gone.
+
+`run()` builds first and runs after — `builder.build(tauri::generate_context!())`
+returns the error instead of unwinding inside it — so `start_failed` gets a
+value it can act on. An in-use refusal earns **one** retry: the mutex is released,
+a fresh process is spawned 1.5 s later with `SHALE_START_RETRIED=1`, and that
+variable is what stops the child from retrying in turn, so the pair cannot loop.
+If the retry also fails, `say_start_failed` puts the sentence in a native box and
+the process exits 0.
+
+The refusal itself could not be arranged on demand. Four attempts, all negative:
+
+| attempt | result |
+|---|---|
+| kill the app, start again after 0.2 s / 0.6 s / 1.5 s | no orphan survived (`webviews left: 0` at each delay); the profile was free and the app opened |
+| launch `msedgewebview2.exe --user-data-dir=<profile> --headless=new` directly | the browser exited at once, 0 holders — it wants a host handshake |
+| hold `EBWebView\Default\LOCK` with `CreateFileW(share mode 0)` from Python | the app started normally; that file is not the lock |
+| point `WEBVIEW2_USER_DATA_FOLDER` at a file instead of a folder | the app started normally |
+
+The lock is inside WebView2, keyed to a profile a live browser process owns, and
+the only way to hold it is to be that process. So the path is driven by a
+diagnostic instead: `SHALE_START_FAILS=1` hands `start_failed` the exact refusal
+above and `SHALE_START_FAILS=retry` takes the retry road first. Both are read at
+startup, are never set by the app, and change nothing when absent — the same kind
+of switch as `SHALE_TRACE`.
+
+The proof reads the box's own controls out of the live window rather than
+photographing it, which is stronger: a capture can be of the wrong desktop (it
+was, twice), where `GetWindowTextW` on the dialogue's `Static` child returns the
+exact characters the user is being shown.
+
+```sh
+python read_box.py                     # SHALE_START_FAILS=1
+# dialogues owned by the app: 1
+#   caption: 'Shale did not start'
+#   Button: 'OK'
+#   Static: 'Shale could not open its window because an earlier Shale is still
+#            closing.\n\nWait a moment, then start Shale again. If this comes
+#            back, end the\nmsedgewebview2 processes in Task Manager and start
+#            Shale once more.'
+# exit code after dismissing: 0
+```
+
+And the retry, watched from outside:
+
+```sh
+python read_retry.py                   # SHALE_START_FAILS=retry
+# parent pid: 33660 exit at 3s: 0
+# pids alive: [32128, 33660]
+# dialogs: 1
+#   caption: 'Shale did not start' owned by pid 32128
+# parent final exit: 0
+# --- trace:
+#     [shale] the window profile is still held: failed to create webview: WebView2
+#             error: WindowsError(Error { code: HRESULT(0x800700AA), message: "The requ…
+#     [shale] retrying once in a second and a half
+```
+
+The parent gave up its mutex, the child took it, and the child — not the parent —
+carried the box. No panic appears in either run, and both exits are 0.
+
+Three unit tests hold the sentence still: a held profile is explained as a wait
+and the number `0x800700AA` never reaches the reader, any other failure is quoted
+rather than summarised, and a long error is cut to six lines with an ellipsis.
+
+What is not proved: that the real lock produces this path. It cannot be made to
+happen on demand here, so the branch is covered by the seam and the sentence by
+the tests, and the honest statement is that the *handling* is proved while the
+*provocation* is not.
 
 ## How long the catalogue takes, when nothing else is running
 

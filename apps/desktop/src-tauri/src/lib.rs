@@ -4037,7 +4037,7 @@ pub fn run() {
         None
     };
     let support_model_id = if support.is_some() { Some(1) } else { None };
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState(Mutex::new(Inner {
             catalog,
@@ -4194,8 +4194,70 @@ pub fn run() {
             list_recents,
             forget_recent_project
         ])
-        .run(tauri::generate_context!())
-        .expect("Shale failed to start");
+        ;
+
+    // `run` would panic with a bare HRESULT when the window cannot be made, and
+    // by then there is no window to put the sentence in. `build` returns the
+    // error instead, so the box can say what happened before the process ends.
+    //
+    // `SHALE_START_FAILS=1` skips the build and hands the failure path a
+    // synthetic WebView2 refusal: the real one needs a process to be holding the
+    // profile at the moment of the attempt, which cannot be arranged on demand.
+    // It is a diagnostic, like `SHALE_TRACE`, and does nothing unless asked for.
+    let forced = std::env::var("SHALE_START_FAILS").ok();
+    // `1` shows the box at once; `retry` takes the retry road first, so the
+    // parent-and-child dance can be watched instead of hoped for.
+    let allow_retry = forced.as_deref() != Some("1");
+    let built = if forced.is_some() {
+        None
+    } else {
+        Some(builder.build(tauri::generate_context!()))
+    };
+    let app = match built {
+        None => {
+            start_failed(
+                "failed to create webview: WebView2 error: WindowsError(Error { \
+                 code: HRESULT(0x800700AA), message: \"The requested resource is in \
+                 use.\" })",
+                allow_retry,
+            );
+            return;
+        }
+        Some(Ok(app)) => app,
+        Some(Err(err)) => {
+            start_failed(&format!("{err:?}"), true);
+            return;
+        }
+    };
+    app.run(|_app, _event| {});
+}
+
+/// A window that could not be made: one retry as a fresh process, then the box.
+fn start_failed(detail: &str, allow_retry: bool) {
+    // WebView2 usually needs a moment, not a fix: the process holding the profile
+    // is finishing its exit. One retry as a fresh process covers that, and
+    // `SHALE_START_RETRIED` stops the child retrying again, so a real problem
+    // shows the box instead of a loop.
+    let in_use = detail.to_ascii_lowercase().contains("0x800700aa");
+    let retried = std::env::var_os("SHALE_START_RETRIED").is_some();
+    if in_use && !retried && allow_retry {
+        if std::env::var_os("SHALE_TRACE").is_some() {
+            eprintln!("[shale] the window profile is still held: {detail}");
+            eprintln!("[shale] retrying once in a second and a half");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1_500));
+        // The mutex is this process's; the child has to be able to take it.
+        instance::release();
+        let exe = std::env::current_exe()
+            .unwrap_or_else(|_| std::path::PathBuf::from("shale-desktop.exe"));
+        let spawned = std::process::Command::new(exe)
+            .env("SHALE_START_RETRIED", "1")
+            .spawn();
+        if spawned.is_ok() {
+            return;
+        }
+    }
+    instance::say_start_failed(detail);
 }
 
 #[cfg(test)]
