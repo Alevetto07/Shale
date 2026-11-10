@@ -15,7 +15,7 @@ ignored tests are two stopwatches (`boolean_timings_…`,
 
 | # | Item | Commit | State |
 |---|---|---|---|
-| 1 | The surviving WebView2 crash | `HEAD-1` | done; the box says "an earlier Shale is still closing", one retry, exit 0 |
+| 1 | The surviving WebView2 crash | `f92c3c5` | done; the box says "an earlier Shale is still closing", one retry, exit 0 |
 | 2 | The boolean wall, timeboxed | — | in progress |
 | 3 | Clean-slate pass | — | in progress |
 | 4 | Final check | — | in progress |
