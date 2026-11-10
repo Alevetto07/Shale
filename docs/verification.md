@@ -275,11 +275,18 @@ sphere from it. Release build, one run:
 |---|---|---|---|---|---|---|
 | 7 800 | 45 ms | 8 054 | 108 | 13 335 | 2 914 ms | 33 728 |
 | 32 500 | 300 ms | 34 670 | 135 | 58 663 | 141 181 ms | 145 928 |
-| 79 200 | 673 ms | 85 585 | 195 | 146 304 | not timed | — |
+| 79 200 | 673 ms | 85 585 | 195 | 146 304 | 1 601 108 ms | 345 858 |
 
 (Measured on the Batch 3 tree; before it the same run gave 67 / 366 / 924 ms for
 the trees and 5 114 ms and 215 565 ms for the two subtracts. The third bullet
 below accounts for the difference.)
+
+The same runs report open edges in the result — 4 737, 16 444 and 34 731 — and
+that number is T-junctions, not holes: a BSP splits a polygon without splitting
+the neighbour that just gained a vertex. It is why `volume` carries the proof at
+this size and why the small cases assert closedness exactly: a 10 mm cube minus a
+48-facet pillar is `difference 663.68` of the 663.72 the arithmetic predicts, with
+16 open edges and no gap in the solid.
 
 Three changes moved this. None of them cracks it.
 
@@ -314,7 +321,8 @@ balanced either: at 32 500 triangles it is 135 deep against a log₂ of 15, and
 the polygon count has grown by 1.8× before a single clip, because a plane
 through a sphere cuts a third of its triangles in two. Clipping is charged per
 polygon per level, so the subtract at 32 500 triangles takes 2¼ minutes and the
-subtract at 79 200 was not waited for. The wall is now polygon growth rather
+subtract at 79 200 takes twenty-seven — the ladder was left running to its end
+rather than abandoned, and the number is the whole of it. The wall is now polygon growth rather
 than depth, and it has the same shape: on a finely tessellated convex body a
 BSP-based Boolean is quadratic whatever the plane chooser does.
 

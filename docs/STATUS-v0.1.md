@@ -69,7 +69,7 @@ needs and re-reads a side per edge when it has to cut.
 |---|---|---|
 | 7 800 | 67 → 45 ms | 5 114 → **2 914 ms** (1.75×) |
 | 32 500 | 366 → 300 ms | 215 565 → **141 181 ms** (1.53×) |
-| 79 200 | 924 → 673 ms | not timed |
+| 79 200 | 924 → 673 ms | 1 601 108 ms (not run before; 27 minutes) |
 
 So `BOOLEAN_CAP` stays 12 000. Two and a quarter minutes at 32 500 is not
 "seconds", and the climb is steep enough that the cap is already optimistic on a
