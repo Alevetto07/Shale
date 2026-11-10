@@ -19,6 +19,8 @@ export interface SliceSettings {
 
 export interface MenuBarProps {
   screen: "start" | "slicer";
+  /** `--demo <scenario>`, when the window was started for a recording. */
+  demo?: string | null;
   projectName: string;
   busy: boolean;
   sliced: boolean;
@@ -330,9 +332,25 @@ function PresetPanel({
 }
 
 export function MenuBar(props: MenuBarProps) {
-  const [open, setOpen] = useState<Menu | null>(null);
+  const [open, setOpen] = useState<Menu | null>(props.demo === "presets" ? "settings" : null);
   const [group, setGroup] = useState(FIRST_GROUP);
   const bar = useRef<HTMLDivElement | null>(null);
+
+  // The demo flag arrives with the status, one render after this component
+  // mounts, so the sheet cannot be opened in the initial state alone.
+  useEffect(() => {
+    if (props.demo === "presets") setOpen("settings");
+  }, [props.demo]);
+
+  // The presets panel sits at the foot of a long sheet; the clip has to show
+  // it, so the sheet scrolls itself there once it has opened.
+  useEffect(() => {
+    if (props.demo !== "presets" || open !== "settings") return;
+    const timer = window.setTimeout(() => {
+      document.querySelector(".presets")?.scrollIntoView({ block: "center" });
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [props.demo, open]);
 
   useEffect(() => {
     if (!open) return;

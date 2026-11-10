@@ -264,6 +264,15 @@ export function App() {
   /// Preview plays the toolpath a layer at a time, the way a print would.
   const [playing, setPlaying] = useState(false);
   const [layerCount, setLayerCount] = useState(0);
+
+  // A demo that is about the toolpath has to end up on Preview once the slice
+  // has arrived: boot can run before the preload is installed, and the pane
+  // would otherwise stay on Prepare for the whole clip.
+  useEffect(() => {
+    if (!status?.demo) return;
+    if (status.demo !== "preview" && status.demo !== "multi") return;
+    if (layerCount > 0) setPane("preview");
+  }, [status?.demo, layerCount]);
   const [layerZ, setLayerZ] = useState<number[]>([]);
   const [paths, setPaths] = useState<PreviewPath[]>([]);
   /// Kinds turned off in the legend. The toolpath stays loaded; this only
@@ -331,6 +340,10 @@ export function App() {
   useEffect(() => {
     let stopped = false;
     let retry: number | undefined;
+    // A demo scenario slices before the window opens, so the first boot can
+    // legitimately see an empty plate. Ask again instead of filming the start
+    // screen.
+    let demoPolls = 0;
     /** The window opens before the profile library is read, so the first few
      * attempts legitimately come back empty. Ask again rather than showing an
      * error for a disk that is simply slow. */
@@ -410,10 +423,26 @@ export function App() {
           if (loaded.length > 0 || next.demo_model) {
             setScreen("slicer");
             setWorkspace(true);
+            // The workspace is chosen by the pane, not by the screen: a demo
+            // that only set the screen still opened on Home.
+            if (next.demo) {
+              // The clips say what they are about: "preview" and "multi" are
+              // about the toolpath, the rest about the plate.
+              setPane(
+                next.demo === "preview" || next.demo === "multi"
+                  ? "preview"
+                  : "prepare",
+              );
+            }
           }
-          if (next.demo_model && loaded.length === 0) {
-            void importFromPath(next.demo_model);
+          if (next.demo && loaded.length === 0 && demoPolls < 60) {
+            demoPolls += 1;
+            window.clearTimeout(retry);
+            retry = window.setTimeout(() => void boot(), 500);
           }
+          // A demo scenario is a state, not a script: the queue video starts
+          // with the Device pane already open rather than hunting for a tab.
+          if (next.demo === "queue") setPane("device");
           setRecents(await api.recents().catch(() => []));
         }
       } catch (err) {
@@ -2365,6 +2394,29 @@ export function App() {
     };
   }, [filamentMetres, printSeconds, materialInfo?.density, materialInfo?.diameter, cost]);
 
+  // A file handed over on the command line: at launch, or by a second launch
+  // that wrote its path down and raised this window. The poll is 800 ms, which
+  // is invisible next to a model import and costs one file read when idle.
+  useEffect(() => {
+    let stopped = false;
+    const openRequested = (path: string | null) => {
+      if (!path || stopped) return;
+      if (path.toLowerCase().endsWith(".shale")) void openProject(path);
+      else void importFromPath(path);
+    };
+    void api.startupOpen().then(openRequested).catch(() => {});
+    const timer = window.setInterval(() => {
+      void api.takePendingOpen().then(openRequested).catch(() => {});
+    }, 800);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+    // The two openers are stable for the life of the window in practice; this
+    // effect is about the handover, not about re-running when a model loads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const changeCost = (patch: Partial<CostSettings>) => {
     const next = { ...cost, ...patch };
     setCost(next);
@@ -2442,6 +2494,7 @@ export function App() {
           onMaterial={setMaterial}
           settings={sliceSettings}
           onSettings={applySliceSettings}
+          demo={status?.demo ?? null}
           overrides={scope === "all" ? overrides : (models.find((m) => m.id === Number(scope))?.settings ?? {})}
           profileValues={profileValues}
           onOverride={(key, value) => void setScopedOverride(key, value)}
@@ -3466,7 +3519,10 @@ export function App() {
               onNone={() => setHiddenKinds(new Set(paths.map((path) => path.kind)))}
             />
           )}
-          <div className="job-card" data-sliced={layerCount > 0 ? "yes" : "no"}>
+          <div
+            className={status?.demo === "cost" ? "job-card demo-cost" : "job-card"}
+            data-sliced={layerCount > 0 ? "yes" : "no"}
+          >
             {layerCount > 0 ? (
               <>
                 <span className="job-state">sliced</span>
@@ -3501,6 +3557,14 @@ export function App() {
                           {estimate.kwh.toFixed(3)} kWh · {money(estimate.energy_cost)}
                         </dd>
                       </div>
+                      {estimate.spools.map((spool) => (
+                        <div key={spool.slot}>
+                          <dt>{`spool ${spool.slot + 1}`}</dt>
+                          <dd>
+                            {spool.grams.toFixed(0)} g · {money(spool.cost)}
+                          </dd>
+                        </div>
+                      ))}
                       <div className="job-total">
                         <dt>total</dt>
                         <dd>{money(estimate.total)}</dd>

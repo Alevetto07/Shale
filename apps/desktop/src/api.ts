@@ -10,6 +10,7 @@ export interface Status {
   engine_backend: string;
   printer_count: number;
   demo_model?: string | null;
+  demo?: string | null;
   /** The profile library is still being read; the window is usable meanwhile. */
   catalog_loading?: boolean;
   version: string;
@@ -372,6 +373,8 @@ export const api = {
   secretClear,
 
   status: () => invoke<Status>("app_status"),
+  startupOpen: () => invoke<string | null>("startup_open"),
+  takePendingOpen: () => invoke<string | null>("take_pending_open"),
   costSettings: () => invoke<CostSettings>("cost_settings"),
   setCostSettings: (settings: CostSettings) =>
     invoke<CostSettings>("set_cost_settings", { settings }),

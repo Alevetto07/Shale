@@ -121,6 +121,7 @@ struct Status {
     engine_backend: String,
     printer_count: usize,
     demo_model: Option<String>,
+    demo: Option<String>,
     /// True while the profile library is still being read. The window is up
     /// and usable; the printer list arrives when this goes false.
     catalog_loading: bool,
@@ -249,6 +250,7 @@ fn app_status(state: State<AppState>) -> Result<Status, String> {
         engine_backend: inner.engine.backend.as_str().to_string(),
         printer_count,
         demo_model: std::env::var("SHALE_DEMO_MODEL").ok(),
+        demo: std::env::var("SHALE_DEMO").ok(),
         catalog_loading: inner.catalog.is_none() && inner.catalog_error.is_none(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
@@ -3376,7 +3378,6 @@ fn view_of(
     }
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 fn preload_demo(
     catalog: &Catalog,
     engine: &Engine,
@@ -3389,13 +3390,9 @@ fn preload_demo(
     let Some(path) = std::env::var_os("SHALE_DEMO_MODEL") else {
         return (Vec::new(), Vec::new(), None, None);
     };
-    // A plain demo model is imported from the window so a large file does not
-    // freeze startup. Preload only when a slice or a support plan is requested.
-    let preload = std::env::var("SHALE_DEMO_SLICE").ok().as_deref() == Some("1")
-        || std::env::var("SHALE_DEMO_SUPPORTS").ok().as_deref() == Some("1");
-    if !preload {
-        return (Vec::new(), Vec::new(), None, None);
-    }
+    // The model is always preloaded, so the window opens on a plate that
+    // already holds the demo part instead of racing an import it cannot see.
+    // The slice and the support plan are still optional.
     let Ok(imported) = load_mesh_with(
         std::path::Path::new(&path),
         &TessellationTolerance::standard(),
@@ -3441,6 +3438,32 @@ fn preload_demo(
     let mut toolpath = None;
     let mut gcode_path = None;
     let mut instructions = Vec::new();
+    // Two parts on two spools, with supports and a prime tower: the shape of a
+    // real multi-colour plate, which is what the "multi" clip has to show.
+    let multi = std::env::var("SHALE_DEMO_SUPPORTS").ok().as_deref() == Some("1");
+    let mut placed = vec![PlacedModel {
+        name: name.clone(),
+        mesh: mesh.clone(),
+        transform: transform.clone(),
+        settings: Vec::new(),
+        slot: None,
+    }];
+    if multi {
+        let mut second = transform.clone();
+        second.translation[0] += 45.0;
+        placed.push(PlacedModel {
+            name: format!("{name} spool 2"),
+            mesh: mesh.clone(),
+            transform: second,
+            settings: Vec::new(),
+            slot: Some(1),
+        });
+    }
+    let materials: Vec<Option<String>> = if multi {
+        vec![Some("generic_pla".into()), Some("generic_petg".into())]
+    } else {
+        vec![Some("generic_pla".into())]
+    };
     if std::env::var("SHALE_DEMO_SLICE").ok().as_deref() == Some("1") {
         let pause = CustomInstruction::Pause {
             layer: Some(40),
@@ -3456,22 +3479,20 @@ fn preload_demo(
             &printer_id,
             Some("0.4mm Nozzle".into()),
             Some("draft".into()),
-            &[Some("generic_pla".into())],
+            &materials,
             UserSettings {
                 layer_height: Some(0.2),
                 infill_sparse_density: Some(20.0),
-                support_enable: Some(false),
+                support_enable: Some(multi),
                 material_print_temperature: Some(200.0),
                 material_bed_temperature: Some(60.0),
-                extra: Vec::new(),
+                extra: if multi {
+                    vec![("prime_tower_enable".to_string(), "true".to_string())]
+                } else {
+                    Vec::new()
+                },
             },
-            &[PlacedModel {
-                name: name.clone(),
-                mesh: mesh.clone(),
-                transform: transform.clone(),
-                settings: Vec::new(),
-                slot: None,
-            }],
+            &placed,
             &[pause],
             None,
             &[],
@@ -3482,22 +3503,34 @@ fn preload_demo(
             toolpath = Some(outcome.toolpath);
         }
     }
-    (
-        vec![LoadedModel {
-            id: 1,
-            name,
-            mesh,
-            transform,
-            report,
-            source_bytes: fs::read(std::path::Path::new(&path)).unwrap_or_default(),
-            visible: true,
-            settings: std::collections::BTreeMap::new(),
-            slot: None,
-        }],
-        instructions,
-        toolpath,
-        gcode_path,
-    )
+    let source_bytes = fs::read(std::path::Path::new(&path)).unwrap_or_default();
+    let mut loaded = vec![LoadedModel {
+        id: 1,
+        name,
+        mesh,
+        transform,
+        report,
+        source_bytes: source_bytes.clone(),
+        visible: true,
+        settings: std::collections::BTreeMap::new(),
+        slot: None,
+    }];
+    if multi {
+        if let Some(second) = placed.get(1) {
+            loaded.push(LoadedModel {
+                id: 2,
+                name: second.name.clone(),
+                mesh: second.mesh.clone(),
+                transform: second.transform.clone(),
+                report: loaded[0].report.clone(),
+                source_bytes,
+                visible: true,
+                settings: std::collections::BTreeMap::new(),
+                slot: Some(1),
+            });
+        }
+    }
+    (loaded, instructions, toolpath, gcode_path)
 }
 
 #[derive(Deserialize)]
@@ -4214,13 +4247,137 @@ fn secret_clear(key: String) -> Result<(), String> {
     secrets::clear(&key)
 }
 
+/// The file a launch was asked to open, if any.
+///
+/// Windows hands a double-clicked file over as a bare argument, so the first
+/// argument with a model or project extension is the request. Flags are
+/// skipped, and an extension Shale cannot open is ignored rather than shown as
+/// an error: Explorer can be told to "open with" anything.
+fn open_argument() -> Option<String> {
+    for arg in std::env::args_os().skip(1) {
+        let text = arg.to_string_lossy().to_string();
+        if text.starts_with('-') {
+            continue;
+        }
+        let lower = text.to_lowercase();
+        if [".shale", ".3mf", ".stl", ".step", ".stp"]
+            .iter()
+            .any(|ext| lower.ends_with(ext))
+        {
+            return Some(text);
+        }
+    }
+    None
+}
+
+/// Where a second launch leaves the file it was asked to open.
+///
+/// The running Shale owns the window, so the second process cannot open a tab;
+/// it writes the path here, brings the window up and exits. The running app
+/// polls this file, which is crude and has no failure mode that loses the
+/// request quietly.
+fn pending_open_path() -> Option<PathBuf> {
+    let appdata = std::env::var_os("APPDATA")?;
+    Some(
+        PathBuf::from(appdata)
+            .join("dev.shale.desktop")
+            .join("pending-open.txt"),
+    )
+}
+
+static STARTUP_OPEN: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// The file this launch was asked to open. Answered once per process.
+#[tauri::command]
+fn startup_open() -> Option<String> {
+    STARTUP_OPEN.get().cloned().flatten()
+}
+
+/// A file another launch handed over, consumed by reading it.
+#[tauri::command]
+fn take_pending_open() -> Option<String> {
+    let path = pending_open_path()?;
+    let text = fs::read_to_string(&path).ok()?;
+    let _ = fs::remove_file(&path);
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// The scenario named by `--demo <scenario>`, if any.
+fn demo_flag() -> Option<String> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--demo" {
+            return args.next();
+        }
+        if let Some(value) = arg.strip_prefix("--demo=") {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+/// A cube that travels with the binary, so `--demo` works from an install.
+///
+/// It is written to the temp folder rather than opened from the repository:
+/// the installed app has no repository, and a demo that only runs from a
+/// checkout is a demo that breaks the first time someone else runs it.
+fn demo_model() -> std::path::PathBuf {
+    let path = std::env::temp_dir().join("shale-demo-cube.stl");
+    let _ = std::fs::write(&path, include_bytes!("../../../../examples/cube.stl"));
+    path
+}
+
+/// Turn `--demo <scenario>` into the environment the rest of the app reads.
+///
+/// The scenarios are states, not animations: each one is the app already in the
+/// position a video wants to start from, so the recording is deterministic and
+/// does not depend on a robot finding a button.
+fn apply_demo_flag() {
+    let Some(scenario) = demo_flag() else {
+        return;
+    };
+    // Safety: called before any thread is spawned, at the top of run().
+    unsafe {
+        std::env::set_var("SHALE_DEMO", &scenario);
+        if scenario != "start" {
+            std::env::set_var("SHALE_DEMO_MODEL", demo_model());
+        }
+        if matches!(
+            scenario.as_str(),
+            "preview" | "multi" | "queue" | "cost" | "presets"
+        ) {
+            std::env::set_var("SHALE_DEMO_SLICE", "1");
+        }
+        if scenario == "multi" {
+            std::env::set_var("SHALE_DEMO_SUPPORTS", "1");
+        }
+    }
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    apply_demo_flag();
     // Before anything opens: WebView2 will not let two processes share the
     // window's profile, and its refusal is a bare HRESULT that unwinds setup.
+    let requested = open_argument();
+    let _ = STARTUP_OPEN.set(requested.clone());
     if !instance::claim("Local\\dev.shale.desktop") {
         // A second launch means "show me Shale": bring the window up rather than
-        // telling the user off. The box is only for the case where a process
-        // holds the profile and has no window to show.
+        // telling the user off. If it named a file, leave the path where the
+        // running window will find it before raising the window.
+        if let Some(path) = &requested {
+            if let Some(pending) = pending_open_path() {
+                if let Some(parent) = pending.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = fs::write(&pending, path);
+            }
+        }
         if !instance::focus_existing("Shale") {
             instance::say_already_running();
         }
@@ -4300,6 +4457,29 @@ pub fn run() {
         None
     };
     let support_model_id = if support.is_some() { Some(1) } else { None };
+    // A queue clip needs a queue. These jobs point at the demo slice: nothing
+    // is printed, and the pane shows names, sizes and the running job.
+    let demo_queue: Vec<QueuedJob> = if std::env::var("SHALE_DEMO").ok().as_deref() == Some("queue")
+    {
+        gcode_path
+            .as_ref()
+            .map(|path| {
+                let bytes = fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+                (1..=3)
+                    .map(|id| QueuedJob {
+                        id,
+                        name: format!("Cube plate {id}"),
+                        path: path.clone(),
+                        bytes,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let demo_queue_next = demo_queue.len() as u64 + 1;
+    let demo_queue_running = demo_queue.first().map(|job| job.name.clone());
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState(Mutex::new(Inner {
@@ -4323,11 +4503,11 @@ pub fn run() {
             engine,
             toolpath,
             gcode_path,
-            queue: Vec::new(),
-            queue_next_id: 1,
+            queue: demo_queue,
+            queue_next_id: demo_queue_next,
             queue_run: shale_core::queue::QueueRun::new(),
             printer_id: None,
-            queue_running: None,
+            queue_running: demo_queue_running,
             slicing: false,
             cancel_import: import_cancel,
             engine_message,
@@ -4338,6 +4518,21 @@ pub fn run() {
         // command, so no command ever blocks on the disk. When it lands, the
         // window is told and asks for the printer list again.
         .setup(move |app| {
+            // A demo recording should fit the screen it is filmed on: the normal
+            // window is 1440x900, which is larger than this laptop's desktop at
+            // 200% scaling, and a window that hangs off the edge films badly.
+            if std::env::var("SHALE_DEMO").is_ok() {
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Ok(Some(monitor)) = window.current_monitor() {
+                        let scale = monitor.scale_factor();
+                        let width =
+                            (monitor.size().width as f64 / scale - 80.0).clamp(900.0, 1440.0);
+                        let height =
+                            (monitor.size().height as f64 / scale - 120.0).clamp(640.0, 900.0);
+                        let _ = window.set_size(tauri::LogicalSize::new(width, height));
+                    }
+                }
+            }
             let Some(rx) = catalog_rx else {
                 return Ok(());
             };
@@ -4372,6 +4567,8 @@ pub fn run() {
             secret_clear,
             scratch_path,
             app_status,
+            startup_open,
+            take_pending_open,
             preset_list,
             preset_save,
             preset_delete,

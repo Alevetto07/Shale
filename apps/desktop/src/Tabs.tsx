@@ -655,7 +655,7 @@ export function DevicePane({
             <input
               type="text"
               aria-label="printer host"
-              placeholder="192.168.1.40"
+              placeholder="printer address"
               value={host}
               onChange={(event) => setHost(event.target.value)}
             />
@@ -665,7 +665,7 @@ export function DevicePane({
             <input
               type="text"
               aria-label="printer serial"
-              placeholder="01P00A000000000"
+              placeholder="serial number"
               value={serial}
               onChange={(event) => setSerial(event.target.value)}
             />
@@ -675,7 +675,7 @@ export function DevicePane({
             <input
               type="password"
               aria-label="printer access code"
-              placeholder="8 characters, from the printer's LAN settings"
+              placeholder="8 characters from the printer"
               value={code}
               onChange={(event) => setCode(event.target.value)}
             />

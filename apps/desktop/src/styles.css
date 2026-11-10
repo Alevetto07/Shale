@@ -2222,3 +2222,16 @@ input[type="checkbox"]:focus-visible {
   line-height: 1.45;
 }
 .preset-note { color: var(--accent); }
+
+/* The cost clip has to read as a cost clip: the job card floats over the plate
+   at twice its size, on the same panel colour, so the numbers are the subject. */
+.job-card.demo-cost {
+  position: fixed;
+  right: 56px;
+  top: 50%;
+  transform: translateY(-50%) scale(1.9);
+  transform-origin: right center;
+  z-index: 40;
+  border-color: #2a2b3a;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.65);
+}
