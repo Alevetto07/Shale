@@ -372,6 +372,11 @@ export const api = {
   secretClear,
 
   status: () => invoke<Status>("app_status"),
+  costSettings: () => invoke<CostSettings>("cost_settings"),
+  setCostSettings: (settings: CostSettings) =>
+    invoke<CostSettings>("set_cost_settings", { settings }),
+  costEstimate: (metres: number, seconds: number | null, diameter: number, density: number) =>
+    invoke<CostEstimate>("cost_estimate", { metres, seconds, diameter, density }),
   setEngine: (path: string, libDir: string, backend: string) =>
     invoke<boolean>("set_engine", { path, libDir: libDir || null, backend }),
   cancelImport: () => invoke<void>("cancel_import"),
@@ -631,4 +636,30 @@ export interface OpenedProject {
   instructions: StoredInstruction[];
   support: SupportView | null;
   warnings: string[];
+}
+
+/** The editable half of the cost estimate: price, power, tariff, currency. */
+export interface CostSettings {
+  currency: string;
+  price_per_kg: number;
+  watts: number;
+  electricity_per_kwh: number;
+}
+
+export interface SpoolCost {
+  slot: number;
+  metres: number;
+  grams: number;
+  cost: number;
+}
+
+/** What the slice on screen costs, computed in the core and shown on the card. */
+export interface CostEstimate {
+  spools: SpoolCost[];
+  grams: number;
+  filament_cost: number;
+  kwh: number;
+  energy_cost: number;
+  total: number;
+  currency: string;
 }

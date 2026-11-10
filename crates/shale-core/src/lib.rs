@@ -21,6 +21,7 @@ pub mod bambu;
 pub mod cad;
 pub mod calibrate;
 pub mod catalog;
+pub mod cost;
 pub mod csg;
 pub mod cut;
 mod definition;

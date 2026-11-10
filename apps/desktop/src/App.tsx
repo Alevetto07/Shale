@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   type Bed,
+  type CostEstimate,
+  type CostSettings,
   type CalibrationApplied,
   type CustomInstruction,
   type MaterialInfo,
@@ -269,6 +271,15 @@ export function App() {
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
   const [printSeconds, setPrintSeconds] = useState<number | null>(null);
   const [filamentMetres, setFilamentMetres] = useState<number | null>(null);
+  // Price, power and tariff are the user's numbers, not the engine's; they are
+  // read once and written whenever a field changes, so a reinstall keeps them.
+  const [cost, setCost] = useState<CostSettings>({
+    currency: "EUR",
+    price_per_kg: 20,
+    watts: 100,
+    electricity_per_kwh: 0.3,
+  });
+  const [estimate, setEstimate] = useState<CostEstimate | null>(null);
 
   // What the plate *is*, near enough to tell whether a slice still describes
   // it: every part, where it sits and how big it is. A part leaving, arriving
@@ -2321,6 +2332,50 @@ export function App() {
     const area = Math.PI * (diameter / 2) ** 2;
     return filamentMetres * area * density;
   })();
+  useEffect(() => {
+    void api
+      .costSettings()
+      .then(setCost)
+      .catch(() => {
+        /* defaults are already in state */
+      });
+  }, []);
+
+  // The card's cost figures are the core's arithmetic over the file on screen.
+  // Re-run whenever the slice, the material or a price changes; the backend
+  // reads the saved settings, so a price edit lands here as soon as it is
+  // written and never makes the card disagree with the panel.
+  useEffect(() => {
+    const density = materialInfo?.density;
+    if (filamentMetres == null || !density) {
+      setEstimate(null);
+      return;
+    }
+    let live = true;
+    void api
+      .costEstimate(filamentMetres, printSeconds, materialInfo?.diameter ?? 1.75, density)
+      .then((next) => {
+        if (live) setEstimate(next);
+      })
+      .catch(() => {
+        if (live) setEstimate(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [filamentMetres, printSeconds, materialInfo?.density, materialInfo?.diameter, cost]);
+
+  const changeCost = (patch: Partial<CostSettings>) => {
+    const next = { ...cost, ...patch };
+    setCost(next);
+    void api
+      .setCostSettings(next)
+      .then(setCost)
+      .catch(() => {
+        /* the panel keeps what was typed; the file is rewritten next time */
+      });
+  };
+  const money = (value: number) => `${value.toFixed(2)} ${estimate?.currency ?? cost.currency}`;
   const clockTime = (seconds: number) =>
     `${Math.floor(seconds / 3600)} h ${String(Math.round((seconds % 3600) / 60)).padStart(2, "0")} m`;
   const marks = instructionMarks(instructions, layerZ, layerHeight);
@@ -3288,6 +3343,55 @@ export function App() {
             <p className="hint">xyz is the part centre.  keys  1 move  2 rotate  3 scale  f frame</p>
           </Frame>
 
+          <Frame title="cost">
+            <label>
+              currency
+              <AsciiField
+                label="currency"
+                value={cost.currency}
+                onChange={(value) => changeCost({ currency: value })}
+              />
+            </label>
+            <label>
+              price per kg
+              <AsciiField
+                label="price per kg"
+                value={String(cost.price_per_kg)}
+                onChange={(value) => {
+                  const next = Number(value.replace(",", "."));
+                  if (Number.isFinite(next)) changeCost({ price_per_kg: next });
+                }}
+              />
+            </label>
+            <label>
+              printer power, W
+              <AsciiField
+                label="printer power"
+                value={String(cost.watts)}
+                onChange={(value) => {
+                  const next = Number(value.replace(",", "."));
+                  if (Number.isFinite(next)) changeCost({ watts: next });
+                }}
+              />
+            </label>
+            <label>
+              electricity per kWh
+              <AsciiField
+                label="electricity price"
+                value={String(cost.electricity_per_kwh)}
+                onChange={(value) => {
+                  const next = Number(value.replace(",", "."));
+                  if (Number.isFinite(next)) changeCost({ electricity_per_kwh: next });
+                }}
+              />
+            </label>
+            <p className="hint">
+              filament weight is the slice's metres through the material's strand; energy is
+              printer power times the estimate. both figures are only ever as good as the three
+              numbers above.
+            </p>
+          </Frame>
+
           <Frame title="engine">
             <label>
               backend
@@ -3385,6 +3489,24 @@ export function App() {
                     <dt>layers</dt>
                     <dd>{layerCount}</dd>
                   </div>
+                  {estimate && (
+                    <>
+                      <div>
+                        <dt>filament cost</dt>
+                        <dd>{money(estimate.filament_cost)}</dd>
+                      </div>
+                      <div>
+                        <dt>energy</dt>
+                        <dd>
+                          {estimate.kwh.toFixed(3)} kWh · {money(estimate.energy_cost)}
+                        </dd>
+                      </div>
+                      <div className="job-total">
+                        <dt>total</dt>
+                        <dd>{money(estimate.total)}</dd>
+                      </div>
+                    </>
+                  )}
                 </dl>
               </>
             ) : (

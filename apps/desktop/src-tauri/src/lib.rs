@@ -3567,6 +3567,59 @@ fn remember(
     .map_err(|err| err.to_string())
 }
 
+/// The cost fields, read from the app's config dir.
+///
+/// A missing or unreadable file is the defaults, not an error: a fresh install
+/// has no file, and a cost estimate is not worth refusing a slice over.
+#[tauri::command]
+fn cost_settings(app: AppHandle) -> Result<shale_core::cost::CostSettings, String> {
+    let dir = config_dir(&app)?;
+    let path = dir.join("cost.json");
+    match fs::read_to_string(&path) {
+        Ok(text) => Ok(serde_json::from_str(&text).unwrap_or_default()),
+        Err(_) => Ok(shale_core::cost::CostSettings::default()),
+    }
+}
+
+#[tauri::command]
+fn set_cost_settings(
+    app: AppHandle,
+    settings: shale_core::cost::CostSettings,
+) -> Result<shale_core::cost::CostSettings, String> {
+    let mut settings = settings;
+    settings.price_per_kg = settings.price_per_kg.clamp(0.0, 10_000.0);
+    settings.watts = settings.watts.clamp(0.0, 20_000.0);
+    settings.electricity_per_kwh = settings.electricity_per_kwh.clamp(0.0, 100.0);
+    if settings.currency.trim().is_empty() {
+        settings.currency = shale_core::cost::DEFAULT_CURRENCY.to_string();
+    }
+    settings.currency = settings.currency.trim().chars().take(6).collect();
+    let dir = config_dir(&app)?;
+    let path = dir.join("cost.json");
+    let text = serde_json::to_string_pretty(&settings).map_err(|err| err.to_string())?;
+    fs::write(&path, text).map_err(|err| err.to_string())?;
+    Ok(settings)
+}
+
+/// What the slice on screen costs, in the currency the user chose.
+#[tauri::command]
+fn cost_estimate(
+    app: AppHandle,
+    metres: f64,
+    seconds: Option<f64>,
+    diameter: f64,
+    density: f64,
+) -> Result<shale_core::cost::CostEstimate, String> {
+    let settings = cost_settings(app)?;
+    Ok(shale_core::cost::estimate(
+        &[(0, metres.max(0.0))],
+        if diameter > 0.0 { diameter } else { 1.75 },
+        if density > 0.0 { density } else { 1.24 },
+        seconds,
+        &settings,
+    ))
+}
+
 #[tauri::command]
 fn list_recents(app: AppHandle) -> Result<Vec<RecentEntry>, String> {
     let dir = config_dir(&app)?;
@@ -4261,6 +4314,9 @@ pub fn run() {
             secret_clear,
             scratch_path,
             app_status,
+            cost_settings,
+            set_cost_settings,
+            cost_estimate,
             profile_settings,
             settings_help,
             set_engine,

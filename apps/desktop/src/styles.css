@@ -1653,6 +1653,11 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 .job-card dl > div {
   display: contents;
 }
+.job-total dt,
+.job-total dd {
+  color: var(--accent);
+}
+
 .job-card dt {
   font-family: var(--prose);
   font-size: 10px;
