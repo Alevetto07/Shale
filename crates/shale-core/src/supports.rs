@@ -1213,7 +1213,9 @@ mod modifier_role_tests {
         let enforce = modifier_settings(RegionRole::Enforce);
         let block = modifier_settings(RegionRole::Block);
         let has = |pairs: &[(String, String)], key: &str| {
-            pairs.iter().any(|(name, value)| name == key && value == "true")
+            pairs
+                .iter()
+                .any(|(name, value)| name == key && value == "true")
         };
         assert!(has(&enforce, "support_mesh"));
         assert!(has(&block, "anti_overhang_mesh"));

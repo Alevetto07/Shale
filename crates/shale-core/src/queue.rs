@@ -193,8 +193,14 @@ mod tests {
         run.observe(Machine::Running);
         let update = run.observe(Machine::Finished);
         assert_eq!(update.state, RunState::WaitingForPlate);
-        assert!(update.note.is_some(), "the operator has to be told what to do");
-        assert!(!run.may_start(), "nothing may go out until the plate is cleared");
+        assert!(
+            update.note.is_some(),
+            "the operator has to be told what to do"
+        );
+        assert!(
+            !run.may_start(),
+            "nothing may go out until the plate is cleared"
+        );
     }
 
     #[test]
@@ -237,7 +243,10 @@ mod tests {
         run.observe(Machine::Running);
         run.observe(Machine::Finished);
         assert_eq!(run.plate_cleared().state, RunState::Armed);
-        assert!(run.may_start(), "clearing the plate is what allows the next job");
+        assert!(
+            run.may_start(),
+            "clearing the plate is what allows the next job"
+        );
         run.started();
         assert!(!run.may_start(), "one job, not two");
     }
@@ -280,6 +289,9 @@ mod tests {
         run.observe(Machine::Failed);
         assert_eq!(run.state(), RunState::Stopped);
         assert_eq!(run.arm().state, RunState::Armed);
-        assert!(run.may_start(), "a person pressed start; that is authorisation");
+        assert!(
+            run.may_start(),
+            "a person pressed start; that is authorisation"
+        );
     }
 }

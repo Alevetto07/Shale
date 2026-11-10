@@ -13,8 +13,8 @@ use crate::error::Error;
 use crate::gcode::{self, Toolpath};
 use crate::instructions::{self, CustomInstruction, GcodeFlavour};
 use crate::mesh::{self, Transform, TriangleMesh};
-use crate::resolver::{ResolveRequest, ResolvedSettings, UserSettings};
 use crate::paint;
+use crate::resolver::{ResolveRequest, ResolvedSettings, UserSettings};
 use crate::supports::{self, SupportPlan};
 use crate::template::{self, Value, Values};
 
@@ -119,7 +119,9 @@ pub fn render_sequence(
             }
         }
         if list.is_empty() {
-            list = global.map(|text| vec![template::value_of(text)]).unwrap_or_default();
+            list = global
+                .map(|text| vec![template::value_of(text)])
+                .unwrap_or_default();
         }
         // Left unset when nothing resolved: the render then names the missing
         // name and the slice stops, rather than starting a machine at 0 degrees.
@@ -364,7 +366,9 @@ pub fn slice(
         .extra
         .iter()
         .chain(models.iter().flat_map(|model| model.settings.iter()))
-        .any(|(key, value)| key == "cool_fan_enabled" && matches!(value.as_str(), "False" | "false"));
+        .any(|(key, value)| {
+            key == "cool_fan_enabled" && matches!(value.as_str(), "False" | "false")
+        });
     if cooling_off {
         for key in [
             "cool_fan_speed",

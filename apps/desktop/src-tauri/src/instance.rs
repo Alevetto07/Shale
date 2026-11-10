@@ -236,9 +236,15 @@ mod tests {
             "failed to create webview: WebView2 error: WindowsError(Error { \
              code: HRESULT(0x800700AA), message: \"The requested resource is in use.\" })",
         );
-        assert!(message.contains("an earlier Shale is still closing"), "{message}");
+        assert!(
+            message.contains("an earlier Shale is still closing"),
+            "{message}"
+        );
         assert!(message.contains("start Shale again"), "{message}");
-        assert!(!message.contains("0x800700AA"), "the number is not the sentence: {message}");
+        assert!(
+            !message.contains("0x800700AA"),
+            "the number is not the sentence: {message}"
+        );
     }
 
     #[test]
@@ -246,7 +252,10 @@ mod tests {
         let detail = "failed to create webview: WebView2 error: WindowsError(Error { \
                       code: HRESULT(0x80070005), message: \"Access is denied.\" })";
         let message = start_failed_message(detail);
-        assert!(message.contains("Shale could not open its window"), "{message}");
+        assert!(
+            message.contains("Shale could not open its window"),
+            "{message}"
+        );
         assert!(message.contains("0x80070005"), "{message}");
         assert!(message.contains("standard error"), "{message}");
     }

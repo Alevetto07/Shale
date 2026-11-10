@@ -62,7 +62,6 @@ fn side_of(normal: &[f64; 3], w: f64, point: [f64; 3]) -> f64 {
     dot(*normal, point) - w
 }
 
-
 /// Twice the area of a polygon, from Newell's method: the length of the sum of
 /// the edge cross products. Used only to recognise a fragment too small to be
 /// geometry.
@@ -205,11 +204,7 @@ fn median_centroid(sample: &[&Poly], axis: usize) -> f64 {
     let mut values: Vec<f64> = sample
         .iter()
         .map(|polygon| {
-            let sum: f64 = polygon
-                .vertices
-                .iter()
-                .map(|vertex| vertex[axis])
-                .sum();
+            let sum: f64 = polygon.vertices.iter().map(|vertex| vertex[axis]).sum();
             sum / polygon.vertices.len() as f64
         })
         .collect();
@@ -692,7 +687,13 @@ fn merged(left: &Node, right: &Node, flip: bool) -> TriangleMesh {
 /// A closed cylinder whose base sits at `start` and whose axis runs to `start +
 /// axis * height`. Used for pins (union) and their holes (subtract), so both
 /// ends are capped.
-pub fn cylinder(start: [f64; 3], axis: [f64; 3], radius: f64, height: f64, segments: usize) -> TriangleMesh {
+pub fn cylinder(
+    start: [f64; 3],
+    axis: [f64; 3],
+    radius: f64,
+    height: f64,
+    segments: usize,
+) -> TriangleMesh {
     let segments = segments.max(3);
     let axis = normalise(axis);
     // Any vector not parallel to the axis gives a basis to sweep the rim.
@@ -715,7 +716,10 @@ pub fn cylinder(start: [f64; 3], axis: [f64; 3], radius: f64, height: f64, segme
                 let angle = std::f64::consts::TAU * index as f64 / segments as f64;
                 add(
                     centre,
-                    add(scale(u, radius * angle.cos()), scale(v, radius * angle.sin())),
+                    add(
+                        scale(u, radius * angle.cos()),
+                        scale(v, radius * angle.sin()),
+                    ),
                 )
             })
             .collect()
@@ -734,8 +738,14 @@ pub fn cylinder(start: [f64; 3], axis: [f64; 3], radius: f64, height: f64, segme
 
     for index in 0..segments {
         let next = (index + 1) % segments;
-        push(&mut mesh, [near_ring[index], near_ring[next], far_ring[next]]);
-        push(&mut mesh, [near_ring[index], far_ring[next], far_ring[index]]);
+        push(
+            &mut mesh,
+            [near_ring[index], near_ring[next], far_ring[next]],
+        );
+        push(
+            &mut mesh,
+            [near_ring[index], far_ring[next], far_ring[index]],
+        );
         // Caps, wound outward: the near cap faces -axis, the far cap +axis.
         push(&mut mesh, [start, near_ring[next], near_ring[index]]);
         push(&mut mesh, [far, far_ring[index], far_ring[next]]);
@@ -874,10 +884,12 @@ mod tests {
         ];
         TriangleMesh {
             vertices: corners.to_vec(),
-            triangles: faces.iter().map(|face| [face[0] as u32, face[1] as u32, face[2] as u32]).collect(),
+            triangles: faces
+                .iter()
+                .map(|face| [face[0] as u32, face[1] as u32, face[2] as u32])
+                .collect(),
         }
     }
-
 
     #[test]
     fn a_triangle_has_a_plane() {
@@ -925,9 +937,18 @@ mod tests {
             open_edges(&common)
         );
 
-        assert!((volume(&difference) - 500.0).abs() < 5.0, "half the cube is left");
-        assert!((volume(&unioned) - 1500.0).abs() < 5.0, "the union is both minus the overlap");
-        assert!((volume(&common) - 500.0).abs() < 5.0, "the overlap is the shared half");
+        assert!(
+            (volume(&difference) - 500.0).abs() < 5.0,
+            "half the cube is left"
+        );
+        assert!(
+            (volume(&unioned) - 1500.0).abs() < 5.0,
+            "the union is both minus the overlap"
+        );
+        assert!(
+            (volume(&common) - 500.0).abs() < 5.0,
+            "the overlap is the shared half"
+        );
         // Twelve seams, not a hole: BSP clipping splits a polygon without
         // splitting its neighbour, so the surface is closed but does not pair
         // edge-for-edge (see `open_edges`). A *large* count is the failure —
@@ -997,7 +1018,11 @@ mod tests {
             kept > 10_000.0 && kept < volume(&body),
             "the cut left {kept:.2} mm3, which is a stub or a copy"
         );
-        assert_eq!(open_edges(&difference), 0, "watertight, not merely closed enough");
+        assert_eq!(
+            open_edges(&difference),
+            0,
+            "watertight, not merely closed enough"
+        );
         assert!(
             elapsed < std::time::Duration::from_secs(2),
             "a part this size took {elapsed:?}, which is the chain coming back"
@@ -1020,8 +1045,7 @@ mod tests {
             let started = std::time::Instant::now();
             let difference = subtract(&body, &cube);
             let elapsed = started.elapsed();
-            let (nodes, depth, polygons) =
-                Node::from_polygons(to_polygons(&body)).stats();
+            let (nodes, depth, polygons) = Node::from_polygons(to_polygons(&body)).stats();
             println!(
                 "{segments} segments: {} tris -> {} tris in {:.3}s; tree {nodes} nodes, depth {depth}, {polygons} polys",
                 body.triangles.len(),
@@ -1061,7 +1085,9 @@ mod tests {
             volume(&overlap),
             pin_size
         );
-        assert!((volume(&lower) - (1000.0 - std::f64::consts::PI * 2.2f64.powi(2) * 4.3)).abs() < 5.0);
+        assert!(
+            (volume(&lower) - (1000.0 - std::f64::consts::PI * 2.2f64.powi(2) * 4.3)).abs() < 5.0
+        );
         assert!(volume(&upper) > 1000.0);
     }
 
@@ -1094,10 +1120,11 @@ mod tests {
                 }
             }
         }
-        TriangleMesh { vertices, triangles }
+        TriangleMesh {
+            vertices,
+            triangles,
+        }
     }
-
-
 
     /// A box whose six faces are cut into `n` by `n` squares: convex, closed,
     /// and 12·n² triangles, so the ladder has a rung with an exact volume.
@@ -1134,7 +1161,10 @@ mod tests {
         face([0.0, s, 0.0], [0.0, 0.0, s], [s, 0.0, 0.0]); // +y
         face([0.0, 0.0, 0.0], [0.0, 0.0, s], [0.0, s, 0.0]); // -x
         face([s, 0.0, 0.0], [0.0, s, 0.0], [0.0, 0.0, s]); // +x
-        TriangleMesh { vertices, triangles }
+        TriangleMesh {
+            vertices,
+            triangles,
+        }
     }
 
     /// The case the brief names: a 30 000-triangle convex part, cut, and the
@@ -1157,7 +1187,11 @@ mod tests {
             open_edges(&cut)
         );
         assert_eq!(engine, Engine::Manifold, "the library is the default path");
-        assert_eq!(open_edges(&cut), 0, "watertight: every edge in exactly two triangles");
+        assert_eq!(
+            open_edges(&cut),
+            0,
+            "watertight: every edge in exactly two triangles"
+        );
         assert!(
             (kept - expected).abs() < 0.5,
             "{kept:.3} mm3 against the arithmetic {expected:.3}"

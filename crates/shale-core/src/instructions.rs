@@ -637,7 +637,12 @@ mod tests {
             filament_change: false,
             message: None,
         };
-        let reprap = apply(&sample(), std::slice::from_ref(&pause), GcodeFlavour::RepRap).unwrap();
+        let reprap = apply(
+            &sample(),
+            std::slice::from_ref(&pause),
+            GcodeFlavour::RepRap,
+        )
+        .unwrap();
         assert!(reprap.contains("M226"));
         assert!(!reprap.contains("\nM0 "));
         let klipper = apply(&sample(), &[pause], GcodeFlavour::Klipper).unwrap();

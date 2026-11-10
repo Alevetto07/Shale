@@ -125,7 +125,10 @@ impl Values {
     pub fn set_setting(&mut self, name: &str, value: &str) {
         let trimmed = value.trim();
         if let Ok(number) = trimmed.parse::<f64>() {
-            if trimmed.chars().all(|c| c.is_ascii_digit() || "+-.eE".contains(c)) {
+            if trimmed
+                .chars()
+                .all(|c| c.is_ascii_digit() || "+-.eE".contains(c))
+            {
                 self.set(name, Value::Num(number));
                 return;
             }
@@ -400,7 +403,9 @@ fn tokenize(expression: &str) -> Result<Vec<Token>, Error> {
                     }
                 }
                 let number = text.parse::<f64>().map_err(|_| {
-                    Error::message(format!("`{text}` is not a number in a machine G-code template"))
+                    Error::message(format!(
+                        "`{text}` is not a number in a machine G-code template"
+                    ))
                 })?;
                 tokens.push(Token::Number(number));
             }
@@ -476,7 +481,9 @@ fn tokenize(expression: &str) -> Result<Vec<Token>, Error> {
                     chars.next();
                     tokens.push(Token::And);
                 } else {
-                    return Err(Error::message("a machine G-code template uses a single `&`"));
+                    return Err(Error::message(
+                        "a machine G-code template uses a single `&`",
+                    ));
                 }
             }
             '|' => {
@@ -484,7 +491,9 @@ fn tokenize(expression: &str) -> Result<Vec<Token>, Error> {
                     chars.next();
                     tokens.push(Token::Or);
                 } else {
-                    return Err(Error::message("a machine G-code template uses a single `|`"));
+                    return Err(Error::message(
+                        "a machine G-code template uses a single `|`",
+                    ));
                 }
             }
             other => {
@@ -582,14 +591,13 @@ impl<'a> Parser<'a> {
     /// `filament_type[initial_no_support_extruder]`: a name that holds the
     /// index. Resolve that name first.
     fn index_of(&self, value: &Value) -> Result<usize, Error> {
-        let value = match value {
-            Value::Text(name) => self
-                .values
-                .get(name)
-                .cloned()
-                .ok_or_else(|| self.error(&format!("no value named `{name}` for a subscript")))?,
-            other => other.clone(),
-        };
+        let value =
+            match value {
+                Value::Text(name) => self.values.get(name).cloned().ok_or_else(|| {
+                    self.error(&format!("no value named `{name}` for a subscript"))
+                })?,
+                other => other.clone(),
+            };
         match value {
             Value::Num(number) => Ok(number.max(0.0) as usize),
             Value::Flag(flag) => Ok(usize::from(flag)),
@@ -720,10 +728,7 @@ mod tests {
         values.set("curr_bed_type", "Textured PEI Plate");
         values.set("print_sequence", "all");
         values.set("nozzle_diameter", 0.4);
-        values.set_list(
-            "nozzle_temperature_initial_layer",
-            vec![Value::Num(200.0)],
-        );
+        values.set_list("nozzle_temperature_initial_layer", vec![Value::Num(200.0)]);
         values.set_list("filament_type", vec![Value::Text("PLA".into())]);
         values
     }
@@ -808,7 +813,6 @@ mod tests {
         .unwrap();
         assert_eq!(neither, "");
     }
-
 
     #[test]
     fn a_subscript_can_be_a_name() {

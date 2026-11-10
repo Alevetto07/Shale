@@ -149,12 +149,42 @@ mod tests {
             triangles.push([a, b, c]);
             triangles.push([a, c, d]);
         };
-        quad(index(0, 0, 0), index(0, 1, 0), index(0, 1, 1), index(0, 0, 1));
-        quad(index(1, 0, 0), index(1, 0, 1), index(1, 1, 1), index(1, 1, 0));
-        quad(index(0, 0, 0), index(0, 0, 1), index(1, 0, 1), index(1, 0, 0));
-        quad(index(0, 1, 0), index(1, 1, 0), index(1, 1, 1), index(0, 1, 1));
-        quad(index(0, 0, 0), index(1, 0, 0), index(1, 1, 0), index(0, 1, 0));
-        quad(index(0, 0, 1), index(0, 1, 1), index(1, 1, 1), index(1, 0, 1));
+        quad(
+            index(0, 0, 0),
+            index(0, 1, 0),
+            index(0, 1, 1),
+            index(0, 0, 1),
+        );
+        quad(
+            index(1, 0, 0),
+            index(1, 0, 1),
+            index(1, 1, 1),
+            index(1, 1, 0),
+        );
+        quad(
+            index(0, 0, 0),
+            index(0, 0, 1),
+            index(1, 0, 1),
+            index(1, 0, 0),
+        );
+        quad(
+            index(0, 1, 0),
+            index(1, 1, 0),
+            index(1, 1, 1),
+            index(0, 1, 1),
+        );
+        quad(
+            index(0, 0, 0),
+            index(1, 0, 0),
+            index(1, 1, 0),
+            index(0, 1, 0),
+        );
+        quad(
+            index(0, 0, 1),
+            index(0, 1, 1),
+            index(1, 1, 1),
+            index(1, 0, 1),
+        );
         let mut mesh = TriangleMesh {
             vertices,
             triangles,
@@ -174,7 +204,10 @@ mod tests {
     fn a_box_survives_the_round_trip_exactly() {
         let mesh = cube(10.0);
         let volume = signed_volume(&mesh);
-        assert!((volume - 1000.0).abs() < 1e-3, "the fixture is a 1000 mm3 box: {volume}");
+        assert!(
+            (volume - 1000.0).abs() < 1e-3,
+            "the fixture is a 1000 mm3 box: {volume}"
+        );
         let welded = solid(&mesh).expect("a box is manifold");
         assert!((welded.volume() - 1000.0).abs() < 1e-3);
         let back = to_shale(&welded);

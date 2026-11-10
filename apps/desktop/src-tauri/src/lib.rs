@@ -17,12 +17,12 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use shale_core::{
-    compare_support, drop_to_bed, forget_recent, load_mesh_with,
-    load_named_bytes, load_recents, now_ms, overlays, place_on_bed, propose, read_project,
-    remember_recent, set_enabled, slice, Catalog, CustomInstruction, Engine, EngineBackend,
-    ImportReport, MaterialInfo, PlacedModel, PrinterInfo, ProjectData, ProjectModel, QualityInfo,
-    RecentEntry, ResourcePaths, StoredInstruction, SupportOverlay, SupportParams, SupportPlan,
-    TessellationTolerance, Toolpath, Transform, TriangleMesh, UserSettings, VariantInfo,
+    compare_support, drop_to_bed, forget_recent, load_mesh_with, load_named_bytes, load_recents,
+    now_ms, overlays, place_on_bed, propose, read_project, remember_recent, set_enabled, slice,
+    Catalog, CustomInstruction, Engine, EngineBackend, ImportReport, MaterialInfo, PlacedModel,
+    PrinterInfo, ProjectData, ProjectModel, QualityInfo, RecentEntry, ResourcePaths,
+    StoredInstruction, SupportOverlay, SupportParams, SupportPlan, TessellationTolerance, Toolpath,
+    Transform, TriangleMesh, UserSettings, VariantInfo,
 };
 mod instance;
 mod secrets;
@@ -227,7 +227,11 @@ fn app_status(state: State<AppState>) -> Result<Status, String> {
         // Not loaded and not failed: the background read is still running.
         (None, None) => "Reading the printer and material profiles…".to_string(),
     };
-    let printer_count = inner.catalog.as_ref().map(|c| c.printers().len()).unwrap_or(0);
+    let printer_count = inner
+        .catalog
+        .as_ref()
+        .map(|c| c.printers().len())
+        .unwrap_or(0);
     let engine_ok = inner.engine.available();
     Ok(Status {
         resources_ok: loaded,
@@ -346,7 +350,9 @@ fn list_materials(state: State<AppState>, printer_id: String) -> Result<Vec<Mate
     // Prefer the short generic profiles at the top of a long library; Cura
     // ships hundreds of brand filaments whose names sort before `generic_pla`.
     materials.sort_by(|a, b| {
-        let generic = a.id.starts_with("generic_").cmp(&b.id.starts_with("generic_"));
+        let generic =
+            a.id.starts_with("generic_")
+                .cmp(&b.id.starts_with("generic_"));
         generic.reverse().then_with(|| a.id.cmp(&b.id))
     });
     materials.truncate(40);
@@ -584,8 +590,14 @@ fn fill_plate(
             let (low, high) = model.mesh.bounds();
             let shift = &model.transform.translation;
             (
-                [low[0] as f64 * model.transform.scale[0] + shift[0], low[1] as f64 * model.transform.scale[1] + shift[1]],
-                [high[0] as f64 * model.transform.scale[0] + shift[0], high[1] as f64 * model.transform.scale[1] + shift[1]],
+                [
+                    low[0] as f64 * model.transform.scale[0] + shift[0],
+                    low[1] as f64 * model.transform.scale[1] + shift[1],
+                ],
+                [
+                    high[0] as f64 * model.transform.scale[0] + shift[0],
+                    high[1] as f64 * model.transform.scale[1] + shift[1],
+                ],
             )
         })
         .collect();
@@ -605,14 +617,18 @@ fn fill_plate(
             let cell_high = [x + width_mm / 2.0, y + depth_mm / 2.0];
             let here = base.translation[0];
             let there = base.translation[1];
-            let holds_the_original = (here - x).abs() < step_x / 2.0 && (there - y).abs() < step_y / 2.0;
+            let holds_the_original =
+                (here - x).abs() < step_x / 2.0 && (there - y).abs() < step_y / 2.0;
             let blocked = holds_the_original
-                || taken.iter().chain(placed.iter()).any(|(other_low, other_high)| {
-                    cell_low[0] < other_high[0] + gap / 2.0
-                        && cell_high[0] > other_low[0] - gap / 2.0
-                        && cell_low[1] < other_high[1] + gap / 2.0
-                        && cell_high[1] > other_low[1] - gap / 2.0
-                });
+                || taken
+                    .iter()
+                    .chain(placed.iter())
+                    .any(|(other_low, other_high)| {
+                        cell_low[0] < other_high[0] + gap / 2.0
+                            && cell_high[0] > other_low[0] - gap / 2.0
+                            && cell_low[1] < other_high[1] + gap / 2.0
+                            && cell_high[1] > other_low[1] - gap / 2.0
+                    });
             if !blocked {
                 let mut transform = base.clone();
                 transform.translation[0] = x;
@@ -722,8 +738,14 @@ fn add_primitive(
             let mut candidate = transform.clone();
             candidate.translation[0] = transform.translation[0] + column as f64 * step_x;
             candidate.translation[1] = transform.translation[1] - row as f64 * step_y;
-            let low = [min[0] as f64 + candidate.translation[0], min[1] as f64 + candidate.translation[1]];
-            let high = [max[0] as f64 + candidate.translation[0], max[1] as f64 + candidate.translation[1]];
+            let low = [
+                min[0] as f64 + candidate.translation[0],
+                min[1] as f64 + candidate.translation[1],
+            ];
+            let high = [
+                max[0] as f64 + candidate.translation[0],
+                max[1] as f64 + candidate.translation[1],
+            ];
             let hits = taken.iter().any(|(other_low, other_high)| {
                 low[0] < other_high[0] + gap / 2.0
                     && high[0] > other_low[0] - gap / 2.0
@@ -971,7 +993,9 @@ fn pressure_tower(
     let start_k = start_k.unwrap_or(0.0);
     let step_k = step_k.unwrap_or(0.01);
     if step_k <= 0.0 {
-        return Err("Pressure advance has to step upwards, or there is nothing to read".to_string());
+        return Err(
+            "Pressure advance has to step upwards, or there is nothing to read".to_string(),
+        );
     }
     let highest = start_k + step_k * (bands - 1) as f64;
     if start_k < 0.0 || highest > 1.0 {
@@ -1003,7 +1027,9 @@ fn calibrate_slice(
         return Err("There is no calibration plan to apply".to_string());
     }
     let step = match kind.as_deref() {
-        None | Some("temperature") | Some("temperature-tower") => shale_core::calibrate::Step::Temperature,
+        None | Some("temperature") | Some("temperature-tower") => {
+            shale_core::calibrate::Step::Temperature
+        }
         Some("flow") | Some("flow-coupon") => shale_core::calibrate::Step::Flow,
         Some("pressure") | Some("pressure-tower") => shale_core::calibrate::Step::PressureAdvance,
         Some(other) => return Err(format!("There is no calibration called {other}")),
@@ -1015,7 +1041,8 @@ fn calibrate_slice(
             .clone()
             .ok_or_else(|| "Slice the plate before stepping it".to_string())?
     };
-    let gcode = fs::read_to_string(&path).map_err(|err| format!("could not read the slice: {err}"))?;
+    let gcode =
+        fs::read_to_string(&path).map_err(|err| format!("could not read the slice: {err}"))?;
     let plan: Vec<shale_core::calibrate::Band> = bands
         .iter()
         .map(|band| shale_core::calibrate::Band {
@@ -1028,7 +1055,8 @@ fn calibrate_slice(
     if injected.is_empty() {
         return Err("The slice has no layer at any band height".to_string());
     }
-    fs::write(&path, rewritten.as_bytes()).map_err(|err| format!("could not write the slice: {err}"))?;
+    fs::write(&path, rewritten.as_bytes())
+        .map_err(|err| format!("could not write the slice: {err}"))?;
     Ok(CalibrationApplied {
         path: path.to_string_lossy().to_string(),
         bytes: rewritten.len(),
@@ -1206,7 +1234,11 @@ fn mesh_health(state: State<AppState>, id: u32) -> Result<MeshHealth, String> {
 /// vertex. `None` means the click was in the middle of a face and is better
 /// left where the ray put it.
 #[tauri::command]
-fn snap_measure(state: State<AppState>, id: u32, point: [f64; 3]) -> Result<Option<[f64; 3]>, String> {
+fn snap_measure(
+    state: State<AppState>,
+    id: u32,
+    point: [f64; 3],
+) -> Result<Option<[f64; 3]>, String> {
     let inner = lock(&state)?;
     let model = inner
         .models
@@ -1473,7 +1505,8 @@ fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Boolea
     }
     // Both sides are baked into world space: a boolean of two parts that were
     // merely dragged is a boolean of where they are, not of where they were.
-    let mut solid = shale_core::mesh::bake(&inner.models[index].mesh, &inner.models[index].transform);
+    let mut solid =
+        shale_core::mesh::bake(&inner.models[index].mesh, &inner.models[index].transform);
     // Only parts that actually touch the chosen one are cutlery. A plate can
     // hold forty parts, and eating the thirty-nine that are nowhere near the
     // one being cut is not a boolean, it is a mistake.
@@ -1487,7 +1520,8 @@ fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Boolea
         }
         let world = shale_core::mesh::bake(&model.mesh, &model.transform);
         let (other_low, other_high) = shale_core::mesh::bounds(&world);
-        let apart = (0..3).any(|axis| other_low[axis] >= high[axis] || other_high[axis] <= low[axis]);
+        let apart =
+            (0..3).any(|axis| other_low[axis] >= high[axis] || other_high[axis] <= low[axis]);
         if !apart {
             others.push((model.id, world));
         }
@@ -1503,16 +1537,15 @@ fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Boolea
         };
         // `boolean_within` refuses when the library will not take the mesh
         // and the fallback would take minutes; the sentence says which.
-        let next = with_big_stack(|| {
-            shale_core::csg::boolean_within(&solid, other, op, BOOLEAN_CAP)
-        })?
-        .ok_or_else(|| {
-            boolean_refusal(
-                solid.triangles.len().max(other.triangles.len()),
-                "Cut, or boolean fewer parts at a time.",
-            )
-        })?
-        .0;
+        let next =
+            with_big_stack(|| shale_core::csg::boolean_within(&solid, other, op, BOOLEAN_CAP))?
+                .ok_or_else(|| {
+                    boolean_refusal(
+                        solid.triangles.len().max(other.triangles.len()),
+                        "Cut, or boolean fewer parts at a time.",
+                    )
+                })?
+                .0;
         // A boolean that empties the part is not a boolean: say so rather than
         // leaving a plate with nothing on it.
         if next.triangles.is_empty() || shale_core::cut::volume(&next).abs() < 0.01 {
@@ -2254,13 +2287,13 @@ fn profile_settings(
     let catalogue = catalog(&mut inner).map_err(|error| error.to_string())?;
     let resolved = catalogue
         .resolve(&shale_core::ResolveRequest {
-        printer_id,
-        variant_name,
-        quality_type,
-        material_id,
-        intent_category: None,
-        settings: UserSettings::default(),
-    })
+            printer_id,
+            variant_name,
+            quality_type,
+            material_id,
+            intent_category: None,
+            settings: UserSettings::default(),
+        })
         .map_err(|error| error.to_string())?;
     Ok(resolved.global.into_iter().collect())
 }
@@ -2464,7 +2497,11 @@ async fn slice_model(
             .or(facts.filament_metres),
         warning_count: outcome.resolved.warning_count,
         gcode_path: outcome.gcode_path.display().to_string(),
-        model_ids: inner.models.iter().map(|model| u64::from(model.id)).collect(),
+        model_ids: inner
+            .models
+            .iter()
+            .map(|model| u64::from(model.id))
+            .collect(),
         machine_gcode: outcome.machine_gcode,
     };
     inner.gcode_path = Some(outcome.gcode_path);
@@ -2546,7 +2583,10 @@ struct PrinterHost {
 
 impl PrinterHost {
     fn with<T>(&self, f: impl FnOnce(&shale_host::Link) -> Result<T, String>) -> Result<T, String> {
-        let slot = self.link.lock().map_err(|_| "the printer lock is poisoned".to_string())?;
+        let slot = self
+            .link
+            .lock()
+            .map_err(|_| "the printer lock is poisoned".to_string())?;
         match slot.as_ref() {
             Some(link) => f(link),
             None => Err("Connect a printer first.".to_string()),
@@ -2573,7 +2613,10 @@ fn host_connect(
     state: State<AppState>,
     host: State<PrinterHost>,
 ) -> Result<shale_host::Status, String> {
-    if config.host.trim().is_empty() || config.serial.trim().is_empty() || config.code.trim().is_empty() {
+    if config.host.trim().is_empty()
+        || config.serial.trim().is_empty()
+        || config.code.trim().is_empty()
+    {
         return Err("A host, a serial and the printer's access code are all needed.".to_string());
     }
     let mut slot = host
@@ -2604,10 +2647,8 @@ fn host_connect(
         .pin_key
         .lock()
         .map_err(|_| "the pin lock is poisoned".to_string())? = pin_key;
-    host.pin_stored.store(
-        stored.is_some(),
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    host.pin_stored
+        .store(stored.is_some(), std::sync::atomic::Ordering::Relaxed);
     // Uploads read the same config back out of the plate state.
     lock(&state)?.host_config = Some(config);
     Ok(status)
@@ -2662,7 +2703,10 @@ fn host_forget(link: State<PrinterHost>, serial: String, address: String) -> Res
 #[tauri::command]
 fn slice_tools(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let path = {
-        let inner = state.0.lock().map_err(|_| "the plate lock is poisoned".to_string())?;
+        let inner = state
+            .0
+            .lock()
+            .map_err(|_| "the plate lock is poisoned".to_string())?;
         inner.gcode_path.clone()
     };
     let Some(path) = path else {
@@ -2672,7 +2716,9 @@ fn slice_tools(state: State<'_, AppState>) -> Result<serde_json::Value, String> 
     let mut tools: Vec<i64> = Vec::new();
     let mut changes = 0usize;
     for line in text.lines() {
-        let Some(rest) = line.strip_prefix('T') else { continue };
+        let Some(rest) = line.strip_prefix('T') else {
+            continue;
+        };
         let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
         if digits.is_empty() {
             continue;
@@ -2792,13 +2838,16 @@ fn host_pin(host: State<PrinterHost>) -> Result<Option<String>, String> {
 // anywhere in it, so a Cura file with the string in a comment was accepted.
 use shale_host::starts_with_machine_sequence;
 
-
 /// The pin this printer is held to, if one has been recorded. Shared by the
 /// status link and the upload so both are guarded by the same value.
 fn stored_pin(serial: &str, host: &str) -> Option<shale_host::Pin> {
     let key = format!(
         "pin/{}",
-        if serial.trim().is_empty() { host } else { serial }
+        if serial.trim().is_empty() {
+            host
+        } else {
+            serial
+        }
     );
     let stored = secrets::get(&key).ok().flatten()?;
     shale_host::parse_hex(&stored)
@@ -2843,13 +2892,19 @@ async fn send_file(
         tauri::async_runtime::spawn_blocking(move || {
             shale_host::upload_with(&shale_host::Trust::new(pin), &config, &path, &name)
         })
-            .await
-            .map_err(|err| err.to_string())?
-            .map_err(|err| err.to_string())?
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(|err| err.to_string())?
     };
     let remote = format!("/{}/{}", config.remote_dir.trim_matches('/'), name);
-    let sequence = host.sequence.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-    host.with(|link| link.send(shale_host::gcode_file_command(sequence, &remote, &bed_type)).map_err(|err| err.to_string()))?;
+    let sequence = host
+        .sequence
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        + 1;
+    host.with(|link| {
+        link.send(shale_host::gcode_file_command(sequence, &remote, &bed_type))
+            .map_err(|err| err.to_string())
+    })?;
     Ok(serde_json::json!({ "remote": remote, "bytes": upload }))
 }
 
@@ -2992,7 +3047,9 @@ async fn queue_start_next(
             // the run stops. An error is not a reason to try the next one.
             let mut inner = lock(&state)?;
             inner.queue.insert(0, job);
-            inner.queue_run.stop("queue stopped — the host refused the job");
+            inner
+                .queue_run
+                .stop("queue stopped — the host refused the job");
             Err(err)
         }
     }
@@ -3107,8 +3164,14 @@ fn host_control(host: State<PrinterHost>, command: String) -> Result<(), String>
     if !allowed.contains(&command.as_str()) {
         return Err(format!("{command} is not a print control"));
     }
-    let sequence = host.sequence.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-    host.with(|link| link.send(shale_host::simple_command(sequence, &command)).map_err(|err| err.to_string()))
+    let sequence = host
+        .sequence
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        + 1;
+    host.with(|link| {
+        link.send(shale_host::simple_command(sequence, &command))
+            .map_err(|err| err.to_string())
+    })
 }
 
 #[tauri::command]
@@ -3135,7 +3198,11 @@ fn existing_slice(state: State<AppState>) -> Result<Option<SliceSummary>, String
         filament_metres: facts.filament_metres,
         warning_count: 0,
         gcode_path: path.display().to_string(),
-        model_ids: inner.models.iter().map(|model| u64::from(model.id)).collect(),
+        model_ids: inner
+            .models
+            .iter()
+            .map(|model| u64::from(model.id))
+            .collect(),
         machine_gcode: starts_with_machine_sequence(path),
     }))
 }
@@ -3177,7 +3244,11 @@ fn set_model_settings(
 }
 
 #[tauri::command]
-fn set_model_slot(state: State<AppState>, id: u32, slot: Option<usize>) -> Result<ModelView, String> {
+fn set_model_slot(
+    state: State<AppState>,
+    id: u32,
+    slot: Option<usize>,
+) -> Result<ModelView, String> {
     let mut inner = lock(&state)?;
     let index = inner
         .models
@@ -3216,7 +3287,12 @@ fn export_plate(
         .models
         .iter()
         .filter(|model| model.visible)
-        .map(|model| (model.name.as_str(), shale_core::mesh::bake(&model.mesh, &model.transform)))
+        .map(|model| {
+            (
+                model.name.as_str(),
+                shale_core::mesh::bake(&model.mesh, &model.transform),
+            )
+        })
         .collect();
     if visible.is_empty() {
         return Err("Nothing on the plate to export".into());
@@ -3233,10 +3309,8 @@ fn export_plate(
                 .map_err(|err| err.to_string())?;
         }
         "3mf" => {
-            let parts: Vec<(&str, &TriangleMesh)> = visible
-                .iter()
-                .map(|(name, mesh)| (*name, mesh))
-                .collect();
+            let parts: Vec<(&str, &TriangleMesh)> =
+                visible.iter().map(|(name, mesh)| (*name, mesh)).collect();
             let bytes = shale_core::exchange::to_3mf(&parts)?;
             fs::write(&destination, bytes).map_err(|err| err.to_string())?;
         }
@@ -3473,7 +3547,12 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn remember(app: &AppHandle, path: &str, name: &str, printer: &str) -> Result<Vec<RecentEntry>, String> {
+fn remember(
+    app: &AppHandle,
+    path: &str,
+    name: &str,
+    printer: &str,
+) -> Result<Vec<RecentEntry>, String> {
     let dir = config_dir(app)?;
     remember_recent(
         &dir,
@@ -3710,16 +3789,28 @@ fn clear_job(state: State<AppState>) -> Result<(), String> {
 fn scratch_path(name: String) -> String {
     let mut safe: String = name
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
     while safe.contains("--") {
         safe = safe.replace("--", "-");
     }
     let safe = safe.trim_matches('-').to_string();
-    let stem = if safe.is_empty() { "untitled".to_string() } else { safe };
+    let stem = if safe.is_empty() {
+        "untitled".to_string()
+    } else {
+        safe
+    };
     let dir = std::env::temp_dir().join("shale").join("tabs");
     let _ = std::fs::create_dir_all(&dir);
-    dir.join(format!("{stem}.shale")).to_string_lossy().into_owned()
+    dir.join(format!("{stem}.shale"))
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[tauri::command]
@@ -3813,13 +3904,25 @@ fn save_project(
 }
 
 #[tauri::command]
-async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<OpenedJob, String> {
+async fn open_project(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<OpenedJob, String> {
     let file = PathBuf::from(&path);
     let loaded = tauri::async_runtime::spawn_blocking(move || {
         let project = read_project(&file).map_err(|err| err.to_string())?;
         let tolerance = TessellationTolerance::new(
-            if project.data.chord_mm > 0.0 { project.data.chord_mm } else { 0.1 },
-            if project.data.turn_deg > 0.0 { project.data.turn_deg } else { 15.0 },
+            if project.data.chord_mm > 0.0 {
+                project.data.chord_mm
+            } else {
+                0.1
+            },
+            if project.data.turn_deg > 0.0 {
+                project.data.turn_deg
+            } else {
+                15.0
+            },
         );
         let mut built = Vec::new();
         for model in &project.data.models {
@@ -3889,7 +3992,14 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
                 },
             );
         }
-        let view = view_of(id, &name, &transform, &imported.report, &settings, slot.as_ref());
+        let view = view_of(
+            id,
+            &name,
+            &transform,
+            &imported.report,
+            &settings,
+            slot.as_ref(),
+        );
         ids.push(id);
         let model = LoadedModel {
             id,
@@ -3916,7 +4026,12 @@ async fn open_project(app: AppHandle, state: State<'_, AppState>, path: String) 
     }
     if let Some(index) = project.data.support_model {
         if let Some(&id) = ids.get(index) {
-            let plate = project.data.models.get(index).map(|model| model.plate).unwrap_or(0);
+            let plate = project
+                .data
+                .models
+                .get(index)
+                .map(|model| model.plate)
+                .unwrap_or(0);
             if plate == 0 {
                 inner.support_model_id = Some(id);
                 inner.support = project.data.support.clone();
@@ -4036,7 +4151,12 @@ pub fn run() {
         match rx.recv() {
             Ok(Ok(catalog)) => (Some(catalog), None, None, true),
             Ok(Err(err)) => (None, Some(err), None, false),
-            Err(_) => (None, Some("the profile library reader stopped".into()), None, false),
+            Err(_) => (
+                None,
+                Some("the profile library reader stopped".into()),
+                None,
+                false,
+            ),
         }
     } else {
         (None, None, Some(rx), false)
@@ -4163,7 +4283,7 @@ pub fn run() {
             snap_measure,
             measure_span,
             cut_model,
-        boolean_model,
+            boolean_model,
             calibration_tower,
             flow_coupon,
             pressure_tower,
@@ -4225,8 +4345,7 @@ pub fn run() {
             rename_plate,
             list_recents,
             forget_recent_project
-        ])
-        ;
+        ]);
 
     // `run` would panic with a bare HRESULT when the window cannot be made, and
     // by then there is no window to put the sentence in. `build` returns the
@@ -4300,8 +4419,14 @@ mod tests {
     #[test]
     fn a_boolean_refusal_says_the_number_the_reason_and_the_way_round() {
         let refused = boolean_refusal(325_000, "Cut, or boolean fewer parts at a time.");
-        assert!(refused.contains("325000"), "the count the app measured: {refused}");
-        assert!(refused.contains(&BOOLEAN_CAP.to_string()), "the cap: {refused}");
+        assert!(
+            refused.contains("325000"),
+            "the count the app measured: {refused}"
+        );
+        assert!(
+            refused.contains(&BOOLEAN_CAP.to_string()),
+            "the cap: {refused}"
+        );
         assert!(
             refused.contains("more than Shale will attempt"),
             "the sentence says why: {refused}"
@@ -4314,7 +4439,10 @@ mod tests {
             !refused.to_lowercase().contains("memory"),
             "the cap is not a memory limit and must not claim to be: {refused}"
         );
-        assert!(refused.contains("Cut, or boolean fewer parts"), "the way round: {refused}");
+        assert!(
+            refused.contains("Cut, or boolean fewer parts"),
+            "the way round: {refused}"
+        );
     }
 
     fn temp(name: &str) -> std::path::PathBuf {

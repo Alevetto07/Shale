@@ -154,7 +154,10 @@ mod tests {
         let key = key();
         let secret = "not-a-real-access-code";
         set(&key, secret).expect("the vault took the write");
-        assert_eq!(get(&key).expect("the vault answered"), Some(secret.to_string()));
+        assert_eq!(
+            get(&key).expect("the vault answered"),
+            Some(secret.to_string())
+        );
         clear(&key).expect("the vault took the delete");
         assert_eq!(
             get(&key).expect("the vault answered after the delete"),

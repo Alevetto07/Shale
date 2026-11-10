@@ -246,8 +246,12 @@ impl Catalog {
             eprintln!(
                 "RESOLVE material={:?} print={:?} bed={:?}",
                 material_id,
-                global.get("material_print_temperature").map(|s| format!("{s:?}")),
-                global.get("material_bed_temperature").map(|s| format!("{s:?}"))
+                global
+                    .get("material_print_temperature")
+                    .map(|s| format!("{s:?}")),
+                global
+                    .get("material_bed_temperature")
+                    .map(|s| format!("{s:?}"))
             );
         }
 
@@ -578,7 +582,11 @@ fn select_material_id(catalog: &Catalog, wanted: Option<&str>, diameter: f64) ->
     // an exact id, its nearest-diameter tie-break keeps the *first* material it
     // meets, which is a 1.75 mm PLA — so every material used to slice as PLA,
     // whatever the sheet said.
-    if catalog.materials.iter().any(|material| material.id == wanted) {
+    if catalog
+        .materials
+        .iter()
+        .any(|material| material.id == wanted)
+    {
         return Some(wanted.to_string());
     }
     let mut best: Option<(&crate::material::Material, f64)> = None;
@@ -641,10 +649,22 @@ fn apply_material(
     // "print temperature" under a key nothing reads, and every material slices
     // at the definition's 200 C whatever the sheet says.
     for (from, to) in [
-        ("default_material_print_temperature", "material_print_temperature"),
-        ("default_material_print_temperature", "material_print_temperature_layer_0"),
-        ("default_material_bed_temperature", "material_bed_temperature"),
-        ("default_material_bed_temperature", "material_bed_temperature_layer_0"),
+        (
+            "default_material_print_temperature",
+            "material_print_temperature",
+        ),
+        (
+            "default_material_print_temperature",
+            "material_print_temperature_layer_0",
+        ),
+        (
+            "default_material_bed_temperature",
+            "material_bed_temperature",
+        ),
+        (
+            "default_material_bed_temperature",
+            "material_bed_temperature_layer_0",
+        ),
     ] {
         if let Some(value) = values.get(from).copied() {
             values.entry(to.to_string()).or_insert(value);
@@ -1390,16 +1410,17 @@ mod golden {
                 }
                 checked += 1;
                 if item.get("match").and_then(|value| value.as_bool()) != Some(true)
-                    && mismatches.len() < 25 {
-                        mismatches.push(format!(
-                            "{printer} {}: shale {:?} cura {:?}",
-                            item.get("key")
-                                .and_then(|value| value.as_str())
-                                .unwrap_or("?"),
-                            item.get("shale"),
-                            item.get("cura")
-                        ));
-                    }
+                    && mismatches.len() < 25
+                {
+                    mismatches.push(format!(
+                        "{printer} {}: shale {:?} cura {:?}",
+                        item.get("key")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("?"),
+                        item.get("shale"),
+                        item.get("cura")
+                    ));
+                }
             }
         }
         let allowed = mismatches.len();

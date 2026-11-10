@@ -56,7 +56,11 @@ fn a_boolean_part_slices_into_gcode_the_host_gate_accepts() {
     );
     let (part, answered) = boolean(&plate, &bore, Op::Difference);
     assert_eq!(answered, Engine::Manifold, "the library should answer this");
-    assert_eq!(open_edges_topological(&part), 0, "watertight before slicing");
+    assert_eq!(
+        open_edges_topological(&part),
+        0,
+        "watertight before slicing"
+    );
 
     let catalog = Catalog::open(ResourcePaths::discover().expect("resources")).expect("catalog");
     let engine = CliEngine::from_env();
@@ -120,7 +124,10 @@ fn a_boolean_part_slices_into_gcode_the_host_gate_accepts() {
         );
     }
 
-    assert!(outcome.machine_gcode, "the A1's own start and end were used");
+    assert!(
+        outcome.machine_gcode,
+        "the A1's own start and end were used"
+    );
 
     // The header's bounds are Shale's own baked scene, and they say where the
     // part actually sat. A part handed in at the origin lands at -133..-123 —
@@ -187,7 +194,10 @@ fn a_thirty_thousand_triangle_part_also_slices() {
     }
 
     let part = subdivided_box(10.0, 52);
-    assert!(part.triangles.len() > 30_000, "the case the brief asked for");
+    assert!(
+        part.triangles.len() > 30_000,
+        "the case the brief asked for"
+    );
     let bore = mesh::bake(
         &primitives::cylinder(2.0, 14.0),
         &Transform {
@@ -196,7 +206,11 @@ fn a_thirty_thousand_triangle_part_also_slices() {
         },
     );
     let (cut, answered) = boolean(&part, &bore, Op::Difference);
-    assert_eq!(answered, Engine::Manifold, "the library is the default path");
+    assert_eq!(
+        answered,
+        Engine::Manifold,
+        "the library is the default path"
+    );
     assert_eq!(open_edges_topological(&cut), 0, "watertight before slicing");
 
     let catalog = Catalog::open(ResourcePaths::discover().expect("resources")).expect("catalog");

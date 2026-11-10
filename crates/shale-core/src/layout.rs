@@ -98,6 +98,9 @@ mod tests {
         let slots = shelves(&sizes, 220.0, 220.0, 4.0);
         let rows: Vec<f64> = slots.iter().map(|slot| slot[1]).collect();
         let first_row = rows[0];
-        assert!(rows.iter().any(|y| (*y - first_row).abs() > 1.0), "{rows:?}");
+        assert!(
+            rows.iter().any(|y| (*y - first_row).abs() > 1.0),
+            "{rows:?}"
+        );
     }
 }

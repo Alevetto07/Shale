@@ -86,11 +86,7 @@ fn normal(mesh: &TriangleMesh, index: usize) -> [f64; 3] {
     if length <= f64::EPSILON {
         return [0.0, 0.0, 0.0];
     }
-    [
-        cross[0] / length,
-        cross[1] / length,
-        cross[2] / length,
-    ]
+    [cross[0] / length, cross[1] / length, cross[2] / length]
 }
 
 fn triangle_points(mesh: &TriangleMesh, index: usize) -> [[f32; 3]; 3] {
@@ -217,7 +213,12 @@ pub fn patches(mesh: &TriangleMesh, angle_deg: f64, reach_mm: f64) -> Vec<Patch>
     let mut buckets: std::collections::BTreeMap<(i32, i32), Vec<usize>> =
         std::collections::BTreeMap::new();
     let cell = reach;
-    let key = |point: &[f64; 3]| ((point[0] / cell).floor() as i32, (point[1] / cell).floor() as i32);
+    let key = |point: &[f64; 3]| {
+        (
+            (point[0] / cell).floor() as i32,
+            (point[1] / cell).floor() as i32,
+        )
+    };
     for (index, centre) in centres.iter().enumerate() {
         buckets.entry(key(centre)).or_default().push(index);
     }
@@ -289,7 +290,8 @@ pub fn patches(mesh: &TriangleMesh, angle_deg: f64, reach_mm: f64) -> Vec<Patch>
         }
     }
 
-    let mut groups: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
+    let mut groups: std::collections::BTreeMap<usize, Vec<usize>> =
+        std::collections::BTreeMap::new();
     for index in 0..faces.len() {
         let root = root(&mut parent, index);
         groups.entry(root).or_default().push(index);
@@ -393,8 +395,11 @@ pub fn prism_mesh(mesh: &TriangleMesh, triangles: &[usize], floor_mm: f64) -> Tr
         let offset = out.vertices.len() as u32;
         out.vertices.extend(prism.vertices);
         for triangle in prism.triangles {
-            out.triangles
-                .push([triangle[0] + offset, triangle[1] + offset, triangle[2] + offset]);
+            out.triangles.push([
+                triangle[0] + offset,
+                triangle[1] + offset,
+                triangle[2] + offset,
+            ]);
         }
     }
     out
@@ -405,17 +410,16 @@ mod tests {
     use super::*;
 
     fn mesh(vertices: Vec<[f32; 3]>, triangles: Vec<[u32; 3]>) -> TriangleMesh {
-        TriangleMesh { vertices, triangles }
+        TriangleMesh {
+            vertices,
+            triangles,
+        }
     }
 
     /// One downward-facing triangle, ten millimetres up.
     fn lid() -> TriangleMesh {
         mesh(
-            vec![
-                [0.0, 0.0, 10.0],
-                [20.0, 0.0, 10.0],
-                [0.0, 10.0, 10.0],
-            ],
+            vec![[0.0, 0.0, 10.0], [20.0, 0.0, 10.0], [0.0, 10.0, 10.0]],
             vec![[2, 1, 0]],
         )
     }
@@ -426,19 +430,12 @@ mod tests {
         assert_eq!(paintable(&flat, PAINT_ANGLE_DEG), vec![0]);
 
         // The same triangle wound the other way faces up: not an underside.
-        let up = mesh(
-            flat.vertices.clone(),
-            vec![[0, 1, 2]],
-        );
+        let up = mesh(flat.vertices.clone(), vec![[0, 1, 2]]);
         assert!(paintable(&up, PAINT_ANGLE_DEG).is_empty());
 
         // A wall is vertical, which is 90 degrees from vertical: its own support.
         let wall = mesh(
-            vec![
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 0.0, 10.0],
-            ],
+            vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 10.0]],
             vec![[2, 1, 0]],
         );
         assert!(paintable(&wall, PAINT_ANGLE_DEG).is_empty());
@@ -553,7 +550,6 @@ mod tests {
         assert!(patches(&mesh, PAINT_ANGLE_DEG, PAINT_REACH_MM).is_empty());
     }
 
-
     #[test]
     fn a_brush_covers_a_disc_of_faces_around_the_point() {
         // A ten millimetre square, two triangles per side of a plane grid: the
@@ -574,11 +570,20 @@ mod tests {
                 triangles.push([base, base + 2, base + 3]);
             }
         }
-        let mesh = TriangleMesh { vertices, triangles };
+        let mesh = TriangleMesh {
+            vertices,
+            triangles,
+        };
         let reach = 2.5;
         let stroke = brush_stroke(&mesh, [5.0, 5.0, 0.0], reach);
-        assert!(!stroke.is_empty(), "a brush in the middle of a plane must paint");
-        assert!(stroke.len() < mesh.triangles.len(), "a brush must not paint the world");
+        assert!(
+            !stroke.is_empty(),
+            "a brush in the middle of a plane must paint"
+        );
+        assert!(
+            stroke.len() < mesh.triangles.len(),
+            "a brush must not paint the world"
+        );
         // Two 1x1 mm triangles per square millimetre of the sheet, so the count
         // is twice the area of the disc to within the cells on its rim.
         let area = std::f64::consts::PI * reach * reach;
@@ -591,5 +596,4 @@ mod tests {
         // And a brush pressed outside the part paints nothing at all.
         assert!(brush_stroke(&mesh, [40.0, 40.0, 0.0], reach).is_empty());
     }
-
 }

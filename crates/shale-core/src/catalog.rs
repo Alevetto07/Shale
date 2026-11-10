@@ -317,7 +317,9 @@ impl Catalog {
         let mut external = std::collections::HashSet::new();
         for definition in library.definitions {
             external.insert(definition.id.clone());
-            definitions.entry(definition.id.clone()).or_insert(definition);
+            definitions
+                .entry(definition.id.clone())
+                .or_insert(definition);
         }
         // Bambu's extruder profiles are self-contained, but CuraEngine asks for
         // base extruder values by name (nozzle offsets, cooling fan number, ...)

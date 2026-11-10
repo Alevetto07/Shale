@@ -474,7 +474,8 @@ mod tests {
     fn panic_payload_text_is_extracted() {
         let text = std::panic::catch_unwind(|| panic!("radius must be larger than 0")).unwrap_err();
         assert_eq!(panic_text(text.as_ref()), "radius must be larger than 0");
-        let owned = std::panic::catch_unwind(|| std::panic::panic_any(String::from("boom"))).unwrap_err();
+        let owned =
+            std::panic::catch_unwind(|| std::panic::panic_any(String::from("boom"))).unwrap_err();
         assert_eq!(panic_text(owned.as_ref()), "boom");
     }
 

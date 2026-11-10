@@ -297,7 +297,10 @@ impl Wire {
         // with a readable error instead of on the first packet. A pin refusal
         // arrives as a TLS alert carrying the verifier's sentence; it is pulled
         // out here so the caller can tell it apart from a busy port.
-        stream.conn.complete_io(&mut stream.sock).map_err(handshake_error)?;
+        stream
+            .conn
+            .complete_io(&mut stream.sock)
+            .map_err(handshake_error)?;
         Ok(Self {
             stream,
             buffered: Vec::new(),
@@ -323,7 +326,9 @@ impl Wire {
             Err(err)
                 if matches!(
                     err.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
                 ) =>
             {
                 Ok(false)
@@ -708,7 +713,10 @@ pub fn upload_with(
         .map_err(|_| HostError::Bad("the printer host is not a server name".into()))?;
     let conn = ClientConnection::new(Arc::clone(&trust.config), name_tls)?;
     let mut secure = StreamOwned::new(conn, data);
-    secure.conn.complete_io(&mut secure.sock).map_err(handshake_error)?;
+    secure
+        .conn
+        .complete_io(&mut secure.sock)
+        .map_err(handshake_error)?;
 
     secure.write_all(&bytes)?;
     secure.flush()?;
@@ -778,7 +786,6 @@ fn pasv(wire: &mut Wire) -> Result<std::net::SocketAddr> {
     addr.parse()
         .map_err(|_| HostError::Bad(format!("bad address {addr}")))
 }
-
 
 // --------------------------------------------------------------- the file gate
 
@@ -859,7 +866,11 @@ mod gate_tests {
         );
 
         let cura = dir.join("cura.gcode");
-        std::fs::write(&cura, ";FLAVOR:Marlin\n;TIME:1234\nM140 S60\nM104 S210\nG28 ;Start GCode\n").unwrap();
+        std::fs::write(
+            &cura,
+            ";FLAVOR:Marlin\n;TIME:1234\nM140 S60\nM104 S210\nG28 ;Start GCode\n",
+        )
+        .unwrap();
         assert!(!starts_with_machine_sequence(&cura));
 
         assert!(!starts_with_machine_sequence(&dir.join("missing.gcode")));
@@ -978,7 +989,9 @@ mod tests {
     #[test]
     fn a_passive_address_is_parsed() {
         assert_eq!(
-            "192.168.3.40:59021".parse::<std::net::SocketAddr>().unwrap(),
+            "192.168.3.40:59021"
+                .parse::<std::net::SocketAddr>()
+                .unwrap(),
             "192.168.3.40:59021".parse().unwrap()
         );
     }

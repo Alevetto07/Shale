@@ -247,9 +247,8 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
     let file = File::open(path)?;
     let mut zip = ZipArchive::new(file)
         .map_err(|err| Error::message(format!("Could not read the project archive: {err}")))?;
-    let json = read_zip(&mut zip, "project.json").map_err(|_| {
-        Error::message("The project archive has no project.json.")
-    })?;
+    let json = read_zip(&mut zip, "project.json")
+        .map_err(|_| Error::message("The project archive has no project.json."))?;
     let document: Document = serde_json::from_slice(&json).map_err(|source| Error::Json {
         path: path.display().to_string(),
         source,
@@ -459,7 +458,8 @@ mod tests {
             vertices: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 8.0, 4.0]],
             triangles: vec![[0, 1, 2]],
         };
-        let path = std::env::temp_dir().join(format!("shale-project-tri-{}.stl", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("shale-project-tri-{}.stl", std::process::id()));
         write_binary_stl(&path, &mesh).unwrap();
         fs::read(&path).unwrap()
     }
@@ -578,7 +578,10 @@ mod tests {
         assert_eq!(data.models[0].bytes, stl);
         assert_eq!(data.models[0].transform, saved.models[0].transform);
         // Two plates, named, with each part on the one it was put on.
-        assert_eq!(data.plate_names, vec!["front".to_string(), "back".to_string()]);
+        assert_eq!(
+            data.plate_names,
+            vec!["front".to_string(), "back".to_string()]
+        );
         assert_eq!(data.models[0].plate, 0);
         assert_eq!(data.models[1].plate, 1);
         assert_eq!(data.models[1].name, "block-20.step");
@@ -663,7 +666,9 @@ mod tests {
         assert_eq!(listed[1].printer, "Creality Ender-3");
         fs::remove_file(&first).unwrap();
         let listed = load_recents(&dir).unwrap();
-        assert!(listed.iter().any(|entry| entry.name == "one" && entry.missing));
+        assert!(listed
+            .iter()
+            .any(|entry| entry.name == "one" && entry.missing));
         let listed = forget_recent(&dir, &first.display().to_string()).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].name, "two");

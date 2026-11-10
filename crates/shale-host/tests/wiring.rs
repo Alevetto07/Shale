@@ -80,7 +80,11 @@ fn an_a1_file_uploads_and_the_start_command_arrives() {
     // it, so a failed upload cannot leave a print command pointing at nothing.
     let link = Link::spawn(config.clone());
     let connected = printer.wait_for(WAIT, || link.status().connected.then_some(()));
-    assert!(connected.is_some(), "the link never connected: {:?}", link.status());
+    assert!(
+        connected.is_some(),
+        "the link never connected: {:?}",
+        link.status()
+    );
 
     let path = a1_file(&dir);
     let sent = shale_host::upload(&config, &path, "plate.gcode").expect("the upload");
@@ -95,8 +99,12 @@ fn an_a1_file_uploads_and_the_start_command_arrives() {
     assert!(String::from_utf8_lossy(&bytes).starts_with(";===== machine: A1"));
     assert_eq!(bytes.len(), sent, "the whole file arrived");
 
-    link.send(gcode_file_command(1, "/cache/plate.gcode", "textured_plate"))
-        .expect("a command to the machine");
+    link.send(gcode_file_command(
+        1,
+        "/cache/plate.gcode",
+        "textured_plate",
+    ))
+    .expect("a command to the machine");
     let command = printer.wait_for(WAIT, || {
         printer
             .commands()
@@ -166,7 +174,10 @@ fn a_finished_print_parks_the_queue_until_the_plate_is_cleared() {
         update.note.unwrap_or_default().contains("clear the plate"),
         "the operator is told what to do"
     );
-    assert!(!run.may_start(), "nothing may go out with a part still on the bed");
+    assert!(
+        !run.may_start(),
+        "nothing may go out with a part still on the bed"
+    );
 
     // Only the person in front of the machine can say the bed is clear.
     assert_eq!(run.plate_cleared().state, RunState::Armed);
@@ -177,11 +188,9 @@ fn a_finished_print_parks_the_queue_until_the_plate_is_cleared() {
 fn a_failed_report_stops_the_run() {
     let printer = FakePrinter::start(CERT_A, KEY_A);
     let link = Link::spawn(printer.config());
-    assert!(
-        printer
-            .wait_for(WAIT, || link.status().connected.then_some(()))
-            .is_some()
-    );
+    assert!(printer
+        .wait_for(WAIT, || link.status().connected.then_some(()))
+        .is_some());
 
     let mut run = QueueRun::new();
     run.arm();
@@ -230,12 +239,13 @@ fn a_sliced_file_reaches_the_fake_printer() {
         shale_host::starts_with_machine_sequence(&path),
         "the gate refuses the slicer's own output"
     );
-    assert!(
-        !text.contains('{'),
-        "a placeholder survived the slice"
-    );
+    assert!(!text.contains('{'), "a placeholder survived the slice");
     let head: String = text.chars().take(8_192).collect();
-    for line in [";===== machine: A1", "M1002 gcode_claim_action : 2", "M1002 set_filament_type:PLA"] {
+    for line in [
+        ";===== machine: A1",
+        "M1002 gcode_claim_action : 2",
+        "M1002 set_filament_type:PLA",
+    ] {
         assert!(head.contains(line), "the A1's own start is missing {line}");
     }
     let skip = text.chars().count().saturating_sub(4_096);

@@ -120,10 +120,22 @@ pub fn flow_coupon(
         let z0 = i as f64 * band_height;
         let z1 = z0 + band_height;
         for (min, max) in [
-            ([center[0] - side, center[1] - side, z0], [center[0] + side, center[1] - side + wall, z1]),
-            ([center[0] - side, center[1] + side - wall, z0], [center[0] + side, center[1] + side, z1]),
-            ([center[0] - side, center[1] - reach, z0], [center[0] - side + wall, center[1] + reach, z1]),
-            ([center[0] + side - wall, center[1] - reach, z0], [center[0] + side, center[1] + reach, z1]),
+            (
+                [center[0] - side, center[1] - side, z0],
+                [center[0] + side, center[1] - side + wall, z1],
+            ),
+            (
+                [center[0] - side, center[1] + side - wall, z0],
+                [center[0] + side, center[1] + side, z1],
+            ),
+            (
+                [center[0] - side, center[1] - reach, z0],
+                [center[0] - side + wall, center[1] + reach, z1],
+            ),
+            (
+                [center[0] + side - wall, center[1] - reach, z0],
+                [center[0] + side, center[1] + reach, z1],
+            ),
         ] {
             append_box(&mut mesh, min, max);
         }
@@ -304,8 +316,8 @@ pub fn step_bands(gcode: &str, bands: &[Band], step: Step) -> (String, Vec<Injec
         if line.starts_with(";LAYER:") {
             let index = layer;
             if let Some(Some(band)) = plan.get(index) {
-                let first_of_band = index == 0
-                    || plan.get(index.wrapping_sub(1)).copied().flatten() != Some(*band);
+                let first_of_band =
+                    index == 0 || plan.get(index.wrapping_sub(1)).copied().flatten() != Some(*band);
                 if first_of_band {
                     if let Some(band) = bands.iter().find(|b| b.index == *band) {
                         out.push_str(&format!(
@@ -454,7 +466,10 @@ mod tests {
         // Forty layers of 0.2 mm: 8 mm, four 2 mm bands.
         let mut gcode = String::from(";FLAVOR:Marlin\n;LAYER_COUNT:40\n");
         for layer in 0..40 {
-            gcode.push_str(&format!(";LAYER:{layer}\nG0 F6000 X10 Y10 Z{:.2}\n", (layer + 1) as f64 * 0.2));
+            gcode.push_str(&format!(
+                ";LAYER:{layer}\nG0 F6000 X10 Y10 Z{:.2}\n",
+                (layer + 1) as f64 * 0.2
+            ));
             gcode.push_str(";TYPE:WALL-OUTER\nG1 X20 Y20 E0.5\n");
         }
         let bands: Vec<Band> = (0..4)
@@ -482,7 +497,6 @@ mod tests {
         let rewritten: Vec<&str> = out.lines().filter(|l| l.starts_with("G1")).collect();
         assert_eq!(original, rewritten);
     }
-
 
     #[test]
     fn the_end_sequence_is_not_a_layer() {
@@ -512,15 +526,31 @@ M104 S0\n\
 G1 E-2 Z0.2\n\
 M84\n";
         let bands = vec![
-            Band { index: 0, z_mm: 0.0, value: 230.0 },
-            Band { index: 1, z_mm: 5.0, value: 220.0 },
-            Band { index: 2, z_mm: 10.0, value: 210.0 },
+            Band {
+                index: 0,
+                z_mm: 0.0,
+                value: 230.0,
+            },
+            Band {
+                index: 1,
+                z_mm: 5.0,
+                value: 220.0,
+            },
+            Band {
+                index: 2,
+                z_mm: 10.0,
+                value: 210.0,
+            },
         ];
         let (out, injected) = step_temperatures(gcode, &bands);
         // Band 2 starts at z=10, so it is written once, at the layer that first
         // reaches it; the layer above it needs no line because 210 still holds.
         let last = injected.last().expect("a band for every layer it reached");
-        assert_eq!((last.layer, last.value), (2, 210.0), "injected: {injected:?}");
+        assert_eq!(
+            (last.layer, last.value),
+            (2, 210.0),
+            "injected: {injected:?}"
+        );
         // The temperature in force at the last layer is the top band's, not the
         // first one's: the end sequence's Z0.2 is not a height.
         let before_end = out.split(";TIME_ELAPSED").next().expect("an end");
@@ -547,15 +577,27 @@ M84\n";
             lo = lo.min(v[0] as f64);
             hi = hi.max(v[0] as f64);
         }
-        assert!((hi - lo - 30.0).abs() < 1e-6, "coupon is {} mm wide", hi - lo);
+        assert!(
+            (hi - lo - 30.0).abs() < 1e-6,
+            "coupon is {} mm wide",
+            hi - lo
+        );
     }
 
     #[test]
     fn flow_and_pressure_are_written_with_their_own_lines() {
         let gcode = ";FLAVOR:Marlin\n;LAYER:0\nG0 F6000 X10 Y10 Z0.20\nG1 X20 Y20 E0.5\n";
         let bands = vec![
-            Band { index: 0, z_mm: 0.0, value: 105.0 },
-            Band { index: 1, z_mm: 3.0, value: 100.0 },
+            Band {
+                index: 0,
+                z_mm: 0.0,
+                value: 105.0,
+            },
+            Band {
+                index: 1,
+                z_mm: 3.0,
+                value: 100.0,
+            },
         ];
         let (flow, flow_injected) = step_bands(gcode, &bands, Step::Flow);
         assert_eq!(flow_injected.len(), 1);

@@ -519,7 +519,11 @@ pub fn split_objects(mesh: &TriangleMesh) -> Vec<TriangleMesh> {
     let mut corner = Vec::with_capacity(mesh.triangles.len() * 3);
     for triangle in &mesh.triangles {
         for index in triangle {
-            let vertex = mesh.vertices.get(*index as usize).copied().unwrap_or([0.0; 3]);
+            let vertex = mesh
+                .vertices
+                .get(*index as usize)
+                .copied()
+                .unwrap_or([0.0; 3]);
             let key = (
                 (vertex[0] * GRID).round() as i64,
                 (vertex[1] * GRID).round() as i64,
@@ -569,7 +573,11 @@ pub fn split_objects(mesh: &TriangleMesh) -> Vec<TriangleMesh> {
             let source = mesh.triangles[face];
             let mut rebuilt = [0u32; 3];
             for (slot, original) in source.iter().enumerate() {
-                let vertex = mesh.vertices.get(*original as usize).copied().unwrap_or([0.0; 3]);
+                let vertex = mesh
+                    .vertices
+                    .get(*original as usize)
+                    .copied()
+                    .unwrap_or([0.0; 3]);
                 // Key on the welded corner, not on the file's index: a corner
                 // written once per facet must land as one vertex here too.
                 let welded = corner[face * 3 + slot];
@@ -582,7 +590,10 @@ pub fn split_objects(mesh: &TriangleMesh) -> Vec<TriangleMesh> {
             }
             triangles.push(rebuilt);
         }
-        pieces.push(TriangleMesh { vertices, triangles });
+        pieces.push(TriangleMesh {
+            vertices,
+            triangles,
+        });
     }
 
     pieces.sort_by_key(|piece| std::cmp::Reverse(piece.triangles.len()));
@@ -624,7 +635,10 @@ pub fn bake(mesh: &TriangleMesh, transform: &Transform) -> TriangleMesh {
     } else {
         mesh.triangles.clone()
     };
-    TriangleMesh { vertices, triangles }
+    TriangleMesh {
+        vertices,
+        triangles,
+    }
 }
 
 /// Shift a mesh from Shale's machine coordinates into the space CuraEngine expects.
@@ -810,7 +824,15 @@ fn load_3mf_objects(bytes: &[u8]) -> Result<Vec<(String, TriangleMesh)>, Error> 
     for (id, transform) in items {
         let mut vertices = Vec::new();
         let mut triangles = Vec::new();
-        flatten_object(id, transform, root, &parts, &mut vertices, &mut triangles, 0)?;
+        flatten_object(
+            id,
+            transform,
+            root,
+            &parts,
+            &mut vertices,
+            &mut triangles,
+            0,
+        )?;
         if triangles.is_empty() {
             continue;
         }
@@ -1226,28 +1248,50 @@ mod tests {
     fn cube_at(x: f32, y: f32) -> TriangleMesh {
         let mut vertices = Vec::new();
         for (dx, dy, dz) in [
-            (0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (10.0, 10.0, 0.0), (0.0, 10.0, 0.0),
-            (0.0, 0.0, 10.0), (10.0, 0.0, 10.0), (10.0, 10.0, 10.0), (0.0, 10.0, 10.0),
+            (0.0, 0.0, 0.0),
+            (10.0, 0.0, 0.0),
+            (10.0, 10.0, 0.0),
+            (0.0, 10.0, 0.0),
+            (0.0, 0.0, 10.0),
+            (10.0, 0.0, 10.0),
+            (10.0, 10.0, 10.0),
+            (0.0, 10.0, 10.0),
         ] {
             vertices.push([x + dx, y + dy, dz]);
         }
         TriangleMesh {
             vertices,
             triangles: vec![
-                [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
-                [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5],
-                [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7],
+                [0, 2, 1],
+                [0, 3, 2],
+                [4, 5, 6],
+                [4, 6, 7],
+                [0, 1, 5],
+                [0, 5, 4],
+                [1, 2, 6],
+                [1, 6, 5],
+                [2, 3, 7],
+                [2, 7, 6],
+                [3, 0, 4],
+                [3, 4, 7],
             ],
         }
     }
 
     fn merged(meshes: &[TriangleMesh]) -> TriangleMesh {
-        let mut out = TriangleMesh { vertices: Vec::new(), triangles: Vec::new() };
+        let mut out = TriangleMesh {
+            vertices: Vec::new(),
+            triangles: Vec::new(),
+        };
         for mesh in meshes {
             let offset = out.vertices.len() as u32;
             out.vertices.extend_from_slice(&mesh.vertices);
             for triangle in &mesh.triangles {
-                out.triangles.push([triangle[0] + offset, triangle[1] + offset, triangle[2] + offset]);
+                out.triangles.push([
+                    triangle[0] + offset,
+                    triangle[1] + offset,
+                    triangle[2] + offset,
+                ]);
             }
         }
         out
@@ -1272,7 +1316,10 @@ mod tests {
         // two places they stood are both still there.
         let mut xs: Vec<f32> = pieces.iter().map(|piece| piece.bounds().0[0]).collect();
         xs.sort_by(|left, right| left.partial_cmp(right).unwrap());
-        assert!((xs[0] - 0.0).abs() < 1e-3 && (xs[1] - 40.0).abs() < 1e-3, "still where they were: {xs:?}");
+        assert!(
+            (xs[0] - 0.0).abs() < 1e-3 && (xs[1] - 40.0).abs() < 1e-3,
+            "still where they were: {xs:?}"
+        );
     }
 
     #[test]
@@ -1341,7 +1388,10 @@ mod tests {
         assert!(signed_volume(&inverted) < 0.0, "the copy should be inward");
 
         let mut flipped = inverted.clone();
-        assert!(right_way_round(&mut flipped), "an inward mesh must be repaired");
+        assert!(
+            right_way_round(&mut flipped),
+            "an inward mesh must be repaired"
+        );
         assert!(
             (signed_volume(&flipped) - signed_volume(&sound)).abs() < 1e-12,
             "repairing must restore the sound volume, got {} against {}",
@@ -1352,7 +1402,10 @@ mod tests {
         assert_eq!(flipped.triangles.len(), sound.triangles.len());
 
         let mut untouched = sound.clone();
-        assert!(!right_way_round(&mut untouched), "a sound mesh must be left alone");
+        assert!(
+            !right_way_round(&mut untouched),
+            "a sound mesh must be left alone"
+        );
         assert_eq!(untouched.triangles, sound.triangles);
     }
 
@@ -1505,11 +1558,7 @@ mod tests {
         assert_eq!(mesh.triangles.len(), 2);
         // Both components resolve object ids inside the same part, 5 mm and
         // 15 mm along X, so the widest vertex sits at 15 + 2.
-        let max_x = mesh
-            .vertices
-            .iter()
-            .map(|v| v[0])
-            .fold(f32::MIN, f32::max);
+        let max_x = mesh.vertices.iter().map(|v| v[0]).fold(f32::MIN, f32::max);
         assert!((max_x - 17.0).abs() < 1e-3, "max x was {max_x}");
     }
 
@@ -1532,7 +1581,10 @@ mod tests {
         assert_eq!(preview.len() / 9, 960, "preview kept the whole budget");
         // The first run is contiguous: triangle 0 then triangle 1.
         assert!((preview[0] - 0.0).abs() < 1e-6);
-        assert!((preview[9] - 1.0).abs() < 1e-6, "second kept triangle follows the first");
+        assert!(
+            (preview[9] - 1.0).abs() < 1e-6,
+            "second kept triangle follows the first"
+        );
         assert!((preview[18] - 2.0).abs() < 1e-6);
     }
 

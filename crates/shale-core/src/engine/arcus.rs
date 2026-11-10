@@ -255,10 +255,7 @@ fn mesh_from_path(
     if !settings.iter().any(|(key, _)| key == "extruder_nr") {
         // The mesh group carries the extruder, so a part on the second spool asks
         // the engine for the second tool even though the printer has one nozzle.
-        settings.push((
-            "extruder_nr".into(),
-            extruder.unwrap_or(0).to_string(),
-        ));
+        settings.push(("extruder_nr".into(), extruder.unwrap_or(0).to_string()));
     }
     let name = path
         .file_stem()

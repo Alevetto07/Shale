@@ -65,7 +65,8 @@ pub fn cylinder(radius: f64, height: f64) -> TriangleMesh {
     for z in [0.0f32, height] {
         for side in 0..SIDES {
             let angle = side as f32 / SIDES as f32 * std::f32::consts::TAU;
-            mesh.vertices.push([radius * angle.cos(), radius * angle.sin(), z]);
+            mesh.vertices
+                .push([radius * angle.cos(), radius * angle.sin(), z]);
         }
     }
     let ring = SIDES as u32;
@@ -98,7 +99,8 @@ pub fn cone(radius: f64, height: f64) -> TriangleMesh {
     };
     for side in 0..SIDES {
         let angle = side as f32 / SIDES as f32 * std::f32::consts::TAU;
-        mesh.vertices.push([radius * angle.cos(), radius * angle.sin(), 0.0]);
+        mesh.vertices
+            .push([radius * angle.cos(), radius * angle.sin(), 0.0]);
     }
     let ring = SIDES as u32;
     let apex = ring;
@@ -147,8 +149,10 @@ pub fn sphere(radius: f64) -> TriangleMesh {
         let upper = lower + ring_vertices;
         for side in 0..ring_vertices {
             let next = (side + 1) % ring_vertices;
-            mesh.triangles.push([lower + side, lower + next, upper + next]);
-            mesh.triangles.push([lower + side, upper + next, upper + side]);
+            mesh.triangles
+                .push([lower + side, lower + next, upper + next]);
+            mesh.triangles
+                .push([lower + side, upper + next, upper + side]);
         }
     }
     // Top fan: last ring up to the pole.
@@ -180,7 +184,12 @@ mod tests {
     fn a_cylinder_holds_pi_r_squared_h() {
         let mesh = cylinder(10.0, 20.0);
         let want = std::f64::consts::PI * 10.0 * 10.0 * 20.0;
-        assert!(close(signed_volume(&mesh), want), "{} vs {}", signed_volume(&mesh), want);
+        assert!(
+            close(signed_volume(&mesh), want),
+            "{} vs {}",
+            signed_volume(&mesh),
+            want
+        );
         let (min, max) = mesh.bounds();
         assert!((min[2] - 0.0).abs() < 1e-4, "stands on the bed");
         assert!((max[2] - 20.0).abs() < 1e-3);
@@ -190,13 +199,23 @@ mod tests {
     fn a_cone_is_a_third_of_the_cylinder() {
         let mesh = cone(10.0, 20.0);
         let want = std::f64::consts::PI * 10.0 * 10.0 * 20.0 / 3.0;
-        assert!(close(signed_volume(&mesh), want), "{} vs {}", signed_volume(&mesh), want);
+        assert!(
+            close(signed_volume(&mesh), want),
+            "{} vs {}",
+            signed_volume(&mesh),
+            want
+        );
     }
 
     #[test]
     fn a_sphere_is_four_thirds_pi_r_cubed() {
         let mesh = sphere(10.0);
         let want = 4.0 / 3.0 * std::f64::consts::PI * 1000.0;
-        assert!(close(signed_volume(&mesh), want), "{} vs {}", signed_volume(&mesh), want);
+        assert!(
+            close(signed_volume(&mesh), want),
+            "{} vs {}",
+            signed_volume(&mesh),
+            want
+        );
     }
 }

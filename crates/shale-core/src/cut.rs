@@ -10,8 +10,8 @@
 //!
 //! Everything here is geometry in the part's own frame: no engine, no transforms.
 
-use crate::mesh::TriangleMesh;
 use crate::csg;
+use crate::mesh::TriangleMesh;
 
 /// Distances are in millimetres; this is a tenth of a micron.
 const EPS: f64 = 1e-6;
@@ -104,7 +104,11 @@ pub fn cut(mesh: &TriangleMesh, plane: &Plane) -> Halves {
     for polygon in loops(&segments) {
         let cap = triangulate_cap(&polygon, plane);
         for triangle in cap {
-            let points = [polygon[triangle[0]], polygon[triangle[1]], polygon[triangle[2]]];
+            let points = [
+                polygon[triangle[0]],
+                polygon[triangle[1]],
+                polygon[triangle[2]],
+            ];
             push_triangle(&mut halves.below, &points);
             push_triangle(&mut halves.above, &[points[0], points[2], points[1]]);
         }
@@ -153,13 +157,7 @@ pub fn cut_with_pins(mesh: &TriangleMesh, plane: &Plane, pin: Pin, count: usize)
     let upright = normalise(plane.normal);
     for centre in centres {
         // The pin stands proud of the cut face on the lower half…
-        let peg = csg::cylinder(
-            centre,
-            upright,
-            pin.radius,
-            pin.height,
-            32,
-        );
+        let peg = csg::cylinder(centre, upright, pin.radius, pin.height, 32);
         halves.below = csg::union(&halves.below, &peg);
         // …and the upper half gets a hole that is wider by the clearance and
         // deeper by the same amount, so the pin has somewhere to go.
@@ -258,7 +256,10 @@ pub fn cut_with_dovetail(mesh: &TriangleMesh, plane: &Plane, dovetail: Dovetail)
         (plane_v(plane.normal), plane_u(plane.normal)),
     ] {
         for ring in rings.iter().filter(|ring| ring.len() >= 3) {
-            let polygon: Vec<[f64; 2]> = ring.iter().map(|point| [dot(*point, u), dot(*point, v)]).collect();
+            let polygon: Vec<[f64; 2]> = ring
+                .iter()
+                .map(|point| [dot(*point, u), dot(*point, v)])
+                .collect();
             let area = signed_area(&polygon).abs();
             if area > largest {
                 largest = area;
@@ -267,12 +268,16 @@ pub fn cut_with_dovetail(mesh: &TriangleMesh, plane: &Plane, dovetail: Dovetail)
         }
     }
     let Some((ring, u, v)) = biggest else {
-        return JointCut { halves, tab_mm3: None };
+        return JointCut {
+            halves,
+            tab_mm3: None,
+        };
     };
     let flat = |point: [f64; 3]| [dot(point, u), dot(point, v)];
     let polygon: Vec<[f64; 2]> = ring.iter().map(|point| flat(*point)).collect();
     let centre = scale(
-        ring.iter().fold([0.0f64; 3], |sum, point| add_3(sum, *point)),
+        ring.iter()
+            .fold([0.0f64; 3], |sum, point| add_3(sum, *point)),
         1.0 / ring.len() as f64,
     );
     let middle = flat(centre);
@@ -293,22 +298,17 @@ pub fn cut_with_dovetail(mesh: &TriangleMesh, plane: &Plane, dovetail: Dovetail)
     };
     let rect_fits = |half_u: f64, half_v: f64| {
         inside(&polygon, middle)
-            && [
-                [-1.0, -1.0],
-                [1.0, -1.0],
-                [1.0, 1.0],
-                [-1.0, 1.0],
-            ]
-            .iter()
-            .all(|corner| {
-                inside(
-                    &polygon,
-                    [
-                        middle[0] + corner[0] * (half_u + margin),
-                        middle[1] + corner[1] * (half_v + margin),
-                    ],
-                )
-            })
+            && [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]
+                .iter()
+                .all(|corner| {
+                    inside(
+                        &polygon,
+                        [
+                            middle[0] + corner[0] * (half_u + margin),
+                            middle[1] + corner[1] * (half_v + margin),
+                        ],
+                    )
+                })
     };
 
     let wanted = (dovetail.root, dovetail.tip, dovetail.thickness);
@@ -327,7 +327,10 @@ pub fn cut_with_dovetail(mesh: &TriangleMesh, plane: &Plane, dovetail: Dovetail)
         }
     }
     let Some((root, tip, thickness)) = chosen else {
-        return JointCut { halves, tab_mm3: None };
+        return JointCut {
+            halves,
+            tab_mm3: None,
+        };
     };
 
     // A tab that comes out of the far side of the other half is a spike, not a
@@ -397,7 +400,9 @@ fn dovetail_prism(
         at(-q, depth, s),
     ];
     let middle = scale(
-        corners.iter().fold([0.0f64; 3], |sum, point| add_3(sum, *point)),
+        corners
+            .iter()
+            .fold([0.0f64; 3], |sum, point| add_3(sum, *point)),
         1.0 / 8.0,
     );
     let mut mesh = TriangleMesh {
@@ -418,12 +423,16 @@ fn dovetail_prism(
         [1, 5, 6, 2],      // flank, at +u
     ];
     for quad in quads {
-        push_quad(&mut mesh, &[
-            corners[quad[0]],
-            corners[quad[1]],
-            corners[quad[2]],
-            corners[quad[3]],
-        ], middle);
+        push_quad(
+            &mut mesh,
+            &[
+                corners[quad[0]],
+                corners[quad[1]],
+                corners[quad[2]],
+                corners[quad[3]],
+            ],
+            middle,
+        );
     }
     mesh
 }
@@ -433,7 +442,9 @@ fn push_quad(mesh: &mut TriangleMesh, corners: &[[f64; 3]; 4], inside: [f64; 3])
     let normal = cross(sub(corners[1], corners[0]), sub(corners[2], corners[0]));
     let outward = sub(
         scale(
-            corners.iter().fold([0.0f64; 3], |sum, point| add_3(sum, *point)),
+            corners
+                .iter()
+                .fold([0.0f64; 3], |sum, point| add_3(sum, *point)),
             0.25,
         ),
         inside,
@@ -480,7 +491,8 @@ fn pin_centres(rings: &[Vec<[f64; 3]>], plane: &Plane, pin: Pin, count: usize) -
     // other.
     let spacing = reach * 2.0;
     let mut candidates: Vec<[f64; 3]> = Vec::new();
-    let mut rings_sorted: Vec<&Vec<[f64; 3]>> = rings.iter().filter(|ring| ring.len() >= 3).collect();
+    let mut rings_sorted: Vec<&Vec<[f64; 3]>> =
+        rings.iter().filter(|ring| ring.len() >= 3).collect();
     rings_sorted.sort_by_key(|ring| std::cmp::Reverse(ring.len()));
     for ring in rings_sorted {
         let polygon: Vec<[f64; 2]> = ring.iter().map(|point| flat(*point)).collect();
@@ -754,10 +766,7 @@ fn triangulate_cap(polygon: &[[f64; 3]], plane: &Plane) -> Vec<[usize; 3]> {
     let u = cross(helper, normal);
     let u = normalise(u);
     let v = cross(normal, u);
-    let flat: Vec<[f64; 2]> = polygon
-        .iter()
-        .map(|p| [dot(*p, u), dot(*p, v)])
-        .collect();
+    let flat: Vec<[f64; 2]> = polygon.iter().map(|p| [dot(*p, u), dot(*p, v)]).collect();
     ear_clip(&flat)
 }
 
@@ -793,7 +802,13 @@ fn ear_clip(flat: &[[f64; 2]]) -> Vec<[usize; 3]> {
     triangles
 }
 
-fn is_ear(flat: &[[f64; 2]], indices: &[usize], previous: usize, current: usize, next: usize) -> bool {
+fn is_ear(
+    flat: &[[f64; 2]],
+    indices: &[usize],
+    previous: usize,
+    current: usize,
+    next: usize,
+) -> bool {
     let (a, b, c) = (flat[previous], flat[current], flat[next]);
     if orient2d(a, b, c) <= 0.0 {
         return false;
@@ -921,11 +936,20 @@ mod tests {
         let cube = boxed([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]);
         let halves = cut(&cube, &Plane::new([0.0, 0.0, 5.0], [0.0, 0.0, 1.0]));
         assert!(is_closed(&halves.above), "the top half must be watertight");
-        assert!(is_closed(&halves.below), "the bottom half must be watertight");
+        assert!(
+            is_closed(&halves.below),
+            "the bottom half must be watertight"
+        );
         let (top, bottom) = (volume(&halves.above), volume(&halves.below));
         assert!((top - 500.0).abs() < 1e-3, "top half is 5 x 10 x 10: {top}");
-        assert!((bottom - 500.0).abs() < 1e-3, "bottom half is 5 x 10 x 10: {bottom}");
-        assert!((top + bottom - volume(&cube)).abs() < 1e-3, "no plastic lost or gained");
+        assert!(
+            (bottom - 500.0).abs() < 1e-3,
+            "bottom half is 5 x 10 x 10: {bottom}"
+        );
+        assert!(
+            (top + bottom - volume(&cube)).abs() < 1e-3,
+            "no plastic lost or gained"
+        );
     }
 
     #[test]
@@ -935,7 +959,10 @@ mod tests {
         let once = cut(&cube, &Plane::new([0.0, 0.0, 4.0], [0.0, 0.0, 1.0]));
         let again = cut(&once.above, &Plane::new([0.0, 0.0, 7.5], [0.0, 0.0, 1.0]));
         let total = volume(&again.below) + volume(&again.above) + volume(&once.below);
-        assert!((total - original).abs() < 1e-2, "{total} against {original}");
+        assert!(
+            (total - original).abs() < 1e-2,
+            "{total} against {original}"
+        );
         assert!(is_closed(&again.above) && is_closed(&again.below));
     }
 
@@ -965,8 +992,14 @@ mod tests {
         let upper = volume(&halves.above);
         // A pin adds material below the plane; its hole takes material away
         // above it. Neither half is the plain half any more.
-        assert!(lower > 4000.0 + 20.0, "the lower half should have pins: {lower}");
-        assert!(upper < 4000.0 - 20.0, "the upper half should have holes: {upper}");
+        assert!(
+            lower > 4000.0 + 20.0,
+            "the lower half should have pins: {lower}"
+        );
+        assert!(
+            upper < 4000.0 - 20.0,
+            "the upper half should have holes: {upper}"
+        );
         // Two pins, so roughly twice the hole.
         let one_hole = std::f64::consts::PI * 2.2f64.powi(2) * 4.4;
         assert!(
@@ -998,7 +1031,11 @@ mod tests {
         let total = volume(&halves.above) + volume(&halves.below);
         assert!((total - 1000.0).abs() < 1e-2, "{total}");
         // Symmetric cut through the middle splits the cube in two equal parts.
-        assert!((volume(&halves.above) - 500.0).abs() < 1.0, "{}", volume(&halves.above));
+        assert!(
+            (volume(&halves.above) - 500.0).abs() < 1.0,
+            "{}",
+            volume(&halves.above)
+        );
     }
     #[test]
     fn a_dovetail_stands_proud_of_the_face_and_leaves_a_slot_for_itself() {
@@ -1031,14 +1068,26 @@ mod tests {
         // BSP leaves seams where it clips a polygon against its neighbour, so
         // "closed" here means a few open edges, not none.
         let seams = csg::open_edges(&halves.above);
-        assert!(seams <= 40, "the slotted half should be all but closed: {seams} open edges");
+        assert!(
+            seams <= 40,
+            "the slotted half should be all but closed: {seams} open edges"
+        );
         let lower_seams = csg::open_edges(&halves.below);
-        assert!(lower_seams <= 40, "the tabbed half should be all but closed: {lower_seams}");
+        assert!(
+            lower_seams <= 40,
+            "the tabbed half should be all but closed: {lower_seams}"
+        );
         // It really is a dovetail: the tab reaches past the plane it was cut on.
         let (_, top) = halves.below.bounds();
-        assert!((top[2] as f64 - 14.0).abs() < 1e-3, "the tab is 4 mm proud: {top:?}");
+        assert!(
+            (top[2] as f64 - 14.0).abs() < 1e-3,
+            "the tab is 4 mm proud: {top:?}"
+        );
         let reported = joint.tab_mm3.expect("a tab was cut, so it has a volume");
-        assert!((reported - 192.0).abs() < 1.0, "the tab reports 192 mm3: {reported}");
+        assert!(
+            (reported - 192.0).abs() < 1.0,
+            "the tab reports 192 mm3: {reported}"
+        );
     }
 
     #[test]
@@ -1059,9 +1108,15 @@ mod tests {
             "the plate reports the tab it took: {:?}",
             joint.tab_mm3
         );
-        assert!((gained - 432.0).abs() < 2.0, "the tab should add 432 mm3: {gained}");
+        assert!(
+            (gained - 432.0).abs() < 2.0,
+            "the tab should add 432 mm3: {gained}"
+        );
         let (_, top) = halves.below.bounds();
-        assert!((top[2] as f64 - 10.0).abs() < 1e-3, "the tab stops 1 mm under the surface: {top:?}");
+        assert!(
+            (top[2] as f64 - 10.0).abs() < 1e-3,
+            "the tab stops 1 mm under the surface: {top:?}"
+        );
         assert!(csg::open_edges(&halves.above) <= 40);
         assert!(csg::open_edges(&halves.below) <= 40);
     }

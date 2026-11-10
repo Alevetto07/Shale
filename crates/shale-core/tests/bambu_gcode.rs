@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use shale_core::bambu::MachineGcode;
 use shale_core::job::{render_sequence, PlacedModel};
-use shale_core::mesh::{Transform};
+use shale_core::mesh::Transform;
 use shale_core::primitives;
 use shale_core::resolver::ProfileSummary;
 use shale_core::resolver::ResolvedSettings;
@@ -139,13 +139,19 @@ fn the_numbers_in_the_sequence_are_this_slice_numbers() {
     // Layer 0 at 215, the rest at 210: the first-layer name and the other one
     // are different settings and the template uses both.
     assert!(start.contains("M104 S215"), "no first-layer temperature");
-    assert!(start.contains("M109 S215"), "the first-layer wait is missing");
+    assert!(
+        start.contains("M109 S215"),
+        "the first-layer wait is missing"
+    );
     // `M109 S{nozzle_temperature[initial_extruder]}` is the print temperature,
     // and it is the other name: 210, not the 215 the first layer heats to.
     assert!(start.contains("M109 S210"), "no print temperature");
     assert!(start.contains("M140 S60"), "no bed temperature");
     // Nozzle 0.4, and the bed scan is the textured-plate one the A1 ships with.
-    assert!(start.contains("H0.4"), "the nozzle diameter is not in the sequence");
+    assert!(
+        start.contains("H0.4"),
+        "the nozzle diameter is not in the sequence"
+    );
     assert!(
         start.contains("Textured PEI Plate"),
         "the bed type did not reach the template"

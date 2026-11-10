@@ -32,7 +32,10 @@ fn an_empty_file_is_refused_by_every_loader() {
 
     let shale = scratch("empty.shale");
     std::fs::write(&shale, []).unwrap();
-    assert!(read_project(&shale).is_err(), "an empty file is not a project");
+    assert!(
+        read_project(&shale).is_err(),
+        "an empty file is not a project"
+    );
 }
 
 #[test]
@@ -42,16 +45,25 @@ fn a_truncated_binary_stl_is_refused_rather_than_indexed_past() {
     // reads past the end if the loader trusts the header.
     let mut bytes = vec![0u8; 84];
     bytes[80..84].copy_from_slice(&4u32.to_le_bytes());
-    assert!(load_stl(&bytes).is_err(), "four triangles were promised, none arrived");
+    assert!(
+        load_stl(&bytes).is_err(),
+        "four triangles were promised, none arrived"
+    );
 
     // And a header that is not even long enough to hold the count.
-    assert!(load_stl(&bytes[..40]).is_err(), "a 40-byte file has no triangle count");
+    assert!(
+        load_stl(&bytes[..40]).is_err(),
+        "a 40-byte file has no triangle count"
+    );
 }
 
 #[test]
 fn an_ascii_stl_with_no_facets_is_refused() {
     let body = b"solid empty\nendsolid empty\n";
-    assert!(load_stl(body).is_err(), "a solid with no facet is not a mesh");
+    assert!(
+        load_stl(body).is_err(),
+        "a solid with no facet is not a mesh"
+    );
 }
 
 #[test]

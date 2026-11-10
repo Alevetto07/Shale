@@ -11,7 +11,7 @@
 //! Nothing here knows about the engine. It scores geometry, so it can be reason
 //! about — and tested — without slicing anything.
 
-use crate::mesh::{apply_transform, TriangleMesh, Transform};
+use crate::mesh::{apply_transform, Transform, TriangleMesh};
 
 /// Surface within a hair of the plate is resting on it, not overhanging it.
 const BED_EPSILON: f64 = 0.05;
@@ -97,7 +97,11 @@ fn rotated_bounds(mesh: &TriangleMesh, rotation_deg: [f64; 3]) -> ([f64; 3], [f6
 /// a vertical wall is 0° and a ceiling is 90°. A face is counted when it is
 /// steeper than the angle, which is `normal.z < -cos(angle)`.
 pub fn overhang_area(mesh: &TriangleMesh, rotation_deg: [f64; 3], angle_deg: f64) -> f64 {
-    let points: Vec<[f64; 3]> = mesh.vertices.iter().map(|v| rotated(*v, rotation_deg)).collect();
+    let points: Vec<[f64; 3]> = mesh
+        .vertices
+        .iter()
+        .map(|v| rotated(*v, rotation_deg))
+        .collect();
     let plate = points.iter().map(|p| p[2]).fold(f64::INFINITY, f64::min);
     if !plate.is_finite() {
         return 0.0;
@@ -214,25 +218,39 @@ pub fn face_rest(mesh: &TriangleMesh, transform: &Transform, world_normal: [f64;
         n[2] * target[0] - n[0] * target[2],
         n[0] * target[1] - n[1] * target[0],
     ];
-    let sine = (axis_cross[0] * axis_cross[0] + axis_cross[1] * axis_cross[1] + axis_cross[2] * axis_cross[2]).sqrt();
+    let sine = (axis_cross[0] * axis_cross[0]
+        + axis_cross[1] * axis_cross[1]
+        + axis_cross[2] * axis_cross[2])
+        .sqrt();
     let (axis, angle) = if sine < 1e-9 {
         if dot > 0.0 {
             // Already facing down: nothing to turn, only to drop.
             ([1.0, 0.0, 0.0], 0.0)
         } else {
             // Straight up: a half turn, and any horizontal axis will do.
-            let pick = if n[0].abs() < 0.9 { [1.0, 0.0, 0.0] } else { [0.0, 1.0, 0.0] };
+            let pick = if n[0].abs() < 0.9 {
+                [1.0, 0.0, 0.0]
+            } else {
+                [0.0, 1.0, 0.0]
+            };
             let cross = [
                 n[1] * pick[2] - n[2] * pick[1],
                 n[2] * pick[0] - n[0] * pick[2],
                 n[0] * pick[1] - n[1] * pick[0],
             ];
             let l = (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt();
-            ([cross[0] / l, cross[1] / l, cross[2] / l], std::f64::consts::PI)
+            (
+                [cross[0] / l, cross[1] / l, cross[2] / l],
+                std::f64::consts::PI,
+            )
         }
     } else {
         (
-            [axis_cross[0] / sine, axis_cross[1] / sine, axis_cross[2] / sine],
+            [
+                axis_cross[0] / sine,
+                axis_cross[1] / sine,
+                axis_cross[2] / sine,
+            ],
             sine.atan2(dot),
         )
     };
@@ -241,9 +259,21 @@ pub fn face_rest(mesh: &TriangleMesh, transform: &Transform, world_normal: [f64;
     let (s, c) = (angle.sin(), angle.cos());
     let (x, y, z) = (axis[0], axis[1], axis[2]);
     let turn = [
-        [c + x * x * (1.0 - c), x * y * (1.0 - c) - z * s, x * z * (1.0 - c) + y * s],
-        [y * x * (1.0 - c) + z * s, c + y * y * (1.0 - c), y * z * (1.0 - c) - x * s],
-        [z * x * (1.0 - c) - y * s, z * y * (1.0 - c) + x * s, c + z * z * (1.0 - c)],
+        [
+            c + x * x * (1.0 - c),
+            x * y * (1.0 - c) - z * s,
+            x * z * (1.0 - c) + y * s,
+        ],
+        [
+            y * x * (1.0 - c) + z * s,
+            c + y * y * (1.0 - c),
+            y * z * (1.0 - c) - x * s,
+        ],
+        [
+            z * x * (1.0 - c) - y * s,
+            z * y * (1.0 - c) + x * s,
+            c + z * z * (1.0 - c),
+        ],
     ];
     let held = rotation_matrix(&transform.rotation_deg);
     let mut next = [[0.0; 3]; 3];
@@ -371,8 +401,11 @@ mod tests {
         let cap = boxed([0.0, 0.0, 10.0], [20.0, 20.0, 12.0]);
         let offset = mesh.vertices.len() as u32;
         mesh.vertices.extend(cap.vertices);
-        mesh.triangles
-            .extend(cap.triangles.iter().map(|t| [t[0] + offset, t[1] + offset, t[2] + offset]));
+        mesh.triangles.extend(
+            cap.triangles
+                .iter()
+                .map(|t| [t[0] + offset, t[1] + offset, t[2] + offset]),
+        );
         mesh
     }
 
@@ -430,7 +463,10 @@ mod tests {
     fn a_wedge_is_left_sitting_on_its_flat_face() {
         let mesh = wedge();
         let flat = overhang_area(&mesh, [0.0, 0.0, 0.0], 45.0);
-        assert!(flat < 1e-6, "the wedge as drawn rests on its flat face: {flat}");
+        assert!(
+            flat < 1e-6,
+            "the wedge as drawn rests on its flat face: {flat}"
+        );
         // The prism is symmetrical, so several quarter turns put the same
         // face down. What matters is that the answer is a flat one.
         let best = best_orientation(&mesh, 45.0);
@@ -452,7 +488,10 @@ mod tests {
         // Not zero: the post's top face is buried in the cap, and once the part
         // is turned over that buried 4 x 4 face points down. No slicer ever
         // sees it, and 16 mm² against the 400 mm² it replaced is the point.
-        assert!(best.overhang_mm2 < 20.0, "the 400 mm² ceiling is gone: {best:?}");
+        assert!(
+            best.overhang_mm2 < 20.0,
+            "the 400 mm² ceiling is gone: {best:?}"
+        );
         assert!((best.height_mm - 12.0).abs() < 1e-6, "{best:?}");
         // A 20 x 20 footprint means the cap is what it stands on, whichever
         // quarter turns the search happened to name it with.
@@ -487,13 +526,19 @@ mod tests {
             volume(&baked_after).abs()
         );
         let (min_after, _) = baked_after.bounds();
-        assert!(min_after[2].abs() < 1e-3, "it should sit on the plate: {min_after:?}");
+        assert!(
+            min_after[2].abs() < 1e-3,
+            "it should sit on the plate: {min_after:?}"
+        );
         // The middle of the part stays where it was, so it does not run away.
         let (min_before, max_before) = baked_before.bounds();
         let (_, max_after) = baked_after.bounds();
         let moved_x = ((min_after[0] + max_after[0]) - (min_before[0] + max_before[0])) * 0.5;
         let moved_y = ((min_after[1] + max_after[1]) - (min_before[1] + max_before[1])) * 0.5;
-        assert!(moved_x.abs() < 0.01 && moved_y.abs() < 0.01, "{moved_x} {moved_y}");
+        assert!(
+            moved_x.abs() < 0.01 && moved_y.abs() < 0.01,
+            "{moved_x} {moved_y}"
+        );
     }
 
     #[test]
@@ -534,12 +579,22 @@ mod tests {
         }
         assert!(lowest.is_some(), "no face on the plate");
         // The volume is unchanged: this is a rotation, not a reshape.
-        assert!((volume(&baked).abs() - 1000.0).abs() < 1.0, "{}", volume(&baked).abs());
+        assert!(
+            (volume(&baked).abs() - 1000.0).abs() < 1.0,
+            "{}",
+            volume(&baked).abs()
+        );
         // And it stayed where it stood in plan.
         let (min_before, max_before) = crate::mesh::bake(&mesh, &before).bounds();
         let (min_after, max_after) = baked.bounds();
-        let centre_before = ((min_before[0] + max_before[0]) * 0.5, (min_before[1] + max_before[1]) * 0.5);
-        let centre_after = ((min_after[0] + max_after[0]) * 0.5, (min_after[1] + max_after[1]) * 0.5);
+        let centre_before = (
+            (min_before[0] + max_before[0]) * 0.5,
+            (min_before[1] + max_before[1]) * 0.5,
+        );
+        let centre_after = (
+            (min_after[0] + max_after[0]) * 0.5,
+            (min_after[1] + max_after[1]) * 0.5,
+        );
         assert!((centre_before.0 - centre_after.0).abs() < 1e-6);
         assert!((centre_before.1 - centre_after.1).abs() < 1e-6);
     }

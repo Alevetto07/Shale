@@ -157,7 +157,8 @@ impl Library {
             let id = slug(&model);
             let definition_index = self.definitions.len();
             let names: Vec<String> = group.iter().map(|profile| profile.file.clone()).collect();
-            let mut nozzles: Vec<String> = group.iter().map(|profile| profile.nozzle.clone()).collect();
+            let mut nozzles: Vec<String> =
+                group.iter().map(|profile| profile.nozzle.clone()).collect();
             nozzles.sort_by(|a, b| {
                 number(a)
                     .partial_cmp(&number(b))
@@ -179,12 +180,15 @@ impl Library {
             let machine_dir = dir.join("machine");
             for profile in group {
                 if let Some(gcode) = machine_gcode(&machine_dir, &profile.file) {
-                    self.gcode
-                        .push((id.clone(), profile.nozzle.clone(), gcode));
+                    self.gcode.push((id.clone(), profile.nozzle.clone(), gcode));
                 }
             }
-            self.instances
-                .extend(quality_instances(&processes, &id, &names, &base.default_quality));
+            self.instances.extend(quality_instances(
+                &processes,
+                &id,
+                &names,
+                &base.default_quality,
+            ));
             let first_material = self.materials.len();
             self.materials
                 .extend(filaments(&filament_profiles, &id, vendor, &names, &model));
@@ -556,10 +560,7 @@ fn quality_instances(
             settings.insert("top_layers".to_string(), format!("{}", layers.round()));
         }
         if let Some(layers) = values.get("bottom_shell_layers").and_then(number_value) {
-            settings.insert(
-                "bottom_layers".to_string(),
-                format!("{}", layers.round()),
-            );
+            settings.insert("bottom_layers".to_string(), format!("{}", layers.round()));
         }
         if let Some(support) = values.get("enable_support").and_then(truthy) {
             settings.insert(
@@ -637,7 +638,11 @@ fn filaments(
         if let Some(temp) = values
             .get("nozzle_temperature")
             .and_then(first_number)
-            .or_else(|| values.get("nozzle_temperature_initial_layer").and_then(first_number))
+            .or_else(|| {
+                values
+                    .get("nozzle_temperature_initial_layer")
+                    .and_then(first_number)
+            })
         {
             settings.insert("material_print_temperature".to_string(), temp);
         }
@@ -714,7 +719,10 @@ fn material_color(kind: &str) -> &'static str {
 /// the machine files in the group. Libraries that omit the key are treated as
 /// universal so a dropdown is never empty.
 fn applies_to(values: &Json, machine_names: &[String]) -> bool {
-    let Some(list) = values.get("compatible_printers").and_then(|value| value.as_array()) else {
+    let Some(list) = values
+        .get("compatible_printers")
+        .and_then(|value| value.as_array())
+    else {
         return true;
     };
     if list.is_empty() {
@@ -748,7 +756,12 @@ fn pretty_quality(stem: &str) -> String {
     let head = stem.split(" @").next().unwrap_or(stem);
     // "0.20mm Standard" -> "0.20 mm Standard"
     match head.find("mm") {
-        Some(index) if index > 0 && head[..index].chars().all(|ch| ch.is_ascii_digit() || ch == '.') => {
+        Some(index)
+            if index > 0
+                && head[..index]
+                    .chars()
+                    .all(|ch| ch.is_ascii_digit() || ch == '.') =>
+        {
             format!("{} mm{}", &head[..index], &head[index + 2..])
         }
         _ => head.to_string(),
@@ -891,7 +904,11 @@ mod tests {
             .expect("A1 profile");
         assert_eq!(a1.name, "A1");
         assert_eq!(
-            a1.settings["machine_depth"].default_value.clone().unwrap().as_f64(),
+            a1.settings["machine_depth"]
+                .default_value
+                .clone()
+                .unwrap()
+                .as_f64(),
             Some(256.0)
         );
     }
@@ -921,7 +938,9 @@ mod tests {
         let quality = library
             .instances
             .iter()
-            .find(|instance| instance.type_name == "quality" && instance.name.contains("0.20 mm Standard"))
+            .find(|instance| {
+                instance.type_name == "quality" && instance.name.contains("0.20 mm Standard")
+            })
             .expect("0.20 mm Standard process");
         let height: f64 = quality.values["layer_height"].parse().unwrap();
         assert!((height - 0.2).abs() < 1e-9);
@@ -992,9 +1011,9 @@ pub fn strip_engine_prelude(gcode: &str) -> String {
     for line in gcode.lines().take(banner) {
         let trimmed = line.trim_start();
         let is_heat = HEAT.iter().any(|code| {
-            trimmed
-                .strip_prefix(code)
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with(' ') || rest.starts_with('\t'))
+            trimmed.strip_prefix(code).is_some_and(|rest| {
+                rest.is_empty() || rest.starts_with(' ') || rest.starts_with('\t')
+            })
         });
         if !is_heat {
             kept.push(line);

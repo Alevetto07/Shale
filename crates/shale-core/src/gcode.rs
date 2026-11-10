@@ -187,7 +187,11 @@ pub fn filament_by_tool(gcode: &str) -> std::collections::BTreeMap<u8, f64> {
             continue;
         }
         if let Some(rest) = line.strip_prefix('T') {
-            let digits: String = rest.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
+            let digits: String = rest
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
             if let Ok(index) = digits.parse::<u8>() {
                 tool = index;
                 totals.entry(tool).or_insert(0.0);

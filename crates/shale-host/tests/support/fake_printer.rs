@@ -44,10 +44,8 @@ pub const KEY_B: &[u8] = include_bytes!("../fixtures/fake-tls/key-b.der");
 
 /// SHA-256 of the certificate each fixture carries, lower-case hex. Written
 /// down here so a test can name the pin without hashing anything.
-pub const FINGERPRINT_A: &str =
-    "61acc0aeb5255c5d0548b5c3afefd8ec58c5a512a9672de9f4495fe1b3a26f11";
-pub const FINGERPRINT_B: &str =
-    "633d1a33fbe0a3cbe323f936f4e143dc31591aa8c2ebe5d86fe5ed970b810ebd";
+pub const FINGERPRINT_A: &str = "61acc0aeb5255c5d0548b5c3afefd8ec58c5a512a9672de9f4495fe1b3a26f11";
+pub const FINGERPRINT_B: &str = "633d1a33fbe0a3cbe323f936f4e143dc31591aa8c2ebe5d86fe5ed970b810ebd";
 
 pub struct FakePrinter {
     pub mqtt_port: u16,
@@ -147,7 +145,10 @@ impl FakePrinter {
 
     /// Push one status report to every subscriber, the way a machine does.
     pub fn say(&self, report: serde_json::Value) {
-        let frame = publish_frame("device/FAKE01A000000001/report", report.to_string().as_bytes());
+        let frame = publish_frame(
+            "device/FAKE01A000000001/report",
+            report.to_string().as_bytes(),
+        );
         for box_ in self.outboxes.lock().unwrap().iter() {
             box_.lock().unwrap().extend_from_slice(&frame);
         }
@@ -363,7 +364,11 @@ fn serve_ftps(
                 tls.write_all(b"331 password please\r\n")?;
             } else if upper.starts_with("PASS") {
                 tls.write_all(b"230 logged in\r\n")?;
-            } else if upper.starts_with("PBSZ") || upper.starts_with("PROT") || upper.starts_with("TYPE") || upper.starts_with("OPTS") {
+            } else if upper.starts_with("PBSZ")
+                || upper.starts_with("PROT")
+                || upper.starts_with("TYPE")
+                || upper.starts_with("OPTS")
+            {
                 tls.write_all(b"200 ok\r\n")?;
             } else if upper.starts_with("PASV") {
                 let listener = TcpListener::bind("127.0.0.1:0")?;
@@ -376,7 +381,11 @@ fn serve_ftps(
                 tls.write_all(reply.as_bytes())?;
                 passive = Some(listener);
             } else if upper.starts_with("STOR") {
-                let name = text.split_whitespace().nth(1).unwrap_or("/unnamed").to_string();
+                let name = text
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or("/unnamed")
+                    .to_string();
                 tls.write_all(b"150 send the file\r\n")?;
                 tls.flush()?;
                 let Some(listener) = passive.take() else {
@@ -386,8 +395,8 @@ fn serve_ftps(
                 listener.set_nonblocking(false)?;
                 let (data, _) = listener.accept()?;
                 data.set_read_timeout(Some(Duration::from_secs(10)))?;
-                let dconn = ServerConnection::new(Arc::clone(&data_config))
-                    .expect("a data connection");
+                let dconn =
+                    ServerConnection::new(Arc::clone(&data_config)).expect("a data connection");
                 let mut dstream = StreamOwned::new(dconn, data);
                 let mut file = Vec::new();
                 let mut chunk = [0u8; 16384];
