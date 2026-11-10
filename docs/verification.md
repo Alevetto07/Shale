@@ -894,6 +894,59 @@ The timings under `boolean_timings` are still the release-build ladder; these tw
 tests run in the ordinary suite in about six seconds, and skip when
 `SHALE_CURAENGINE`, `SHALE_CURA_DIR` and `SHALE_MATERIALS_DIR` are unset.
 
+## Which bed temperature Cura would show for an Ender-3
+
+The resolver's golden file disagreed with the resolver on two keys for
+`creality_ender3`: `material_bed_temperature` (golden 50, resolved 60) and
+`retraction_amount` (golden 5, resolved 6.5). Settled by walking what Cura
+5.13.0 itself would do, in the order Cura applies it.
+
+**The chain.** `definitions/creality_ender3.def.json:4` inherits
+`creality_base`, and line 9 names `creality_base` as its `quality_definition`.
+`definitions/creality_base.def.json` does not mention
+`material_bed_temperature` at all — `grep -n material_bed_temperature` returns
+nothing — so nothing is overridden there.
+
+**The definition default is 60, and the first layer follows it.**
+`definitions/fdmprinter.def.json:2809-2826` defines `material_bed_temperature`
+with `"default_value": 60` and `"value": "default_material_bed_temperature"`.
+Immediately after it, `:2827-2842` defines `material_bed_temperature_layer_0`
+with `"default_value": 60` and `"value": "resolveOrValue('material_bed_temperature')"`
+— so a material that raises the bed raises the first layer with it, and there
+is no separate number to disagree about.
+
+**The draft quality sets no temperature.** The test asks for `quality_type`
+`draft`; for this printer that is `quality/creality/base/base_global_draft.inst.cfg`
+(`quality_type = draft`, `weight = -5`, `[values] layer_height = 0.32`,
+`layer_height_0 = 0.32`). No file under `quality/creality/` contains
+`material_bed_temperature`: the only 50s in the whole `quality/` tree belong to
+an Elegoo TPU profile and an NWA3D machine.
+
+**The material says 60 too, and Shale reads it.**
+`materials/generic_pla.xml.fdm_material:46-47` carries
+`<setting key="print temperature">200</setting>` and
+`<setting key="heated bed temperature">60</setting>` for the generic profile.
+Cura's material format uses display labels rather than setting keys, and Shale
+already knows that: `material.rs:233` maps `"heated bed temperature"` to
+`default_material_bed_temperature`, and `resolver.rs:646-647` maps that to
+`material_bed_temperature` and `material_bed_temperature_layer_0`. So the 60 is
+not the definition default surviving by accident — it is the material's own
+number arriving through the same path Cura uses.
+
+**Where 50 could have come from, and why it is not this printer.** The only 50s
+in `generic_pla.xml.fdm_material` are inside `<machine>` blocks for Ultimaker
+hotends (`:181`, `:189`, `:218`), which do not apply to an Ender-3. The golden's
+`retraction_amount` 5 has the same shape: `fdmprinter.def.json:4695` defaults it
+to **6.5**, no Creality quality file sets it, and the only 5s in the material
+are again per-Ultimaker-machine (`:94`). Both stale values look like they were
+recorded against a different printer's block, or an older material file.
+
+**Verdict: the resolver was right and the golden was stale.** It was regenerated
+from the same Cura 5.13.0 resources (`SHALE_WRITE_GOLDEN=1`), and exactly two
+lines moved — those two — with `prusa_i3` and `ultimaker2` unchanged, so the
+other sample printers do not share the fault. No resolver code changed, so no
+A1 value was re-derived: the A1 end-to-end slice still passes in the same run.
+
 ## What the installer carries
 
 `Shale_0.1.0_x64-setup.exe` is **4 979 275 B** (4.75 MiB), built with

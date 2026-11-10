@@ -1,19 +1,48 @@
 # Shale v0.1 — status
 
-Batch 5 was the last one: what follows is the state of v0.1 as a whole, with the
+Batch 6 was the last one: what follows is the state of v0.1 as a whole, with the
 batches below kept because each records a decision and the numbers behind it.
 
 Branch `cursor/deep-field-75ee`. Nothing was pushed, merged, tagged, released or
 published; no PR was opened or changed. The A1 at 192.168.1.11 was never
 contacted and no network was scanned — the fake printer binds to 127.0.0.1.
 
-Workspace at this commit: **188 passed, 0 failed, 3 ignored**, and
+Workspace at this commit: **188 passed, 0 failed, 3 ignored** — the same count
+with `SHALE_CURA_DIR` set, which is the only way the resolver golden actually
+runs, and it now passes — and
 `cargo clippy --workspace --all-targets -- -D warnings` is clean, also with
 `-p shale-host --features fake-printer`. Batch 3 closed at 182, Batch 4 at 186;
-Batch 5 adds the two slicer tests in `tests/boolean_to_gcode.rs` and no others.
+Batch 5 adds the two slicer tests in `tests/boolean_to_gcode.rs`; Batch 6
+changes no code, only the golden's two stale values.
 The three ignored tests are the two boolean timing ladders (they run for
 minutes on purpose) and the fake-printer wiring test (it needs a running
 double).
+
+## Batch 6 item
+
+One open question, settled from Cura's own files rather than by preference: the
+resolver's golden disagreed with the resolver on `creality_ender3`
+(`material_bed_temperature` 50 against 60; `retraction_amount` 5 against 6.5).
+
+**Ground truth: 60 and 6.5.** `fdmprinter.def.json:2809-2826` defaults the bed
+to 60 and `:2827-2842` makes the first layer follow it; `creality_base.def.json`
+overrides neither; the draft quality for this printer
+(`quality/creality/base/base_global_draft.inst.cfg`) sets `layer_height = 0.32`
+and no temperature; and `materials/generic_pla.xml.fdm_material:47` carries
+`heated bed temperature = 60`, which `material.rs:233` and `resolver.rs:646-647`
+already translate. `retraction_amount` defaults to 6.5 at
+`fdmprinter.def.json:4695`, and no Creality quality file sets it. The stale 50
+and 5 match the per-Ultimaker-machine blocks in the same material file
+(`:181`, `:218`, `:94`), which is not this printer. The walk is written out with
+line references in `docs/verification.md`.
+
+**The golden moved, not the resolver.** Regenerated with `SHALE_WRITE_GOLDEN=1`
+against the same Cura 5.13.0 resources: two lines changed, and `prusa_i3` and
+`ultimaker2` came out identical, so the other sample printers do not share the
+fault. No code changed, so the installer was not rebuilt and clippy was not
+re-run; `cargo test --workspace` is **188/0/3 both with and without
+`SHALE_CURA_DIR`**, which is the first time the golden has actually run in the
+suite.
 
 ## Batch 5 items
 
@@ -601,17 +630,6 @@ not themed — they are the system's.
    sentence through unit tests. If the real refusal says something other than
    `0x800700AA`, the box quotes the error instead of guessing, which is the safe
    half of the same fix.
-5. **The resolver's golden file is stale against Cura 5.13.0, and is skipped in
-   the ordinary suite.** `resolver::golden::sample_printers_match_the_golden_file`
-   reads `SHALE_CURA_DIR`; without it, it returns early, which is why the count
-   above is green. With Cura 5.13.0 configured it fails on one key:
-   `creality_ender3 material_bed_temperature` resolves to **60** against the
-   golden's **50**. The app is not affected — it resolves at run time and never
-   reads the golden — but the check is not currently a check. Settling it means
-   deciding whether the golden is what should move (regenerate it with
-   `SHALE_WRITE_GOLDEN=1` against a named Cura version) or whether the resolver
-   is picking the wrong ancestor for that key; that is a decision about what the
-   golden is for, so it is left open rather than quietly regenerated.
-6. **Remaining Bambu parity is blocked outside Shale** — seam painting,
+5. **Remaining Bambu parity is blocked outside Shale** — seam painting,
    per-filament flush volumes and multi-spool sliced 3MF need CuraEngine 5.13
    support it does not offer; camera and AMS mapping need a machine.
