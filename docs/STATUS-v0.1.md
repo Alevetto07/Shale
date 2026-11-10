@@ -19,7 +19,7 @@ ignored tests are two stopwatches (`boolean_timings_…`,
 | 3 | The boolean wall | `5a54e5b` | moved, not cracked — cap stays 12 000 |
 | 4 | End-to-end slice for the A1 | `905e8f1` | done on both surfaces; found and fixed a prelude defect |
 | 5 | Release readiness | `26e2d75` | clippy clean, release build, installer; built three times as fixes landed, numbers below |
-| 6 | Last UI pass | `626796e`, `84cc721`, `d8902a9`, `5f1236c` | two dishonest strings, a nameless About, a bounding box and an unwithdrawable pin found and fixed; what is left is under Open |
+| 6 | Last UI pass | `626796e`, `84cc721`, `d8902a9`, `5f1236c`, `63a6a15` | two dishonest strings, a nameless About, a bounding box, an unwithdrawable pin and a silent second launch found and fixed; what is left is under Open |
 
 ### 1. A Bambu printer that exists only on loopback
 
@@ -169,6 +169,12 @@ Three things were fixed, the first two found by reading what the window said:
   taken from `env!("CARGO_PKG_VERSION")` so the window cannot drift from
   `Cargo.toml` (`84cc721`).
 
+- A second launch died in the dark: WebView2 refuses to share the window
+  profile, `create webview` fails with `HRESULT(0x800700AA)` and setup unwinds
+  with no window and no sentence. A named mutex is claimed first now; the second
+  process finds the window titled `Shale`, restores it, brings it forward and
+  exits 0. Measured: the second process left with exit 0, the first kept its
+  window, and a launch after both had gone still opened.
 - Every file the slicer wrote claimed a bounding box two million millimetres
   wide: CuraEngine fills `;MINX`…`;MAXZ` with `f32::MAX` when it is handed bare
   STL files, and it is. `bambu::rewrite_header_bounds` now measures the meshes it
@@ -248,14 +254,15 @@ not themed — they are the system's.
 3. **Nothing is pushed.** `git push` cannot read a username in this shell
    (`terminal prompts disabled`) and both batches forbid it. Every commit is
    local; the remote tip is still `0b2e3e4`.
-4. **A second launch dies without a word.** Start Shale while a WebView2 child
-   from an earlier run still holds `%LOCALAPPDATA%\dev.shale.desktop\EBWebView`
-   and setup panics: `failed to create webview: WebView2 error:
-   WindowsError(Error { code: HRESULT(0x800700AA), message: "The requested
-   resource is in use." })`, then the process exits. No window, no sentence, no
-   hint that Shale is already running. The probes provoke it by `terminate`-ing
-   the app; a user would provoke it by double-clicking the icon twice. A
-   single-instance guard, or an error box, would fix it.
+4. **A webview that outlives a crash still blocks the next launch.** The
+   single-instance guard covers the second *Shale process*; it cannot cover a
+   surviving `msedgewebview2` child holding
+   `%LOCALAPPDATA%\dev.shale.desktop\EBWebView` with no Shale running. Then the
+   mutex is free, setup runs, and it panics: `failed to create webview: WebView2
+   error: WindowsError(Error { code: HRESULT(0x800700AA), message: "The
+   requested resource is in use." })` — no window, no sentence. Provoked twice
+   tonight by `terminate`-ing probes. Catching `Builder::build()`'s error and
+   saying something would fix it; the mutex cannot.
 5. **Remaining Bambu parity is blocked outside Shale** — seam painting,
    per-filament flush volumes and multi-spool sliced 3MF need CuraEngine 5.13
    support it does not offer; camera and AMS mapping need a machine.

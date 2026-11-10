@@ -567,6 +567,41 @@ The run, with the pin from an earlier session still in the vault:
    certificate pin`.
 3. A reload: the Device pane comes back with empty fields, not the old address.
 
+## A second launch comes to the front
+
+WebView2 will not let two processes share a window profile: the second one's
+`create webview` fails with `HRESULT(0x800700AA)`, "The requested resource is in
+use", and Tauri unwinds setup — no window, no sentence, the process just ends.
+Double-clicking the icon twice was enough to do it.
+
+`instance.rs` claims a named mutex (`Local\dev.shale.desktop`) before anything
+opens. A second process does not argue: it finds the window titled `Shale`,
+restores it with `ShowWindow(SW_RESTORE)` and brings it up with
+`SetForegroundWindow`, then exits 0. The message box is only the fallback for a
+process that holds the profile and has no window to show.
+
+```sh
+python second_launch.py
+# after the first launch:
+#   39704  01:11:56.651  Shale
+# after the second launch (second pid 34948):
+#   39704  01:11:56.651  Shale
+# second process still alive: False exit: 0
+# after killing both, a new launch:
+#   30984  01:12:14.284  Shale
+```
+
+The second process left instead of dying, the first kept its window, and a
+launch after both had gone still opened — so the mutex is released with the
+process and cannot wedge the app. What this does **not** show is the window
+actually rising to the front: the probes run on a desktop the Shale windows do
+not occupy, so a screen capture sees neither the app nor the box. The calls are
+the documented ones and the second process's exit is the observable.
+
+The other case is untouched and still Open: a webview child that outlives a
+crash keeps the profile directory, and then there is no window to focus and no
+mutex to lose — the next launch panics in setup.
+
 ## How long the catalogue takes, when nothing else is running
 
 The first window cannot list printers until Cura's resources are read: 706

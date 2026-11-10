@@ -24,6 +24,7 @@ use shale_core::{
     RecentEntry, ResourcePaths, StoredInstruction, SupportOverlay, SupportParams, SupportPlan,
     TessellationTolerance, Toolpath, Transform, TriangleMesh, UserSettings, VariantInfo,
 };
+mod instance;
 mod secrets;
 
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -3956,6 +3957,17 @@ fn secret_clear(key: String) -> Result<(), String> {
 }
 
 pub fn run() {
+    // Before anything opens: WebView2 will not let two processes share the
+    // window's profile, and its refusal is a bare HRESULT that unwinds setup.
+    if !instance::claim("Local\\dev.shale.desktop") {
+        // A second launch means "show me Shale": bring the window up rather than
+        // telling the user off. The box is only for the case where a process
+        // holds the profile and has no window to show.
+        if !instance::focus_existing("Shale") {
+            instance::say_already_running();
+        }
+        return;
+    }
     let started = std::time::Instant::now();
     let engine = Engine::from_env();
     // The profile library is read on a worker thread: two and a half seconds of
