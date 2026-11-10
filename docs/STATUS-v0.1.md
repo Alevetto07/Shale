@@ -130,8 +130,7 @@ Every commit of Batch 3, in order:
 | `c52172c` | the boolean stops allocating a list of sides; refusal sentence rewritten; five garbage-input tests (item 2) |
 | `cc9bc4c` | clean-slate pass: two panics and two untrue strings fixed, the rest listed (item 3) |
 | `14b9561` | the `Side` enum the boolean no longer collects |
-| `30d547b` | the status page itself (item 4) |
-| `1e7eca5` | the ordinary launch re-proved after `build()`, and recorded |
+| `30d547b` and the docs commits after it | this page and `docs/verification.md` (item 4) — nothing after `14b9561` changes code |
 
 Nothing was pushed, merged, tagged or published, and no PR was touched. The A1 at
 192.168.1.11 was never contacted; no network was scanned; the fake printer binds
