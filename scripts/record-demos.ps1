@@ -168,10 +168,14 @@ public class ToastWatch {
 # in the shape the app itself writes.
 $presetDir = Join-Path $env:APPDATA "dev.shale.desktop\presets"
 New-Item -ItemType Directory -Force -Path $presetDir | Out-Null
+# A preset is the eight fields of the sheet and nothing else: a file missing a
+# key is not a preset, and the sheet then lists none of them.
 $seed = @{
-  "draft-fast.json" = @{ name = "draft fast"; values = @{ layerHeight = "0.28"; walls = "2"; infill = "10"; speed = "150" } }
-  "strong-012.json" = @{ name = "strong 0.12"; values = @{ layerHeight = "0.12"; walls = "4"; infill = "35"; speed = "60" } }
+  "draft-fast.json" = @{ name = "draft fast"; values = @{ layerHeight = "0.28"; walls = "2"; infill = "10"; pattern = "grid"; supports = "none"; nozzle = "0.4"; bed = "60"; speed = "150" } }
+  "strong-012.json" = @{ name = "strong 0.12"; values = @{ layerHeight = "0.12"; walls = "4"; infill = "35"; pattern = "gyroid"; supports = "tree"; nozzle = "0.4"; bed = "60"; speed = "60" } }
+  "display-02.json" = @{ name = "display 0.20"; values = @{ layerHeight = "0.20"; walls = "3"; infill = "15"; pattern = "cubic"; supports = "none"; nozzle = "0.4"; bed = "60"; speed = "100" } }
 }
+
 $utf8 = New-Object System.Text.UTF8Encoding $false
 foreach ($file in $seed.Keys) {
   $path = Join-Path $presetDir $file

@@ -44,7 +44,9 @@ def main():
     expression = (
         "(() => {"
         f" const wanted = {json.dumps(wanted)};"
-        " const tabs = [...document.querySelectorAll('button')];"
+        " const tabs = [...document.querySelectorAll('button')].filter("
+        "   (b) => b.hasAttribute('aria-selected'),"
+        " );"
         " const tab = tabs.find((b) => b.textContent.trim().toUpperCase() === wanted);"
         " if (!tab) return 'missing';"
         " if (tab.getAttribute('aria-selected') === 'true') return 'active';"

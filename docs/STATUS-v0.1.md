@@ -70,15 +70,17 @@ and the start clip is recorded with the recent list empty. Frames were pulled
 from every clip and looked at: `01-start` is the star field with the menu and no
 recents; `02-slice` presses Slice and ends with the part, the stats and the cost;
 `03-preview` is the coloured toolpath with the layer slider; `04-multi` has two
-parts on two spools with supports and a prime tower; `05-queue` has three jobs;
-`06-cost` puts the card over the plate at twice its size; `07-presets` has the
-sheet open on a list of named presets. None of them shows a toast, another
+parts on two spools, one of them tipped onto an edge; `05-queue` has three jobs;
+`06-cost` puts the whole job card over the plate at its own size, labels and
+values legible; `07-presets` has the sheet open on three named presets with one
+selected. None of them shows a toast, another
 window, the taskbar or the pointer.
 
 **Still open.** Item 2c (the seam) was not started: it is the one parity item
-that needs CuraEngine support 5.13 does not have. `04-multi` is taken on Prepare
-rather than Preview, which shows the supports and the tower but not the colour
-by feature. The `.shale` association is registered per user only; a machine-wide
+that needs CuraEngine support 5.13 does not have. `04-multi` is taken on Prepare rather than Preview: the slice does carry
+supports and a prime tower (their counts are in the feature legend) but the
+Prepare viewport draws only the parts, and the tab click that was meant to move
+the clip to Preview lands on the wrong control. The `.shale` association is registered per user only; a machine-wide
 install is not offered.
 
 ## Batch 6 item

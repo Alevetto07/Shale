@@ -220,6 +220,21 @@ function PresetPanel({
           save
         </button>
       </div>
+      {presets.length > 0 && (
+        <ul className="preset-names" aria-label="named presets">
+          {presets.map((entry) => (
+            <li key={entry.name}>
+              <button
+                type="button"
+                className={entry.name === picked ? "preset-name on" : "preset-name"}
+                onClick={() => setPicked(entry.name)}
+              >
+                {entry.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="preset-row">
         <select
           aria-label="saved presets"

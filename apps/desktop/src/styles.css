@@ -2190,6 +2190,29 @@ input[type="checkbox"]:focus-visible {
   gap: 0.35rem;
   align-items: center;
 }
+/* The names are the list: a select hides them behind a click, and a clip (or a
+   person) should see what has been saved without opening anything. */
+.preset-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.preset-name {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+.preset-name.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .preset-row input,
 .preset-row select {
   flex: 1;
@@ -2226,12 +2249,21 @@ input[type="checkbox"]:focus-visible {
 /* The cost clip has to read as a cost clip: the job card floats over the plate
    at twice its size, on the same panel colour, so the numbers are the subject. */
 .job-card.demo-cost {
-  position: fixed;
-  right: 56px;
+  position: absolute;
+  left: 50%;
   top: 50%;
-  transform: translateY(-50%) scale(1.9);
-  transform-origin: right center;
+  transform: translate(-50%, -50%);
+  min-width: 24rem;
+  gap: 0.5rem;
+  padding: 1.1rem 1.5rem 1.2rem;
   z-index: 40;
+  background: var(--panel);
+  backdrop-filter: none;
   border-color: #2a2b3a;
   box-shadow: 0 30px 90px rgba(0, 0, 0, 0.65);
 }
+/* Scaling the card blurred its own text and pushed the labels out of the box;
+   the demo card is laid out large instead, so every row is crisp and inside. */
+.job-card.demo-cost .job-state { font-size: 11px; }
+.job-card.demo-cost dt { font-size: 12px; }
+.job-card.demo-cost dd { font-size: 17px; }
