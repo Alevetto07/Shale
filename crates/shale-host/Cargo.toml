@@ -1,6 +1,6 @@
 [package]
 name = "shale-host"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Bambu LAN host for Shale: MQTT status, FTPS upload, print control"
 publish = false

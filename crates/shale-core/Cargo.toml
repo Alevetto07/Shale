@@ -1,6 +1,6 @@
 [package]
 name = "shale-core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Job model, Cura profile resolution, and CuraEngine orchestration for Shale"
 publish = false

@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Shale",
-  "version": "0.1.0",
+  "mainBinaryName": "Shale",
+  "version": "0.1.1",
   "identifier": "dev.shale.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -27,6 +28,20 @@
   },
   "bundle": {
     "active": true,
+    "fileAssociations": [
+      {
+        "ext": ["shale"],
+        "name": "Shale project",
+        "description": "Shale project",
+        "role": "Editor"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
+    },
     "targets": ["deb", "appimage", "nsis", "app", "dmg"],
     "resources": {
       "../../../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
