@@ -5,7 +5,8 @@ published; no PR was opened or changed. The A1 at 192.168.1.11 was never
 contacted and no network was scanned — the fake printer binds to 127.0.0.1.
 
 Workspace at this commit: **173 passed, 0 failed, 3 ignored**, and
-`cargo clippy --workspace --all-targets -- -D warnings` is clean. The three
+`cargo clippy --workspace --all-targets -- -D warnings` is clean. The run was at
+`729b074`; everything after it changes only this page and `docs/verification.md`. The three
 ignored tests are two stopwatches (`boolean_timings_…`,
 `a_curved_part_does_not_become_a_chain`) and one check that takes a file
 (`a_sliced_file_reaches_the_fake_printer`, which reads `SHALE_SLICED_GCODE`).
