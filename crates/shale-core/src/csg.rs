@@ -363,7 +363,7 @@ impl Node {
         if self.plane.is_none() {
             self.plane = Some(pick_plane(&polygons));
         }
-        let (normal, w) = self.plane.unwrap();
+        let (normal, w) = self.plane.expect("a plane was chosen for a non-empty set");
         let mut front = Vec::new();
         let mut back = Vec::new();
         let mut coplanar_front = Vec::new();

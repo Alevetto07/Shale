@@ -226,8 +226,8 @@ export function App() {
   /// a moment on a cold start — and an empty list that means "not loaded" must
   /// not be shown as "none yet".
   const [recentsRead, setRecentsRead] = useState(false);
-  // The recent list does not depend on the catalogue, and the catalogue takes
-  // twenty-odd seconds to read 655 printer definitions on a cold start. Reading
+  // The recent list does not depend on the catalogue, and the catalogue takes a
+  // couple of seconds to read 655 printer definitions on a cold start. Reading
   // the list immediately keeps the start screen from claiming nothing is recent.
   useEffect(() => {
     let live = true;

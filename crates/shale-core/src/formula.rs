@@ -251,7 +251,12 @@ fn eval_binary(
         BinOp::Ge => Ok(Value::Bool(compare(&left, &right)? >= 0)),
         BinOp::In => Ok(Value::Bool(contains(&right, &left)?)),
         BinOp::NotIn => Ok(Value::Bool(!contains(&right, &left)?)),
-        BinOp::And | BinOp::Or => unreachable!("logical operators are handled above"),
+        // Logical operators return above, before either side is evaluated. If
+        // one ever reaches here the short-circuit was lost, and a formula in a
+        // profile must answer, not take the window down.
+        BinOp::And | BinOp::Or => Err(FormulaError::new(
+            "a logical operator reached the arithmetic evaluator",
+        )),
     }
 }
 
@@ -1235,7 +1240,9 @@ impl<'a> Parser<'a> {
                     if !matches!(self.bump(), Some(Tok::RParen)) {
                         return Err(self.error("expected ')'"));
                     }
-                    let body = positional.pop().unwrap();
+                    let Some(body) = positional.pop() else {
+                        return Err(self.error("a comprehension needs an expression"));
+                    };
                     return Ok((
                         vec![Expr::Comprehension {
                             body: Box::new(body),
