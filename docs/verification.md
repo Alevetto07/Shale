@@ -284,9 +284,11 @@ below accounts for the difference.)
 The same runs report open edges in the result — 4 737, 16 444 and 34 731 — and
 that number is T-junctions, not holes: a BSP splits a polygon without splitting
 the neighbour that just gained a vertex. It is why `volume` carries the proof at
-this size and why the small cases assert closedness exactly: a 10 mm cube minus a
-48-facet pillar is `difference 663.68` of the 663.72 the arithmetic predicts, with
-16 open edges and no gap in the solid.
+this size and why the small cases check the arithmetic instead: a 10 mm cube minus
+a 48-facet 4 mm pillar measures **874.69 mm³** against the 874.34 that
+`1000 - π·4·10` predicts, with 462 open edges and no hole in the solid, and two
+cubes overlapping halfway come out at exactly `difference 500.00, union 1500.00,
+common 500.00`.
 
 Three changes moved this. None of them cracks it.
 
