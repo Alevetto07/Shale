@@ -7,9 +7,9 @@ Branch `cursor/deep-field-75ee`. Nothing was pushed, merged, tagged, released or
 published; no PR was opened or changed. The A1 at 192.168.1.11 was never
 contacted and no network was scanned — the fake printer binds to 127.0.0.1.
 
-Workspace at this commit: **188 passed, 0 failed, 3 ignored** — the same count
+Workspace at this commit: **202 passed, 0 failed, 3 ignored** — the same count
 with `SHALE_CURA_DIR` set, which is the only way the resolver golden actually
-runs, and it now passes — and
+runs, and it passes — and
 `cargo clippy --workspace --all-targets -- -D warnings` is clean, also with
 `-p shale-host --features fake-printer`. Batch 3 closed at 182, Batch 4 at 186;
 Batch 5 adds the two slicer tests in `tests/boolean_to_gcode.rs`; Batch 6
@@ -17,6 +17,69 @@ changes no code, only the golden's two stale values.
 The three ignored tests are the two boolean timing ladders (they run for
 minutes on purpose) and the fake-printer wiring test (it needs a running
 double).
+
+## Batch A and A2 — what the release actually contains
+
+Batch A added the two things a 0.1 can be sold on without a printer: the job
+card now says what a print costs, and the slice settings sheet keeps named
+presets. Batch A2 re-recorded the seven feature clips, ran the whole gate and
+rebuilt the installer.
+
+**Cost.** `shale-core::cost` turns grams, minutes and a few settings into
+filament, energy and a total, in one currency. Defaults are 20 EUR/kg, 100 W and
+0.30 EUR/kWh, all three editable and stored in `cost.json`; the arithmetic is
+clamped so a typo cannot produce a negative or absurd number. The card lists the
+per-spool rows when the plate uses more than one spool, so a two-spool plate
+does not silently add up to one number.
+
+**Presets.** `shale-core::preset` stores the eight fields of the settings sheet
+as JSON under `presets/`, named by the person who saved them. Applying a preset
+shows the diff first; a blank name, an unknown key and an existing name are
+refusals with their own sentences, not silent no-ops.
+
+**The installer.** `Shale_0.1.1_x64-setup.exe`, **5 009 490 bytes**, built from
+this tree with `npm run tauri build`. It installs per user into
+`%LOCALAPPDATA%\Shale`, claims `.shale` as its own, offers itself in "Open with"
+for `.3mf`, `.stl`, `.step` and `.stp` without taking the default away from
+whatever owns them today, and on uninstall removes the app, the shortcut, the
+Open With entries and the `.shale` key. The bundle had been naming a binary that
+does not exist (`shale-desktop.exe`); `mainBinaryName` is `Shale` now, which is
+why the shortcut and the association work at all.
+
+**The smoke test passes.** `scripts/installer-smoke.ps1`: installs silently,
+checks the files, the `.shale` default and its open command, the four Open With
+entries, that `.stl` still belongs to Bambu Studio, launches, opens a project by
+association and checks the second process handed the path to the first and
+exited, then uninstalls and checks every key and the shortcut are gone and the
+project file was left alone. Nineteen checks, all PASS.
+
+**The gate.** `cargo test --workspace --locked` **202 passed, 0 failed, 3
+ignored** (the two boolean timing ladders and the fake-printer wiring test);
+`cargo clippy --workspace --all-targets --locked -- -D warnings` clean;
+`cargo fmt --check` clean; `npm run build` clean. The fourteen new tests are the
+six cost and eight preset ones.
+
+**The clips.** Seven, H.264/yuv420p, 30 fps, captured from the Shale
+window's own rectangle and encoded at 1920×1080, no audio, 6 s each except `02-slice` at 10 s. The
+recorder parks the window on the work area, keeps it topmost and captures only
+that rectangle, so the taskbar and other windows cannot be in frame; it turns
+notifications off for the run, closes any that are already up and watches for
+new ones, and it does not draw the pointer. Each clip starts on a throwaway
+webview profile so the Device pane cannot show a remembered address or serial,
+and the start clip is recorded with the recent list empty. Frames were pulled
+from every clip and looked at: `01-start` is the star field with the menu and no
+recents; `02-slice` presses Slice and ends with the part, the stats and the cost;
+`03-preview` is the coloured toolpath with the layer slider; `04-multi` has two
+parts on two spools with supports and a prime tower; `05-queue` has three jobs;
+`06-cost` puts the card over the plate at twice its size; `07-presets` has the
+sheet open on a list of named presets. None of them shows a toast, another
+window, the taskbar or the pointer.
+
+**Still open.** Item 2c (the seam) was not started: it is the one parity item
+that needs CuraEngine support 5.13 does not have. `04-multi` is taken on Prepare
+rather than Preview, which shows the supports and the tower but not the colour
+by feature. The `.shale` association is registered per user only; a machine-wide
+install is not offered.
 
 ## Batch 6 item
 
