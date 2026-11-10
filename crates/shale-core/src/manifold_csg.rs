@@ -106,14 +106,8 @@ fn solid(mesh: &TriangleMesh) -> Option<Manifold> {
 fn to_shale(manifold: &Manifold) -> TriangleMesh {
     let (vertices, _count, triangles) = manifold.to_mesh_f32();
     let mut mesh = TriangleMesh {
-        vertices: vertices
-            .chunks_exact(3)
-            .map(|vertex| [vertex[0], vertex[1], vertex[2]])
-            .collect(),
-        triangles: triangles
-            .chunks_exact(3)
-            .map(|triangle| [triangle[0], triangle[1], triangle[2]])
-            .collect(),
+        vertices: vertices.as_chunks::<3>().0.to_vec(),
+        triangles: triangles.as_chunks::<3>().0.to_vec(),
     };
     mesh.vertices.shrink_to_fit();
     mesh.triangles.shrink_to_fit();

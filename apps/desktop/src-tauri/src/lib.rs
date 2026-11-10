@@ -1263,7 +1263,7 @@ const BOOLEAN_CAP: usize = shale_core::csg::MANIFOLD_CAP;
 fn boolean_refusal(triangles: usize, alternative: &str) -> String {
     format!(
         "A mesh boolean on {triangles} triangles is more than Shale will attempt at once: \
-         the engine is given at most {BOOLEAN_CAP}. That is not a memory limit — it is the \
+         the engine is given at most {BOOLEAN_CAP}. That is not about bytes: it is the \
          size at which a boolean is more likely a mistake in the plate than a part. \
          {alternative}"
     )
