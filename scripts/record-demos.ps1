@@ -183,8 +183,8 @@ foreach ($file in $seed.Keys) {
 # How long each scenario needs before it is worth filming: an import or a slice
 # at startup takes real seconds, and a video of a spinner is not a demo.
 $settle = @{
-  "start"   = 9
-  "slice"   = 22
+  "start"   = 20
+  "slice"   = 12
   "preview" = 18
   "multi"   = 26
   "queue"   = 18
@@ -241,12 +241,12 @@ try {
     Start-Sleep -Seconds $settle[$scenario]
     # The tab refuses to open before a slice exists, and a slow plate is still
     # slicing when the app settles, so the click is retried until it takes.
+    # The slice clip is about pressing Slice: the plate is empty on purpose, and
+    # the take is longer so the toolpath has time to appear.
     if ($scenario -eq "slice") {
-      # The clip is about a plate that has been sliced: wait for the engine and
-      # then stand on Prepare, where the part and the job card are.
-      $click = & python "C:\Users\Alessio\Shale\scripts\demo-tab.py" PREPARE 2>&1
-      Write-Host ("   tab {0}" -f $click)
-      Start-Sleep -Milliseconds 1200
+      $click = & python "C:\Users\Alessio\Shale\scripts\demo-tab.py" SLICE 2>&1
+      Write-Host ("   slice {0}" -f $click)
+      Start-Sleep -Milliseconds 1500
     }
     if ($scenario -in @("preview", "multi")) {
       for ($try = 0; $try -lt 12; $try++) {
@@ -280,6 +280,8 @@ try {
       [void][ShaleCapture]::GetWindowRect($tray, [ref]$trayRect)
       $trayH = $trayRect.Bottom - $trayRect.Top
     }
+    $takeSeconds = $Seconds
+    if ($scenario -eq "slice") { $takeSeconds = 10 }
     $rect = New-Object ShaleCapture+RECT
     [void][ShaleCapture]::GetWindowRect($window.MainWindowHandle, [ref]$rect)
     $x = [Math]::Max($work.Left, $rect.Left)
@@ -292,7 +294,7 @@ try {
 
     & $ffmpeg -y -hide_banner -loglevel error `
       -f gdigrab -framerate 30 -draw_mouse 0 -offset_x $x -offset_y $y -video_size "${w}x${h}" -i desktop `
-      -t $Seconds `
+      -t $takeSeconds `
       -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2" `
       -c:v libx264 -preset medium -crf 20 -pix_fmt yuv420p -movflags +faststart -an `
       $target
