@@ -528,8 +528,107 @@ fn to_mesh(polygons: &[Poly]) -> TriangleMesh {
     mesh
 }
 
+/// Which of the two engines answered a Boolean.
+///
+/// It is reported rather than hidden: the library is roughly a thousand times
+/// faster at 32 500 triangles, so a silent fall back to the BSP is a
+/// two-hundred-second surprise in a window that promised seconds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Engine {
+    /// Manifold, through `manifold_csg`, watertight by construction.
+    Manifold,
+    /// The BSP in this file, used when Manifold will not take the input.
+    Bsp,
+}
+
+/// The largest part the library will be handed.
+///
+/// Not a memory limit and not a polygon budget wall: Manifold cuts 32 448
+/// triangles in 0.10 s in a debug build, so the cap exists to bound the worst
+/// case — a mesh so large that a mistake in the caller (a boolean inside a
+/// loop, a plate of a thousand copies) would be felt as a hung window rather
+/// than as work.
+pub const MANIFOLD_CAP: usize = 200_000;
+
+/// The largest part the BSP fallback will be handed.
+///
+/// This one *is* about time: the BSP is quadratic, so 12 000 triangles is
+/// already seconds and 32 500 is minutes. When Manifold refuses a mesh above
+/// this, the honest answer is to refuse as well.
+pub const BSP_CAP: usize = 12_000;
+
+/// Which Boolean to ask for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Op {
+    Union,
+    Difference,
+    Intersection,
+}
+
 /// Everything in `a` or in `b`.
 pub fn union(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
+    boolean(a, b, Op::Union).0
+}
+
+/// Everything in `a` that is not in `b`.
+pub fn subtract(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
+    boolean(a, b, Op::Difference).0
+}
+
+/// Everything in both.
+pub fn intersect(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
+    boolean(a, b, Op::Intersection).0
+}
+
+/// The Boolean, and which engine gave it.
+///
+/// Manifold first. It is exact, watertight and fast on the shapes a slicer
+/// meets; the BSP only gets the call when Manifold refuses the input (a mesh
+/// with holes, several shells that touch, a self-intersection it cannot
+/// resolve), because the alternative to a slow answer there is no answer.
+pub fn boolean(a: &TriangleMesh, b: &TriangleMesh, op: Op) -> (TriangleMesh, Engine) {
+    match boolean_within(a, b, op, MANIFOLD_CAP) {
+        Some(answer) => answer,
+        // Beyond the cap, or refused by the library with a fallback that would
+        // take minutes: the caller that wants the work anyway gets the BSP.
+        None => (run_bsp(a, b, op), Engine::Bsp),
+    }
+}
+
+/// The Boolean if it is inside `limit` triangles and either engine will take
+/// it; `None` when Shale would rather refuse than spend minutes.
+///
+/// This is the door the window uses. `boolean` is the door the rest of the
+/// crate uses, where the meshes are small enough that the caps are not the
+/// interesting part of the question.
+pub fn boolean_within(
+    a: &TriangleMesh,
+    b: &TriangleMesh,
+    op: Op,
+    limit: usize,
+) -> Option<(TriangleMesh, Engine)> {
+    if a.triangles.len() > limit || b.triangles.len() > limit {
+        return None;
+    }
+    if let Some(mesh) = crate::manifold_csg::boolean(a, b, op) {
+        return Some((mesh, Engine::Manifold));
+    }
+    if a.triangles.len() <= BSP_CAP && b.triangles.len() <= BSP_CAP {
+        return Some((run_bsp(a, b, op), Engine::Bsp));
+    }
+    None
+}
+
+fn run_bsp(a: &TriangleMesh, b: &TriangleMesh, op: Op) -> TriangleMesh {
+    match op {
+        Op::Union => union_bsp(a, b),
+        Op::Difference => subtract_bsp(a, b),
+        Op::Intersection => intersect_bsp(a, b),
+    }
+}
+
+/// The BSP's union, kept for the inputs Manifold will not take.
+pub fn union_bsp(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
     let mut left = Node::from_polygons(to_polygons(a));
     let mut right = Node::from_polygons(to_polygons(b));
     left.clip_to(&right);
@@ -540,8 +639,8 @@ pub fn union(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
     merged(&left, &right, false)
 }
 
-/// Everything in `a` that is not in `b`.
-pub fn subtract(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
+/// The BSP's subtraction, kept for the inputs Manifold will not take.
+pub fn subtract_bsp(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
     let mut left = Node::from_polygons(to_polygons(a));
     let mut right = Node::from_polygons(to_polygons(b));
     left.invert();
@@ -553,8 +652,8 @@ pub fn subtract(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
     merged(&left, &right, true)
 }
 
-/// Everything in both.
-pub fn intersect(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
+/// The BSP's intersection, kept for the inputs Manifold will not take.
+pub fn intersect_bsp(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
     let mut left = Node::from_polygons(to_polygons(a));
     let mut right = Node::from_polygons(to_polygons(b));
     left.invert();
@@ -663,6 +762,34 @@ pub fn open_edges(mesh: &TriangleMesh) -> usize {
         for index in 0..3 {
             let a = key(mesh.vertices[triangle[index] as usize]);
             let b = key(mesh.vertices[triangle[(index + 1) % 3] as usize]);
+            if a == b {
+                continue;
+            }
+            let ordered = if a < b { (a, b) } else { (b, a) };
+            *edges.entry(ordered).or_insert(0) += 1;
+        }
+    }
+    edges.values().filter(|count| **count != 2).count()
+}
+
+/// Edges that are not shared by exactly two triangles, counted by vertex
+/// index rather than by position.
+///
+/// `open_edges` rounds positions to a thousandth of a millimetre because the
+/// BSP returns a polygon soup: its triangles carry their own copies of the
+/// corners, and position is the only handle on "the same corner". Manifold's
+/// output is indexed — two corners are the same corner because they are the
+/// same index — so the honest question there is topological, and asking it by
+/// position instead reports a rounding artefact: at 32 500 triangles, twelve
+/// edges of a watertight sphere come back as "open" because two vertices a
+/// ten-thousandth of a millimetre apart round to the same key.
+pub fn open_edges_topological(mesh: &TriangleMesh) -> usize {
+    use std::collections::HashMap;
+    let mut edges: HashMap<(u32, u32), usize> = HashMap::new();
+    for triangle in &mesh.triangles {
+        for index in 0..3 {
+            let a = triangle[index];
+            let b = triangle[(index + 1) % 3];
             if a == b {
                 continue;
             }
@@ -862,12 +989,15 @@ mod tests {
             open_edges(&difference)
         );
 
-        assert!(difference.triangles.len() > 500, "the cut left a solid, not a stub");
-        // The count is T-junctions, not holes: a BSP splits a polygon without
-        // splitting the neighbour whose edge it just gained a vertex on, so a
-        // part with a bore in it has hundreds of them and `volume` is what
-        // proves the solid. The box test above pins the exact arithmetic.
-        assert!(open_edges(&difference) < 4 * difference.triangles.len());
+        // Manifold answers this one, so the result is a surface and not a pile
+        // of fragments: 420 triangles where the BSP left thousands, and every
+        // edge shared by exactly two of them.
+        let kept = volume(&difference);
+        assert!(
+            kept > 10_000.0 && kept < volume(&body),
+            "the cut left {kept:.2} mm3, which is a stub or a copy"
+        );
+        assert_eq!(open_edges(&difference), 0, "watertight, not merely closed enough");
         assert!(
             elapsed < std::time::Duration::from_secs(2),
             "a part this size took {elapsed:?}, which is the chain coming back"
@@ -968,6 +1098,72 @@ mod tests {
     }
 
 
+
+    /// A box whose six faces are cut into `n` by `n` squares: convex, closed,
+    /// and 12·n² triangles, so the ladder has a rung with an exact volume.
+    fn subdivided_box(size: f64, n: usize) -> TriangleMesh {
+        let mut vertices = Vec::new();
+        let mut triangles = Vec::new();
+        // Each face is given its two edge vectors in the order that makes
+        // u × v point out of the box, so the winding is outward by construction.
+        let mut face = |origin: [f64; 3], u: [f64; 3], v: [f64; 3]| {
+            let start = vertices.len() as u32;
+            for j in 0..=n {
+                for i in 0..=n {
+                    let (fu, fv) = (i as f64 / n as f64, j as f64 / n as f64);
+                    vertices.push([
+                        (origin[0] + u[0] * fu + v[0] * fv) as f32,
+                        (origin[1] + u[1] * fu + v[1] * fv) as f32,
+                        (origin[2] + u[2] * fu + v[2] * fv) as f32,
+                    ]);
+                }
+            }
+            let at = |i: usize, j: usize| start + (j * (n + 1) + i) as u32;
+            for j in 0..n {
+                for i in 0..n {
+                    let (a, b, c, d) = (at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
+                    triangles.push([a, b, c]);
+                    triangles.push([a, c, d]);
+                }
+            }
+        };
+        let s = size;
+        face([0.0, 0.0, 0.0], [0.0, s, 0.0], [s, 0.0, 0.0]); // -z
+        face([0.0, 0.0, s], [s, 0.0, 0.0], [0.0, s, 0.0]); // +z
+        face([0.0, 0.0, 0.0], [s, 0.0, 0.0], [0.0, 0.0, s]); // -y
+        face([0.0, s, 0.0], [0.0, 0.0, s], [s, 0.0, 0.0]); // +y
+        face([0.0, 0.0, 0.0], [0.0, 0.0, s], [0.0, s, 0.0]); // -x
+        face([s, 0.0, 0.0], [0.0, s, 0.0], [0.0, 0.0, s]); // +x
+        TriangleMesh { vertices, triangles }
+    }
+
+    /// The case the brief names: a 30 000-triangle convex part, cut, and the
+    /// answer has to be watertight and right to the arithmetic.
+    #[test]
+    fn a_thirty_thousand_triangle_convex_subtract_is_watertight() {
+        let part = subdivided_box(10.0, 52); // 12 · 52² = 32 448 triangles
+        assert!(part.triangles.len() > 30_000);
+        let bore = cylinder([5.0, 5.0, -1.0], [0.0, 0.0, 1.0], 2.0, 12.0, 64);
+
+        let (cut, engine) = boolean(&part, &bore, Op::Difference);
+        // A 64-sided bore of radius 2 through 10 mm of material: the polygon is
+        // 32·r²·sin(2π/64) = 12.5464 mm², so 125.46 mm³ leaves 874.54.
+        let expected = 1000.0 - 10.0 * 32.0 * 4.0 * (std::f64::consts::TAU / 64.0).sin();
+        let kept = crate::cut::volume(&cut);
+        println!(
+            "30k convex: {} in, {} out, {kept:.3} mm3 of {expected:.3}, {} open edges, {engine:?}",
+            part.triangles.len(),
+            cut.triangles.len(),
+            open_edges(&cut)
+        );
+        assert_eq!(engine, Engine::Manifold, "the library is the default path");
+        assert_eq!(open_edges(&cut), 0, "watertight: every edge in exactly two triangles");
+        assert!(
+            (kept - expected).abs() < 0.5,
+            "{kept:.3} mm3 against the arithmetic {expected:.3}"
+        );
+    }
+
     /// The release-build ladder: 8 000, 33 000 and 80 000 triangles. Ignored by
     /// default because it is a stopwatch, not a check; run it with
     /// `cargo test -p shale-core --release boolean_timings -- --ignored --nocapture`.
@@ -1001,12 +1197,13 @@ mod tests {
                     drop(node);
 
                     let started = std::time::Instant::now();
-                    let out = subtract(&a, &b);
+                    let (out, engine) = boolean(&a, &b, Op::Difference);
                     let elapsed = started.elapsed().as_secs_f64() * 1000.0;
                     println!(
-                        "        subtract: {:>6} out, {elapsed:>10.2} ms, {:.0} mm3, {} open edges",
+                        "        subtract: {:>6} out, {elapsed:>10.2} ms, {:.0} mm3, {} open edges ({} by position), {engine:?}",
                         out.triangles.len(),
                         crate::cut::volume(&out),
+                        open_edges_topological(&out),
                         open_edges(&out)
                     );
                 }

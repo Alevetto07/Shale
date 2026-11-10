@@ -22,6 +22,7 @@ pub mod cad;
 pub mod calibrate;
 pub mod csg;
 pub mod cut;
+mod manifold_csg;
 pub mod catalog;
 mod definition;
 pub mod engine;

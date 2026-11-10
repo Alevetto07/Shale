@@ -1246,7 +1246,11 @@ fn measure_span(a: [f64; 3], b: [f64; 3]) -> shale_core::measure::Span {
 /// over this size would sit on a spinner for minutes rather than fail, so the
 /// guard is a word instead. It is a limit on the kernel, not on the printer:
 /// raising it needs an iterative build, not a bigger stack.
-const BOOLEAN_CAP: usize = 12_000;
+/// The largest part the mesh engine is handed. It cuts 32 448 triangles in a
+/// tenth of a second, so this is a guard against a mistake in the plate
+/// rather than a polygon budget: a boolean asked for in a loop over a
+/// thousand copies should say so, not hang the window.
+const BOOLEAN_CAP: usize = shale_core::csg::MANIFOLD_CAP;
 
 /// The sentence a boolean refusal earns, in the same words wherever it is asked.
 ///
@@ -1258,8 +1262,10 @@ const BOOLEAN_CAP: usize = 12_000;
 /// still works.
 fn boolean_refusal(triangles: usize, alternative: &str) -> String {
     format!(
-        "A mesh boolean on {triangles} triangles would take minutes, so Shale refuses it: \
-         above {BOOLEAN_CAP} the work grows faster than the wait is worth. {alternative}"
+        "A mesh boolean on {triangles} triangles is more than Shale will attempt at once: \
+         the engine is given at most {BOOLEAN_CAP}. That is not a memory limit — it is the \
+         size at which a boolean is more likely a mistake in the plate than a part. \
+         {alternative}"
     )
 }
 
@@ -1490,11 +1496,23 @@ fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Boolea
         return Err("No other part overlaps this one, so there is nothing to cut with".to_string());
     }
     for (_, other) in &others {
-        let next = match mode.as_str() {
-            "subtract" => with_big_stack(|| shale_core::csg::subtract(&solid, other))?,
-            "union" => with_big_stack(|| shale_core::csg::union(&solid, other))?,
-            _ => with_big_stack(|| shale_core::csg::intersect(&solid, other))?,
+        let op = match mode.as_str() {
+            "subtract" => shale_core::csg::Op::Difference,
+            "union" => shale_core::csg::Op::Union,
+            _ => shale_core::csg::Op::Intersection,
         };
+        // `boolean_within` refuses when the library will not take the mesh
+        // and the fallback would take minutes; the sentence says which.
+        let next = with_big_stack(|| {
+            shale_core::csg::boolean_within(&solid, other, op, BOOLEAN_CAP)
+        })?
+        .ok_or_else(|| {
+            boolean_refusal(
+                solid.triangles.len().max(other.triangles.len()),
+                "Cut, or boolean fewer parts at a time.",
+            )
+        })?
+        .0;
         // A boolean that empties the part is not a boolean: say so rather than
         // leaving a plate with nothing on it.
         if next.triangles.is_empty() || shale_core::cut::volume(&next).abs() < 0.01 {
@@ -4281,10 +4299,17 @@ mod tests {
 
     #[test]
     fn a_boolean_refusal_says_the_number_the_reason_and_the_way_round() {
-        let refused = boolean_refusal(32_500, "Cut, or boolean fewer parts at a time.");
-        assert!(refused.contains("32500"), "the count the app measured: {refused}");
+        let refused = boolean_refusal(325_000, "Cut, or boolean fewer parts at a time.");
+        assert!(refused.contains("325000"), "the count the app measured: {refused}");
         assert!(refused.contains(&BOOLEAN_CAP.to_string()), "the cap: {refused}");
-        assert!(refused.contains("minutes"), "the reason is time: {refused}");
+        assert!(
+            refused.contains("more than Shale will attempt"),
+            "the sentence says why: {refused}"
+        );
+        assert!(
+            !refused.contains("minutes"),
+            "the library no longer takes minutes at 32k, so the sentence must not say it does: {refused}"
+        );
         assert!(
             !refused.to_lowercase().contains("memory"),
             "the cap is not a memory limit and must not claim to be: {refused}"
