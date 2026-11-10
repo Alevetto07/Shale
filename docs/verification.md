@@ -703,16 +703,16 @@ cd apps/desktop && npm run tauri build                           # exit 0
 
 | artefact | bytes | size |
 |---|---|---|
-| `target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe` | 4 675 455 | 4.46 MiB |
-| `target/release/shale-desktop.exe` | 17 854 464 | 17.0 MiB |
+| `target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe` | 4 675 254 | 4.46 MiB |
+| `target/release/shale-desktop.exe` | 17 856 000 | 17.0 MiB |
 | `target/release/shale-mcp.exe` | 10 735 104 | 10.2 MiB |
 
 The installer was built three times as the night went on — 4 651 432 bytes after
 the lint pass, 4 657 574 once the UI pass had changed two strings in the window
-and given About its version, and 4 675 455 after the last two fixes (the
-bounding box and the forget press). The last one is the one that ships, and it is
-built from the branch head, not from a working tree with notes in it — the
-two commits after the one it was built from touch only these documents.
+and given About its version, 4 675 455 after the bounding-box and forget fixes,
+and 4 675 254 once the single-instance guard was in. The last one is the one
+that ships, and it is built from the branch head, not from a working tree with
+notes in it.
 
 Versions are 0.1.0 in all four crates, `apps/desktop/package.json` and
 `apps/desktop/src-tauri/tauri.conf.json`. Nothing was tagged, and the installer

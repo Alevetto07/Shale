@@ -210,9 +210,9 @@ The release numbers are recorded in `docs/verification.md` under "The release
 build", with the commands that produced them. Short version: clippy clean,
 `cargo build --workspace --release` in 4m 49s, and `npm run tauri build` producing
 
-    target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe   4 675 455 B, 4.46 MiB
+    target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe   4 675 254 B, 4.46 MiB
 
-rebuilt once more after the bounding-box and forget fixes, at branch head. Versions are 0.1.0 in
+rebuilt after the bounding-box, forget and single-instance fixes, at branch head. Versions are 0.1.0 in
 four crates, `package.json` and `tauri.conf.json`; nothing was tagged, the
 installer was never run, and it is unsigned.
 
