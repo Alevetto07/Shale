@@ -694,6 +694,17 @@ Three unit tests hold the sentence still: a held profile is explained as a wait
 and the number `0x800700AA` never reaches the reader, any other failure is quoted
 rather than summarised, and a long error is cut to six lines with an ellipsis.
 
+The ordinary launch still works after the change — `build()` then `run()` is a
+different order of the same two calls, and it would be a poor fix that traded a
+silent crash for a silent nothing:
+
+```sh
+python ordinary_launch.py              # release binary, clean WebView2 profile
+# alive at 9s: True
+# visible windows: ['Shale']
+# exit after WM_CLOSE: 0
+```
+
 What is not proved: that the real lock produces this path. It cannot be made to
 happen on demand here, so the branch is covered by the seam and the sentence by
 the tests, and the honest statement is that the *handling* is proved while the

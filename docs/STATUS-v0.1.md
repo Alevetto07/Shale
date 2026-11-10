@@ -41,7 +41,10 @@ a file does not either. So the branch is driven by `SHALE_START_FAILS` (a
 diagnostic like `SHALE_TRACE`) and the box's caption and text were read out of the
 live window — not from a screenshot — with the exit code checked after a
 `WM_CLOSE`: caption `Shale did not start`, the Static control carrying the closing
-sentence, exit 0. Three unit tests pin the wording. `docs/verification.md` has the
+sentence, exit 0. Three unit tests pin the wording, and the ordinary launch was
+re-run afterwards — release binary, clean profile, window `Shale` visible at 9 s,
+`WM_CLOSE` → exit 0 — so the fix did not buy the sentence by breaking the road to
+normal startup. `docs/verification.md` has the
 transcripts and says plainly that the handling is proved while the provocation is
 not.
 
