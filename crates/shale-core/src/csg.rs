@@ -99,20 +99,21 @@ fn split_polygon(
     front: &mut Vec<Poly>,
     back: &mut Vec<Poly>,
 ) {
+    // No list of sides: a Boolean at 12 000 triangles makes millions of these
+    // calls, one per polygon per plane, and a `Vec` each time is millions of
+    // allocations for a boolean flag and three bytes. The first pass only needs
+    // the flag, and the split below re-reads a side per edge when it needs one.
     let mut polygon_type = 0u8;
-    let mut types: Vec<Side> = Vec::with_capacity(polygon.vertices.len());
     for vertex in &polygon.vertices {
         let distance = side_of(&normal, w, *vertex);
-        let kind = if distance < -EPS {
+        if distance < -EPS {
             polygon_type |= 1;
-            Side::Back
         } else if distance > EPS {
             polygon_type |= 2;
-            Side::Front
-        } else {
-            Side::Coplanar
-        };
-        types.push(kind);
+        }
+        if polygon_type == 3 {
+            break;
+        }
     }
 
     match polygon_type {
@@ -132,15 +133,15 @@ fn split_polygon(
             for index in 0..polygon.vertices.len() {
                 let next = (index + 1) % polygon.vertices.len();
                 let (vi, vj) = (polygon.vertices[index], polygon.vertices[next]);
-                let (ti, tj) = (types[index], types[next]);
-                if ti != Side::Back {
+                // Positive is in front of the plane, negative behind it.
+                let (di, dj) = (side_of(&normal, w, vi), side_of(&normal, w, vj));
+                if di >= -EPS {
                     front_vertices.push(vi);
                 }
-                if ti != Side::Front {
+                if di <= EPS {
                     back_vertices.push(vi);
                 }
-                if (ti == Side::Front && tj == Side::Back) || (ti == Side::Back && tj == Side::Front)
-                {
+                if (di > EPS && dj < -EPS) || (di < -EPS && dj > EPS) {
                     let numerator = w - dot(normal, vi);
                     let denominator = dot(normal, sub(vj, vi));
                     if denominator.abs() > EPS {

@@ -1248,6 +1248,21 @@ fn measure_span(a: [f64; 3], b: [f64; 3]) -> shale_core::measure::Span {
 /// raising it needs an iterative build, not a bigger stack.
 const BOOLEAN_CAP: usize = 12_000;
 
+/// The sentence a boolean refusal earns, in the same words wherever it is asked.
+///
+/// The cap is about **time**, not memory: the BSP boolean finishes 7 800
+/// triangles in 5.1 s and 32 500 in 215.6 s, because a convex body turns the
+/// tree into a chain of facet planes and every fragment is re-split by each one.
+/// Saying "in memory" was wrong and saying "only proven on small parts" told the
+/// user nothing they could act on. This says the number, the reason and what
+/// still works.
+fn boolean_refusal(triangles: usize, alternative: &str) -> String {
+    format!(
+        "A mesh boolean on {triangles} triangles would take minutes, so Shale refuses it: \
+         above {BOOLEAN_CAP} the work grows faster than the wait is worth. {alternative}"
+    )
+}
+
 /// BSP clipping recurses once for every polygon it splits, and a real part has
 /// enough of them to overflow the two megabytes a thread gets by default — a
 /// 1488-triangle bracket with a dovetail overflows `main` and the window dies
@@ -1308,10 +1323,9 @@ fn cut_model(
     if pins > 0 || dovetail > 0.0 {
         let triangles = world.triangles.len();
         if triangles > BOOLEAN_CAP {
-            return Err(format!(
-                "A joint needs a mesh boolean, and this part has {triangles} triangles, \
-                 past the {BOOLEAN_CAP} the boolean can hold in memory. A plain cut still \
-                 works."
+            return Err(boolean_refusal(
+                triangles,
+                "A plain cut, with no pegs or dovetail, still works.",
             ));
         }
     }
@@ -1443,9 +1457,9 @@ fn boolean_model(state: State<AppState>, id: u32, mode: String) -> Result<Boolea
         .map(|model| model.mesh.triangles.len())
         .sum::<usize>();
     if triangles > BOOLEAN_CAP {
-        return Err(format!(
-            "The mesh boolean is only proven on small parts: this plate has {triangles} \
-             triangles and the cap is {BOOLEAN_CAP}."
+        return Err(boolean_refusal(
+            triangles,
+            "Cut, or boolean fewer parts at a time.",
         ));
     }
     if !matches!(mode.as_str(), "subtract" | "union" | "common") {
@@ -4262,7 +4276,21 @@ fn start_failed(detail: &str, allow_retry: bool) {
 
 #[cfg(test)]
 mod tests {
+    use super::{boolean_refusal, BOOLEAN_CAP};
     use shale_host::starts_with_machine_sequence;
+
+    #[test]
+    fn a_boolean_refusal_says_the_number_the_reason_and_the_way_round() {
+        let refused = boolean_refusal(32_500, "Cut, or boolean fewer parts at a time.");
+        assert!(refused.contains("32500"), "the count the app measured: {refused}");
+        assert!(refused.contains(&BOOLEAN_CAP.to_string()), "the cap: {refused}");
+        assert!(refused.contains("minutes"), "the reason is time: {refused}");
+        assert!(
+            !refused.to_lowercase().contains("memory"),
+            "the cap is not a memory limit and must not claim to be: {refused}"
+        );
+        assert!(refused.contains("Cut, or boolean fewer parts"), "the way round: {refused}");
+    }
 
     fn temp(name: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!("shale-gate-{name}.gcode"));

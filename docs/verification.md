@@ -273,11 +273,15 @@ sphere from it. Release build, one run:
 
 | triangles | tree built | nodes | depth | polygons in the tree | subtract | polygons out |
 |---|---|---|---|---|---|---|
-| 7 800 | 67 ms | 8 054 | 108 | 13 335 | 5 114 ms | 33 728 |
-| 32 500 | 366 ms | 34 670 | 135 | 58 663 | 215 565 ms | 145 928 |
-| 79 200 | 924 ms | 85 585 | 195 | 146 304 | not timed | — |
+| 7 800 | 45 ms | 8 054 | 108 | 13 335 | 2 914 ms | 33 728 |
+| 32 500 | 300 ms | 34 670 | 135 | 58 663 | 141 181 ms | 145 928 |
+| 79 200 | 673 ms | 85 585 | 195 | 146 304 | not timed | — |
 
-Two changes moved this. Neither cracks it.
+(Measured on the Batch 3 tree; before it the same run gave 67 / 366 / 924 ms for
+the trees and 5 114 ms and 215 565 ms for the two subtracts. The third bullet
+below accounts for the difference.)
+
+Three changes moved this. None of them cracks it.
 
 **The plane chooser samples and balances.** `pick_plane` used to score every
 face plane against every polygon and take the cheapest: quadratic, and on a
@@ -298,18 +302,38 @@ concatenates the two polygon lists and applies the final flip, which is all
 `invert()` means to a caller that only wants polygons. Subtraction and
 intersection end with that flip; a union does not.
 
+**The side of a plane is not kept in a list.** `split_polygon` collected a
+`Vec<Side>` for every polygon at every plane — millions of one-allocation messages
+for three bytes each, since a clip at 32 500 triangles runs a polygon through 135
+levels. It now computes only the flag it needs, and re-reads a side per edge when
+it actually has to cut. Same arithmetic, same order, no allocation on the common
+path: 1.75× at 7 800 triangles and 1.53× at 32 500. It is still minutes at 32 500.
+
 **What is still true.** The depth is no longer 4 264, but the tree is not
 balanced either: at 32 500 triangles it is 135 deep against a log₂ of 15, and
 the polygon count has grown by 1.8× before a single clip, because a plane
 through a sphere cuts a third of its triangles in two. Clipping is charged per
-polygon per level, so the subtract at 32 500 triangles takes 3½ minutes and the
+polygon per level, so the subtract at 32 500 triangles takes 2¼ minutes and the
 subtract at 79 200 was not waited for. The wall is now polygon growth rather
 than depth, and it has the same shape: on a finely tessellated convex body a
 BSP-based Boolean is quadratic whatever the plane chooser does.
 
+**A BVH was tried on paper and not landed.** A bounding-volume hierarchy over the
+two meshes would prune the planes that cannot possibly cut a given fragment, and
+on a convex body that is almost all of them — the fragments are near one facet
+and the other 32 000 are far away. But pruning the plane tests is only half of a
+Boolean: the cap surface (B's skin inside A) has to be classified against A's
+volume, which needs either a second BSP or a ray-cast inside test, and the answer
+has to stay watertight at the T-junctions the pruned clipping leaves behind. That
+is a new Boolean engine with its own correctness proof, not a bounded change to
+this one, and the two-hour timebox was spent on the measured win above instead.
+The evidence for the shape of the work is in this table: tree build is already
+fast (0.3 s at 32 500); every second after that is clipping and polygon growth.
+
 **So the cap stays at 12 000 triangles.** These numbers do not justify raising
-it: 32 500 takes three and a half minutes, and the climb is steep enough that
-12 000 is already slower than a person will sit through on a convex body. The
+it: 32 500 takes two and a quarter minutes even after the 1.5×, and the climb is
+steep enough that 12 000 is already slower than a person will sit through on a
+convex body. The
 concave case that parts are actually made of is fast — the bracket (1 946
 triangles, 0.01 s, 1 864 out) and a plate with a bore (2 554 triangles, 57 ms).
 Lifting the cap needs a different algorithm, not a better tree: a bounding-volume
