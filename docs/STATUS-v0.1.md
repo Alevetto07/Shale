@@ -6,7 +6,7 @@ contacted and no network was scanned — the fake printer binds to 127.0.0.1.
 
 Workspace at this commit: **182 passed, 0 failed, 3 ignored**, and
 `cargo clippy --workspace --all-targets -- -D warnings` is clean. The run was at
-`14b9561`; everything after it changes only this page. The three ignored tests are
+`14b9561`; everything after it changes only this page and `docs/verification.md`. The three ignored tests are
 the two boolean stopwatches (`boolean_timings_at_eight_thirty_and_eighty_thousand`
 and `measure_boolean_scaling`) and one check that takes a file
 (`a_sliced_file_reaches_the_fake_printer`, which reads `SHALE_SLICED_GCODE`).
@@ -130,7 +130,8 @@ Every commit of Batch 3, in order:
 | `c52172c` | the boolean stops allocating a list of sides; refusal sentence rewritten; five garbage-input tests (item 2) |
 | `cc9bc4c` | clean-slate pass: two panics and two untrue strings fixed, the rest listed (item 3) |
 | `14b9561` | the `Side` enum the boolean no longer collects |
-| (this page) | the status page itself (item 4) |
+| `30d547b` | the status page itself (item 4) |
+| `1e7eca5` | the ordinary launch re-proved after `build()`, and recorded |
 
 Nothing was pushed, merged, tagged or published, and no PR was touched. The A1 at
 192.168.1.11 was never contacted; no network was scanned; the fake printer binds
