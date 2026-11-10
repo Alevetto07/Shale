@@ -18,7 +18,7 @@ ignored tests are two stopwatches (`boolean_timings_…`,
 | 2 | TOFU certificate pinning | `fdd37c1`, `b16462b` | done; refusal and trust press proved in the window |
 | 3 | The boolean wall | `5a54e5b` | moved, not cracked — cap stays 12 000 |
 | 4 | End-to-end slice for the A1 | `905e8f1` | done on both surfaces; found and fixed a prelude defect |
-| 5 | Release readiness | `26e2d75` | clippy clean, release build, installer; built three times as fixes landed, numbers below |
+| 5 | Release readiness | `26e2d75` | clippy clean, release build, installer; rebuilt five times as fixes landed, numbers below |
 | 6 | Last UI pass | `626796e`, `84cc721`, `d8902a9`, `5f1236c`, `63a6a15` | two dishonest strings, a nameless About, a bounding box, an unwithdrawable pin and a silent second launch found and fixed; what is left is under Open |
 
 ### 1. A Bambu printer that exists only on loopback
@@ -154,7 +154,8 @@ looking at a picture.
   Settings (backend `cli`, BINARY and LIBS fields, CHECK ENGINE), About. The
   recent list carried five projects with dates and machine names.
 
-Three things were fixed, the first two found by reading what the window said:
+Five things were fixed tonight, the first two found by reading what the window
+said, the third by reading a file header, the last two by driving the thing:
 
 - `app_status` reported "Printer resources are loaded." for the whole of a cold
   catalogue read, with an empty printer list underneath, and `catalog()`'s
@@ -162,40 +163,41 @@ Three things were fixed, the first two found by reading what the window said:
   state they are in, and a command that arrives mid-read is told the profiles are
   still being read rather than that they are missing (`626796e`). The read itself
   turned out to be 4.1 s in a debug build and 1.8 s in release when the machine
-  is idle; the half-minute I first timed it at was measured while `cargo` was
-  using every core. The status page said 36 s for a while and that was wrong.
+  is idle; the half-minute first timed was measured while `cargo` was using every
+  core. This page claimed 36 s for a while, and that was wrong.
 - About credited a photograph and three fonts and never named the application or
   its version. It now reads "Shale 0.1.0 — a desktop slicer…", with the number
   taken from `env!("CARGO_PKG_VERSION")` so the window cannot drift from
   `Cargo.toml` (`84cc721`).
-
-- A second launch died in the dark: WebView2 refuses to share the window
-  profile, `create webview` fails with `HRESULT(0x800700AA)` and setup unwinds
-  with no window and no sentence. A named mutex is claimed first now; the second
-  process finds the window titled `Shale`, restores it, brings it forward and
-  exits 0. Measured: the second process left with exit 0, the first kept its
-  window, and a launch after both had gone still opened.
 - Every file the slicer wrote claimed a bounding box two million millimetres
   wide: CuraEngine fills `;MINX`…`;MAXZ` with `f32::MAX` when it is handed bare
   STL files, and it is. `bambu::rewrite_header_bounds` now measures the meshes it
   just baked and replaces the six lines; a re-slice of the same model says
-  `;-45.392 … 24.392` by `0 … 11`, which is the Arm. Three unit tests, and the
-  real slice in `docs/verification.md`. This one is item 4 territory as much as
-  item 6's — it was found reading a header, not a window.
+  `;-45.392 … 24.392` by `0 … 11`, which is the Arm (`d8902a9`). This one is
+  item 4 territory as much as item 6's: it was found reading a header.
+- A second launch died in the dark: WebView2 refuses to share the window
+  profile, `create webview` fails with `HRESULT(0x800700AA)` and setup unwinds
+  with no window and no sentence. A named mutex is claimed first now; the second
+  process finds the window titled `Shale`, restores it, brings it forward and
+  exits 0 (`729b074`). Measured: the second process left with exit 0, the first
+  kept its window, and a launch after both had gone still opened.
+- A pinned printer could never be forgotten: after a board swap or a typo the
+  only way out was the Windows Credential Manager. The Device pane has a `forget`
+  press now that drops the link, deletes the pin and the access code from the
+  vault, and clears the address and serial the window kept (`5f1236c`).
 
-- **A `forget` press on the Device pane.** Pinning meant a machine that changed
-  its certificate was refused for ever, with no way out but the Credential
-  Manager; `forget` now drops the link, deletes the pin and the access code from
-  the vault, and clears the address and serial the window kept. Driven with a
-  real press: the pin left by an earlier session met a different certificate and
-  was refused, `forget` emptied every field and both vault keys, and a reload
-  came back empty.
+Two things were also driven end to end rather than argued:
+
 - **The .shale round trip**, on the Arm rather than a fixture: saved through
   `save_project` (26 515 bytes), read back as 1 946 triangles with the A1 job
   intact, and then reopened *in the window* by pressing its entry in the start
   screen's recent list — tab `roundtrip`, Plate 1, the part on the plate, the
   painted support patch still attached. That path needs no dialog, so it is the
   one a probe can take.
+- **The new `forget` press**, with the pin from an earlier session still in the
+  vault: the printer answered with a different certificate, was refused with
+  both fingerprints named, and `forget` then emptied the three fields, both
+  `localStorage` keys, `host_pin` and `device.code`; a reload came back empty.
 
 Not re-driven tonight: the window's own import and Save As flows end in an OS file
 dialog, which a probe cannot press. Calling `import_model` over CDP loads the model in
@@ -207,14 +209,15 @@ through the commands the menu calls.
 ## Build
 
 The release numbers are recorded in `docs/verification.md` under "The release
-build", with the commands that produced them. Short version: clippy clean,
-`cargo build --workspace --release` in 4m 49s, and `npm run tauri build` producing
+build", with the commands that produced them. Short version: clippy clean, the
+first full `cargo build --workspace --release` in 4m 49s, and `npm run tauri build`
+producing
 
     target/release/bundle/nsis/Shale_0.1.0_x64-setup.exe   4 675 254 B, 4.46 MiB
 
-rebuilt after the bounding-box, forget and single-instance fixes, at branch head. Versions are 0.1.0 in
-four crates, `package.json` and `tauri.conf.json`; nothing was tagged, the
-installer was never run, and it is unsigned.
+rebuilt after each fix, the last time at branch head. Versions are 0.1.0 in four
+crates, `package.json` and `tauri.conf.json`; nothing was tagged, the installer
+was never run, and it is unsigned.
 
 ## Batch 1 (kept for reference)
 
