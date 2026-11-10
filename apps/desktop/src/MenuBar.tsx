@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "./api";
-import type { MaterialInfo, PrinterInfo, QualityInfo, VariantInfo } from "./api";
+import type { MaterialInfo, Preset, PrinterInfo, QualityInfo, VariantInfo } from "./api";
 import { SETTING_GROUPS } from "./settings";
 import type { ViewStyle } from "./Viewport";
 
@@ -108,6 +108,225 @@ function options_has(
   value: string
 ): boolean {
   return value !== "" && (item.options ?? []).some((option) => option === value);
+}
+
+
+/** The eight fields a preset can hold: exactly what this sheet can change. */
+const PRESET_KEYS = [
+  "layerHeight",
+  "walls",
+  "infill",
+  "pattern",
+  "supports",
+  "nozzle",
+  "bed",
+  "speed",
+] as const;
+
+function as_values(settings: SliceSettings): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of PRESET_KEYS) out[key] = String(settings[key]);
+  return out;
+}
+
+/** Save, load, rename, delete, export and import named Slice settings.
+ *
+ *  A preset is the eight fields above and nothing else, so applying one is the
+ *  same operation as typing the numbers: the diff shown before applying is
+ *  against what the sheet holds now, which is what the user is looking at. */
+function PresetPanel({
+  settings,
+  onSettings,
+}: {
+  settings: SliceSettings;
+  onSettings: (patch: Partial<SliceSettings>) => void;
+}) {
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [name, setName] = useState("");
+  const [picked, setPicked] = useState("");
+  const [note, setNote] = useState("");
+
+  const refresh = () => {
+    void api
+      .presetList()
+      .then((list) => {
+        setPresets(list);
+        if (list.length > 0 && !list.some((entry) => entry.name === picked)) {
+          setPicked(list[0].name);
+        }
+      })
+      .catch((err) => setNote(String(err)));
+  };
+  useEffect(refresh, []); // once, when the sheet opens
+
+  const current = as_values(settings);
+  const chosen = presets.find((entry) => entry.name === picked) ?? null;
+  const diff = chosen
+    ? PRESET_KEYS.filter((key) => chosen.values[key] !== undefined && chosen.values[key] !== current[key]).map(
+        (key) => [key, current[key], chosen.values[key]] as [string, string, string],
+      )
+    : [];
+
+  const apply = () => {
+    if (!chosen) return;
+    const unknown = Object.keys(chosen.values).find(
+      (key) => !(PRESET_KEYS as readonly string[]).includes(key),
+    );
+    if (unknown) {
+      setNote("`" + unknown + "` is not a slice setting Shale knows, so a preset holding it would change nothing");
+      return;
+    }
+    const patch: Partial<SliceSettings> = {};
+    for (const key of PRESET_KEYS) {
+      const value = chosen.values[key];
+      if (value === undefined) continue;
+      if (key === "pattern") patch.pattern = value;
+      else if (key === "supports") patch.supports = value === "true";
+      else {
+        const number = Number(value);
+        if (Number.isFinite(number)) patch[key] = number;
+      }
+    }
+    onSettings(patch);
+    setNote(`applied ${chosen.name}`);
+  };
+
+  return (
+    <div className="presets">
+      <p className="preset-title">presets</p>
+      <div className="preset-row">
+        <input
+          aria-label="preset name"
+          placeholder="name this set"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+        <button
+          type="button"
+          disabled={name.trim() === ""}
+          onClick={() => {
+            void api
+              .presetSave(name.trim(), as_values(settings), false)
+              .then(() => {
+                setNote(`saved ${name.trim()}`);
+                setName("");
+                refresh();
+              })
+              .catch((err) => setNote(String(err)));
+          }}
+        >
+          save
+        </button>
+      </div>
+      <div className="preset-row">
+        <select
+          aria-label="saved presets"
+          value={picked}
+          onChange={(event) => setPicked(event.target.value)}
+        >
+          {presets.length === 0 && <option value="">none saved</option>}
+          {presets.map((entry) => (
+            <option key={entry.name} value={entry.name}>
+              {entry.name}
+            </option>
+          ))}
+        </select>
+        <button type="button" disabled={!chosen} onClick={apply}>
+          apply
+        </button>
+        <button
+          type="button"
+          disabled={!chosen}
+          onClick={() => {
+            if (!chosen) return;
+            void api
+              .presetDelete(chosen.name)
+              .then(() => {
+                setNote(`deleted ${chosen.name}`);
+                refresh();
+              })
+              .catch((err) => setNote(String(err)));
+          }}
+        >
+          delete
+        </button>
+      </div>
+      <div className="preset-row">
+        <button
+          type="button"
+          disabled={!chosen || name.trim() === ""}
+          onClick={() => {
+            if (!chosen) return;
+            void api
+              .presetRename(chosen.name, name.trim())
+              .then((renamed) => {
+                setNote(`renamed to ${renamed.name}`);
+                setName("");
+                refresh();
+                setPicked(renamed.name);
+              })
+              .catch((err) => setNote(String(err)));
+          }}
+        >
+          rename to the name
+        </button>
+        <button
+          type="button"
+          disabled={!chosen}
+          onClick={() => {
+            if (!chosen) return;
+            void (async () => {
+              const { save } = await import("@tauri-apps/plugin-dialog");
+              const path = await save({
+                defaultPath: `${chosen.name}.shale-preset`,
+                filters: [{ name: "Shale preset", extensions: ["shale-preset"] }],
+              });
+              if (!path) return;
+              try {
+                await api.presetExport(chosen.name, path);
+                setNote(`exported to ${path}`);
+              } catch (err) {
+                setNote(String(err));
+              }
+            })();
+          }}
+        >
+          export
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            void (async () => {
+              const { open } = await import("@tauri-apps/plugin-dialog");
+              const path = await open({
+                multiple: false,
+                filters: [{ name: "Shale preset", extensions: ["shale-preset", "json"] }],
+              });
+              if (typeof path !== "string") return;
+              try {
+                const imported = await api.presetImport(path);
+                setNote(`imported ${imported.name}`);
+                refresh();
+                setPicked(imported.name);
+              } catch (err) {
+                setNote(String(err));
+              }
+            })();
+          }}
+        >
+          import
+        </button>
+      </div>
+      {chosen && (
+        <p className="preset-diff">
+          {diff.length === 0
+            ? "this preset matches the sheet already"
+            : diff.map(([key, was, next]) => `${key} ${was} -> ${next}`).join("   ")}
+        </p>
+      )}
+      {note && <p className="preset-note">{note}</p>}
+    </div>
+  );
 }
 
 export function MenuBar(props: MenuBarProps) {
@@ -699,6 +918,7 @@ export function MenuBar(props: MenuBarProps) {
             </div>
             </>
             )}
+            <PresetPanel settings={settings} onSettings={props.onSettings} />
             <p className={helpKey && help[helpKey] ? "settings-help" : "settings-help idle"}>
               {helpKey && help[helpKey]
                 ? help[helpKey]

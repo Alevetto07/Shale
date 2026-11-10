@@ -39,6 +39,7 @@ pub mod measure;
 pub mod mesh;
 pub mod orient;
 pub mod paint;
+pub mod preset;
 pub mod primitives;
 pub mod project;
 pub mod queue;

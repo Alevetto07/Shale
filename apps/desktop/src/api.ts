@@ -377,6 +377,14 @@ export const api = {
     invoke<CostSettings>("set_cost_settings", { settings }),
   costEstimate: (metres: number, seconds: number | null, diameter: number, density: number) =>
     invoke<CostEstimate>("cost_estimate", { metres, seconds, diameter, density }),
+  presetList: () => invoke<Preset[]>("preset_list"),
+  presetSave: (name: string, values: Record<string, string>, replace: boolean) =>
+    invoke<Preset>("preset_save", { name, values, replace }),
+  presetDelete: (name: string) => invoke<void>("preset_delete", { name }),
+  presetRename: (from: string, to: string) => invoke<Preset>("preset_rename", { from, to }),
+  presetExport: (name: string, destination: string) =>
+    invoke<void>("preset_export", { name, destination }),
+  presetImport: (source: string) => invoke<Preset>("preset_import", { source }),
   setEngine: (path: string, libDir: string, backend: string) =>
     invoke<boolean>("set_engine", { path, libDir: libDir || null, backend }),
   cancelImport: () => invoke<void>("cancel_import"),
@@ -662,4 +670,10 @@ export interface CostEstimate {
   energy_cost: number;
   total: number;
   currency: string;
+}
+
+/** A named set of the Slice settings panel's fields, as strings. */
+export interface Preset {
+  name: string;
+  values: Record<string, string>;
 }

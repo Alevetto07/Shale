@@ -3571,6 +3571,64 @@ fn remember(
 ///
 /// A missing or unreadable file is the defaults, not an error: a fresh install
 /// has no file, and a cost estimate is not worth refusing a slice over.
+/// Where named presets live: `presets/` beside the other app files.
+fn preset_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(config_dir(app)?.join("presets"))
+}
+
+#[tauri::command]
+fn preset_list(app: AppHandle) -> Result<Vec<shale_core::preset::Preset>, String> {
+    shale_core::preset::list(&preset_dir(&app)?).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn preset_save(
+    app: AppHandle,
+    name: String,
+    values: std::collections::BTreeMap<String, String>,
+    replace: bool,
+) -> Result<shale_core::preset::Preset, String> {
+    let preset = shale_core::preset::Preset::new(&name, values).map_err(|err| err.to_string())?;
+    let dir = preset_dir(&app)?;
+    let result = if replace {
+        shale_core::preset::overwrite(&dir, &preset)
+    } else {
+        shale_core::preset::save(&dir, &preset)
+    };
+    result.map_err(|err| err.to_string())?;
+    Ok(preset)
+}
+
+#[tauri::command]
+fn preset_delete(app: AppHandle, name: String) -> Result<(), String> {
+    shale_core::preset::delete(&preset_dir(&app)?, &name).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn preset_rename(
+    app: AppHandle,
+    from: String,
+    to: String,
+) -> Result<shale_core::preset::Preset, String> {
+    shale_core::preset::rename(&preset_dir(&app)?, &from, &to).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn preset_export(app: AppHandle, name: String, destination: String) -> Result<(), String> {
+    shale_core::preset::export(
+        &preset_dir(&app)?,
+        &name,
+        std::path::Path::new(&destination),
+    )
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn preset_import(app: AppHandle, source: String) -> Result<shale_core::preset::Preset, String> {
+    shale_core::preset::import(&preset_dir(&app)?, std::path::Path::new(&source))
+        .map_err(|err| err.to_string())
+}
+
 #[tauri::command]
 fn cost_settings(app: AppHandle) -> Result<shale_core::cost::CostSettings, String> {
     let dir = config_dir(&app)?;
@@ -4314,6 +4372,12 @@ pub fn run() {
             secret_clear,
             scratch_path,
             app_status,
+            preset_list,
+            preset_save,
+            preset_delete,
+            preset_rename,
+            preset_export,
+            preset_import,
             cost_settings,
             set_cost_settings,
             cost_estimate,
