@@ -75,7 +75,15 @@ pub fn header_facts(gcode: &str) -> HeaderFacts {
             break;
         }
         if let Some(value) = line.strip_prefix(";TIME:") {
-            facts.seconds = value.trim().parse::<f64>().ok().filter(|value| *value > 0.0);
+            // `6666` is CuraEngine's placeholder for "I did not work it out",
+            // not an estimate of 111 minutes; `annotate_header` looks for it by
+            // that literal, so a reader that reports it as a time would turn a
+            // missing estimate into a wrong one.
+            facts.seconds = value
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|value| *value > 0.0 && *value != 6666.0);
         } else if let Some(value) = line.strip_prefix(";Filament used:") {
             facts.filament_metres = value
                 .trim()

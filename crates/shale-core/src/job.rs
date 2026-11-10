@@ -511,7 +511,17 @@ pub fn slice(
         on_progress,
     )?;
     let gcode = fs::read_to_string(&output.gcode_path)?;
+    // CuraEngine does not always say the print time on stdout; it writes it
+    // into the file's own `;TIME:` line. The header is read before the summary
+    // is allowed to claim there is no estimate, because for the A1 profile
+    // there always was one — in the file.
     let gcode = gcode::annotate_header(&gcode, output.print_time_seconds);
+    // Read back rather than guess: `annotate_header` has just put the measured
+    // figure, or the last `;TIME_ELAPSED:`, into the `;TIME:` line. Doing this
+    // in the other order reported 6666 — the placeholder — as 111 minutes.
+    let print_time_seconds = output
+        .print_time_seconds
+        .or_else(|| gcode::header_facts(&gcode).seconds);
     let flavour = GcodeFlavour::from_cura(
         resolved
             .global
@@ -535,7 +545,7 @@ pub fn slice(
         gcode_path: output.gcode_path,
         resolved,
         toolpath,
-        print_time_seconds: output.print_time_seconds,
+        print_time_seconds,
         filament_metres,
         flavour,
         machine_gcode: machine_gcode.is_some(),
