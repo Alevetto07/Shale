@@ -3451,6 +3451,11 @@ fn preload_demo(
     if multi {
         let mut second = transform.clone();
         second.translation[0] += 45.0;
+        // A cube sits flat and needs nothing under it. Tipped onto an edge, it
+        // has an overhang, which is the only way a support proposal has
+        // anything to propose in a clip.
+        second.rotation_deg = [45.0, 0.0, 45.0];
+        second.translation[2] += 20.0;
         placed.push(PlacedModel {
             name: format!("{name} spool 2"),
             mesh: mesh.clone(),
