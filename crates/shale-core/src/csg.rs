@@ -57,13 +57,6 @@ impl Poly {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Side {
-    Coplanar,
-    Front,
-    Back,
-}
-
 /// Which side of the plane `dot(normal, x) = w` a point is on.
 fn side_of(normal: &[f64; 3], w: f64, point: [f64; 3]) -> f64 {
     dot(*normal, point) - w
