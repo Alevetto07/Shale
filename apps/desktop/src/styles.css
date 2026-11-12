@@ -566,32 +566,145 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   text-transform: uppercase;
 }
 .start-label, .start-empty { margin: 0.45rem 0 0.1rem; }
-.start-list button.recent {
+.start-recents {
+  position: absolute;
+  z-index: 2;
+  right: 28px;
+  bottom: 28px;
+  width: calc((var(--recents-inner-ch, 28) + 2) * 1ch);
+  color: var(--line);
+  pointer-events: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+.start-recents--collapsed {
+  width: auto;
+}
+.start-recents-rule,
+.start-recents-line {
+  display: grid;
+  grid-template-columns: 1ch calc(var(--recents-inner-ch, 28) * 1ch) 1ch;
+  align-items: baseline;
+  white-space: nowrap;
+}
+.start-recents-fill {
+  overflow: hidden;
+  color: var(--line);
+}
+.start-recents-bar {
+  color: var(--line);
+  text-align: center;
+}
+.start-recents-cell {
+  min-width: 0;
+  max-width: calc(var(--recents-inner-ch, 28) * 1ch);
+  overflow: hidden;
+  color: var(--ink-2);
+}
+.start-recents-title {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.05rem;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5ch;
+  width: 100%;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.start-recents-hide {
+  padding: 0;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: lowercase;
+  color: var(--ink-3);
+}
+.start-recents-hide:hover { color: var(--accent); }
+.start-recents-empty {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+.start-recents-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5ch;
+  width: 100%;
+  min-width: 0;
+}
+.start-recents-row:hover .recent-forget,
+.start-recents-row:focus-within .recent-forget {
+  opacity: 1;
+}
+button.recent-row {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
   text-transform: none;
   letter-spacing: 0;
-  font-family: var(--prose);
-  font-size: 13px;
-  color: var(--ink);
-  min-width: 0;
-  max-width: 100%;
-}
-.start-list button.recent.dim { color: var(--ink-3); }
-/* A recent row is a name, then what it was saved on: the date first, because
-   that is the part you are scanning for, then the machine, which is allowed to
-   shrink to an ellipsis so the date never does. */
-.start-list button.recent {
-  padding: 0.44rem 0.35rem 0.42rem;
-  border-top: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ink-2);
   border-radius: 0;
 }
-.start-list button.recent:hover {
-  background: rgba(233, 232, 242, 0.045);
+button.recent-row:hover,
+button.recent-row:focus-visible {
   color: var(--ink);
 }
+button.recent-row.dim { color: var(--ink-3); }
+.recent-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-meta-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.15rem;
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-family: var(--prose);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+.recent-meta-line.dim { color: var(--ink-3); }
+.recent-machine {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.recent-forget {
+  flex: none;
+  width: 2ch;
+  opacity: 0;
+  padding: 0;
+  font-size: 9px;
+  letter-spacing: 0;
+  text-align: right;
+  color: var(--ink-3);
+}
+.recent-forget:hover { color: var(--accent); }
+.start-recents-tab {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.2rem 0.35rem;
+  color: var(--ink-3);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: lowercase;
+}
+.start-recents-tab:hover { color: var(--accent); }
+.start-recents-tab-label { color: var(--ink-2); }
 .start-detail {
   display: flex;
   align-items: baseline;

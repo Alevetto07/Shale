@@ -2593,6 +2593,9 @@ export function App() {
             onOpen={() => void openProject()}
             onImport={() => void importModel()}
             onOpenRecent={(path) => void openProject(path)}
+            onForgetRecent={(path) => {
+              void api.forgetRecent(path).then(setRecents).catch(() => {});
+            }}
             onChoosePrinter={setPrinterId}
             onEnginePath={setEnginePath}
             onLibDir={setLibDir}
