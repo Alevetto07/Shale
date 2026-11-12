@@ -2582,7 +2582,7 @@ export function App() {
           import {(importProgress ? importProgress.fraction * 100 : 0).toFixed(0)}%{" "}
           {importProgress?.message ?? "reading"}{" "}
           <button type="button" onClick={() => void cancelImport()}>
-            [ cancel ]
+            cancel
           </button>
         </p>
       )}
@@ -2721,7 +2721,7 @@ export function App() {
                 </span>
               ))}
               <button type="button" title="add a plate" onClick={() => void newPlate()}>
-                [ + ]
+                +
               </button>
             </div>
             <p className="hint">
@@ -2842,16 +2842,16 @@ export function App() {
                       title={`under ${patch.min[0].toFixed(0)},${patch.min[1].toFixed(0)} to ${patch.max[0].toFixed(0)},${patch.max[1].toFixed(0)}`}
                       onClick={() => void paintPatch(patch.triangles)}
                     >
-                      [ {paintMode === "block" ? "keep out" : "hold up"} {Math.round(patch.area_mm2)} mm² ]
+                      {paintMode === "block" ? "keep out" : "hold up"} {Math.round(patch.area_mm2)} mm²
                     </button>
                   ))}
                   {(painted > 0 || blocked > 0) && (
                     <>
                       <button type="button" className="paint-back" onClick={() => void takeBackPaint()}>
-                        [ take back ]
+                        take back
                       </button>
                       <button type="button" className="paint-clear" onClick={() => void unpaint()}>
-                        [ clear ]
+                        clear
                       </button>
                     </>
                   )}
@@ -2958,16 +2958,16 @@ export function App() {
             </p>
             <div className="row">
               <button type="button" disabled={calibrating} onClick={() => void addCalibration("temperature")}>
-                [ temperature tower ]
+                temperature tower
               </button>
               <button type="button" disabled={calibrating} onClick={() => void addCalibration("flow")}>
-                [ flow coupon ]
+                flow coupon
               </button>
               <button type="button" disabled={calibrating} onClick={() => void addCalibration("pressure")}>
-                [ pressure tower ]
+                pressure tower
               </button>
               <button type="button" disabled={!tower || calibrating} onClick={() => void stepCalibration()}>
-                [ step it ]
+                step it
               </button>
             </div>
             {calibration && (
@@ -3034,7 +3034,7 @@ export function App() {
               />
             </label>
             <button type="button" onClick={() => setChordTied(true)}>
-              [ tie chord to layer ]
+              tie chord to layer
             </button>
             <p className="hint">
               step files are tessellated here. chord is half the layer height, and no coarser than half the nozzle.
@@ -3053,10 +3053,10 @@ export function App() {
             </label>
             <div className="row">
               <button type="button" disabled={selectedId == null || supportBusy} onClick={() => void proposeSupports()}>
-                [ propose ]
+                propose
               </button>
               <button type="button" disabled={!support || supportBusy} onClick={() => void compareSupports()}>
-                [ compare ]
+                compare
               </button>
             </div>
             {support && <ComparisonLines comparison={support.plan.comparison} />}
@@ -3152,7 +3152,7 @@ export function App() {
               </label>
             )}
             <button type="button" onClick={() => void addInstruction()}>
-              [ add ]
+              add
             </button>
             {instructions.length === 0 && <p className="hint">none yet. they are stored on this job.</p>}
             <ul className="instructions">
@@ -3599,7 +3599,7 @@ export function App() {
               />
             </label>
             <button type="button" onClick={() => void applyEngine()}>
-              [ check engine ]
+              check engine
             </button>
           </Frame>
           </>)}

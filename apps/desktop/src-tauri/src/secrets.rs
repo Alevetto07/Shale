@@ -1,121 +1,65 @@
-//! The printer's access code, kept where Windows keeps passwords.
+//! Passwords, kept where Windows keeps passwords.
 //!
-//! A Bambu machine's LAN access code is the password on its MQTT connection:
-//! anyone with it can drive the printer. It used to sit in the WebView's
+//! Two things live here: a Bambu machine's LAN access code, which is the
+//! password on its MQTT connection and lets anyone who has it drive the
+//! printer, and the cloud account's tokens. Both used to sit in the WebView's
 //! `localStorage`, which is a plain file in the profile directory — readable by
-//! anything running as this user, and backed up with the profile. It goes to the
-//! Windows Credential Manager now, one entry per key, under the target name
-//! `Shale/<key>`.
+//! anything running as this user, and backed up with the profile. They go to
+//! the Windows Credential Manager now, through `keyring`: service `Shale`, and
+//! the key as the account name, so a listing of the vault shows whose password
+//! it is.
 //!
 //! Nothing here logs a value, and `get` returns `None` rather than an error when
 //! the entry is absent — an absent password is a state the UI has to handle
 //! anyway.
+//!
+//! The entries written by the previous build used the whole `Shale/<key>` string
+//! as the target name, with no account. That is a different entry to Windows,
+//! so an access code saved before this change has to be typed once more; the
+//! alternative was keeping two ways into one vault.
 
-/// The target name a key is stored under. Scoped by `Shale/` so a listing of the
-/// vault shows whose password it is.
-fn target(key: &str) -> String {
-    format!("Shale/{key}")
-}
+/// The service name every entry is filed under.
+const SERVICE: &str = "Shale";
 
 #[cfg(windows)]
 mod platform {
-    use super::target;
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Foundation::{GetLastError, ERROR_NOT_FOUND};
-    use windows_sys::Win32::Security::Credentials::{
-        CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
-        CRED_TYPE_GENERIC,
-    };
+    use keyring::Entry;
 
-    /// A NUL-terminated UTF-16 buffer, which is what every `*W` call wants.
-    fn wide(text: &str) -> Vec<u16> {
-        std::ffi::OsStr::new(text)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect()
-    }
-
-    fn error(what: &str) -> String {
-        // SAFETY: `GetLastError` takes no arguments and reads thread-local state.
-        let code = unsafe { GetLastError() };
-        format!("{what} failed (Windows error {code})")
+    fn entry(key: &str) -> Result<Entry, String> {
+        Entry::new(super::SERVICE, key)
+            .map_err(|err| format!("the credential manager refused the name: {err}"))
     }
 
     pub fn set(key: &str, value: &str) -> Result<(), String> {
-        let name = wide(&target(key));
-        let mut blob = value.as_bytes().to_vec();
-        let credential = CREDENTIALW {
-            Flags: 0,
-            Type: CRED_TYPE_GENERIC,
-            TargetName: name.as_ptr() as *mut u16,
-            Comment: std::ptr::null_mut(),
-            LastWritten: windows_sys::Win32::Foundation::FILETIME {
-                dwLowDateTime: 0,
-                dwHighDateTime: 0,
-            },
-            CredentialBlobSize: blob.len() as u32,
-            CredentialBlob: blob.as_mut_ptr(),
-            Persist: CRED_PERSIST_LOCAL_MACHINE,
-            AttributeCount: 0,
-            Attributes: std::ptr::null_mut(),
-            TargetAlias: std::ptr::null_mut(),
-            UserName: std::ptr::null_mut(),
-        };
-        // SAFETY: the struct and both buffers outlive the call, the blob length is
-        // the real length, and nothing is handed back to be freed.
-        let ok = unsafe { CredWriteW(&credential, 0) };
-        if ok == 0 {
-            return Err(error("saving the printer's access code"));
-        }
-        Ok(())
+        entry(key)?
+            .set_password(value)
+            .map_err(|err| format!("the credential manager refused the write: {err}"))
     }
 
     pub fn get(key: &str) -> Result<Option<String>, String> {
-        let name = wide(&target(key));
-        let mut out: *mut CREDENTIALW = std::ptr::null_mut();
-        // SAFETY: `out` is a valid pointer to a pointer, and the credential it
-        // receives is owned by the vault and freed with `CredFree` below.
-        let ok = unsafe { CredReadW(name.as_ptr(), CRED_TYPE_GENERIC, 0, &mut out) };
-        if ok == 0 {
-            // SAFETY: as above; the read failed, so there is nothing to free.
-            let code = unsafe { GetLastError() };
-            if code == ERROR_NOT_FOUND {
-                return Ok(None);
-            }
-            return Err(error("reading the printer's access code"));
+        match entry(key)?.get_password() {
+            Ok(secret) => Ok(Some(secret)),
+            // Absent is an answer, not a failure.
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(err) => Err(format!("the credential manager refused the read: {err}")),
         }
-        // SAFETY: a successful read fills `out` with a live credential.
-        let credential = unsafe { &*out };
-        let bytes = unsafe {
-            std::slice::from_raw_parts(
-                credential.CredentialBlob,
-                credential.CredentialBlobSize as usize,
-            )
-        };
-        let text = String::from_utf8_lossy(bytes).to_string();
-        // SAFETY: the buffer is the vault's and is released exactly once.
-        unsafe { CredFree(out as *const core::ffi::c_void) };
-        Ok(Some(text))
     }
 
     pub fn clear(key: &str) -> Result<(), String> {
-        let name = wide(&target(key));
-        // SAFETY: `name` is NUL-terminated and lives for the call.
-        let ok = unsafe { CredDeleteW(name.as_ptr(), CRED_TYPE_GENERIC, 0) };
-        if ok == 0 {
-            // SAFETY: as above.
-            let code = unsafe { GetLastError() };
-            if code == ERROR_NOT_FOUND {
-                return Ok(());
-            }
-            return Err(error("forgetting the printer's access code"));
+        match entry(key)?.delete_credential() {
+            // Clearing twice is not an error: the state asked for is the state
+            // that is there.
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(err) => Err(format!("the credential manager refused the delete: {err}")),
         }
-        Ok(())
     }
 }
 
 #[cfg(not(windows))]
 mod platform {
+    // `keyring` needs a platform backend chosen at build time. Until this
+    // program is built somewhere that is not Windows, saying so is better than
+    // a build that quietly has no vault.
     pub fn set(_key: &str, _value: &str) -> Result<(), String> {
         Err("there is no keyring on this platform yet".to_string())
     }

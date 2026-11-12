@@ -47,7 +47,7 @@ The installer also contains these components, all under permissive licences:
 | [truck](https://github.com/ricosjp/truck) (STEP import) | Apache-2.0 |
 | [`quick-xml`](https://github.com/tafia/quick-xml), `serde`, `serde_json`, `thiserror`, `toml` | MIT OR Apache-2.0 |
 | The Rust standard library and the `windows-sys` crate | MIT OR Apache-2.0 |
-| [`keyring`](https://github.com/hwchen/keyring-rs) | MIT OR Apache-2.0 |
+| [`keyring`](https://github.com/hwchen/keyring-rs) 3.6.3 (Windows Credential Manager) | MIT OR Apache-2.0 |
 | `tokio`, `rustls`, `webpki-roots`, `flate2`, `zip`, `image` | MIT OR Apache-2.0 |
 
 The full dependency graph, with each crate's declared licence, is reproducible
