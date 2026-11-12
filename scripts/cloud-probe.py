@@ -100,9 +100,15 @@ def step(page, label, ok, detail=""):
 
 def main():
     page = Page()
+    # The demo preload imports a cube and the import takes the pane to Prepare,
+    # so wait for the model before asking for Device: a click that lands first is
+    # undone by the import.
     step(page, "window is up", page.wait_for("device", 30), page.text()[:120])
+    step(page, "model loaded", page.wait_for("cube.stl", 90), page.text()[:200])
     step(page, "device tab", page.click("device") != "no button: device")
     step(page, "panel is there", page.wait_for("bambu cloud"), page.text()[:200])
+    # The panel asks the backend who is signed in before it draws the form.
+    step(page, "form is drawn", page.wait_for("sign in", 20), page.text()[:200])
 
     # Sign in with a password that makes the cloud ask for a code.
     step(page, "email filled", page.fill(0, "probe@example.com").startswith("email"))

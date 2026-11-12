@@ -33,7 +33,15 @@ impl SecretStore for Vault {
     }
 }
 
-pub struct CloudState(pub Mutex<Cloud<HttpTransport>>);
+/// The account, and whether the vault has been read yet.
+///
+/// Reading the vault is a Windows call and it happens on the first command that
+/// needs the account, never while the window is being built: a credential store
+/// that is slow to answer must not be able to keep the window from appearing.
+pub struct CloudState {
+    cloud: Mutex<Cloud<HttpTransport>>,
+    loaded: std::sync::atomic::AtomicBool,
+}
 
 pub fn state() -> CloudState {
     let host = std::env::var("SHALE_CLOUD_HOST").unwrap_or_else(|_| api::GLOBAL_HOST.to_string());
@@ -46,16 +54,21 @@ pub fn state() -> CloudState {
         } else {
             Arc::new(Vault)
         };
-    let mut cloud = Cloud::new(&host, Arc::new(HttpTransport), store);
-    cloud.load();
-    CloudState(Mutex::new(cloud))
+    CloudState {
+        cloud: Mutex::new(Cloud::new(&host, Arc::new(HttpTransport), store)),
+        loaded: std::sync::atomic::AtomicBool::new(false),
+    }
 }
 
 fn lock(state: &CloudState) -> Result<std::sync::MutexGuard<'_, Cloud<HttpTransport>>, String> {
-    state
-        .0
+    let mut cloud = state
+        .cloud
         .lock()
-        .map_err(|_| "the cloud session is in an unknown state; restart Shale".to_string())
+        .map_err(|_| "the cloud session is in an unknown state; restart Shale".to_string())?;
+    if !state.loaded.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        cloud.load();
+    }
+    Ok(cloud)
 }
 
 #[derive(Debug, Serialize)]
