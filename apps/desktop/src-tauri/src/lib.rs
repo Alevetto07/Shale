@@ -24,6 +24,7 @@ use shale_core::{
     StoredInstruction, SupportOverlay, SupportParams, SupportPlan, TessellationTolerance, Toolpath,
     Transform, TriangleMesh, UserSettings, VariantInfo,
 };
+mod cloud;
 mod instance;
 mod secrets;
 
@@ -203,7 +204,7 @@ struct PreviewPath {
     layer: i32,
 }
 
-fn lock(state: &AppState) -> Result<std::sync::MutexGuard<'_, Inner>, String> {
+pub(crate) fn lock(state: &AppState) -> Result<std::sync::MutexGuard<'_, Inner>, String> {
     state
         .0
         .lock()
@@ -4250,6 +4251,14 @@ async fn open_project(
     })
 }
 
+/// The G-code file the last slice wrote, for the cloud upload. Reading it here
+/// keeps `Inner` private to this file: the cloud module asks for a path, not for
+/// the state.
+pub(crate) fn last_gcode_path(state: &AppState) -> Result<Option<PathBuf>, String> {
+    let inner = lock(state)?;
+    Ok(inner.gcode_path.clone())
+}
+
 /// Print how long each startup step took. The window is created only after
 /// these finish, so a slow one is the difference between an app that opens and
 /// an app that looks dead; `SHALE_TRACE=1` turns it on.
@@ -4547,6 +4556,7 @@ pub fn run() {
             host_config: None,
         })))
         .manage(PrinterHost::default())
+        .manage(cloud::state())
         // The profile library reader hands its result back here rather than to a
         // command, so no command ever blocks on the disk. When it lands, the
         // window is told and asks for the printer list again.
@@ -4695,7 +4705,13 @@ pub fn run() {
             delete_plate,
             rename_plate,
             list_recents,
-            forget_recent_project
+            forget_recent_project,
+            cloud::cloud_state,
+            cloud::cloud_login,
+            cloud::cloud_verify,
+            cloud::cloud_sign_out,
+            cloud::cloud_devices,
+            cloud::cloud_send
         ]);
 
     // `run` would panic with a bare HRESULT when the window cannot be made, and

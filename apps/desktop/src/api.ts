@@ -194,6 +194,19 @@ export const secretSet = (key: string, value: string) =>
 
 export const secretGet = (key: string) => invoke<string | null>("secret_get", { key });
 
+// Bambu's cloud. The pane signs in, reads the account's printers and sends the
+// plate that was sliced last; the tokens never come back out here, they stay in
+// the Windows Credential Manager on the other side of the IPC.
+export const cloudState = () => invoke<CloudSession>("cloud_state");
+export const cloudLogin = (email: string, password: string) =>
+  invoke<CloudLoginStep>("cloud_login", { email, password });
+export const cloudVerify = (email: string, tfaKey: string, code: string) =>
+  invoke<void>("cloud_verify", { email, tfaKey, code });
+export const cloudSignOut = () => invoke<void>("cloud_sign_out");
+export const cloudDevices = () => invoke<CloudDeviceRow[]>("cloud_devices");
+export const cloudSend = (devId: string, taskName: string) =>
+  invoke<string>("cloud_send", { devId, taskName });
+
 export const secretClear = (key: string) => invoke<void>("secret_clear", { key });
 
 export const hostDefaults = () =>
@@ -605,6 +618,15 @@ export const api = {
   clearJob: () => invoke<void>("clear_job"),
   recents: () => invoke<RecentProject[]>("list_recents"),
   forgetRecent: (path: string) => invoke<RecentProject[]>("forget_recent_project", { path }),
+
+  // ---------------------------------------------------------- Bambu cloud
+
+  cloudState,
+  cloudLogin,
+  cloudVerify,
+  cloudSignOut,
+  cloudDevices,
+  cloudSend,
 };
 
 export interface RecentProject {
@@ -682,4 +704,26 @@ export interface CostEstimate {
 export interface Preset {
   name: string;
   values: Record<string, string>;
+}
+
+/// Who is signed in to Bambu's cloud, if anyone.
+export interface CloudSession {
+  signedIn: boolean;
+  account: string | null;
+  host: string;
+}
+
+/// The answer to a sign-in: either tokens, or a request for a code.
+export interface CloudLoginStep {
+  needsCode: boolean;
+  tfaKey: string | null;
+}
+
+/// One printer in the account, as the cloud describes it.
+export interface CloudDeviceRow {
+  devId: string;
+  label: string;
+  model: string;
+  state: string;
+  mayPrint: boolean;
 }
