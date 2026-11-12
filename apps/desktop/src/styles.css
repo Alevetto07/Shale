@@ -904,25 +904,21 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   background: rgba(185, 179, 255, 0.12);
 }
 
-/* Settings sheet: Bambu-style tabs down the left, fields on the right. */
+/* Settings sheet. It used to be a two-column grid with the tabs down the left;
+   the process panel now owns its own tabs, so the sheet is a single column and
+   must not impose a column on its child — a grid child that is not placed
+   collapses into the first column, which is how the whole panel once ended up
+   117 px wide with its tabs stacked vertically. */
 .menu-sheet.settings-sheet {
-  display: grid;
-  /* Three rows and a named place for each child. Placement used to be left to
-     the auto-flow, and once a title row was added above the two columns every
-     item slid one cell along: the body landed in the 9 rem tab column and the
-     whole list wrapped inside a strip a tenth of the sheet's width. The rows
-     say where things go, so adding a child cannot shuffle the sheet again. */
-  grid-template-columns: 9rem minmax(0, 1fr);
-  grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
   width: min(46rem, calc(100vw - 3rem));
   max-height: min(32rem, calc(100vh - 6rem));
   padding: 0.75rem;
 }
-.menu-sheet.settings-sheet > .settings-scope { grid-column: 1 / -1; grid-row: 1; }
-.menu-sheet.settings-sheet > .settings-tabs { grid-column: 1; grid-row: 2 / 4; }
-.menu-sheet.settings-sheet > .settings-search { grid-column: 2; grid-row: 2; }
-.menu-sheet.settings-sheet > .settings-body { grid-column: 2; grid-row: 3; min-width: 0; }
+.menu-sheet.settings-sheet > .process-sheet { min-width: 0; flex: 1 1 auto; }
+.menu-sheet.settings-sheet .settings-body { overflow-y: auto; min-height: 0; }
 
 .settings-scope {
   display: flex;
