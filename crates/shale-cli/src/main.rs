@@ -163,7 +163,11 @@ fn resolve_request(args: &[String], printer: &str) -> ResolveRequest {
         settings: UserSettings {
             layer_height: flag(args, "--layer").and_then(|value| value.parse().ok()),
             infill_sparse_density: flag(args, "--infill").and_then(|value| value.parse().ok()),
-            support_enable: if has(args, "--supports") { Some(true) } else { None },
+            support_enable: if has(args, "--supports") {
+                Some(true)
+            } else {
+                None
+            },
             material_print_temperature: None,
             material_bed_temperature: None,
             extra,
@@ -176,7 +180,10 @@ fn default_printer(catalog: &Catalog) -> Result<String, String> {
         .printers()
         .first()
         .map(|printer| printer.id.clone())
-        .ok_or_else(|| "the catalogue has no printers; point SHALE_CURA_DIR at a Cura resource tree".to_string())
+        .ok_or_else(|| {
+            "the catalogue has no printers; point SHALE_CURA_DIR at a Cura resource tree"
+                .to_string()
+        })
 }
 
 fn settings(args: &[String]) -> Result<(), String> {
@@ -185,7 +192,10 @@ fn settings(args: &[String]) -> Result<(), String> {
     let resolved = catalog
         .resolve(&resolve_request(args, &printer))
         .map_err(|err| err.to_string())?;
-    println!("# {} / {} / {} / {}", resolved.printer_name, resolved.variant_name, resolved.quality_type, resolved.material_id);
+    println!(
+        "# {} / {} / {} / {}",
+        resolved.printer_name, resolved.variant_name, resolved.quality_type, resolved.material_id
+    );
     for (key, value) in &resolved.global {
         println!("{key}={value}");
     }
@@ -206,8 +216,16 @@ fn slice_command(args: &[String]) -> Result<(), String> {
     let printer = flag(args, "--printer").unwrap_or(default_printer(&catalog)?);
     let request = resolve_request(args, &printer);
     let resolved = catalog.resolve(&request).map_err(|err| err.to_string())?;
-    let width = resolved.global.get("machine_width").and_then(|v| v.parse().ok()).unwrap_or(220.0);
-    let depth = resolved.global.get("machine_depth").and_then(|v| v.parse().ok()).unwrap_or(220.0);
+    let width = resolved
+        .global
+        .get("machine_width")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(220.0);
+    let depth = resolved
+        .global
+        .get("machine_depth")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(220.0);
 
     let transform = place_on_bed(&mesh, width, depth, false);
     let placed = vec![PlacedModel {
@@ -228,7 +246,10 @@ fn slice_command(args: &[String]) -> Result<(), String> {
 
     let engine = CliEngine::from_env();
     engine.probe().map_err(|message| {
-        format!("CuraEngine is not usable at {}.\n{message}\nSet SHALE_CURAENGINE to the binary.", engine.program.display())
+        format!(
+            "CuraEngine is not usable at {}.\n{message}\nSet SHALE_CURAENGINE to the binary.",
+            engine.program.display()
+        )
     })?;
 
     let outcome = slice(
@@ -237,7 +258,7 @@ fn slice_command(args: &[String]) -> Result<(), String> {
         &printer,
         request.variant_name.clone(),
         request.quality_type.clone(),
-        &[request.material_id.clone()],
+        std::slice::from_ref(&request.material_id),
         request.settings.clone(),
         &placed,
         &[],
@@ -246,7 +267,11 @@ fn slice_command(args: &[String]) -> Result<(), String> {
         output.clone(),
         &mut |progress: EngineProgress| {
             if std::env::var_os("SHALE_TRACE").is_some() {
-                eprintln!("[{}] {}", (progress.fraction * 100.0) as u32, progress.message);
+                eprintln!(
+                    "[{}] {}",
+                    (progress.fraction * 100.0) as u32,
+                    progress.message
+                );
             }
         },
     )
@@ -254,7 +279,11 @@ fn slice_command(args: &[String]) -> Result<(), String> {
 
     println!("{}", outcome.gcode_path.display());
     if let Some(seconds) = outcome.print_time_seconds {
-        println!("time     {} h {} m", (seconds / 3600.0) as u32, ((seconds % 3600.0) / 60.0) as u32);
+        println!(
+            "time     {} h {} m",
+            (seconds / 3600.0) as u32,
+            ((seconds % 3600.0) / 60.0) as u32
+        );
     }
     println!("filament {:.2} m", outcome.filament_metres);
     println!("layers   {}", outcome.toolpath.layers.len());

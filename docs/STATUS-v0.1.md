@@ -1,6 +1,6 @@
 # Shale v0.1 — status
 
-Batch 6 was the last one: what follows is the state of v0.1 as a whole, with the
+Batch B was the last one: what follows is the state of v0.1 as a whole, with the
 batches below kept because each records a decision and the numbers behind it.
 
 Branch `cursor/deep-field-75ee`. Nothing was pushed, merged, tagged, released or
@@ -17,6 +17,82 @@ changes no code, only the golden's two stale values.
 The three ignored tests are the two boolean timing ladders (they run for
 minutes on purpose) and the fake-printer wiring test (it needs a running
 double).
+
+## Batch B — the pre-release pass (12 Nov)
+
+Batch B is Alessio's own testing list, worked in the order that fixes come
+first. Two of its nineteen items are not started (17, 19); everything else is
+in the tree and the parts a person can see were looked at in a running window,
+not assumed.
+
+**What was looked at.** The window was driven over the DevTools port
+(`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`,
+`scripts/probe.py` to click by text, evaluate an expression or take a
+screenshot), and the screenshots were read back. On that evidence:
+
+- The title bar is Shale's own: 34 px, wordmark and menus inside it, the three
+  window buttons at the right, no Windows chrome above it.
+- An import lands on **Prepare**, not on Home.
+- The process sheet opens as one 577 px column with Quality / Strength / Speed /
+  Support / Others in a single row, the six A1 presets under it, and each row
+  carrying a name, a `?` and a control.
+- Pressing Slice switches to **Preview** by itself and shows the `SLICED` card
+  with time, filament, weight, layers, cost and energy; the sidebar lists
+  `Slice 1 — 0 h 29 m · 1.4 m · 0.06 EUR`.
+- Orbiting the camera under the plate leaves the part visible: the plate is a
+  transparent plane with no depth write, so it can be seen through from below.
+
+**Item by item.** 1 plate transparency — done. 2 custom title bar — done. 3
+Andromeda credit out of Home, kept in About — done. 4 recent projects: the
+removal and the hide are in `apps/desktop/src/recents.ts` behind
+`useRecents()`/`RecentsApi`, and the Home panel itself is untouched because a
+Cursor agent is restyling it; removing an entry could never have worked before
+— the command is `forget_recent_project` and the client called
+`forget_recent`. 5 auto-switch on import — done. 6 drag stays on the plate and
+a three-arrow gizmo — done. 7 the process sheet is Bambu's: five sections, its
+names, simple/advanced, six A1 presets generated from Bambu Studio's own
+resolved `0.20mm Standard @BBL A1` profile, and `docs/SETTINGS-MAP.md` records
+every mapping and every setting that is hidden because CuraEngine has no
+equivalent. 8 the visibility screen is there and remembers. 9 descriptions sit
+behind the `?`. 10 Prepare prepares and Preview reads the result: the cost and
+energy moved to Preview with the rest of the slice. 11 no credits on Prepare.
+12 every slice is kept as a `SliceRecord` with its own totals, the picker lists
+them with the settings diff, and a change makes Prepare say "slice again".
+13 no slicing settings in Preview. 14 the whole toolpath is fetched once and
+scrubbed with `setDrawRange`, one buffer per line kind. 15 a toggle is a
+`visible` flag, travel starts hidden, and the nine kinds have nine hues.
+16 the Device pane has no scrollbar and no right-hand gap. 18 the CLI and the
+MCP server are packaged and tested (below).
+
+**Not started.** 17 Bambu cloud login: nothing is written; it needs an
+undocumented API, a 2FA flow and keyring storage, and it must be built against
+fixtures because no printer or cloud account may be contacted from here.
+19 the wider ASCII/boxed pass: the existing screens keep the Deep Field look,
+but the extra ASCII art and the removal of `[ ]` were not done.
+
+**Item 18 — the windowless half.** `crates/shale-cli` builds two binaries with
+no Tauri, no webview and no Node: `shale-cli` (`info`, `printers`, `settings`,
+`slice`) and the existing `shale-mcp` (stdio, or `--http` on loopback only).
+The binary is `shale-cli` and not `shale` on purpose: on Windows a file name is
+case-insensitive, so `shale.exe` and the desktop's `Shale.exe` are the same file
+in `target/release`, and the first build silently overwrote the other.
+`scripts/package-cli.ps1` stages a zip of the two with `docs/INSTALL-CLI.md`,
+the third-party notices and the licence; `scripts/package-cli.sh` does the same
+for Linux and honours `TARGET`, so the aarch64 build happens natively on the
+board rather than through a cross toolchain nobody here can test.
+
+Verified on the **extracted zip**, not on the tree: `shale-cli info` reports
+engine ok, 655 printers and the three resource paths; `shale-cli slice
+examples/cube.stl` writes 215 431 bytes of G-code in 100 layers and 1.46 m;
+`scripts/mcp-smoke.py` gets an `initialize` answer from `rmcp 3.8.0` and lists
+the seventeen tools. Five CLI tests cover help, no arguments, `--version`, an
+unknown command and a missing model argument.
+
+**Two bugs found on the way.** The settings sheet was still a two-column grid
+written for the old tab strip, so the new panel — an unplaced grid child —
+collapsed into the 9 rem column and rendered 117 px wide with its tabs stacked.
+And every button inside a menu sheet is a full-width row, which the tabs and
+presets inherited, so they stacked until they were given their width back.
 
 ## Batch A and A2 — what the release actually contains
 

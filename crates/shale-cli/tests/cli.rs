@@ -8,11 +8,22 @@ fn binary() -> Command {
 
 #[test]
 fn help_names_every_command_and_environment_variable() {
-    let output = binary().arg("--help").output().expect("run shale-cli --help");
+    let output = binary()
+        .arg("--help")
+        .output()
+        .expect("run shale-cli --help");
     assert!(output.status.success());
     let text = String::from_utf8_lossy(&output.stdout);
-    for expected in ["shale info", "shale printers", "shale settings", "shale slice"] {
-        assert!(text.contains(expected), "help is missing `{expected}`:\n{text}");
+    for expected in [
+        "shale info",
+        "shale printers",
+        "shale settings",
+        "shale slice",
+    ] {
+        assert!(
+            text.contains(expected),
+            "help is missing `{expected}`:\n{text}"
+        );
     }
     for variable in ["SHALE_CURA_DIR", "SHALE_MATERIALS_DIR", "SHALE_CURAENGINE"] {
         assert!(text.contains(variable), "help is missing {variable}");
@@ -41,7 +52,10 @@ fn an_unknown_command_says_so_and_fails() {
     assert!(!output.status.success());
     let text = String::from_utf8_lossy(&output.stderr);
     assert!(text.contains("unknown command `shred`"), "{text}");
-    assert!(text.contains("shale help"), "the error should point at help: {text}");
+    assert!(
+        text.contains("shale help"),
+        "the error should point at help: {text}"
+    );
 }
 
 #[test]
