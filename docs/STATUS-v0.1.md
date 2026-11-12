@@ -7,7 +7,7 @@ Branch `cursor/deep-field-75ee`. Nothing was pushed, merged, tagged, released or
 published; no PR was opened or changed. The A1 at 192.168.1.11 was never
 contacted and no network was scanned — the fake printer binds to 127.0.0.1.
 
-Workspace at this commit: **202 passed, 0 failed, 3 ignored** — the same count
+Workspace at this commit: **207 passed, 0 failed, 3 ignored** — the same count
 with `SHALE_CURA_DIR` set, which is the only way the resolver golden actually
 runs, and it passes — and
 `cargo clippy --workspace --all-targets -- -D warnings` is clean, also with
@@ -87,6 +87,12 @@ examples/cube.stl` writes 215 431 bytes of G-code in 100 layers and 1.46 m;
 `scripts/mcp-smoke.py` gets an `initialize` answer from `rmcp 3.8.0` and lists
 the seventeen tools. Five CLI tests cover help, no arguments, `--version`, an
 unknown command and a missing model argument.
+
+**The installer and the smoke test.** `Shale_0.1.1_x64-setup.exe`, **5 009 667
+bytes**, rebuilt from this tree after the last commit; `scripts/installer-smoke.ps1`
+runs 24 checks — install, the five associations and the `.stl` default that must
+stay Bambu Studio's, launch, the second-process handover, uninstall — and all 24
+PASS.
 
 **Two bugs found on the way.** The settings sheet was still a two-column grid
 written for the old tab strip, so the new panel — an unplaced grid child —
