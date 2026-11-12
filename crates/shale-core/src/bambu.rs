@@ -957,24 +957,35 @@ mod tests {
         // the library is parsed once per printer rather than once per model, so
         // it warms the cache and then times a second read.
         let _ = Library::from_root(Some(root.clone()));
-        let start = std::time::Instant::now();
-        let library = Library::from_root(Some(root));
-        let elapsed = start.elapsed();
+        // Best of three. The whole workspace suite runs its tests in parallel
+        // and some of them start CuraEngine, so a single read can be descheduled
+        // for seconds while the code is fine; a read that is slow *by itself*
+        // stays slow in all three. The bug this guards made every read slow, so
+        // the minimum still catches it.
+        let mut library = None;
+        let mut best = std::time::Duration::MAX;
+        for _ in 0..3 {
+            let start = std::time::Instant::now();
+            let read = Library::from_root(Some(root.clone()));
+            best = best.min(start.elapsed());
+            library = Some(read);
+        }
+        let library = library.expect("three reads");
         assert!(!library.is_empty());
         println!(
-            "library: {} definitions, {} instances, {} materials in {:?}",
+            "library: {} definitions, {} instances, {} materials, best of three in {:?}",
             library.definitions.len(),
             library.instances.len(),
             library.materials.len(),
-            elapsed
+            best
         );
         // The whole library is re-read on every launch, so this has to stay
         // cheap: it used to take eight seconds because both profile folders
         // were parsed once per printer model. A repeat of that bug blows
         // straight through this bound even with the cache warm.
         assert!(
-            elapsed.as_millis() < 5000,
-            "reading the profile library took {elapsed:?}"
+            best.as_millis() < 5000,
+            "reading the profile library took {best:?} at best"
         );
     }
 
