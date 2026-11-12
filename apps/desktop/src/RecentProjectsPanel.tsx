@@ -1,4 +1,5 @@
 import {
+  Fragment,
   forwardRef,
   useEffect,
   useImperativeHandle,
@@ -176,43 +177,47 @@ export const RecentProjectsPanel = forwardRef<
         </BoxLine>
       )}
       {shown.map((recent, index) => (
-        <BoxLine key={recent.path}>
-          <div className="start-recents-row">
-            <button
-              type="button"
-              ref={(node) => {
-                rowRefs.current[index] = node;
-              }}
-              className={recent.missing ? "recent-row dim" : "recent-row"}
-              onClick={() => onOpen(recent.path)}
-              onKeyDown={(event) => onRowKey(event, recent.path)}
-            >
-              <span className="recent-name">{clip(recent.name, 16)}</span>
-              <span className="recent-meta">
-                {recent.missing ? "missing" : formatWhen(recent.saved_at_ms)}
-                {!recent.missing && recent.printer ? (
-                  <>
-                    <span className="start-dot" aria-hidden="true">
-                      ·
-                    </span>
-                    <span className="recent-machine">{clip(shortMachine(recent.printer), 10)}</span>
-                  </>
-                ) : null}
-              </span>
-            </button>
-            <button
-              type="button"
-              className="recent-forget"
-              aria-label={`Remove ${recent.name} from recents`}
-              onClick={(event) => {
-                event.stopPropagation();
-                onForget(recent.path);
-              }}
-            >
-              rm
-            </button>
-          </div>
-        </BoxLine>
+        <Fragment key={recent.path}>
+          <BoxLine>
+            <div className="start-recents-row">
+              <button
+                type="button"
+                ref={(node) => {
+                  rowRefs.current[index] = node;
+                }}
+                className={recent.missing ? "recent-row dim" : "recent-row"}
+                onClick={() => onOpen(recent.path)}
+                onKeyDown={(event) => onRowKey(event, recent.path)}
+              >
+                <span className="recent-name">{clip(recent.name, 22)}</span>
+              </button>
+              <button
+                type="button"
+                className="recent-forget"
+                aria-label={`Remove ${recent.name} from recents`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onForget(recent.path);
+                }}
+              >
+                rm
+              </button>
+            </div>
+          </BoxLine>
+          <BoxLine>
+            <p className={recent.missing ? "recent-meta-line dim" : "recent-meta-line"}>
+              {recent.missing ? "missing" : formatWhen(recent.saved_at_ms)}
+              {!recent.missing && recent.printer ? (
+                <>
+                  <span className="start-dot" aria-hidden="true">
+                    ·
+                  </span>
+                  <span className="recent-machine">{clip(shortMachine(recent.printer), 14)}</span>
+                </>
+              ) : null}
+            </p>
+          </BoxLine>
+        </Fragment>
       ))}
       <BoxRule kind="bottom" />
     </aside>

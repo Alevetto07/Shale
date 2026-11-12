@@ -599,6 +599,8 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 }
 .start-recents-cell {
   min-width: 0;
+  max-width: calc(var(--recents-inner-ch, 28) * 1ch);
+  overflow: hidden;
   color: var(--ink-2);
 }
 .start-recents-title {
@@ -638,8 +640,6 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   opacity: 1;
 }
 button.recent-row {
-  display: grid;
-  gap: 0;
   flex: 1 1 auto;
   min-width: 0;
   padding: 0;
@@ -657,14 +657,17 @@ button.recent-row:focus-visible {
 }
 button.recent-row.dim { color: var(--ink-3); }
 .recent-name {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.recent-meta {
+.recent-meta-line {
   display: flex;
   align-items: baseline;
   gap: 0.15rem;
+  margin: 0;
+  width: 100%;
   min-width: 0;
   overflow: hidden;
   color: var(--ink-3);
@@ -672,6 +675,7 @@ button.recent-row.dim { color: var(--ink-3); }
   font-size: 10px;
   letter-spacing: 0;
 }
+.recent-meta-line.dim { color: var(--ink-3); }
 .recent-machine {
   overflow: hidden;
   text-overflow: ellipsis;
