@@ -17,6 +17,11 @@ path = "src/bin/fake_printer.rs"
 required-features = ["fake-printer"]
 
 [dependencies]
+# The cloud client is the only part of Shale that speaks outside the LAN. It is
+# a small HTTP/1.1 client over the rustls already in this crate rather than a
+# full HTTP stack: reqwest 0.13 drags in a platform verifier, sixteen crates and
+# a C build of aws-lc, and this needs one GET and two POSTs of JSON.
+webpki-roots = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pki-types = "1"
 serde = { version = "1", features = ["derive"] }
