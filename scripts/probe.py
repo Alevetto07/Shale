@@ -53,5 +53,12 @@ if __name__ == "__main__":
     elif command == "click":
         text = sys.argv[2]
         print(cdp.js("(() => { const b=[...document.querySelectorAll('button,summary,a,[role=tab]')].find(e=>e.textContent.trim().toLowerCase()===" + json.dumps(text.lower()) + "); if(!b) return 'no'; b.click(); return 'clicked'; })()"))
+    elif command == "key":
+        key = sys.argv[2]
+        codes = {"Escape": (27, "Escape"), "f": (70, "KeyF")}
+        vk, code = codes.get(key, (0, key))
+        cdp.call("Input.dispatchKeyEvent", type="keyDown", key=key, code=code, windowsVirtualKeyCode=vk)
+        cdp.call("Input.dispatchKeyEvent", type="keyUp", key=key, code=code, windowsVirtualKeyCode=vk)
+        print("sent", key)
     else:
         print(cdp.js(sys.argv[2]))

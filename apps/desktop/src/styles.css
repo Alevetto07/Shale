@@ -1275,8 +1275,15 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   border-bottom: 1px solid var(--line);
 }
 
+/* Every button in a menu sheet is a full-width row by default (that is what a
+   menu is). These two strips are not menus, so they take their width back. */
 .process-tabs { display: flex; flex-wrap: wrap; }
 .process-tabs button {
+  display: inline-flex;
+  width: auto;
+  justify-content: center;
+  gap: 0.25rem;
+  border-radius: 0;
   background: transparent;
   border: 0;
   border-bottom: 1px solid transparent;
@@ -1301,7 +1308,12 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   border-bottom: 1px solid var(--line);
 }
 .process-presets-label { color: var(--ink-3); font-size: 10px; margin-right: 0.3rem; }
-.process-preset {
+.process-presets .process-preset {
+  display: inline-flex;
+  width: auto;
+  justify-content: center;
+  gap: 0.25rem;
+  border-radius: 0;
   background: transparent;
   border: 1px solid var(--line);
   color: var(--ink-2);
@@ -1309,14 +1321,16 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   font-size: 10.5px;
   padding: 0.2rem 0.45rem;
   cursor: pointer;
+  white-space: nowrap;
 }
 .process-preset:hover { color: var(--ink); }
 .process-preset.on { border-color: var(--accent); color: var(--accent); }
 
 .process-tools { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0; }
-.process-search { flex: 1 1 auto; }
+.process-search { flex: 1 1 auto; min-width: 0; }
 .process-search input {
   width: 100%;
+  min-width: 0;
   background: transparent;
   border: 1px solid var(--line);
   color: var(--ink);
@@ -1324,7 +1338,11 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   font-size: 11px;
   padding: 0.25rem 0.45rem;
 }
-.process-visibility {
+.menu-sheet .process-visibility {
+  display: inline-flex;
+  width: auto;
+  justify-content: center;
+  border-radius: 0;
   background: transparent;
   border: 1px solid var(--line);
   color: var(--ink-2);
