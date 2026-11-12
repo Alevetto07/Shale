@@ -96,6 +96,36 @@ const BOOT_PROFILE = readBootProfile();
 
 const FIRST_TAB: DocTab[] = [{ id: 1, name: "Untitled", path: null, scratch: null, dirty: false }];
 
+/// One slice, kept. A person compares outcomes — this plate, that infill — so
+/// the result of a slice outlives the next one instead of being overwritten by
+/// it. The toolpath is kept with it, because "show me slice 2" has to draw
+/// slice 2.
+interface SliceRecord {
+  n: number;
+  seconds: number | null;
+  metres: number | null;
+  grams: number | null;
+  layers: number;
+  total: number | null;
+  /// The plate and the settings that produced it, so a record can say how far
+  /// it is from the settings on screen now.
+  plate: string;
+  settings: string;
+  paths: PreviewPath[];
+}
+
+/// Which of the recorded settings differ from the ones on screen. The picker
+/// says "3 changed", and the names are there for a title.
+function settingsDiff(before: string, now: string): string[] {
+  try {
+    const a = JSON.parse(before) as Record<string, unknown>;
+    const b = JSON.parse(now) as Record<string, unknown>;
+    return Object.keys(a).filter((key) => JSON.stringify(a[key]) !== JSON.stringify(b[key]));
+  } catch {
+    return [];
+  }
+}
+
 export function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [printers, setPrinters] = useState<PrinterInfo[]>([]);
@@ -290,6 +320,9 @@ export function App() {
     electricity_per_kwh: 0.3,
   });
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
+  /// Every slice taken this session, newest last, and which one is on screen.
+  const [history, setHistory] = useState<SliceRecord[]>([]);
+  const [viewing, setViewing] = useState<number | null>(null);
 
   // What the plate *is*, near enough to tell whether a slice still describes
   // it: every part, where it sits and how big it is. A part leaving, arriving
@@ -301,6 +334,19 @@ export function App() {
     )
     .join("|");
   const slicedPlate = useRef<string | null>(null);
+
+  /// What a slice was made from. The plate says where the parts are, this says
+  /// what the engine was told to do with them; a change to either makes the
+  /// last slice a description of something else.
+  const settingsKey = JSON.stringify({
+    layerHeight, walls, infill, pattern, supports, speed, nozzle, bedTemp,
+    material, quality, variant, overrides,
+  });
+  const lastSlice = history.length > 0 ? history[history.length - 1] : null;
+  const stale =
+    layerCount > 0 &&
+    lastSlice != null &&
+    (lastSlice.plate !== plateKey || lastSlice.settings !== settingsKey);
 
   useEffect(() => {
     // Nothing was sliced, or the plate is still the one that was sliced.
@@ -1438,7 +1484,44 @@ export function App() {
       setLayer(Math.max(0, summary.layer_count - 1));
       setPrintSeconds(summary.print_time_seconds);
       setFilamentMetres(summary.filament_metres);
+      // The record keeps its own price: the cost panel can be edited later, and
+      // "slice 2 cost 0.11" must not change when the tariff does.
+      const density = materialInfo?.density;
+      let grams: number | null = null;
+      let total: number | null = null;
+      if (summary.filament_metres != null && density) {
+        try {
+          const priced = await api.costEstimate(
+            summary.filament_metres,
+            summary.print_time_seconds,
+            materialInfo?.diameter ?? 1.75,
+            density,
+          );
+          grams = priced.grams;
+          total = priced.total;
+        } catch {
+          // A missing price is not a reason to lose a slice.
+        }
+      }
+      const all = await api.previewAll();
+      setPaths(all);
+      const record: SliceRecord = {
+        n: history.length + 1,
+        seconds: summary.print_time_seconds,
+        metres: summary.filament_metres,
+        grams,
+        layers: summary.layer_count,
+        total,
+        plate: plateKey,
+        settings: settingsKey,
+        paths: all,
+      };
+      setHistory((records) => [...records, record]);
+      setViewing(record.n);
       setPreview(true);
+      // A finished slice is a result to look at: the app turns to Preview by
+      // itself, the way Bambu Studio does when a slice lands.
+      setPane("preview");
       setShowModel(false);
       // The toolpaths arrive at the camera the model was left under; frame
       // them, the way pressing f would.
@@ -2805,6 +2888,10 @@ export function App() {
             )}
           </Frame>
 
+          {/* Prepare owns the machine and the process: these are the things a
+              slice is made from. Preview is a reading of the result and offers
+              none of them. */}
+          {pane === "prepare" && (<>
           <Frame title="printer">
             <label>
               filter
@@ -3398,6 +3485,59 @@ export function App() {
             <p className="hint">xyz is the part centre.  keys  1 move  2 rotate  3 scale  f frame</p>
           </Frame>
 
+          </>)}
+
+          {/* Every slice is kept, so two outcomes can be put side by side
+              instead of one overwriting the other. */}
+          {pane === "preview" && (
+            <Frame title="slices">
+              {history.length === 0 ? (
+                <p className="hint">no slices yet</p>
+              ) : (
+                <div className="slice-list">
+                  {history.map((record) => {
+                    const changed = settingsDiff(record.settings, settingsKey);
+                    return (
+                      <button
+                        key={record.n}
+                        type="button"
+                        className={viewing === record.n ? "slice-row on" : "slice-row"}
+                        title={changed.length > 0 ? `changed: ${changed.join(", ")}` : "the settings on screen"}
+                        onClick={() => {
+                          setViewing(record.n);
+                          setPaths(record.paths);
+                          setLayerCount(record.layers);
+                          setPrintSeconds(record.seconds);
+                          setFilamentMetres(record.metres);
+                          setLayer(Math.max(0, record.layers - 1));
+                        }}
+                      >
+                        <span className="slice-name">Slice {record.n}</span>
+                        <span className="slice-data">
+                          {record.seconds == null ? "—" : clockTime(record.seconds)}
+                          {" · "}
+                          {record.metres == null ? "—" : `${record.metres.toFixed(1)} m`}
+                          {" · "}
+                          {record.total == null ? "—" : money(record.total)}
+                        </span>
+                        <span className="slice-diff">
+                          {changed.length === 0 && record.plate === plateKey
+                            ? "current settings"
+                            : changed.length > 0
+                              ? `${changed.length} changed`
+                              : "plate changed"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </Frame>
+          )}
+
+          {/* Money and energy belong to a slice, not to a part: the numbers only
+              mean anything once there is a result to price. */}
+          {pane === "preview" && (<>
           <Frame title="cost">
             <label>
               currency
@@ -3446,7 +3586,9 @@ export function App() {
               numbers above.
             </p>
           </Frame>
+          </>)}
 
+          {pane === "prepare" && (<>
           <Frame title="engine">
             <label>
               backend
@@ -3484,10 +3626,21 @@ export function App() {
               [ check engine ]
             </button>
           </Frame>
+          </>)}
 
         </aside>
 
         <main className="stage">
+          {/* Prepare never shows a result, so when the plate or the process has
+              moved on from the last slice it says so and offers the press. */}
+          {pane === "prepare" && stale && (
+            <p className="slice-again" role="status">
+              changed since slice {lastSlice?.n}
+              <button type="button" onClick={() => void slice()}>
+                slice again
+              </button>
+            </p>
+          )}
           {/* `data-show-model` is what the viewport is actually told to draw:
               the parts list can be right and the bed still empty. */}
           <div className="plate" data-show-model={solidShown ? "yes" : "no"} data-models={models.length}>
@@ -3512,6 +3665,9 @@ export function App() {
               onNone={() => setHiddenKinds(new Set(paths.map((path) => path.kind)))}
             />
           )}
+          {/* A result, not a setting: the card is Preview's. Prepare used to
+              carry it and showed the last job's numbers over an unsliced plate. */}
+          {preview && (
           <div
             className={status?.demo === "cost" ? "job-card demo-cost" : "job-card"}
             data-sliced={layerCount > 0 ? "yes" : "no"}
@@ -3570,6 +3726,7 @@ export function App() {
               <span className="job-state quiet">not sliced</span>
             )}
           </div>
+          )}
           <Viewport
             width={bed.width}
             depth={bed.depth}

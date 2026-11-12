@@ -1267,6 +1267,58 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   text-overflow: ellipsis;
 }
 
+/* ── slices ──────────────────────────────────────────────────────────────── */
+
+.slice-list { display: flex; flex-direction: column; gap: 2px; }
+
+.slice-row {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr;
+  grid-template-areas:
+    "name data"
+    "diff diff";
+  gap: 0.15rem 0.6rem;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11px;
+  padding: 0.35rem 0.45rem;
+  cursor: pointer;
+}
+.slice-row:hover { border-color: var(--line); }
+.slice-row.on { border-color: var(--accent); color: var(--ink); }
+.slice-name { grid-area: name; color: var(--ink); }
+.slice-data { grid-area: data; font-variant-numeric: tabular-nums; }
+.slice-diff { grid-area: diff; color: var(--ink-3); }
+
+.slice-again {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0;
+  padding: 0.35rem 0.8rem;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  color: var(--ink-2);
+  font-size: 11px;
+}
+.slice-again button {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  padding: 0.1rem 0.5rem;
+  cursor: pointer;
+}
+
 /* ── device ──────────────────────────────────────────────────────────────── */
 
 .device {
