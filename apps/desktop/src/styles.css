@@ -522,14 +522,15 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   z-index: 2;
   left: 28px;
   bottom: 28px;
-  width: min(320px, calc(100% - 56px));
+  width: min(260px, calc(100% - 56px));
   max-height: calc(100% - 72px);
   overflow: auto;
-  padding: 14px 16px 12px;
-  background: var(--panel);
+  padding: 12px 14px 10px;
+  background: rgba(11, 13, 20, 0.88);
+  border: 1px solid var(--line);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 .start .brand-mark { height: 32px; }
 .start .wordmark { font-size: 22px; }
@@ -566,32 +567,135 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   text-transform: uppercase;
 }
 .start-label, .start-empty { margin: 0.45rem 0 0.1rem; }
-.start-list button.recent {
+.start-recents {
+  position: absolute;
+  z-index: 2;
+  right: 28px;
+  bottom: 28px;
+  width: min(240px, calc(100% - 56px));
+  color: var(--dim);
+  pointer-events: auto;
+  background: rgba(6, 7, 11, 0.42);
+}
+.start-recents--collapsed {
+  width: auto;
+  background: transparent;
+}
+.start-recents-rule {
+  display: flex;
+  white-space: nowrap;
+  overflow: hidden;
+  user-select: none;
+  color: var(--line);
+}
+.start-recents-head,
+.start-recents-body {
+  display: grid;
+  grid-template-columns: 1ch 1fr 1ch;
+}
+.start-recents-edge { text-align: center; }
+.start-recents-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.15rem 0.35rem 0.1rem;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.start-recents-hide {
+  padding: 0;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: lowercase;
+  color: var(--ink-3);
+}
+.start-recents-hide:hover { color: var(--accent); }
+.start-recents-list {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 0.05rem;
+  gap: 0;
+  padding: 0.05rem 0.25rem 0.25rem;
+  min-width: 0;
+}
+.start-recents-empty {
+  margin: 0.1rem 0 0.2rem;
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+.start-recents-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: stretch;
+  gap: 0.15rem;
+}
+.start-recents-row:hover .recent-forget { opacity: 1; }
+button.recent-row {
+  display: grid;
+  gap: 0.02rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.18rem 0.2rem;
+  text-align: left;
   text-transform: none;
   letter-spacing: 0;
-  font-family: var(--prose);
-  font-size: 13px;
-  color: var(--ink);
-  min-width: 0;
-  max-width: 100%;
-}
-.start-list button.recent.dim { color: var(--ink-3); }
-/* A recent row is a name, then what it was saved on: the date first, because
-   that is the part you are scanning for, then the machine, which is allowed to
-   shrink to an ellipsis so the date never does. */
-.start-list button.recent {
-  padding: 0.44rem 0.35rem 0.42rem;
-  border-top: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ink-2);
   border-radius: 0;
 }
-.start-list button.recent:hover {
-  background: rgba(233, 232, 242, 0.045);
+button.recent-row:hover,
+button.recent-row:focus-visible {
   color: var(--ink);
+  background: rgba(233, 232, 242, 0.04);
 }
+button.recent-row.dim { color: var(--ink-3); }
+.recent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.15rem;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-family: var(--prose);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+.recent-machine {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.recent-forget {
+  align-self: center;
+  opacity: 0;
+  padding: 0.1rem 0.25rem;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+}
+.recent-forget:hover { color: var(--accent); }
+.start-recents-tab {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.2rem 0.35rem;
+  color: var(--ink-3);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: lowercase;
+}
+.start-recents-tab:hover { color: var(--accent); }
+.start-recents-tab-label { color: var(--ink-2); }
 .start-detail {
   display: flex;
   align-items: baseline;

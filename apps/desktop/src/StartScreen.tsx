@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PrinterInfo, RecentProject } from "./api";
 import { andromeda } from "./field/credit";
 import { PlateField } from "./field/PlateField";
+import { RecentProjectsPanel, type RecentProjectsPanelHandle } from "./RecentProjectsPanel";
 import { AsciiField, AsciiSelect } from "./widgets";
 
 type Panel = "menu" | "printers" | "settings" | "about";
@@ -34,6 +35,7 @@ export function StartScreen({
   onOpen,
   onImport,
   onOpenRecent,
+  onForgetRecent,
   onChoosePrinter,
   onEnginePath,
   onLibDir,
@@ -58,6 +60,7 @@ export function StartScreen({
   onOpen: () => void;
   onImport: () => void;
   onOpenRecent: (path: string) => void;
+  onForgetRecent: (path: string) => void;
   onChoosePrinter: (id: string) => void;
   onEnginePath: (value: string) => void;
   onLibDir: (value: string) => void;
@@ -69,18 +72,17 @@ export function StartScreen({
   const [cursor, setCursor] = useState(0);
   const [printerQuery, setPrinterQuery] = useState("");
   const buttons = useRef<Array<HTMLButtonElement | null>>([]);
+  const recentsRef = useRef<RecentProjectsPanelHandle>(null);
 
   const items = menuItems({
     panel,
     canReturn,
-    recents,
     printers,
     printerQuery,
     onReturn,
     onNew,
     onOpen,
     onImport,
-    onOpenRecent,
     onChoosePrinter,
     onQuit,
     onPanel: setPanel,
@@ -137,10 +139,7 @@ export function StartScreen({
         s: () => setPanel("settings"),
         a: () => setPanel("about"),
         q: onQuit,
-        r: () => {
-          const recent = items.findIndex((item) => item.id.startsWith("recent-"));
-          if (recent >= 0) setCursor(recent);
-        },
+        r: () => recentsRef.current?.focusFirst(),
       };
       const run = shortcut[key];
       if (!run) return;
@@ -158,49 +157,21 @@ export function StartScreen({
         {panel === "menu" && (
           <div className="start-list">
             {items.map((item, index) => (
-              <Fragment key={item.id}>
-                {item.id === "printers" && recents.length === 0 && (
-                  <p className="start-label">
-                    {recentsRead ? "Recent. none yet" : "Recent. reading…"}
-                  </p>
-                )}
-                {item.id.startsWith("recent-") && !items[index - 1]?.id.startsWith("recent-") && (
-                  <p className="start-label">Recent</p>
-                )}
-                <button
-                  type="button"
-                  ref={(node) => {
-                    buttons.current[index] = node;
-                  }}
-                  className={
-                    [
-                      item.id.startsWith("recent-") ? "recent" : "",
-                      item.dim ? "dim" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ") || undefined
-                  }
-                  aria-current={index === cursor ? "true" : undefined}
-                  onClick={item.run}
-                  onFocus={() => setCursor(index)}
-                >
-                  <span>{item.label}</span>
-                  {item.detail ? (
-                    <span className="start-detail">
-                      {item.detail}
-                      {item.machine ? (
-                        <>
-                          <span className="start-dot" aria-hidden="true">
-                            ·
-                          </span>
-                          <span className="start-machine">{item.machine}</span>
-                        </>
-                      ) : null}
-                    </span>
-                  ) : null}
-                  {item.hint ? <span className="start-hint">{item.hint}</span> : null}
-                </button>
-              </Fragment>
+              <button
+                key={item.id}
+                type="button"
+                ref={(node) => {
+                  buttons.current[index] = node;
+                }}
+                className={item.dim ? "dim" : undefined}
+                aria-current={index === cursor ? "true" : undefined}
+                onClick={item.run}
+                onFocus={() => setCursor(index)}
+              >
+                <span>{item.label}</span>
+                {item.detail ? <span className="start-detail">{item.detail}</span> : null}
+                {item.hint ? <span className="start-hint">{item.hint}</span> : null}
+              </button>
             ))}
           </div>
         )}
@@ -282,6 +253,13 @@ export function StartScreen({
           </div>
         )}
       </nav>
+      <RecentProjectsPanel
+        ref={recentsRef}
+        recents={recents}
+        recentsRead={recentsRead}
+        onOpen={onOpenRecent}
+        onForget={onForgetRecent}
+      />
       <p className="start-credit">
         {andromeda.name}, {andromeda.object}. {andromeda.credit}. {andromeda.licence}.
       </p>
@@ -292,28 +270,24 @@ export function StartScreen({
 function menuItems({
   panel,
   canReturn,
-  recents,
   printers,
   printerQuery,
   onReturn,
   onNew,
   onOpen,
   onImport,
-  onOpenRecent,
   onChoosePrinter,
   onQuit,
   onPanel,
 }: {
   panel: Panel;
   canReturn: boolean;
-  recents: RecentProject[];
   printers: PrinterInfo[];
   printerQuery: string;
   onReturn: () => void;
   onNew: () => void;
   onOpen: () => void;
   onImport: () => void;
-  onOpenRecent: (path: string) => void;
   onChoosePrinter: (id: string) => void;
   onQuit: () => void;
   onPanel: (panel: Panel) => void;
@@ -348,19 +322,6 @@ function menuItems({
     { id: "open", label: "Open project...", hint: "o", run: onOpen },
     { id: "import", label: "Import model...", hint: "i", run: onImport },
   );
-  // Five, not eight: eight recents plus the commands and the printers row make
-  // a menu taller than the window, and the last row was clipped by the edge.
-  for (const recent of recents.slice(0, 5)) {
-    items.push({
-      id: `recent-${recent.path}`,
-      label: recent.name,
-      hint: "",
-      detail: recent.missing ? "missing" : formatWhen(recent.saved_at_ms),
-      machine: recent.missing ? "" : shortMachine(recent.printer),
-      dim: recent.missing,
-      run: () => onOpenRecent(recent.path),
-    });
-  }
   items.push(
     { id: "printers", label: "Printers", hint: "p", run: () => onPanel("printers") },
     { id: "settings", label: "Settings", hint: "s", run: () => onPanel("settings") },
@@ -370,26 +331,3 @@ function menuItems({
   return items;
 }
 
-/// The name a machine is printed under in the recent list. Cura definitions
-/// carry a vendor and often a whole family in one entry —
-/// `Creality3D Creality Ender-3 / Ender-3 v2` — where the vendor repeats the
-/// name and the family lists machines the project was not saved on. The first
-/// name is the machine, and a vendor token that repeats the brand is dropped;
-/// "Bambu Lab A1" keeps its vendor, because that is what the machine is called.
-function shortMachine(name: string): string {
-  const first = name.split("/")[0].trim();
-  const words = first.split(/\s+/).filter(Boolean);
-  if (words.length < 2) return first || name;
-  const vendorish = /3d|ultimaker|prusa/i.test(words[0]);
-  const rest = words.slice(1).join(" ");
-  return vendorish && rest ? rest : first;
-}
-
-function formatWhen(ms: number): string {
-  if (!ms) return "";
-  return new Date(ms).toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
