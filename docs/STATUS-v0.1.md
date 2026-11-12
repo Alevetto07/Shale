@@ -7,7 +7,7 @@ Branch `cursor/deep-field-75ee`. Nothing was pushed, merged, tagged, released or
 published; no PR was opened or changed. The A1 at 192.168.1.11 was never
 contacted and no network was scanned — the fake printer binds to 127.0.0.1.
 
-Workspace at this commit: **207 passed, 0 failed, 3 ignored** — the same count
+Workspace at this commit: **239 passed, 0 failed, 3 ignored** — the same count
 with `SHALE_CURA_DIR` set, which is the only way the resolver golden actually
 runs, and it passes — and
 `cargo clippy --workspace --all-targets -- -D warnings` is clean, also with
@@ -21,9 +21,8 @@ double).
 ## Batch B — the pre-release pass (12 Nov)
 
 Batch B is Alessio's own testing list, worked in the order that fixes come
-first. Two of its nineteen items are not started (17, 19); everything else is
-in the tree and the parts a person can see were looked at in a running window,
-not assumed.
+first. All nineteen are in the tree, and the parts a person can see were looked
+at in a running window, not assumed.
 
 **What was looked at.** The window was driven over the DevTools port
 (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`,
@@ -61,14 +60,55 @@ them with the settings diff, and a change makes Prepare say "slice again".
 13 no slicing settings in Preview. 14 the whole toolpath is fetched once and
 scrubbed with `setDrawRange`, one buffer per line kind. 15 a toggle is a
 `visible` flag, travel starts hidden, and the nine kinds have nine hues.
-16 the Device pane has no scrollbar and no right-hand gap. 18 the CLI and the
-MCP server are packaged and tested (below).
+16 the Device pane has no scrollbar and no right-hand gap. 17 the Bambu account
+signs in, lists the account's printers and sends the plate (below). 18 the CLI
+and the MCP server are packaged and tested (below). 19 brackets became boxes
+(below).
 
-**Not started.** 17 Bambu cloud login: nothing is written; it needs an
-undocumented API, a 2FA flow and keyring storage, and it must be built against
-fixtures because no printer or cloud account may be contacted from here.
-19 the wider ASCII/boxed pass: the existing screens keep the Deep Field look,
-but the extra ASCII art and the removal of `[ ]` were not done.
+**Item 17 — the Bambu account.** `crates/shale-host/src/cloud/` is the whole
+cloud client: `api.rs` holds every endpoint, field name and magic string of an
+API Bambu does not document, so the rest of Shale contains none of them and an
+error can name the call that failed instead of saying "login failed"; `http.rs`
+is a small HTTPS/1.1 client over the `rustls` the host already had, one request
+per connection and no redirects (a redirect from an API endpoint is a change in
+the API, and it is reported rather than followed); `session.rs` converts Bambu's
+`expiresIn` into a deadline and has a hand-written `Debug` that prints
+`access: set`; `devices.rs` and `mod.rs` hold the calls and the seam.
+
+Nothing in that module decides when to talk to the cloud — the window asks, and
+the CLI and MCP never do. The tokens go through the same vault as the printer's
+access code: **`keyring`**, service `Shale`, key as the account name, which is
+Windows Credential Manager underneath. That is a change of entry from the
+previous build's `Shale/<key>` target, so an access code saved before this
+commit has to be typed once more. Twelve integration tests answer from a
+scripted transport and one of them speaks to a real loopback socket, so the
+client's HTTP is exercised without a network. `SHALE_CLOUD_HOST` and
+`SHALE_CLOUD_STORE=memory` exist for the probe; the second keeps a fixture's
+tokens out of the real vault.
+
+Driven end to end in the window against `scripts/fake-cloud.py`: address and
+password, the six-digit code asked for, a wrong code refused with its own
+sentence, the right code accepted, three printers listed as idle / printing 37 %
+/ offline, the two that cannot take work with their buttons disabled, and Send
+refused because that window had nothing sliced. Seventeen checks, all PASS
+(`scripts/cloud-probe.py`).
+
+**Item 19 — boxes instead of brackets.** A button with no class of its own is a
+bordered chip in mono with the accent on hover rather than a word in square
+brackets; the fourteen labels that were written `[ like this ]` are now just the
+verb; a `.box` is a one-pixel frame with corner ticks and its label sitting on
+the top edge; and the Device pane opens with a rule of characters under the
+machine name. The account panel is a box, and an account with no printers gets
+an ASCII box rather than an empty list. The Deep Field palette is untouched:
+dark only, one accent, no gradients, no icons.
+
+**A bug found on the way.** Reading the vault while the window was being built
+could keep the window from ever appearing — `keyring` was called from the
+builder chain, before Tauri's own startup, and blocked there. The account is now
+read on the first command that needs it (`CloudState::loaded`), so a slow or
+unhappy credential store can delay the Device pane but cannot stop Shale from
+opening. Found because the demo launch stopped producing a window at all, and
+the plain launch did not.
 
 **Item 18 — the windowless half.** `crates/shale-cli` builds two binaries with
 no Tauri, no webview and no Node: `shale-cli` (`info`, `printers`, `settings`,
@@ -88,8 +128,8 @@ examples/cube.stl` writes 215 431 bytes of G-code in 100 layers and 1.46 m;
 the seventeen tools. Five CLI tests cover help, no arguments, `--version`, an
 unknown command and a missing model argument.
 
-**The installer and the smoke test.** `Shale_0.1.1_x64-setup.exe`, **5 009 667
-bytes**, rebuilt from this tree after the last commit; `scripts/installer-smoke.ps1`
+**The installer and the smoke test.** `Shale_0.1.1_x64-setup.exe`, **5 139 442
+bytes**, rebuilt from this tree after items 17 and 19; `scripts/installer-smoke.ps1`
 runs 24 checks — install, the five associations and the `.stl` default that must
 stay Bambu Studio's, launch, the second-process handover, uninstall — and all 24
 PASS.
