@@ -1267,6 +1267,113 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   text-overflow: ellipsis;
 }
 
+/* ── process sheet ───────────────────────────────────────────────────────── */
+
+.process-sheet { display: flex; flex-direction: column; min-height: 0; }
+
+.process-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.process-tabs { display: flex; flex-wrap: wrap; }
+.process-tabs button {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 11px;
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+}
+.process-tabs button:hover { color: var(--ink); }
+.process-tabs button.selected { color: var(--ink); border-bottom-color: var(--accent); }
+
+.process-advanced { display: flex; align-items: center; gap: 0.35rem; font-size: 11px; color: var(--ink-3); }
+.process-advanced input { accent-color: var(--accent); }
+
+.process-presets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.process-presets-label { color: var(--ink-3); font-size: 10px; margin-right: 0.3rem; }
+.process-preset {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 10.5px;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+}
+.process-preset:hover { color: var(--ink); }
+.process-preset.on { border-color: var(--accent); color: var(--accent); }
+
+.process-tools { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0; }
+.process-search { flex: 1 1 auto; }
+.process-search input {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  padding: 0.25rem 0.45rem;
+}
+.process-visibility {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 10.5px;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.process-visibility:hover { color: var(--ink); border-color: var(--accent); }
+
+.setting-row { align-items: center; }
+.setting-name { display: inline-flex; align-items: center; gap: 0.3rem; }
+/* The question mark is the only place a description lives; the row stays a row. */
+.setting-q {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--ink-3);
+  font-size: 8px;
+  line-height: 1;
+  cursor: help;
+}
+.setting-q:hover { color: var(--accent); border-color: var(--accent); }
+.setting-number { display: inline-flex; align-items: center; gap: 0.3rem; }
+.setting-number input { width: 5.2rem; }
+.setting-row[data-changed="yes"] .setting-name { color: var(--accent); }
+
+.picker-group { margin-bottom: 0.8rem; }
+.picker-row { display: flex; align-items: center; gap: 0.45rem; font-size: 11px; color: var(--ink-2); padding: 0.1rem 0; }
+.picker-row input { accent-color: var(--accent); }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 /* ── slices ──────────────────────────────────────────────────────────────── */
 
 .slice-list { display: flex; flex-direction: column; gap: 2px; }

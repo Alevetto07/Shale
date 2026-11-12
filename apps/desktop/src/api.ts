@@ -604,7 +604,7 @@ export const api = {
   openProject: (path: string) => invoke<OpenedProject>("open_project", { path }),
   clearJob: () => invoke<void>("clear_job"),
   recents: () => invoke<RecentProject[]>("list_recents"),
-  forgetRecent: (path: string) => invoke<RecentProject[]>("forget_recent", { path }),
+  forgetRecent: (path: string) => invoke<RecentProject[]>("forget_recent_project", { path }),
 };
 
 export interface RecentProject {

@@ -466,6 +466,26 @@ function PrintModel({
     onTransform(model.id, { translation, rotation_deg: rotationDeg, scale });
   };
 
+  // Dragging the body slides the part across the plate; the gizmo is for one
+  // axis at a time, this is the coarse move. Z is taken from where the drag
+  // started, so a part never leaves the bed by being dragged.
+  const dragging = useRef<{ start: THREE.Vector3; from: THREE.Vector3 } | null>(null);
+  const invalidate = useThree((state) => state.invalidate);
+
+  useEffect(() => {
+    const stop = () => {
+      if (!dragging.current) return;
+      dragging.current = null;
+      publish();
+    };
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    return () => {
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+  }, [publish]);
+
   return (
     <>
       {model.selected && node && !measuring && (
@@ -511,17 +531,32 @@ function PrintModel({
                     event.stopPropagation();
                     onMeasure(model.id, [event.point.x, event.point.y, event.point.z]);
                   }
-                : undefined
+                : model.selected && mode === "translate" && node
+                  ? (event) => {
+                      event.stopPropagation();
+                      dragging.current = {
+                        start: event.point.clone(),
+                        from: node.position.clone(),
+                      };
+                    }
+                  : undefined
           }
-          onPointerMove={
-            paintArmed
-              ? (event) => {
-                  const local = event.object.worldToLocal(event.point.clone());
-                  if (pressing.current) keepPoint(local);
-                  setBrush([event.point.x, event.point.y, event.point.z]);
-                }
-              : undefined
-          }
+          onPointerMove={(event) => {
+            // One handler for both gestures: a drag starts after this render,
+            // and a handler that only exists while `paintArmed` was chosen at
+            // render time would never see it.
+            if (paintArmed) {
+              const local = event.object.worldToLocal(event.point.clone());
+              if (pressing.current) keepPoint(local);
+              setBrush([event.point.x, event.point.y, event.point.z]);
+              return;
+            }
+            const drag = dragging.current;
+            if (!drag || !node) return;
+            const delta = event.point.clone().sub(drag.start);
+            node.position.set(drag.from.x + delta.x, drag.from.y + delta.y, drag.from.z);
+            invalidate();
+          }}
           onPointerOut={paintArmed ? () => setBrush(null) : undefined}
         >
           {viewStyle === "ascii" ? (
