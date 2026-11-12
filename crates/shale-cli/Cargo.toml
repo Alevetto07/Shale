@@ -1,0 +1,16 @@
+[package]
+name = "shale-cli"
+version = "0.1.1"
+edition = "2021"
+description = "Shale without the window: slice a model from a terminal"
+publish = false
+
+# Not `shale`: on Windows a file name is case-insensitive, so `shale.exe` and
+# the desktop's `Shale.exe` would be the same file in target/release and one
+# build would quietly overwrite the other.
+[[bin]]
+name = "shale-cli"
+path = "src/main.rs"
+
+[dependencies]
+shale-core = { path = "../shale-core" }
