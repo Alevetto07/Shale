@@ -197,6 +197,10 @@ struct PreviewPath {
     points: Vec<[f32; 3]>,
     /// mm/s, so the preview can colour a line by how fast it is laid down.
     feed: f32,
+    /// The layer this polyline belongs to. The preview builds its buffers once
+    /// and scrubs by draw range, which needs the layer on the vertex data
+    /// rather than a fresh IPC call per slider step.
+    layer: i32,
 }
 
 fn lock(state: &AppState) -> Result<std::sync::MutexGuard<'_, Inner>, String> {
@@ -2524,6 +2528,30 @@ fn preview_until(state: State<AppState>, layer: i32) -> Result<Vec<PreviewPath>,
                 kind: polyline.kind.clone(),
                 points: polyline.points.clone(),
                 feed: polyline.feed,
+                layer: item.index,
+            });
+        }
+    }
+    Ok(paths)
+}
+
+/// Every layer at once. The slider used to ask for a prefix of the toolpath on
+/// each step, which meant serialising the whole prefix over IPC sixty times a
+/// second; the preview now holds the lot and draws a prefix of it.
+#[tauri::command]
+fn preview_all(state: State<AppState>) -> Result<Vec<PreviewPath>, String> {
+    let inner = lock(&state)?;
+    let Some(toolpath) = &inner.toolpath else {
+        return Ok(Vec::new());
+    };
+    let mut paths = Vec::new();
+    for item in &toolpath.layers {
+        for polyline in &item.polylines {
+            paths.push(PreviewPath {
+                kind: polyline.kind.clone(),
+                points: polyline.points.clone(),
+                feed: polyline.feed,
+                layer: item.index,
             });
         }
     }
@@ -4651,6 +4679,7 @@ pub fn run() {
             undo_paint,
             redo_paint,
             preview_until,
+            preview_all,
             loaded_models,
             existing_slice,
             export_gcode,

@@ -113,25 +113,54 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .device { flex: 1 1 auto; }
 
-.topbar {
+/* One strip of chrome: the window is undecorated, so this is the caption as
+   well as the menu bar. It is deliberately shorter than the old topbar — the
+   start screen's upper part had a title bar's worth of height above it. */
+.titlebar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 1.5rem;
-  padding: 1.1rem 1.4rem 0.85rem;
-  /* The menu bar is wider than the old header; let it wrap on narrow windows. */
-  flex-wrap: wrap;
-  row-gap: 0.5rem;
+  gap: 1.1rem;
+  padding: 0 0 0 1rem;
+  height: 34px;
+  flex: 0 0 auto;
+  -webkit-user-select: none;
+  user-select: none;
 }
+
+.titlebar-gap {
+  flex: 1 1 auto;
+  align-self: stretch;
+}
+
+.titlebar-buttons {
+  display: flex;
+  align-self: stretch;
+  flex: 0 0 auto;
+}
+
+.titlebar-buttons button {
+  width: 46px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: default;
+}
+.titlebar-buttons button:hover { background: #14161f; color: var(--ink); }
+.titlebar-buttons .titlebar-close:hover { background: #b4474a; color: #fff; }
 
 .brand {
   display: flex;
   align-items: center;
-  /* 22px gap and 100px mark at a 64px wordmark, scaled to 28px. */
-  gap: 9.625px;
+  /* A title bar, not a masthead: the mark and the wordmark are one line. */
+  gap: 0.5rem;
+  flex: 0 0 auto;
 }
 .brand-mark {
-  height: 43.75px;
+  height: 16px;
   width: auto;
   display: block;
 }
@@ -139,7 +168,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   margin: 0;
   font-family: var(--wordmark);
   font-weight: 600;
-  font-size: 28px;
+  font-size: 13px;
   letter-spacing: -0.02em;
   line-height: 1;
   color: var(--ink);
@@ -651,6 +680,16 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 *::-webkit-scrollbar-corner { background: var(--panel); }
 
 /* Menu bar ---------------------------------------------------------------- */
+
+/* Inside the title bar the menu is one compact row; the dropdowns are the same
+   panels they always were. */
+.titlebar .menubar {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: visible;
+  font-size: 11px;
+}
 
 .menubar {
   display: flex;
@@ -1234,6 +1273,9 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  /* The page scrolls, but the bar itself was a strip of grey down the edge and
+     the 84rem cap left the right third of a wide screen empty. */
+  scrollbar-width: none;
   padding: 2.4rem 1.4rem 3rem;
   /* Two columns: the machine on the left, what is going to it on the right.
      One column of sections left two-thirds of a wide screen empty. */
@@ -1241,8 +1283,10 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
   align-items: start;
   gap: 2.2rem 3rem;
-  max-width: 84rem;
+  max-width: none;
 }
+
+.device::-webkit-scrollbar { display: none; }
 
 .device-col {
   display: flex;

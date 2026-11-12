@@ -282,9 +282,9 @@ export function StartScreen({
           </div>
         )}
       </nav>
-      <p className="start-credit">
-        {andromeda.name}, {andromeda.object}. {andromeda.credit}. {andromeda.licence}.
-      </p>
+      {/* The credit lives in About and credits, not on the Home screen: the
+          picture is decoration, and a licence note under it is not what the
+          screen is for. */}
     </div>
   );
 }

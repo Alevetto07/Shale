@@ -28,15 +28,14 @@ import {
   type Transform,
   type VariantInfo,
 } from "./api";
-import mark from "./brand/shale-mark-dark.svg";
 import { worldCentre, translationForCentre } from "./coords";
-import { andromeda } from "./field/credit";
 import { StartScreen } from "./StartScreen";
 import { DevicePane, TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
 import { FeatureLegend } from "./Legend";
 import { thumbnailJpeg } from "./thumbnail";
 import { Frame, meter, track } from "./theme";
 import { MenuBar, type SliceSettings } from "./MenuBar";
+import { TitleBar } from "./TitleBar";
 import { Viewport, type TransformMode, type ViewStyle , type ColourMode } from "./Viewport";
 import { AsciiCheck, AsciiField, AsciiSelect, AsciiStepper } from "./widgets";
 
@@ -277,7 +276,9 @@ export function App() {
   const [paths, setPaths] = useState<PreviewPath[]>([]);
   /// Kinds turned off in the legend. The toolpath stays loaded; this only
   /// decides what is drawn, so switching a kind back on is instant.
-  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
+  // Travel is not something a person wants to see by default: it is the
+  // nozzle going nowhere. The legend still offers it.
+  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set(["travel"]));
   const [printSeconds, setPrintSeconds] = useState<number | null>(null);
   const [filamentMetres, setFilamentMetres] = useState<number | null>(null);
   // Price, power and tariff are the user's numbers, not the engine's; they are
@@ -896,10 +897,13 @@ export function App() {
     setChord(Math.round(Math.min(0.5, Math.max(0.02, suggested)) * 1000) / 1000);
   }, [chordTied, layerHeight, bed.nozzle_size]);
 
+  // The whole toolpath is fetched once per slice, not once per slider step:
+  // `layer` used to be a dependency here, so every pixel of the scrubber
+  // serialised the whole prefix of the job over IPC and rebuilt the buffers.
   useEffect(() => {
     if (!preview || busy) return;
     let cancelled = false;
-    void api.previewUntil(layer).then((next) => {
+    void api.previewAll().then((next) => {
       if (!cancelled) setPaths(next);
     }).catch((err: unknown) => {
       if (!cancelled) setError(messageOf(err));
@@ -907,7 +911,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [preview, layer, busy]);
+  }, [preview, busy, layerCount]);
 
   /** Cura ships every material in a 1.75 mm and a 2.85 mm cut, and the list used
    * to offer both: picking the 2.85 mm PETG on a 1.75 mm machine left the sheet
@@ -1957,6 +1961,9 @@ export function App() {
   function enterSlicer() {
     setWorkspace(true);
     setScreen("slicer");
+    // Opening or importing a part is a Prepare act: landing on whatever pane
+    // was last open made the import look like it had failed.
+    setPane("prepare");
   }
 
   // A play that ends holds the last layer instead of snapping back: the point
@@ -2435,12 +2442,7 @@ export function App() {
 
   return (
     <div className="app">
-      <header className="topbar">
-        <div className="brand">
-          <img className="brand-mark" src={mark} alt="" />
-          <p className="wordmark">Shale</p>
-          {projectPath && <p className="project-name">{projectName}</p>}
-        </div>
+      <TitleBar projectName={projectPath ? projectName : ""}>
         <MenuBar
           screen={screen}
           projectName={projectName}
@@ -2504,7 +2506,7 @@ export function App() {
           onScope={setScope}
           onSlice={() => void slice()}
         />
-      </header>
+      </TitleBar>
 
       {status && !status.resources_ok && (
         <p className="banner error" role="status">
@@ -3483,15 +3485,6 @@ export function App() {
             </button>
           </Frame>
 
-          <Frame title="credits">
-            <p className="credit">
-              {andromeda.name} ({andromeda.object}), {andromeda.credit}. Released {andromeda.release}.{" "}
-              {andromeda.licence}.
-            </p>
-            <p className="credit">
-              <a href={andromeda.page}>{andromeda.page}</a>
-            </p>
-          </Frame>
         </aside>
 
         <main className="stage">
@@ -3588,7 +3581,9 @@ export function App() {
               transform: model.transform,
               selected: model.id === selectedId,
             }))}
-            toolpaths={hiddenKinds.size === 0 ? paths : paths.filter((path) => !hiddenKinds.has(path.kind))}
+            toolpaths={paths}
+            hiddenKinds={hiddenKinds}
+            layer={layer}
             overlays={support?.overlays ?? []}
             showModel={solidShown}
             showToolpaths={preview}

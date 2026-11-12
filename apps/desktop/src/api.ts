@@ -286,6 +286,8 @@ export interface PreviewPath {
   points: [number, number, number][];
   /** The feedrate the moves asked for, in mm/s; absent on a travel-less path. */
   feed?: number;
+  /** Which layer the polyline belongs to; the preview scrubs by draw range. */
+  layer: number;
 }
 
 export type CustomInstruction =
@@ -576,6 +578,7 @@ export const api = {
     invoke<StoredInstruction>("add_instruction", { instruction }),
   removeInstruction: (id: number) => invoke<StoredInstruction[]>("remove_instruction", { id }),
   previewUntil: (layer: number) => invoke<PreviewPath[]>("preview_until", { layer }),
+  previewAll: () => invoke<PreviewPath[]>("preview_all"),
   exportPlate: (destination: string, format: "stl" | "3mf") =>
     invoke<number>("export_plate", { destination, format }),
   exportGcode: (destination: string) => invoke<string>("export_gcode", { destination }),

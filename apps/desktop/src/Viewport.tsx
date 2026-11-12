@@ -1,6 +1,6 @@
 import { Html, OrbitControls, TransformControls } from "@react-three/drei";
 import { Canvas, useThree } from "@react-three/fiber";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { PreviewPath, SupportOverlay, Transform } from "./api";
 import { localCentre, rotateScale, translationForCentre, worldCentre } from "./coords";
@@ -40,6 +40,12 @@ interface ViewportProps {
   centerIsZero: boolean;
   models: SceneModel[];
   toolpaths: PreviewPath[];
+  /// Kinds the person has switched off; hiding one is a visibility flag, not a
+  /// rebuild of the buffers.
+  hiddenKinds: Set<string>;
+  /// Highest layer to draw. The buffers hold every layer; scrubbing moves the
+  /// draw range.
+  layer: number;
   overlays: SupportOverlay[];
   showModel: boolean;
   showToolpaths: boolean;
@@ -67,18 +73,22 @@ interface ViewportProps {
 
 /// The colour each kind of line is drawn in. Exported because the
 /// preview's legend has to name the same colour the plate is painted with.
+/// Nine kinds have to be told apart at a glance on a dark plate, which one
+/// accent cannot do on its own: these are muted hues at the same lightness, so
+/// they read as one palette and still differ. Travel is deliberately almost
+/// invisible and is hidden until asked for.
 export const KIND_COLOR: Record<string, string> = {
-  "wall-outer": "#e2dff0",
-  "wall-inner": "#8e8ba4",
-  skin: "#6e6b80",
-  infill: "#4e6570",
-  support: "#7b5a3f",
-  "support-interface": "#a9865c",
-  skirt: "#7d8fa6",
-  brim: "#a8a3ba",
-  raft: "#3a3834",
-  "prime-tower": "#34323c",
-  travel: "#2a2c34",
+  "wall-outer": "#e9e8f2",
+  "wall-inner": "#b9b3ff",
+  skin: "#7fb0c6",
+  infill: "#6f9a7c",
+  support: "#c08a5a",
+  "support-interface": "#e0b07a",
+  skirt: "#8d7fbb",
+  brim: "#b98fae",
+  raft: "#6b6f7e",
+  "prime-tower": "#9c9a6a",
+  travel: "#23252c",
   extrusion: "#a39fb4",
 };
 
@@ -136,7 +146,12 @@ export function Viewport(props: ViewportProps) {
         <SupportVolume key={overlay.id} overlay={overlay} />
       ))}
             {props.showToolpaths && (
-        <Toolpaths paths={props.toolpaths} colour={props.colour ?? "type"} />
+        <Toolpaths
+          paths={props.toolpaths}
+          colour={props.colour ?? "type"}
+          layer={props.layer}
+          hidden={props.hiddenKinds}
+        />
       )}
       <MeasureMarks marks={props.marks} label={props.measureLabel} />
       <OrbitControls makeDefault enableDamping dampingFactor={0.12} />
@@ -272,17 +287,29 @@ function Bed({
   const outline = useMemo(() => new THREE.EdgesGeometry(new THREE.PlaneGeometry(width, depth)), [width, depth]);
   return (
     <group>
-      <mesh position={[cx, cy, -1.2]} receiveShadow>
-        <boxGeometry args={[width, depth, 2.4]} />
-        <meshStandardMaterial color="#0b0d14" metalness={0} roughness={1} />
+      {/* The plate is a surface, not a slab, and it never writes depth: a solid
+          box under the part hid it completely once the camera dropped below the
+          bed. Seen from underneath the plate is glass — the outline and the grid
+          still say where it is, and the part stays visible through it. */}
+      <mesh position={[cx, cy, 0]} renderOrder={-1}>
+        <planeGeometry args={[width, depth]} />
+        <meshBasicMaterial
+          color="#0b0d14"
+          transparent
+          opacity={0.55}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
       </mesh>
       <gridHelper
         args={[Math.max(width, depth), divisions, "#34343e", "#1e1f28"]}
         rotation={[Math.PI / 2, 0, 0]}
         position={[cx, cy, 0.04]}
-      />
+      >
+        <lineBasicMaterial attach="material" vertexColors transparent opacity={0.7} depthWrite={false} />
+      </gridHelper>
       <lineSegments geometry={outline} position={[cx, cy, 0.08]}>
-        <lineBasicMaterial color="#4a4856" />
+        <lineBasicMaterial color="#4a4856" transparent opacity={0.9} depthWrite={false} />
       </lineSegments>
       <Axes width={width} depth={depth} cx={cx} cy={cy} />
     </group>
@@ -535,55 +562,132 @@ function PrintModel({
   );
 }
 
-function Toolpaths({ paths, colour }: { paths: PreviewPath[]; colour: ColourMode }) {
-  const geometry = useMemo(() => {
-    const positions: number[] = [];
-    const colors: number[] = [];
-    const color = new THREE.Color();
-    // The ramp is scaled to the plate on screen, not to a fixed 30–200 mm/s:
-    // a slow print and a fast one should both use the whole ramp.
-    let low = Infinity;
-    let high = -Infinity;
-    if (colour === "speed") {
-      // Travel is not a print speed. Leaving it in stretched the ramp to 120
-      // mm/s of nothing but rapid moves, and pressed every real pass into the
-      // blue end of it; the ramp is for what the nozzle lays down.
-      for (const path of paths) {
-        if (path.kind === "travel") continue;
-        const feed = path.feed ?? 0;
-        if (feed > 0) {
-          low = Math.min(low, feed);
-          high = Math.max(high, feed);
-        }
-      }
-    }
+/// One buffer per kind, built once per slice.
+///
+/// The old version rebuilt the whole plate whenever `paths` changed identity,
+/// which was every slider step and every kind toggle. Here the vertices are
+/// laid down in layer order and each kind keeps a cumulative count per layer,
+/// so scrubbing is `setDrawRange` and a toggle is `visible = false`: no
+/// geometry is touched after the slice arrives.
+interface KindBuffer {
+  kind: string;
+  geometry: THREE.BufferGeometry;
+  /// counts[layer] is how many vertices to draw for that layer and below.
+  counts: Int32Array;
+  lastLayer: number;
+}
+
+function buildKinds(paths: PreviewPath[], colour: ColourMode): KindBuffer[] {
+  if (paths.length === 0) return [];
+  let low = Infinity;
+  let high = -Infinity;
+  if (colour === "speed") {
+    // Travel is not a print speed; leaving it in stretched the ramp to rapid
+    // moves and pressed every real pass into one end of it.
     for (const path of paths) {
-      color.set(
-        colour === "speed"
-          ? path.kind === "travel"
-            ? "#26282f"
-            : (path.feed ?? 0) > 0
-              ? speedColour(path.feed as number, low, high)
-              : KIND_COLOR[path.kind] ?? "#9c9aab"
-          : KIND_COLOR[path.kind] ?? "#9c9aab"
-      );
-      for (let index = 1; index < path.points.length; index += 1) {
-        const from = path.points[index - 1];
-        const to = path.points[index];
-        positions.push(from[0], from[1], from[2], to[0], to[1], to[2]);
-        colors.push(color.r, color.g, color.b, color.r, color.g, color.b);
+      if (path.kind === "travel") continue;
+      const feed = path.feed ?? 0;
+      if (feed > 0) {
+        low = Math.min(low, feed);
+        high = Math.max(high, feed);
       }
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-    geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-    return geo;
-  }, [paths, colour]);
-  if (paths.length === 0) return null;
+  }
+  const colour_of = (path: PreviewPath): string =>
+    colour === "speed"
+      ? path.kind === "travel"
+        ? "#26282f"
+        : (path.feed ?? 0) > 0
+          ? speedColour(path.feed as number, low, high)
+          : KIND_COLOR[path.kind] ?? "#9c9aab"
+      : KIND_COLOR[path.kind] ?? "#9c9aab";
+
+  let maxLayer = 0;
+  for (const path of paths) maxLayer = Math.max(maxLayer, path.layer ?? 0);
+
+  const groups = new Map<string, { positions: number[]; colors: number[]; counts: Int32Array }>();
+  const tint = new THREE.Color();
+  for (const path of paths) {
+    let group = groups.get(path.kind);
+    if (!group) {
+      group = { positions: [], colors: [], counts: new Int32Array(maxLayer + 1) };
+      groups.set(path.kind, group);
+    }
+    tint.set(colour_of(path));
+    for (let index = 1; index < path.points.length; index += 1) {
+      const from = path.points[index - 1];
+      const to = path.points[index];
+      group.positions.push(from[0], from[1], from[2], to[0], to[1], to[2]);
+      group.colors.push(tint.r, tint.g, tint.b, tint.r, tint.g, tint.b);
+    }
+  }
+
+  // Cumulative vertex counts, filled per layer, so the draw range for layer N
+  // is a lookup rather than a scan.
+  const out: KindBuffer[] = [];
+  for (const [kind, group] of groups) {
+    const perLayer = new Int32Array(maxLayer + 1);
+    for (const path of paths) {
+      if (path.kind !== kind) continue;
+      const layer = Math.min(maxLayer, Math.max(0, path.layer ?? 0));
+      perLayer[layer] += Math.max(0, path.points.length - 1) * 2;
+    }
+    let running = 0;
+    for (let layer = 0; layer <= maxLayer; layer += 1) {
+      running += perLayer[layer];
+      perLayer[layer] = running;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(group.positions, 3));
+    geometry.setAttribute("color", new THREE.Float32BufferAttribute(group.colors, 3));
+    out.push({ kind, geometry, counts: perLayer, lastLayer: maxLayer });
+  }
+  return out;
+}
+
+function KindLines({ buffer, layer, hidden }: { buffer: KindBuffer; layer: number; hidden: boolean }) {
+  const invalidate = useThree((state) => state.invalidate);
+  useLayoutEffect(() => {
+    const at = Math.min(buffer.lastLayer, Math.max(0, layer));
+    buffer.geometry.setDrawRange(0, buffer.counts[at] ?? 0);
+    // The canvas draws on demand; a draw-range change is not a React prop, so
+    // nothing would repaint without this.
+    invalidate();
+  }, [buffer, layer, invalidate]);
+  useEffect(() => {
+    invalidate();
+  }, [hidden, invalidate]);
   return (
-    <lineSegments geometry={geometry}>
+    <lineSegments geometry={buffer.geometry} visible={!hidden}>
       <lineBasicMaterial vertexColors />
     </lineSegments>
+  );
+}
+
+function Toolpaths({
+  paths,
+  colour,
+  layer,
+  hidden,
+}: {
+  paths: PreviewPath[];
+  colour: ColourMode;
+  layer: number;
+  hidden: Set<string>;
+}) {
+  const buffers = useMemo(() => buildKinds(paths, colour), [paths, colour]);
+  if (buffers.length === 0) return null;
+  return (
+    <group>
+      {buffers.map((buffer) => (
+        <KindLines
+          key={buffer.kind}
+          buffer={buffer}
+          layer={layer}
+          hidden={hidden.has(buffer.kind)}
+        />
+      ))}
+    </group>
   );
 }
 
