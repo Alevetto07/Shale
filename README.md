@@ -2,26 +2,37 @@
   <img src="docs/shale-lockup-dark.png" alt="Shale" width="284" />
 </p>
 
-Shale is a desktop 3D-printing slicer with its own interface: a dark, monospace window, box-drawing chrome, and a WebGL plate. Slicing is done by an unmodified [CuraEngine](https://github.com/Ultimaker/CuraEngine) process. Printer definitions, quality profiles, and materials are Cura's, read as data.
+Shale is a desktop 3D-printing slicer with its own interface: a dark, monospace window, box-drawing chrome, and a WebGL plate. Slicing is done by an unmodified [CuraEngine](https://github.com/Ultimaker/CuraEngine) process. Printer definitions, quality profiles, and materials come from an installed Cura or Bambu Studio, read as data.
 
 This is the first MVP:
 
-1. Import an STL or a straightforward 3MF and show it on the build plate. Move, rotate, scale, and drop it onto the plate.
-2. Pick a printer from Cura's definitions, plus layer height, infill density, supports, and nozzle / bed temperature.
+1. Import an STL, a STEP part, or a 3MF package — including the multi-part packages Bambu Studio and Orca write — and show it on the build plate. Move, rotate, scale, and drop it onto the plate.
+2. Pick a printer from Cura's definitions or from an installed Bambu Studio profile library, then set the machine, nozzle, process, and filament from the menu bar.
 3. Slice with CuraEngine, follow progress, then scrub a layer-by-layer toolpath preview.
-4. Export the G-code.
+4. Export the G-code — or the plate itself, as STL or 3MF.
+
+The window is a top strip and a plate below it. The strip carries the **workspace switch** — Home, Prepare, Preview, Device — and beside it a **tab per open project**, each with a dot while it has unsaved changes; leaving a tab parks its plate in a scratch file so nothing is lost, and the file it came from is only rewritten when you save the tab. Home is the start screen — in the main area, with the strip still overhead, because a tab strip that disappears is not a tab strip. Prepare and Preview set the viewport (Preview greys out until there is a slice), and Device is the machine: its four spools, a live link to the printer on the LAN — state, percentage, layer, remaining time, nozzle and bed actual against target — and the job itself, where **send & print** uploads the plate that was just sliced and then asks before it starts, with **pause**, **resume** and **stop** beside it. Below it sits the menu bar: **File** (new, open, import, save, export), **Edit** (duplicate, drop to plate, arrange on plate, delete), **View** (solid, wireframe, ASCII, toolpaths, frame), **Printer** (machine, nozzle, process, filament), and **Slice settings** — eleven tabs (quality, strength, support, build plate, speed, cooling, multi, retraction, ironing, special modes, material) covering 88 engine settings; anything you leave alone comes from the profile. The sheet's **Applies to** menu points those settings at one part instead of the whole plate.
+
+The model frame has **mirror X / Y / Z**, **turn 90°**, **Auto orient**, and **Upright**. Turns and mirrors happen about the part's centre, and a mirror reverses the triangle winding as it bakes, because a negative scale otherwise turns the solid inside out and the engine drops its walls. Below them the cut row splits a part with a plane: pick `cut X`, `cut Y` or `cut Z`, slide the plane with the offset, and take *both halves*, the *upper only* or the *lower only*. Each half is capped where the plane went through, so both arrive as closed solids that slice on their own, and each is set down on the plate rather than left floating. Above the cut row sits **Measure**: arm it, click two points on a part, and the distance is drawn on a line between them and printed in the panel with its x/y/z deltas. A click snaps to the nearest vertex within 2 mm — about a nozzle width and a little more — so clicking near a corner gives the corner exactly, while a click in the middle of a face stays where the ray put it. Escape or *Clear* puts the ruler away. Above the transform rows sits the **ams** frame: three more spools beside the plate's own material, and a **spool** picker on any selected part. Give a part a spool and the slice carries a tool change, that spool's hotend temperature and its own filament — a two-cube plate cuts over to the second spool **301 times** and prints it at **205 °C** instead of the plate's 220 °C, while the same file with every part on spool 1 has no `T` line at all. The **Multi** tab grows a prime tower for those changes: off, the two-spool file carries no tower; on at 45 mm it prints one on all **300 layers**, **44.6 mm** square on a **60.6 mm** base, holding **3590.2 mm** of filament. Spool choice is saved with the plate and survives a reopen. Per-filament flush volumes are still missing, so the tower purges a fixed amount rather than one worked out from the colour change. Shale also proposes its own support regions: [propose] turns every cantilever past the angle into an enforcer column, [compare] slices the plate twice and reports the engine's own filament figure, **2.4464 m with the plan against 3.8505 m with support everywhere** on the bracket, and switching one column off takes the plan to **1.2235 m**. The Support tab also chooses the **shape**: `normal` or `tree`, with branch angle, branch diameter, flare, tip and top density. The upright T-bracket needs **3276.1 mm** of normal support and **2069.9 mm** of tree support, 36.8 % less, for 14.9 % less plastic in the part at the same 170 layers. The **paint support** frame paints supports instead of guessing at them: it lists every ceiling the part has — on the gantry **387, 387 and 6 mm²** — and a painted ceiling becomes a column of prisms down to the bed, handed to the engine as a `support_mesh` volume. Painting turns the plate's own support off, so what is painted is the whole of it: one arm painted puts **1008.6 mm** of support under that arm alone, x **−69.3 to −5.7**, climbing to **z 29.4 mm**, against **2663.7 mm** across the plate with nothing painted, and clearing the paint gives back exactly **2663.7 mm**. Painted faces are saved with the part and index the part's own triangles, so moving or turning it keeps the paint; it paints patches rather than free-hand, and it cannot paint seams. A project holds **several build plates**. The `plates` frame is a row of chips — **+** adds one, **×** drops it — and each plate keeps its own parts and its own support plan, so switching plates swaps what is on the bed without re-reading anything. A slice belongs to the plate it was made on, and saving writes every plate: two plates with a tower and a cube come back as two archive entries marked `plate: 0` and `plate: 1` under named plates. The two plates slice on their own: the tower gives 250 layers, the cube 300. A **calibration** frame builds the temperature tower itself and puts it on the plate: five 10 mm bands, alternating 20 mm and 26 mm blocks so every band overhangs the one below by 3 mm, **250 layers** once sliced. *Step the hotend* rewrites that slice so band *n* prints 5 °C cooler than band *n−1* — five `M104` lines at layers 0, 48, 98, 148 and 198, whose heights read back out of the file as **0.2, 10, 20, 30 and 40 mm** — and leaves every `G` line where it was, so the preview still matches the plate. The same frame builds two more coupons: a **flow coupon**, a 30 mm single-wall tube of five bands (240 triangles) that *step it* writes **five `M221` lines** down — 105, 102.5, 100, 97.5, 95 % — and a **pressure tower** that takes **five `M900 K` lines** from 0.000 to 0.040 K. Flow is measured with calipers on a wall rather than judged by eye, which is why the coupon is a tube and not a tower. The scoreboard against Bambu Studio, including what is still missing, is [docs/bambu-parity.md](docs/bambu-parity.md). New, open, import, save, export, duplicate, arrange, undo and redo are on
+Ctrl+N / O / I / S / E / D / Shift+A / Z / Shift+Z; the rest of the bar is a menu away. Each menu edits the same job the side panel does.
+
+The plate carries a **job card** in its top-left corner once a slice exists: time, filament, weight and layer count, in tabular figures so two slices can be compared at a glance. Time and filament are the file's own figures, read back out of the header, and weight appears only when the filament profile carries a density — a weight invented from a default would be worse than no weight at all. In **Preview** the same plate carries the **feature list** down its right-hand side: every kind of line the slice is made of, in the colour it is drawn, with a switch for each. Turning the infill off leaves the walls standing, which is the only way to answer "is the infill right?". The solid part is not drawn in Preview: it would stand in front of its own infill.
+
+Two more things the plate can do without a file: **File → Add a part** puts a cube, cylinder, cone or sphere on the first free patch of the bed, and **Edit → Fill the plate** steps the selected part's own footprint across the bed until it runs out, skipping anything already standing there. **Edit → Split to objects** is the other half of a cut: a part that is really several bodies is separated into the parts it always had, each keeping its place on the plate.
 
 Two more pieces sit on the same core:
 
 5. An MCP server, so an agent can list printers, load a model, change settings, slice, and export G-code.
 6. Custom instructions (a pause, a temperature change, a beep) stored on the job and compiled into the engine's G-code. You do not edit the file by hand.
+7. The host: the same window talks to the printer itself over its LAN interface — MQTT over TLS for state, implicit FTPS for the upload, and start/pause/resume/stop as requests. It never starts a print by itself; every actuation is a press, and the press names what will be printed. [docs/printer-host.md](docs/printer-host.md).
 
-Still out of scope: camera-based print removal, and automatic non-planar placement. The overhang map is shaped so a later non-planar pass can reuse bridge and cantilever spans.
+Still out of scope: camera-based print removal (the camera stream itself is not implemented either), a job queue, and automatic non-planar placement. The overhang map is shaped so a later non-planar pass can reuse bridge and cantilever spans.
 
 ## Layout
 
 ```
 crates/shale-core     job model, profiles, formulas, meshes, engine boundary
+crates/shale-host     the LAN link: MQTT state, FTPS upload, job control
 crates/shale-mcp      MCP server over that same job API
 apps/desktop          Tauri 2 shell and the React / three.js view
 scripts/fetch-resources.sh
@@ -70,7 +81,7 @@ Creality's preferred quality type in 5.13 is `standard`, and that profile does n
 
 ## CAD import
 
-STL is a mesh already. 3MF mesh import reads the triangles in the package (units, build items, and component transforms) and does not tessellate anything. STEP is a boundary representation. Shale reads it with truck (Apache-2.0) and tessellates the surfaces here. OpenCASCADE is not linked; see [LICENSING.md](LICENSING.md).
+STL is a mesh already. 3MF mesh import reads the triangles in the package (units, build items, and component transforms) and does not tessellate anything. A package holding several objects is imported as several parts — each keeps the name and the place the file gave it, so a MakerWorld model made of two halves stays two halves you can move, paint or spool separately, and the assembly is dropped to the bed rather than pulled to the middle. STEP is a boundary representation. Shale reads it with truck (Apache-2.0) and tessellates the surfaces here. OpenCASCADE is not linked; see [LICENSING.md](LICENSING.md).
 
 The chordal tolerance is the largest gap, in millimetres, between a triangle edge and the curve it stands in for. It starts at half the layer height and is never coarser than half the nozzle, clamped to 0.02–0.5 mm. The angular tolerance is the largest turn, in degrees, between two neighbouring chords of a curved edge. If the first mesh turns more sharply than that, the chord is tightened and the shape is meshed again. Both controls sit in the Slice panel. Planes ignore them. A file whose length unit is centimetres, metres, or inches is scaled to millimetres; a file with no unit is treated as millimetres.
 
@@ -96,6 +107,30 @@ chmod +x scripts/fetch-resources.sh
 ```
 
 That creates `vendor/Cura` and `vendor/fdm_materials`. Override the location with `SHALE_CURA_DIR` and `SHALE_MATERIALS_DIR` if you already have a checkout. See [LICENSING.md](LICENSING.md).
+
+## Profiles from Bambu Studio
+
+Bambu Lab printers, processes, and filaments are read from an installed Bambu
+Studio resource tree, exactly as Cura's are:
+
+```
+<Bambu Studio>/resources/profiles/<VENDOR>/{machine,filament,process}/*.json
+```
+
+`SHALE_ORCA_DIR` points at a different tree. Every vendor directory that ships
+with Bambu Studio is read (BBL, Creality, Anycubic, Elegoo, Anker); a machine
+file becomes an entry in the printer list, its `inherits` chain is resolved
+before conversion, and the window marks it `Bambu`. The library is read once
+per launch and takes well under a second.
+
+These files are data, like Cura's: Shale converts them into its own
+definition, instance, and material values and does not link or ship Bambu
+Studio. The moves and the feature types are still CuraEngine's Marlin flavour,
+but a Bambu machine's own start and end sequence is read from its profile and
+filled in, so the wipe, the bed scan, the AMS handover and the finish are the
+machine's own. AMS mapping for a multi-spool sliced 3MF is not written, so such
+a plate is refused rather than sent. Treat the entries as machines and materials
+Shale can reason about, not as a Bambu Studio replacement.
 
 ## Build CuraEngine
 

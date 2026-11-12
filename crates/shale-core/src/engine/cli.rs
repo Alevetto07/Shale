@@ -65,6 +65,11 @@ impl CliEngine {
             command.current_dir(dir);
         }
         apply_lib_dir(&mut command, self.lib_dir.as_deref());
+        if std::env::var_os("SHALE_TRACE").is_some() {
+            // The engine's own argv, so a fail-fast (0xc0000409) can be read
+            // against the flag it choked on instead of guessed at.
+            eprintln!("[shale] engine: {command:?}");
+        }
         match command.output() {
             Ok(output) if output.status.success() => Ok(()),
             Ok(output) => {
@@ -160,12 +165,25 @@ impl SlicingEngine for CliEngine {
             .arg(&request.output_gcode)
             .arg("-r")
             .arg(&resolved_path);
+        // `-s` applies to the object just loaded, so per-part overrides go
+        // after each `-l`, exactly like the support modifiers below.
         for model in &request.models {
-            command.arg("-l").arg(model);
+            // `-e` selects the extruder for the meshes that follow, so it has to
+            // come before this mesh's `-l` and be reset by the next mesh's `-e`.
+            if let Some(index) = model.extruder {
+                command.arg(extruder_flag(index));
+            }
+            command.arg("-l").arg(&model.path);
+            for (key, value) in &model.settings {
+                command.arg("-s").arg(format!("{key}={value}"));
+            }
         }
         // `-s` applies to the object just loaded. Support enforcers and
         // blockers are extra meshes, not a second slicer.
         for modifier in &request.modifiers {
+            if let Some(index) = modifier.extruder {
+                command.arg(extruder_flag(index));
+            }
             command.arg("-l").arg(&modifier.path);
             for (key, value) in &modifier.settings {
                 command.arg("-s").arg(format!("{key}={value}"));
@@ -177,6 +195,20 @@ impl SlicingEngine for CliEngine {
         apply_lib_dir(&mut command, self.lib_dir.as_deref());
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
+        if std::env::var_os("SHALE_TRACE").is_some() {
+            eprintln!("[shale] engine: {command:?}");
+            for key in [
+                "cool_fan_enabled",
+                "cool_fan_speed",
+                "cool_fan_speed_min",
+                "cool_fan_speed_max",
+                "ironing_enabled",
+            ] {
+                if let Some(value) = request.global.get(key) {
+                    eprintln!("[shale] global {key} = {value}");
+                }
+            }
+        }
         let mut child = command.spawn().map_err(|err| {
             Error::Engine(format!(
                 "could not start CuraEngine at '{}': {err}. Paths are passed as separate arguments, including paths with spaces. DLLs are loaded from the engine's own folder ({}).",
@@ -412,4 +444,26 @@ fn print_time(log: &str) -> Option<f64> {
         }
     }
     None
+}
+
+/// The flag that points the engine at a spool, in one place because its shape
+/// is not optional: `-e1` is one argument, and `-e` with `1` beside it makes
+/// CuraEngine fail fast (0xc0000409) instead of reading the number.
+fn extruder_flag(index: usize) -> String {
+    format!("-e{index}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extruder_flag;
+
+    #[test]
+    fn the_extruder_flag_is_one_attached_argument() {
+        assert_eq!(extruder_flag(0), "-e0");
+        assert_eq!(extruder_flag(1), "-e1");
+        assert_eq!(extruder_flag(3), "-e3");
+        // Nothing to split on: the number is not a separate argv entry.
+        assert!(!extruder_flag(2).contains(' '));
+        assert_eq!(extruder_flag(2).len(), 3);
+    }
 }

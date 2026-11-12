@@ -7,16 +7,32 @@
 }
 
 @font-face {
-  font-family: "IBM Plex Mono";
-  src: url("./fonts/IBMPlexMono-Regular.ttf") format("truetype");
+  font-family: "Geist Mono";
+  src: url("./fonts/GeistMono-Regular.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: "IBM Plex Mono";
-  src: url("./fonts/IBMPlexMono-Medium.ttf") format("truetype");
+  font-family: "Geist Mono";
+  src: url("./fonts/GeistMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/Inter-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/Inter-Medium.woff2") format("woff2");
   font-weight: 500;
   font-style: normal;
   font-display: swap;
@@ -24,19 +40,23 @@
 
 :root {
   color-scheme: dark;
-  --bg: #0d0d0d;
-  --panel: #111111;
-  --ink: #f2f2f2;
-  --muted: #8a8a8a;
-  --dim: #3a3a3a;
-  --line: #2a2a2a;
-  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --bg: #06070b;
+  --panel: #0b0d14;
+  --ink: #e9e8f2;
+  --ink-2: rgba(233, 232, 242, 0.72);
+  --ink-3: rgba(233, 232, 242, 0.58);
+  --line: rgba(233, 232, 242, 0.12);
+  --accent: #b9b3ff;
+  --muted: var(--ink-2);
+  --dim: var(--ink-3);
+  --mono: "Geist Mono", ui-monospace, monospace;
+  --prose: "Inter", system-ui, sans-serif;
   --wordmark: "Space Grotesk", system-ui, sans-serif;
   font-family: var(--mono);
   font-weight: 400;
   background: var(--bg);
   color: var(--ink);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -63,13 +83,35 @@ button {
 
 button:hover { color: var(--ink); }
 button:disabled { opacity: 0.35; cursor: not-allowed; }
-button.primary, button.selected { color: var(--ink); }
+button.primary, button.selected { color: var(--accent); }
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
 
+/* A column, not a grid: the tab strip, the banners and the plate come and go,
+   and a fixed row count would hand the plate the wrong slice of the window. */
 .app {
   height: 100%;
-  display: grid;
-  grid-template-rows: auto auto 1fr;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
+.app > .workspace,
+.app > /* Home is a workspace, not a different window: the top bar and its tabs stay
+   where they are while the start screen sits in the main area. */
+/* Home is a workspace, not a different window: the start screen sits inside this
+   pane, so the tab strip and the four chips stay overhead. The pane is the
+   containing block for `.start` (which is inset: 0); without this it would take
+   the whole window and hide the very bar that got you here. */
+.home-pane {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.device { flex: 1 1 auto; }
 
 .topbar {
   display: flex;
@@ -77,6 +119,9 @@ button.primary, button.selected { color: var(--ink); }
   align-items: center;
   gap: 1.5rem;
   padding: 1.1rem 1.4rem 0.85rem;
+  /* The menu bar is wider than the old header; let it wrap on narrow windows. */
+  flex-wrap: wrap;
+  row-gap: 0.5rem;
 }
 
 .brand {
@@ -97,7 +142,7 @@ button.primary, button.selected { color: var(--ink); }
   font-size: 28px;
   letter-spacing: -0.02em;
   line-height: 1;
-  color: #f2f2f2;
+  color: var(--ink);
 }
 
 .top-actions {
@@ -107,12 +152,15 @@ button.primary, button.selected { color: var(--ink); }
 }
 .top-actions button::before { content: "[ "; color: var(--dim); }
 .top-actions button::after { content: " ]"; color: var(--dim); }
-.top-actions button.primary { color: var(--ink); }
+.top-actions button.primary { color: var(--accent); }
 
 .banner {
   margin: 0 1.4rem 0.4rem;
-  color: var(--muted);
-  font-size: 13px;
+  color: var(--ink-2);
+  font-family: var(--prose);
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
   white-space: pre-wrap;
   max-height: 9rem;
   overflow: auto;
@@ -135,19 +183,46 @@ code { font-family: var(--mono); }
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
+  background: var(--panel);
 }
 
 .frame-rule {
   display: flex;
-  color: var(--dim);
+  color: var(--line);
   white-space: nowrap;
   overflow: hidden;
   user-select: none;
 }
-.frame-title {
-  color: var(--muted);
+.frame-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   flex: none;
+  padding: 0 0.25rem;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 3px;
 }
+.frame-toggle:hover { background: rgba(233, 232, 242, 0.05); }
+.frame-caret {
+  color: var(--ink-3);
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.7;
+}
+.frame-toggle:hover .frame-caret { opacity: 1; color: var(--accent); }
+.frame-title {
+  color: var(--ink-3);
+  flex: none;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.frame-toggle:hover .frame-title { color: var(--ink-2); }
+.frame.closed .frame-title { opacity: 0.75; }
 .rule {
   overflow: hidden;
   white-space: nowrap;
@@ -168,11 +243,24 @@ code { font-family: var(--mono); }
 
 label {
   display: grid;
-  grid-template-columns: 10ch 1fr;
+  grid-template-columns: 12ch 1fr;
   gap: 0.6rem;
   align-items: center;
-  color: var(--muted);
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+label input,
+label button,
+label .ascii-step,
+label .ascii-select,
+label .ascii-field,
+label .ascii-check {
+  letter-spacing: 0;
+  text-transform: none;
   font-size: 13px;
+  color: var(--ink);
 }
 
 input, select {
@@ -199,7 +287,10 @@ input[type="number"] { -moz-appearance: textfield; }
   width: 100%;
   padding: 0.1rem 0;
   text-align: left;
-  color: var(--ink);
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 .ascii-check span:first-child {
   flex: none;
@@ -249,7 +340,7 @@ input[type="number"] { -moz-appearance: textfield; }
   overflow: auto;
   margin: 0;
   padding: 0;
-  background: var(--bg);
+  background: var(--panel);
 }
 .ascii-menu-edge, .ascii-option {
   display: block;
@@ -262,12 +353,15 @@ input[type="number"] { -moz-appearance: textfield; }
   padding: 0.05rem 0;
   font-size: 13px;
 }
-.ascii-option.cursor, .ascii-option[aria-selected="true"] { color: var(--ink); }
+.ascii-option.cursor, .ascii-option[aria-selected="true"] { color: var(--accent); }
 
-.meta, .hint {
+.meta, .hint, .caption {
   margin: 0.2rem 0 0;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--ink-2);
+  font-family: var(--prose);
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
   white-space: pre-line;
 }
 
@@ -284,9 +378,35 @@ input[type="number"] { -moz-appearance: textfield; }
 .instructions button { color: var(--dim); padding: 0; }
 button.model { display: block; width: 100%; text-align: left; padding-left: 0; }
 button.model::before { content: "  "; }
-button.model.selected::before { content: "> "; color: var(--ink); }
+button.model.selected { color: var(--accent); }
+button.model.selected::before { content: "> "; color: var(--accent); }
 
 .modes, .row, .axes { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+
+/* The cut row carries four controls; without this each asks for the full width
+   and they stack into four lines. */
+.cut-row select,
+.cut-row input[type="number"] { width: auto; flex: 1 1 4.5rem; min-width: 0; }
+/* "both halves" is two words; at a 4.5rem basis the select clipped it to
+   "both halv" and the arrow ate the last letter. */
+.cut-row select[aria-label="Keep after cutting"] { flex: 1.3 1 6.5rem; }
+.cut-row button { flex: 0 0 auto; }
+
+/* The ruler's number, floating at the middle of the line it describes. */
+.measure-label {
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: rgba(6, 7, 11, 0.88);
+  color: var(--ink);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.measure-readout { font-size: 11px; color: var(--muted); align-self: center; }
+.measure-row button[aria-pressed="true"] { border-color: var(--ink); color: var(--ink); }
+.measure-deltas { font-variant-numeric: tabular-nums; }
 .axes label { grid-template-columns: 3ch 1fr; flex: 1; min-width: 5rem; }
 
 .stage {
@@ -294,32 +414,67 @@ button.model.selected::before { content: "> "; color: var(--ink); }
   min-height: 0;
   display: grid;
   grid-template-rows: 1fr auto;
+  /* One column that cannot exceed the stage. Without this the column is sized
+     to its content, and the canvas — a device-pixel buffer — makes it wider
+     than the pane, which pushed the plate and its legend off the right edge. */
+  grid-template-columns: minmax(0, 1fr);
   position: relative;
   background: var(--bg);
 }
-.stage canvas { display: block; }
-
-.empty {
+.plate {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  /* The canvas is sized in device pixels and will happily grow past its column;
+     clipping here keeps the plate inside the stage, which is what keeps the
+     legend — positioned against this box — on screen. */
+  overflow: hidden;
+}
+.plate-field, .margin-field {
   position: absolute;
   inset: 0;
-  margin: 0;
-  display: grid;
-  place-content: center;
-  text-align: left;
-  color: var(--muted);
+  width: 100%;
+  height: 100%;
   pointer-events: none;
-  font-family: var(--mono);
-  font-size: 14px;
-  line-height: 1.15;
-  letter-spacing: 0;
 }
-.empty .stone { color: #cfcfcf; }
-.empty .caption { color: var(--dim); margin-top: 1.2rem; }
+.margin-field { position: fixed; z-index: 3; }
+.plate canvas { display: block; max-width: 100%; max-height: 100%; }
+.caption {
+  position: absolute;
+  left: 1rem;
+  right: 1rem;
+  bottom: 0.8rem;
+  margin: 0;
+  text-align: center;
+  pointer-events: none;
+  z-index: 2;
+}
+.credit, .credit-line {
+  margin: 0.15rem 0 0;
+  color: var(--ink-3);
+  font-family: var(--prose);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.4;
+}
+.credit-line { display: block; }
+.credit a {
+  color: var(--ink-2);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.credit a:hover { color: var(--ink); }
 
 .scrubber {
   display: flex;
   align-items: center;
   gap: 1rem;
+  /* Wrap, because two more verbs now live in this row and a button label
+     broken across two lines stops reading as a button. Nothing shrinks: the
+     slider drops to its own line when the controls need the width. */
+  flex-wrap: wrap;
   padding: 0.7rem 0.2rem 0.2rem;
   color: var(--muted);
   font-size: 13px;
@@ -331,7 +486,8 @@ button.model.selected::before { content: "> "; color: var(--ink); }
   color: var(--ink);
 }
 .ascii-slider .readout { color: var(--muted); }
-.ascii-slider .glyphs { letter-spacing: 0; color: var(--ink); }
+.ascii-slider .glyphs { letter-spacing: 0; color: var(--ink-2); }
+.ascii-slider .glyphs .active, .ascii-slider .readout .active { color: var(--accent); }
 .ascii-slider input[type="range"] {
   position: absolute;
   left: 0;
@@ -352,3 +508,1762 @@ button.model.selected::before { content: "> "; color: var(--ink); }
 @media (max-width: 900px) {
   .workspace { grid-template-columns: 1fr; }
 }
+
+.app { position: relative; }
+
+.start {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+}
+.start .plate-field { z-index: 0; }
+.start-menu {
+  position: absolute;
+  z-index: 2;
+  left: 28px;
+  bottom: 28px;
+  width: min(320px, calc(100% - 56px));
+  max-height: calc(100% - 72px);
+  overflow: auto;
+  padding: 14px 16px 12px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.start .brand-mark { height: 32px; }
+.start .wordmark { font-size: 22px; }
+.start-list, .start-panel, .start-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.start-list button, .start-scroll button, .start-back, .start-panel > button {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.8rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.26rem 0.5rem;
+  border-radius: 3px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.start-list button[aria-current="true"],
+.start-scroll button.selected,
+.start-list button:focus-visible,
+.start-scroll button:focus-visible,
+.start-back:focus-visible {
+  color: var(--accent);
+}
+.start-hint, .start-label, .start-empty {
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.start-label, .start-empty { margin: 0.45rem 0 0.1rem; }
+.start-list button.recent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.05rem;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--prose);
+  font-size: 13px;
+  color: var(--ink);
+  min-width: 0;
+  max-width: 100%;
+}
+.start-list button.recent.dim { color: var(--ink-3); }
+/* A recent row is a name, then what it was saved on: the date first, because
+   that is the part you are scanning for, then the machine, which is allowed to
+   shrink to an ellipsis so the date never does. */
+.start-list button.recent {
+  padding: 0.44rem 0.35rem 0.42rem;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+}
+.start-list button.recent:hover {
+  background: rgba(233, 232, 242, 0.045);
+  color: var(--ink);
+}
+.start-detail {
+  display: flex;
+  align-items: baseline;
+  color: var(--ink-2);
+  font-family: var(--prose);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  max-width: 100%;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.start-scroll { max-height: 240px; overflow: auto; }
+.start-panel label { grid-template-columns: 8ch 1fr; }
+.start-credit {
+  position: absolute;
+  z-index: 2;
+  left: 28px;
+  right: 28px;
+  top: 16px;
+  margin: 0;
+  text-align: right;
+  pointer-events: none;
+  color: var(--ink-3);
+  font-family: var(--prose);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+.project-name {
+  margin: 0 0 0 0.8rem;
+  color: var(--ink-3);
+  font-family: var(--prose);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.top-actions { flex-wrap: wrap; justify-content: flex-end; }
+.banner.floating {
+  position: absolute;
+  z-index: 5;
+  left: 28px;
+  right: 28px;
+  bottom: 36px;
+  margin: 0;
+  background: var(--panel);
+  padding: 0.45rem 0.6rem;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(233, 232, 242, 0.28) var(--panel);
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; background: var(--panel); }
+*::-webkit-scrollbar-thumb { background: rgba(233, 232, 242, 0.28); }
+*::-webkit-scrollbar-corner { background: var(--panel); }
+
+/* Menu bar ---------------------------------------------------------------- */
+
+.menubar {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+}
+
+.menu-group {
+  position: relative;
+}
+
+.menu-title {
+  padding: 0.3rem 0.55rem;
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.menu-title:hover,
+.menu-title.open {
+  color: var(--ink);
+  background: rgba(233, 232, 242, 0.07);
+}
+
+.menu-sheet {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  min-width: 15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0.35rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+}
+
+.menu-sheet.wide {
+  min-width: 20rem;
+  gap: 0.55rem;
+  padding: 0.85rem 0.95rem;
+}
+
+.menu-sheet button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.menu-sheet button:hover:not(:disabled) {
+  background: rgba(185, 179, 255, 0.14);
+  color: var(--ink);
+}
+
+.menu-sheet button.checked {
+  color: var(--ink);
+}
+/* State is the accent rule at the left, not a tick in the corner: the theme has
+   one accent and no icons. */
+.menu-sheet button.checked {
+  padding-left: 0.9rem;
+}
+.menu-sheet button.checked::before {
+  content: "";
+  position: absolute;
+  left: 0.35rem;
+  top: 0.45rem;
+  bottom: 0.45rem;
+  width: 2px;
+  background: var(--accent);
+}
+
+.menu-sheet button:disabled {
+  color: var(--dim);
+}
+
+.menu-sheet hr {
+  width: 100%;
+  margin: 0.25rem 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.menu-sheet kbd {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+}
+
+.menu-label {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.menu-sheet select,
+.menu-field input {
+  width: 100%;
+  padding: 0.32rem 0.45rem;
+  background: #0e1119;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 0.82rem;
+}
+
+.menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.84rem;
+  color: var(--ink-2);
+}
+
+.menu-row select {
+  width: 8.6rem;
+}
+
+.menu-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.menu-field input {
+  width: 4.6rem;
+  text-align: right;
+}
+
+.menu-field em {
+  font-style: normal;
+  font-size: 0.7rem;
+  color: var(--dim);
+}
+
+.menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+
+.menu-toggle em {
+  font-style: normal;
+  font-size: 0.75rem;
+  color: var(--dim);
+}
+
+.menu-note {
+  margin: 0;
+  max-width: 19rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--dim);
+}
+
+.menu-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+.menu-printer-name {
+  font-size: 0.8rem;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 18rem;
+}
+
+.menu-status .chip {
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.menu-slice {
+  padding: 0.34rem 0.95rem;
+  border: 1px solid rgba(185, 179, 255, 0.45);
+  border-radius: 7px;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.menu-slice:hover:not(:disabled) {
+  background: rgba(185, 179, 255, 0.12);
+}
+
+/* Settings sheet: Bambu-style tabs down the left, fields on the right. */
+.menu-sheet.settings-sheet {
+  display: grid;
+  /* Three rows and a named place for each child. Placement used to be left to
+     the auto-flow, and once a title row was added above the two columns every
+     item slid one cell along: the body landed in the 9 rem tab column and the
+     whole list wrapped inside a strip a tenth of the sheet's width. The rows
+     say where things go, so adding a child cannot shuffle the sheet again. */
+  grid-template-columns: 9rem minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 0.75rem;
+  width: min(46rem, calc(100vw - 3rem));
+  max-height: min(32rem, calc(100vh - 6rem));
+  padding: 0.75rem;
+}
+.menu-sheet.settings-sheet > .settings-scope { grid-column: 1 / -1; grid-row: 1; }
+.menu-sheet.settings-sheet > .settings-tabs { grid-column: 1; grid-row: 2 / 4; }
+.menu-sheet.settings-sheet > .settings-search { grid-column: 2; grid-row: 2; }
+.menu-sheet.settings-sheet > .settings-body { grid-column: 2; grid-row: 3; min-width: 0; }
+
+.settings-scope {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.settings-scope select {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-scope-note {
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+.settings-tabs {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 0.15rem;
+  border-right: 1px solid var(--line);
+  padding-right: 0.5rem;
+  overflow-y: auto;
+}
+
+.settings-tabs button {
+  text-align: left;
+  padding: 0.3rem 0.45rem;
+  border-radius: 0.25rem;
+  color: var(--muted);
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.settings-tabs button.selected {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.settings-body {
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.settings-heading {
+  margin: 0.5rem 0 0.35rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.settings-reset {
+  margin-top: 0.6rem;
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings-reset:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+/* Plates: a row of chips, the one in front marked. */
+.plates {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.plate-chip {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line, #2b2b2b);
+}
+
+.plate-tab {
+  display: grid;
+  gap: 0.05rem;
+  text-align: left;
+  line-height: 1.25;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 4px 7px 4px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+/* A plate is a name and a count, not `1 plate 1 (1)`: the number in front of a
+   name read as part of the name, and the bracketed count read as a footnote. */
+.plate-tab .plate-name { font-size: 12px; }
+.plate-tab .plate-count {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+}
+.plate-tab.active .plate-count { opacity: 0.7; }
+
+/* The active plate was written as an inverted chip — ink behind, paper in front —
+   which is a light-theme habit: on this background it read as a white tile. It is
+   a tinted panel with the accent under it now. */
+.plate-tab.active {
+  background: rgba(185, 179, 255, 0.1);
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.plate-drop {
+  background: none;
+  border: none;
+  border-left: 1px solid var(--line, #2b2b2b);
+  color: inherit;
+  font: inherit;
+  padding: 0 5px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.plate-drop:hover {
+  opacity: 1;
+}
+
+.paint-patches {
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.paint-patch,
+.paint-clear,
+.paint-back {
+  font-family: inherit;
+  border: 1px solid var(--line, #2a2a2a);
+  background: transparent;
+  color: inherit;
+  padding: 0.15rem 0.45rem;
+  cursor: pointer;
+}
+
+.paint-patch:hover,
+.paint-clear:hover {
+  border-color: var(--ink, #e6e6e6);
+}
+
+/* ── the tab strip and the pane switch ──────────────────────────────────────
+   Two rows, the way a slicer's header reads: the projects that are open, then
+   the four places a project can be looked at. Small caps for the pane names so
+   they read as places, not as buttons that do something. */
+
+.tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0 1.4rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.doc-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.doc-tabs::-webkit-scrollbar { display: none; }
+
+.doc-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  max-width: 15rem;
+  /* An inactive tab is still a tab: with a transparent border it read as loose
+     text sitting next to the real one. */
+  border: 1px solid rgba(233, 232, 242, 0.1);
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
+  padding: 0 0.1rem 0 0.55rem;
+  color: var(--ink-2);
+  background: rgba(6, 7, 11, 0.55);
+  position: relative;
+  top: 1px;
+}
+.doc-tab:hover { color: var(--ink); background: rgba(233, 232, 242, 0.08); }
+.doc-tab.active {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--ink);
+}
+/* A hairline of accent under the tab you are in: it is the same signal the
+   pane switch uses, one row down. */
+.doc-tab.active::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px 0;
+  height: 1px;
+  background: var(--accent);
+  opacity: 0.85;
+}
+
+.doc-name {
+  border: 0;
+  padding: 0.32rem 0;
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--prose);
+  font-size: 12.5px;
+  letter-spacing: 0;
+  color: inherit;
+}
+.doc-name:hover { color: inherit; }
+.doc-dirty {
+  color: var(--accent);
+  margin-left: 0.35rem;
+  font-size: 15px;
+  line-height: 1;
+}
+.doc-close {
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 0.35rem;
+  color: var(--ink-3);
+  opacity: 0;
+}
+/* Every tab keeps a visible way out; at full strength only on the one in hand. */
+.doc-close { opacity: 0.45; }
+.doc-tab:hover .doc-close,
+.doc-tab.active .doc-close { opacity: 1; }
+.doc-close:hover { color: var(--ink); }
+
+/* The tab strip's own controls. `+` is a button with a box around it, not a
+   stray glyph between two words: it is the only control here that makes
+   something out of nothing, and it should look like one. */
+.doc-rule {
+  width: 1px;
+  align-self: stretch;
+  margin: 0.3rem 0.35rem;
+  background: var(--line);
+}
+.doc-add,
+.doc-open {
+  align-self: center;
+  padding: 0.22rem 0.5rem;
+  color: var(--ink-3);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  border-radius: 4px;
+}
+.doc-add {
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+.doc-add:hover {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+.doc-open { color: var(--ink-2); }
+.doc-open:hover { color: var(--ink); background: rgba(233, 232, 242, 0.06); }
+
+.mode-bar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+/* The four workspaces are a segmented control, not a row of links: the well
+   behind them and the filled chip say which pane the window is showing, and the
+   whole chip is the hit target — a bare underlined word is a 12 px target. */
+.mode-chips {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 45%, transparent);
+}
+
+.mode-chip {
+  /* Equal cells: four choices of one control, not four words of different
+     widths. The number is the longest label plus its padding, so the control
+     does not resize as you move between panes. */
+  min-width: 6.4rem;
+  text-align: center;
+  padding: 0.34rem 0.8rem 0.3rem;
+  border-radius: 999px;
+  font-family: var(--prose);
+  font-size: 11.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  transition: color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+.mode-chip:hover:not(:disabled) {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+}
+.mode-chip.active {
+  /* A fill, not an outline: the panel colour alone is the same shade as the bar
+     behind it, so the accent has to be in the fill for the chip to read as set. */
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 24%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.mode-chip.waiting {
+  /* Preview before a slice is genuinely unavailable, not merely unselected:
+     dim enough to say so, bright enough to still be read as a word — and still
+     a button, because the click is what explains why. */
+  color: var(--ink-3);
+  opacity: 0.55;
+}
+
+.mode-printer {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── device ──────────────────────────────────────────────────────────────── */
+
+.device {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2.4rem 1.4rem 3rem;
+  /* Two columns: the machine on the left, what is going to it on the right.
+     One column of sections left two-thirds of a wide screen empty. */
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: start;
+  gap: 2.2rem 3rem;
+  max-width: 84rem;
+}
+
+.device-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2.2rem;
+  min-width: 0;
+}
+
+/* A narrow window still gets the whole page, in one column. */
+@media (max-width: 1080px) {
+  .device { grid-template-columns: minmax(0, 1fr); }
+}
+
+.device-head { display: flex; flex-direction: column; gap: 0.35rem; }
+
+.device-kicker {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.device-title {
+  margin: 0;
+  font-family: var(--wordmark);
+  font-weight: 600;
+  font-size: 40px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.device-sub {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.device-status {
+  margin: 0.55rem 0 0;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  border-left: 2px solid var(--line);
+  padding-left: 0.6rem;
+}
+.device-status.live { border-color: var(--accent); color: var(--ink-2); }
+
+/* The certificate question. It is a question, not an error toast: no red, no
+   icon, an accent edge and a press. */
+.device-pin {
+  margin-top: 0.9rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  background: var(--panel);
+}
+.device-pin p {
+  margin: 0 0 0.7rem;
+  font-family: var(--prose);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.device-pin button {
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.4rem 0.7rem;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.device-pin button:hover { border-color: var(--accent); color: var(--accent); }
+
+.device-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.device-card {
+  background: var(--panel);
+  padding: 1rem 1.1rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.device-label {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.device-big {
+  margin: 0;
+  font-family: var(--wordmark);
+  font-weight: 600;
+  font-size: 30px;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.device-note {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-3);
+  max-width: 46ch;
+}
+
+.device-panel {
+  border-top: 1px solid var(--line);
+  padding-top: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.device-spools {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.6rem;
+}
+.device-spools li { display: flex; align-items: baseline; gap: 0.5rem; }
+.device-spools .bay {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+.device-spools .spool {
+  font-family: var(--prose);
+  font-size: 14px;
+  color: var(--ink);
+}
+.device-spools .spool.empty { color: var(--ink-3); font-style: italic; }
+
+.device-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.4rem;
+}
+.device-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-family: var(--prose);
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.device-form input {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0.3rem 0;
+  min-width: 15rem;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.device-form input:focus { border-color: var(--accent); outline: none; }
+.device-form input::placeholder { color: rgba(233, 232, 242, 0.28); }
+
+.device-form select {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0.3rem 0;
+  min-width: 11rem;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+}
+.device-form select:focus { border-color: var(--accent); outline: none; }
+
+/* The live half: a progress rule, four readouts, and the only four buttons in
+   the app that move a machine. */
+.device-live {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.3rem 1.4rem 1.5rem;
+  border: 1px solid var(--line);
+}
+
+.device-bar {
+  height: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.device-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 420ms ease;
+}
+
+.device-readouts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.6rem;
+  font-family: var(--prose);
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.device-readouts b {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.device-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+.device-controls button {
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 0.42rem 1rem;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease;
+}
+.device-controls button:hover:not(:disabled) { border-color: var(--ink-2); color: var(--ink); }
+.device-controls button:disabled { opacity: 0.32; cursor: default; }
+.device-controls button.device-go {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.device-controls button.device-go:hover:not(:disabled) { background: var(--accent); color: var(--bg); }
+.device-controls .device-note { margin: 0; }
+
+.device-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  border-left: 1px solid var(--accent);
+  padding-left: 0.9rem;
+}
+.device-confirm p {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.device-confirm p b { color: var(--ink); font-weight: 500; }
+.device-confirm div { display: flex; gap: 0.7rem; }
+
+/* ── finding a setting ─────────────────────────────────────────────────────
+   Eleven tabs is past the point where you can hunt: Bambu Studio puts a search
+   field above its tabs, so this one does too. A setting that has been moved off
+   the profile wears a dot and a way back. */
+
+.settings-search {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0 1.1rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--prose);
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.settings-search input {
+  flex: 1 1 auto;
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 0.3rem 0.5rem;
+  font-family: var(--prose);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
+}
+.settings-search input:focus {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  outline: none;
+}
+.settings-search input::placeholder { color: rgba(233, 232, 242, 0.3); font-style: italic; }
+.settings-search em {
+  font-style: normal;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.settings-hit {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+}
+/* A hit is one line of a list: the name takes the room, the control and the
+   group label keep theirs. A grid here looked right on paper and broke the list
+   in the window — the group label clipped to three letters and the whole sheet
+   grew a horizontal scrollbar — because a grid that does not know the widest
+   label pushes everything else out. Flex with a floor does not. */
+.settings-hit > .menu-row {
+  /* A content-sized basis let the row collapse to a third of the sheet and wrap
+     its own label; a zero basis makes it claim the room the group label leaves. */
+  flex: 1 1 0%;
+  min-width: 0;
+  border-bottom: 0;
+}
+.settings-hit-group {
+  flex: 0 0 auto;
+  font-family: var(--prose);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+/* the name of an overridden setting, and the cross that puts it back */
+.menu-row > .menu-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.menu-name.moved { color: var(--ink); }
+.menu-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ink-2);
+}
+.menu-reset:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
+
+/* ── what the plate costs ───────────────────────────────────────────────────
+   A slicer's corner card: time, filament, weight, layers. It sits on the plate
+   rather than in a panel because it is about the plate, and it reads in
+   tabular figures so two slices can be compared at a glance. */
+
+.job-card {
+  position: absolute;
+  left: 1.1rem;
+  top: 1.1rem;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 9.5rem;
+  padding: 0.7rem 0.9rem 0.8rem;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.job-state {
+  font-family: var(--prose);
+  font-size: 9.5px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.job-state.quiet { color: var(--ink-3); letter-spacing: 0.18em; }
+
+.job-card dl {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.15rem 0.9rem;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.job-card dl > div {
+  display: contents;
+}
+.job-total dt,
+.job-total dd {
+  color: var(--accent);
+}
+
+.job-card dt {
+  font-family: var(--prose);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.job-card dd {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ── the features in the toolpath ──────────────────────────────────────────
+   Bambu Studio's preview lists what the slice is made of down the right-hand
+   side, with a switch per kind. Same idea: the colour is the colour the line is
+   drawn in, so the list doubles as the key. */
+
+.legend {
+  position: absolute;
+  right: 1.1rem;
+  top: 1.1rem;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  min-width: 10.5rem;
+  padding: 0.5rem 0.35rem 0.45rem;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+
+.legend header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  padding: 0.05rem 0.45rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--prose);
+  font-size: 9.5px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.legend header span { flex: 1 1 auto; }
+.legend header em {
+  font-style: normal;
+  letter-spacing: 0.12em;
+  color: var(--ink-3);
+}
+.legend header button {
+  padding: 0 0.15rem;
+  font-family: var(--prose);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.legend header button:hover:not(:disabled) { color: var(--accent); }
+.legend header button:disabled { opacity: 0.35; }
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.24rem 0.45rem;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  text-align: left;
+}
+.legend-row:hover { background: rgba(255, 255, 255, 0.04); color: var(--ink); }
+.legend-row i {
+  width: 0.55rem;
+  height: 0.55rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+.legend-row span { flex: 1 1 auto; }
+.legend-row em {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.legend-row.off { color: var(--ink-3); }
+.legend-row.off i { opacity: 0.2; }
+.legend-row.off span { text-decoration: line-through; text-decoration-thickness: 1px; }
+
+/* ── drop-downs carry a caret, not the platform's glyph ──────────────────────
+   WebView2 draws a small `v` for a select that has lost its native chrome, so
+   every list looked like it was labelled with a letter. One drawn caret instead,
+   the same shape at every size. */
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6'%3E%3Cpath d='M0 0l4.5 5L9 0z' fill='%23807f8d'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.2rem center;
+  padding-right: 1.15rem;
+}
+
+.device-confirm p.device-warn {
+  margin: 0.55rem 0 0;
+  max-width: 46ch;
+  color: var(--accent);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+/* The sheet's own footnote: what the setting under the hand does, in the
+   printer definition's words. Fixed height so hovering never shifts the rows. */
+/* The sheet is a two-column grid (categories | rows). Without this the
+   footnote fell into the first column and read as a caption for the category
+   list; it belongs under all of it. */
+.settings-help {
+  grid-column: 1 / -1;
+  position: sticky;
+  bottom: 0;
+  margin: 0;
+  padding: 0.55rem 0.9rem 0.6rem;
+  min-height: 2.9rem;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink-dim);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+.settings-help.idle { opacity: 0.55; font-style: italic; }
+
+/* The speed ramp in the legend. It replaces the kind swatches as the thing that
+   explains the colours on the plate, so it sits above them and reads as a scale:
+   a bar, two numbers, nothing else. */
+.legend-scale {
+  margin: 0.15rem 0 0.5rem;
+  padding: 0 0.15rem;
+}
+.legend-scale-title {
+  display: block;
+  color: var(--ink-dim);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.legend-ramp {
+  display: flex;
+  gap: 1px;
+  height: 0.55rem;
+  margin: 0.3rem 0 0.18rem;
+  border-radius: 2px;
+  overflow: hidden;
+  /* The gaps show the panel behind them, so the five stops read as five bands
+     rather than one smooth wash. */
+  background: var(--panel);
+}
+.legend-ramp i { flex: 1; min-width: 0; }
+.legend-scale-ends {
+  display: flex;
+  justify-content: space-between;
+  color: var(--ink-dim);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
+.legend-row i.muted { opacity: 0.22; }
+
+/* The footer's groups. Each control has a one-word label in small caps and the
+   groups are separated by a hairline, so `[ solid wire ascii ]` reads as one
+   choice rather than five words in a row. */
+.scrub-group {
+  display: inline-flex;
+  flex: none;
+  white-space: nowrap;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding-right: 0.7rem;
+  margin-right: 0.15rem;
+  border-right: 1px solid var(--line);
+}
+.scrub-group:last-of-type { border-right: 0; }
+.scrub-group em {
+  font-style: normal;
+  color: var(--ink-3);
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-right: 0.15rem;
+}
+
+/* The object list. Bambu has one above the settings, and it is the only way to
+   pick a part that is hidden behind another one — the viewport raycast cannot
+   reach it, and on a full plate most parts are behind something. */
+.objects {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.object-line {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+}
+.object-row {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.3rem 0.4rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.object-row:hover { background: rgba(233, 232, 242, 0.05); color: var(--ink); }
+.object-row.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--ink);
+}
+.object-index {
+  color: var(--ink-3);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 0.9em;
+}
+.object-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.object-slot {
+  color: var(--accent);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.object-drop {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 0.35rem;
+  cursor: pointer;
+  opacity: 0;
+}
+.object-line:hover .object-drop { opacity: 0.7; }
+.object-drop:hover { opacity: 1; color: var(--accent); }
+
+.start-dot {
+  color: var(--ink-3);
+  margin: 0 0.32rem;
+  flex: none;
+}
+.start-machine {
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.row.paint-brush {
+  gap: 0.4rem;
+  margin-bottom: 0.15rem;
+}
+
+/* Two brushes as one control: a pair of quiet words that becomes a pair of
+   pressed ones, so the panel says which brush is in your hand. */
+.paint-brush-button {
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.14rem 0.5rem;
+  cursor: pointer;
+}
+
+/* The brush in your hand is filled, not tinted: a 10% wash was indistinguishable
+   from the idle button at a glance, and picking the wrong brush paints the
+   opposite of what you meant. */
+.paint-brush-button.on {
+  color: #14131a;
+  border-color: var(--accent, #d9a441);
+  background: var(--accent, #d9a441);
+  font-weight: 600;
+}
+/* Armed for a pick: the button and the next click are one gesture, so the
+   button has to look held down until the click lands. */
+.face-arm.on {
+  color: #14131a;
+  border-color: var(--accent, #d9a441);
+  background: var(--accent, #d9a441);
+  font-weight: 600;
+}
+
+/* The queue, as rows you can drop one at a time. It sits below the live
+   readouts because the machine is what you look at; the queue is what you set
+   up and walk away from. */
+.device-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.device-queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.device-queue-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-size: 0.76rem;
+}
+
+.device-queue-list li.running {
+  border-color: var(--accent, #b9b3ff);
+  color: var(--ink);
+}
+
+.device-queue-list .queue-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-queue-list .queue-size {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.device-queue-list button {
+  border: none;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0 0.1rem;
+}
+
+.device-queue-list button:hover {
+  color: var(--ink);
+}
+
+/* Pins: a small cluster under the cut row, because they are a property of the
+   cut and not a tool of their own. */
+.boolean-row {
+  /* A verb, three answers: the label carries the word so the buttons stay one
+     word each and the row never wraps into the next section. */
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.boolean-label {
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-right: 0.2rem;
+}
+
+.cut-pins {
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Every tick box in the app, drawn rather than borrowed: a native checkbox
+   inside a near-black panel is a light square from another program. */
+input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  width: 0.78rem;
+  height: 0.78rem;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid rgba(233, 232, 242, 0.28);
+  border-radius: 2px;
+  background: rgba(6, 7, 11, 0.6);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  inset: 0.16rem;
+  transform: scale(0.2);
+  opacity: 0;
+  background: var(--accent, #d9a441);
+  clip-path: polygon(14% 44%, 0 62%, 40% 100%, 100% 18%, 84% 4%, 38% 66%);
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+
+input[type="checkbox"]:hover {
+  border-color: rgba(233, 232, 242, 0.5);
+}
+
+input[type="checkbox"]:checked {
+  border-color: var(--accent, #d9a441);
+  background: rgba(217, 164, 65, 0.14);
+}
+
+input[type="checkbox"]:checked::before {
+  transform: scale(1);
+  opacity: 1;
+}
+
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent, #d9a441);
+  outline-offset: 2px;
+}
+
+.cut-pin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+}
+
+.cut-pin-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+}
+
+.cut-pin-field input {
+  width: 3.1rem;
+  font-size: 0.72rem;
+  padding: 0.12rem 0.24rem;
+}
+
+/* `.row` is declared further down and would win a tie, hence both classes. */
+.row.cut-joint {
+  flex-wrap: wrap;
+  row-gap: 0.2rem;
+}
+
+/* What the tab becomes, under the control that decides it: on one line with
+   `dovetail  [root]  tip 12 · deep 6` the three numbers read as the same kind
+   of thing, and two of them are not for typing. */
+.row.cut-joint .cut-joint-note {
+  flex: 1 0 100%;
+  padding-left: 1.35rem;
+  font-size: 0.66rem;
+  color: var(--ink-3);
+  letter-spacing: 0.02em;
+}
+
+.cut-pin-count {
+  font-size: 0.72rem;
+  padding: 0.14rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+/* The brush reach field sits with the brush, not with the model's numbers: it
+   is how wide the stroke is, and it changes nothing about the part. */
+.paint-radius {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+}
+
+.paint-radius input {
+  width: 2.9rem;
+  font-size: 0.72rem;
+  padding: 0.12rem 0.24rem;
+}
+
+.paint-hint {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--accent);
+  letter-spacing: 0.01em;
+}
+
+/* Presets: a small, quiet block at the foot of the settings sheet. */
+.presets {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-top: 0.7rem;
+  margin-top: 0.2rem;
+  border-top: 1px solid var(--line);
+}
+.preset-title {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 9.5px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.preset-row {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+/* The names are the list: a select hides them behind a click, and a clip (or a
+   person) should see what has been saved without opening anything. */
+.preset-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.preset-name {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+.preset-name.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.preset-row input,
+.preset-row select {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 0.22rem 0.4rem;
+}
+.preset-row button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font-family: var(--prose);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 0.28rem 0.45rem;
+  cursor: pointer;
+}
+.preset-row button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.preset-row button:disabled { opacity: 0.4; cursor: default; }
+.preset-diff,
+.preset-note {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--ink-3);
+  line-height: 1.45;
+}
+.preset-note { color: var(--accent); }
+
+/* The cost clip has to read as a cost clip: the job card floats over the plate
+   at twice its size, on the same panel colour, so the numbers are the subject. */
+.job-card.demo-cost {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 24rem;
+  gap: 0.5rem;
+  padding: 1.1rem 1.5rem 1.2rem;
+  z-index: 40;
+  background: var(--panel);
+  backdrop-filter: none;
+  border-color: #2a2b3a;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.65);
+}
+/* Scaling the card blurred its own text and pushed the labels out of the box;
+   the demo card is laid out large instead, so every row is crisp and inside. */
+.job-card.demo-cost .job-state { font-size: 11px; }
+.job-card.demo-cost dt { font-size: 12px; }
+.job-card.demo-cost dd { font-size: 17px; }

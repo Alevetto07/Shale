@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::mesh::TriangleMesh;
 
+/// Cura's `support_angle` default, in degrees from vertical.
+pub const DEFAULT_SUPPORT_ANGLE: f64 = 50.0;
+
 /// Cura's overhang angle is measured from the vertical. `0` supports every
 /// underside, `90` supports none. The default of 50 matches `support_angle`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -34,7 +37,7 @@ pub struct SupportParams {
 }
 
 fn default_angle() -> f64 {
-    50.0
+    DEFAULT_SUPPORT_ANGLE
 }
 fn default_bridge() -> f64 {
     20.0
@@ -214,6 +217,10 @@ pub fn propose(mesh: &TriangleMesh, params: &SupportParams) -> SupportPlan {
     let everywhere = everywhere_totals(&found, &params);
     let mut regions = Vec::new();
     let mut next_id = 1u32;
+    // One cantilever made of two triangles arrives as two spans with the same
+    // footprint. Emitting both doubles the volume the panel reports and hands
+    // the engine a second box on top of the first.
+    let mut placed: Vec<[f64; 6]> = Vec::new();
     for component in &found {
         if component.span.area_mm2 < params.min_region_area_mm2 {
             continue;
@@ -246,6 +253,16 @@ pub fn propose(mesh: &TriangleMesh, params: &SupportParams) -> SupportPlan {
                     (min, max, 0.0)
                 }
             };
+            let bounds = [min[0], min[1], min[2], max[0], max[1], max[2]];
+            if placed.iter().any(|other| {
+                other
+                    .iter()
+                    .zip(bounds.iter())
+                    .all(|(a, b)| (a - b).abs() < 0.01)
+            }) {
+                continue;
+            }
+            placed.push(bounds);
             let id = next_id;
             next_id += 1;
             let contact = if role == RegionRole::Enforce {
@@ -1011,8 +1028,10 @@ mod tests {
             .any(|region| { region.role == RegionRole::Block && covers(region, 16.0, 4.0, 20.0) }));
         assert!(plan.comparison.everywhere_volume_mm3 > plan.comparison.proposed_volume_mm3 + 50.0);
 
-        let mut short = SupportParams::default();
-        short.max_bridge_mm = 5.0;
+        let short = SupportParams {
+            max_bridge_mm: 5.0,
+            ..SupportParams::default()
+        };
         let forced = propose(&bridge(), &short);
         assert!(forced.spans.iter().any(|span| span.kind.wants_support()));
         assert!(!enforcers(&forced).is_empty());
@@ -1093,6 +1112,8 @@ mod tests {
             name: "bridge".into(),
             mesh,
             transform: crate::Transform::default(),
+            settings: Vec::new(),
+            slot: None,
         }];
         let comparison = crate::compare_support(
             &catalog,
@@ -1178,5 +1199,28 @@ mod tests {
             mesh.triangles
                 .push([base + face[0], base + face[1], base + face[2]]);
         }
+    }
+}
+
+#[cfg(test)]
+mod modifier_role_tests {
+    use super::*;
+
+    #[test]
+    fn the_two_roles_are_two_different_asks() {
+        // The engine is told what a painted volume is for through the meshes it
+        // is handed: a support block, or a slab that may not be supported.
+        let enforce = modifier_settings(RegionRole::Enforce);
+        let block = modifier_settings(RegionRole::Block);
+        let has = |pairs: &[(String, String)], key: &str| {
+            pairs
+                .iter()
+                .any(|(name, value)| name == key && value == "true")
+        };
+        assert!(has(&enforce, "support_mesh"));
+        assert!(has(&block, "anti_overhang_mesh"));
+        assert!(!has(&enforce, "anti_overhang_mesh"));
+        assert!(!has(&block, "support_mesh"));
+        assert_ne!(enforce, block);
     }
 }

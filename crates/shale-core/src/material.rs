@@ -21,6 +21,9 @@ pub struct Material {
     pub name: String,
     pub color: String,
     pub diameter: f64,
+    /// `PLA`, `PETG`, … for a filament from an Orca-family library, which is
+    /// the only place the type is written down. Cura's materials never say.
+    pub filament_type: Option<String>,
     pub settings: HashMap<String, f64>,
     pub machines: Vec<MachineMaterial>,
 }
@@ -149,6 +152,18 @@ fn parse_material(id: &str, text: &str) -> Result<Material, String> {
                         diameter = value;
                     }
                     text_buf.clear();
+                } else if local == "density" {
+                    // <properties><density> is grams per cubic centimetre, the
+                    // number a spool's weight and a print's weight are both
+                    // counted in. Cura keeps it here rather than among the
+                    // settings, and without it the job card cannot say how much
+                    // a print weighs.
+                    if let Ok(value) = text_buf.trim().parse::<f64>() {
+                        if value > 0.0 {
+                            settings.insert("material_density".to_string(), value);
+                        }
+                    }
+                    text_buf.clear();
                 } else if local == "hotend" {
                     hotend_idx = None;
                     text_buf.clear();
@@ -174,6 +189,7 @@ fn parse_material(id: &str, text: &str) -> Result<Material, String> {
         name,
         color,
         diameter,
+        filament_type: None,
         settings,
         machines,
     })

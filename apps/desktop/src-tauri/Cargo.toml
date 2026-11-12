@@ -1,6 +1,6 @@
 [package]
 name = "shale-desktop"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Shale desktop shell"
 publish = false
@@ -12,9 +12,16 @@ tauri-build = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 shale-core = { path = "../../../crates/shale-core" }
+shale-host = { path = "../../../crates/shale-host" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+[target.'cfg(windows)'.dependencies]
+# The printer's LAN access code is a password, so it goes to the Windows
+# Credential Manager rather than the WebView profile. 0.52 is the version Tauri
+# already resolves, so this adds no crate to the lockfile.
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security_Credentials"] }

@@ -1,18 +1,20 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
-/** Visual language for the Shale window. Dark, greyscale, monospace. */
+/** Deep Field. Dark only. One accent, used sparingly. */
 export const theme = {
   color: {
-    bg: "#0d0d0d",
-    panel: "#111111",
-    ink: "#f2f2f2",
-    muted: "#8a8a8a",
-    dim: "#3a3a3a",
-    line: "#2a2a2a",
+    bg: "#06070b",
+    panel: "#0b0d14",
+    ink: "#e9e8f2",
+    muted: "rgba(233, 232, 242, 0.72)",
+    dim: "rgba(233, 232, 242, 0.58)",
+    line: "rgba(233, 232, 242, 0.12)",
+    accent: "#b9b3ff",
   },
   font: {
     wordmark: '"Space Grotesk", system-ui, sans-serif',
-    mono: '"IBM Plex Mono", ui-monospace, monospace',
+    mono: '"Geist Mono", ui-monospace, monospace',
+    prose: '"Inter", system-ui, sans-serif',
   },
   box: {
     tl: "┌",
@@ -22,14 +24,6 @@ export const theme = {
     h: "─",
     v: "│",
   },
-  stone: [
-    "        /\\",
-    "       /  \\",
-    "      / /\\ \\",
-    "     / /  \\ \\",
-    "    / /    \\ \\",
-    "   /_/      \\_\\",
-  ].join("\n"),
 } as const;
 
 export function meter(fraction: number, width = 24): string {
@@ -53,29 +47,87 @@ export function track(value: number, max: number, width = 28, marks: number[] = 
   return cells.join("");
 }
 
+/// Which sections are folded away. The sidebar is taller than a laptop window,
+/// and the sections you are not using should not push the ones you are off the
+/// bottom. Kept in local storage so a folded section stays folded.
+const FOLDED_KEY = "shale.folded";
+
+function readFolded(): string[] {
+  try {
+    const raw = window.localStorage.getItem(FOLDED_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeFolded(titles: string[]) {
+  try {
+    window.localStorage.setItem(FOLDED_KEY, JSON.stringify(titles));
+  } catch {
+    // Storage can be missing or full; a section that will not stay folded is
+    // not a reason to fail.
+  }
+}
+
 export function Frame({ title, children }: { title: string; children: ReactNode }) {
+  const [open, setOpen] = useState(() => !readFolded().includes(title));
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    const folded = readFolded().filter((item) => item !== title);
+    if (!next) folded.push(title);
+    writeFolded(folded);
+  }
+
   return (
-    <section className="frame">
-      <div className="frame-rule" aria-hidden="true">
-        <span>{theme.box.tl}</span>
-        <span className="frame-title"> {title} </span>
-        <span className="rule">{theme.box.h.repeat(48)}</span>
-        <span>{theme.box.tr}</span>
-      </div>
-      <div className="frame-body">
-        <span className="frame-side" aria-hidden="true">
-          {theme.box.v}
+    <section className={open ? "frame" : "frame closed"}>
+      <div className="frame-rule">
+        <span aria-hidden="true">{theme.box.tl}</span>
+        <button
+          type="button"
+          className="frame-toggle"
+          aria-expanded={open}
+          title={open ? `fold ${title}` : `unfold ${title}`}
+          onClick={toggle}
+        >
+          <span className="frame-caret" aria-hidden="true">
+            {open ? "▾" : "▸"}
+          </span>
+          <span className="frame-title">{title}</span>
+        </button>
+        <span className="rule" aria-hidden="true">
+          {theme.box.h.repeat(48)}
         </span>
-        <div className="frame-content">{children}</div>
-        <span className="frame-side" aria-hidden="true">
-          {theme.box.v}
-        </span>
+        <span aria-hidden="true">{theme.box.tr}</span>
       </div>
-      <div className="frame-rule" aria-hidden="true">
-        <span>{theme.box.bl}</span>
-        <span className="rule">{theme.box.h.repeat(48)}</span>
-        <span>{theme.box.br}</span>
-      </div>
+      {!open && (
+        <div className="frame-rule" aria-hidden="true">
+          <span>{theme.box.bl}</span>
+          <span className="rule">{theme.box.h.repeat(48)}</span>
+          <span>{theme.box.br}</span>
+        </div>
+      )}
+      {open && (
+        <div className="frame-body">
+          <span className="frame-side" aria-hidden="true">
+            {theme.box.v}
+          </span>
+          <div className="frame-content">{children}</div>
+          <span className="frame-side" aria-hidden="true">
+            {theme.box.v}
+          </span>
+        </div>
+      )}
+      {open && (
+        <div className="frame-rule" aria-hidden="true">
+          <span>{theme.box.bl}</span>
+          <span className="rule">{theme.box.h.repeat(48)}</span>
+          <span>{theme.box.br}</span>
+        </div>
+      )}
     </section>
   );
 }
