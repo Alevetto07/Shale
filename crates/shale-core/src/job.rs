@@ -386,6 +386,9 @@ pub fn slice(
     let nonplanar_active = settings
         .nonplanar
         .active_for_printer(printer_id);
+    if nonplanar_active {
+        force_setting(&mut resolved, "ironing_enabled", "false");
+    }
     let mut pre_deform_meshes: Vec<TriangleMesh> = Vec::new();
     let mut estimated_layers = 1u32;
     let mut baked_paths = Vec::new();
@@ -403,6 +406,11 @@ pub fn slice(
         estimated_layers = estimated_layers.max((height / layer_height).ceil().max(1.0) as u32);
         // Height is measured in machine space. The engine then wants bed-centre
         // coordinates, which is a pure XY shift and does not change the height.
+        if nonplanar_active {
+            // Inverse G-code mapping runs in machine coordinates; the height field must
+            // match the coordinates CuraEngine writes after `MeshGroup::finalize`.
+            pre_deform_meshes.push(baked.clone());
+        }
         mesh::to_engine_space(
             &mut baked,
             resolved.summary.machine_width,
@@ -410,7 +418,6 @@ pub fn slice(
             resolved.summary.machine_center_is_zero,
         );
         if nonplanar_active {
-            pre_deform_meshes.push(baked.clone());
             let np_in = crate::nonplanar_bridge::to_nonplanar(&baked);
             let (deformed, _ctx) = shale_nonplanar::prepare_pre_pass(
                 &np_in,
@@ -546,6 +553,10 @@ pub fn slice(
             layer_height,
         );
         gcode = mapped;
+        let mut report = report;
+        report
+            .notes
+            .push("ironing_enabled was forced off for curved-top slicing".into());
         nonplanar_report = Some(report);
     }
     // CuraEngine does not always say the print time on stdout; it writes it

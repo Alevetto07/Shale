@@ -57,13 +57,14 @@ pub fn map_gcode_inverse(field: &DeformField, gcode: &str, nominal_layer: f64) -
             word_f(line, 'Z').unwrap_or(position[2]),
             word_f(line, 'E').unwrap_or(position[3]),
         ];
-        let extruding = word_f(line, 'E').is_some() && {
-            let e = word_f(line, 'E').unwrap_or(0.0);
+        let extruding = if let Some(e) = word_f(line, 'E') {
             if absolute {
-                e > position[3]
+                e > position[3] + 1e-9
             } else {
-                e > 0.0
+                e > 1e-9
             }
+        } else {
+            false
         };
 
         let dx = target[0] - position[0];
@@ -172,13 +173,38 @@ mod tests {
         let mesh = sphere_mesh(10.0);
         let grid = build_height_field(&mesh, 1.0, 45.0, 2.0);
         let field = build_deform_field(grid, 2.0, 0.4, 0.2);
-        for z in [15.0, 16.0, 17.0, 18.0] {
+        for z in [15.0, 16.0, 17.0, 18.0, 19.0, 20.0] {
             let back = round_trip_z(&field, 0.0, 0.0, z);
             assert!(
-                (back - z).abs() < 0.5,
+                (back - z).abs() < 0.02,
                 "round-trip at z={z}: got {back}"
             );
         }
+        assert!(
+            field.max_round_trip_error_mm(0.0, 0.0, 128) < 0.02,
+            "LUT inverse should stay within 0.02 mm on the sphere column"
+        );
+    }
+
+    #[test]
+    fn box_top_band_round_trip_under_0_02mm() {
+        let mesh = box_mesh(20.0, 20.0, 10.0);
+        let grid = build_height_field(&mesh, 1.0, 30.0, 2.0);
+        let field = build_deform_field(grid, 2.0, 0.4, 0.2);
+        assert!(field.max_round_trip_error_mm(0.0, 0.0, 64) < 0.02);
+    }
+
+    #[test]
+    fn z_hop_and_retract_moves_preserved() {
+        let mesh = box_mesh(10.0, 10.0, 10.0);
+        let grid = build_height_field(&mesh, 1.0, 30.0, 2.0);
+        let field = build_deform_field(grid, 2.0, 0.4, 0.2);
+        let src = "G1 X1 Y1 Z0.4 E0.5 F1800\nG0 Z1.0\nG1 X2 Y2 Z1.0 E1.0 F1800\nG1 X3 Y3 E-0.2 F3000\n";
+        let out = map_gcode_inverse(&field, src, 0.2);
+        assert!(
+            out.lines().any(|l| l.starts_with("G0") && l.contains('Z')),
+            "z-hop travel kept as G0, got:\n{out}"
+        );
     }
 
     #[test]

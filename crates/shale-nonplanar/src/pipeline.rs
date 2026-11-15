@@ -80,6 +80,7 @@ pub fn apply_post_pass(
         bambu_a1_envelope(),
         options.max_angle_deg,
     );
+    report.notes.push("ironing disabled for curved-top pass".into());
     report.top_islands = field.grid.width * field.grid.height; // refined below
     report.top_islands = count_top_islands(&field.grid);
     let mapped = map_gcode_inverse(&field, gcode, nominal_layer_height);
@@ -109,7 +110,8 @@ fn ok_attach_header(mapped: String, header: &str, mut report: NonplanarReport) -
 pub fn gcode_respects_envelope(gcode: &str, max_angle_deg: f64) -> bool {
     let envelope = bambu_a1_envelope();
     let step = 2.0;
-    let mut printed = PrintedHeightMap::new([-150.0, -150.0], step, 150, 150);
+    // Machine-coordinate G-code from Cura (front-left origin on a 256 mm bed).
+    let mut printed = PrintedHeightMap::new([0.0, 0.0], step, 130, 130);
     let mut position = [0.0; 3];
     for raw in gcode.lines() {
         let line = raw.trim();
@@ -149,6 +151,171 @@ fn parse_word(line: &str, letter: char) -> Option<f64> {
         .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-' && c != '+')
         .unwrap_or(rest.len());
     rest[..end].parse().ok()
+}
+
+fn max_slope_on_moves(moves: &[Vec<[f64; 3]>], across_layers: bool) -> f64 {
+    let mut max_deg = 0.0f64;
+    let mut prev: Option<[f64; 3]> = None;
+    for layer in moves {
+        if !across_layers {
+            prev = None;
+        }
+        for point in layer {
+            if let Some(p) = prev {
+                let dx = point[0] - p[0];
+                let dy = point[1] - p[1];
+                let dz = point[2] - p[2];
+                let horiz = (dx * dx + dy * dy).sqrt();
+                if horiz > 1e-6 {
+                    let deg = dz.atan2(horiz).abs().to_degrees();
+                    max_deg = max_deg.max(deg);
+                }
+            }
+            prev = Some(*point);
+        }
+    }
+    max_deg
+}
+
+/// Maximum slope from the vertical on the top layer's extrusion moves (degrees).
+pub fn max_top_layer_slope_deg(gcode: &str) -> Option<f64> {
+    let moves = top_layer_extrusion_moves(gcode)?;
+    Some(max_slope_on_moves(&[moves], false))
+}
+
+/// Maximum slope over the upper ``layer_count`` extruding layers.
+pub fn max_top_shell_slope_deg(gcode: &str, layer_count: usize) -> Option<f64> {
+    let moves = top_shell_extrusion_moves(gcode, layer_count)?;
+    Some(max_slope_on_moves(&moves, false))
+}
+
+/// Same as [`max_top_shell_slope_deg`] but keeps slope across layer boundaries (ramps).
+pub fn max_top_shell_slope_across_layers_deg(gcode: &str, layer_count: usize) -> Option<f64> {
+    let moves = top_shell_extrusion_moves(gcode, layer_count)?;
+    Some(max_slope_on_moves(&moves, true))
+}
+
+fn top_shell_extrusion_moves(gcode: &str, layer_count: usize) -> Option<Vec<Vec<[f64; 3]>>> {
+    let mut layers: Vec<Vec<[f64; 3]>> = Vec::new();
+    let mut current: Vec<[f64; 3]> = Vec::new();
+    let mut x = 0.0;
+    let mut y = 0.0;
+    let mut z = 0.0;
+    for raw in gcode.lines() {
+        let line = raw.trim();
+        if line.starts_with(";LAYER:") {
+            if !current.is_empty() {
+                layers.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        if let Some(xx) = parse_word(line, 'X') {
+            x = xx;
+        }
+        if let Some(yy) = parse_word(line, 'Y') {
+            y = yy;
+        }
+        if let Some(zz) = parse_word(line, 'Z') {
+            z = zz;
+        }
+        if line.starts_with("G1") && line.contains('E') {
+            if let Some(e) = parse_word(line, 'E') {
+                if e >= 0.0 {
+                    current.push([x, y, z]);
+                }
+            }
+        }
+    }
+    if !current.is_empty() {
+        layers.push(current);
+    }
+    let start = layers.len().saturating_sub(layer_count);
+    if start >= layers.len() {
+        None
+    } else {
+        Some(layers[start..].to_vec())
+    }
+}
+
+fn top_layer_extrusion_moves(gcode: &str) -> Option<Vec<[f64; 3]>> {
+    let mut last_layer: Vec<[f64; 3]> = Vec::new();
+    let mut current = Vec::new();
+    let mut x = 0.0;
+    let mut y = 0.0;
+    let mut z = 0.0;
+    for raw in gcode.lines() {
+        let line = raw.trim();
+        if line.starts_with(";LAYER:") {
+            if !current.is_empty() {
+                last_layer = std::mem::take(&mut current);
+            }
+            continue;
+        }
+        if let Some(xx) = parse_word(line, 'X') {
+            x = xx;
+        }
+        if let Some(yy) = parse_word(line, 'Y') {
+            y = yy;
+        }
+        if let Some(zz) = parse_word(line, 'Z') {
+            z = zz;
+        }
+        if line.starts_with("G1") && line.contains('E') {
+            if let Some(e) = parse_word(line, 'E') {
+                if e >= 0.0 {
+                    current.push([x, y, z]);
+                }
+            }
+        }
+    }
+    if !current.is_empty() {
+        last_layer = current;
+    }
+    if last_layer.is_empty() {
+        None
+    } else {
+        Some(last_layer)
+    }
+}
+
+/// Z variation on the upper ``layer_count`` extruding layers (default top shell).
+pub fn top_shell_z_variation(gcode: &str, layer_count: usize) -> Option<(f64, f64)> {
+    let mut layers: Vec<Vec<f64>> = Vec::new();
+    let mut current = Vec::new();
+    let mut z = 0.0f64;
+    for raw in gcode.lines() {
+        let line = raw.trim();
+        if let Some(rest) = line.strip_prefix(";LAYER:") {
+            if !current.is_empty() {
+                layers.push(std::mem::take(&mut current));
+            }
+            let _ = rest.parse::<i32>();
+            continue;
+        }
+        if let Some(zz) = parse_word(line, 'Z') {
+            z = zz;
+        }
+        if line.starts_with("G1") && line.contains('E') {
+            current.push(z);
+        }
+    }
+    if !current.is_empty() {
+        layers.push(current);
+    }
+    let start = layers.len().saturating_sub(layer_count);
+    let mut min_z = f64::INFINITY;
+    let mut max_z = f64::NEG_INFINITY;
+    for layer in &layers[start..] {
+        for &zz in layer {
+            min_z = min_z.min(zz);
+            max_z = max_z.max(zz);
+        }
+    }
+    if min_z.is_finite() && max_z.is_finite() {
+        Some((min_z, max_z))
+    } else {
+        None
+    }
 }
 
 /// Top-layer Z variation in parsed G-code (max - min Z on last layer block).

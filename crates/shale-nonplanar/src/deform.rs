@@ -20,33 +20,31 @@ pub struct DeformField {
 }
 
 impl DeformField {
-    /// Forward map: physical Z → deformed Z at column (x, y). Monotone in Z.
+    fn column_limits(&self, x: f64, y: f64) -> Option<(f64, f64, f64, f64)> {
+        let z_band = self.grid.sample_band_start(x, y)?;
+        let h_top = self
+            .grid
+            .sample_top_smooth(x, y)
+            .unwrap_or(self.deformed_top_z);
+        let strength = self.island_strength_at(x, y);
+        Some((z_band, h_top, strength, self.deformed_top_z))
+    }
+
+    /// Forward map: physical Z → deformed Z. Linear and monotone within the top band.
     pub fn forward_z(&self, x: f64, y: f64, z: f64) -> f64 {
-        let Some(z_band) = self.grid.sample_band_start(x, y) else {
+        let Some((z_band, h_top, strength, flat_top)) = self.column_limits(x, y) else {
             return z;
         };
-        let strength = self.island_strength_at(x, y);
-        if strength <= 0.0 {
+        if strength <= 0.0 || z <= z_band {
             return z;
         }
-        let ramp_end = z_band + self.ramp_thickness;
-        if z <= z_band {
-            return z;
+        let wall_shift = (flat_top - h_top) * strength;
+        if z >= h_top {
+            return z + wall_shift;
         }
-        if z < ramp_end {
-            let t = (z - z_band) / self.ramp_thickness.max(1e-6);
-            let smooth = t * t * (3.0 - 2.0 * t);
-            let target = z_band + smooth * (self.deformed_top_z - z_band) * strength;
-            return z + (target - z) * strength;
-        }
-        let band_end = z_band + self.band_thickness;
-        if z >= band_end {
-            return z + (self.deformed_top_z - band_end) * strength;
-        }
-        let t = ((z - ramp_end) / (band_end - ramp_end).max(1e-6)).clamp(0.0, 1.0);
-        let mut z_def = ramp_end + t * (self.deformed_top_z - ramp_end);
-        z_def = z_band + (z_def - z_band) * strength + (1.0 - strength) * (z - z_band);
-        z.max(z_def.min(z + self.max_layer)) // keep monotone: never fold
+        let span = (h_top - z_band).max(1e-6);
+        let target = z_band + (z - z_band) / span * (flat_top - z_band);
+        z + strength * (target - z)
     }
 
     /// Effective layer thickness ratio for extrusion correction.
@@ -72,25 +70,42 @@ impl DeformField {
             .unwrap_or(1.0)
     }
 
-    /// Inverse Z at (x, y): find physical z with `forward_z(x,y,z) ≈ z_deformed`.
+    /// Inverse Z: algebraic inverse of the linear `forward_z`.
     pub fn inverse_z(&self, x: f64, y: f64, z_deformed: f64) -> f64 {
-        let Some(z_band) = self.grid.sample_band_start(x, y) else {
+        let Some((z_band, h_top, strength, flat_top)) = self.column_limits(x, y) else {
             return z_deformed;
         };
-        if z_deformed <= z_band {
+        if strength <= 0.0 || z_deformed <= z_band + 1e-12 {
             return z_deformed;
         }
-        let mut lo = z_band;
-        let mut hi = z_band + self.band_thickness + self.ramp_thickness + 50.0;
-        for _ in 0..64 {
-            let mid = 0.5 * (lo + hi);
-            if self.forward_z(x, y, mid) < z_deformed {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
+        let wall_shift = (flat_top - h_top) * strength;
+        let f_top = h_top + wall_shift;
+        if z_deformed >= f_top - 1e-12 {
+            return z_deformed - wall_shift;
         }
-        0.5 * (lo + hi)
+        let span = (h_top - z_band).max(1e-6);
+        let a = 1.0 - strength + strength * (flat_top - z_band) / span;
+        let b = strength * (z_band - (flat_top - z_band) / span * z_band);
+        if a.abs() < 1e-12 {
+            return z_deformed;
+        }
+        (z_deformed - b) / a
+    }
+
+    /// Worst |round-trip Z error| on a grid inside the deformation band (millimetres).
+    pub fn max_round_trip_error_mm(&self, x: f64, y: f64, samples: usize) -> f64 {
+        let Some(z_band) = self.grid.sample_band_start(x, y) else {
+            return 0.0;
+        };
+        let z_top = z_band + self.band_thickness + self.ramp_thickness;
+        let mut worst = 0.0f64;
+        for i in 0..=samples {
+            let z = z_band + (z_top - z_band) * i as f64 / samples as f64;
+            let f = self.forward_z(x, y, z);
+            let back = self.inverse_z(x, y, f);
+            worst = worst.max((back - z).abs());
+        }
+        worst
     }
 
     pub fn verify_monotone(&self, samples: usize) -> bool {
