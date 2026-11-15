@@ -85,10 +85,8 @@ export function AsciiField({
   label: string;
 }) {
   return (
-    <span className="ascii-field">
-      <span aria-hidden="true">[</span>
+    <span className="ascii-field box box-inline">
       <input aria-label={label} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
-      <span aria-hidden="true">]</span>
     </span>
   );
 }
