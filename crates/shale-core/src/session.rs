@@ -73,6 +73,7 @@ struct Loaded {
     name: String,
     mesh: TriangleMesh,
     transform: Transform,
+    settings: Vec<(String, String)>,
 }
 
 impl Session {
@@ -176,6 +177,7 @@ impl Session {
             name,
             mesh,
             transform,
+            settings: Vec::new(),
         });
         Ok(record)
     }
@@ -390,9 +392,11 @@ impl Session {
             .models
             .iter()
             .map(|model| PlacedModel {
+                slot: None,
                 name: model.name.clone(),
                 mesh: model.mesh.clone(),
                 transform: model.transform.clone(),
+                settings: model.settings.clone(),
             })
             .collect();
         let instructions: Vec<CustomInstruction> = self
@@ -409,11 +413,12 @@ impl Session {
             &printer_id,
             self.variant_name.clone(),
             self.quality_type.clone(),
-            self.material_id.clone(),
+            std::slice::from_ref(&self.material_id),
             self.settings.clone(),
             &placed,
             &instructions,
             self.support.as_ref(),
+            &[],
             output,
             on_progress,
         )?;

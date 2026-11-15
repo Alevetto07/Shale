@@ -1,7 +1,7 @@
 import type { Transform } from "./api";
 
 /** Bounding-box centre of an untransformed mesh. */
-export function localCentre(positions: number[]): [number, number, number] {
+export function localCentre(positions: ArrayLike<number>): [number, number, number] {
   if (positions.length < 3) return [0, 0, 0];
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
@@ -46,7 +46,7 @@ export function rotateScale(
 }
 
 /** World position of the part's centre. This is what the panel and the gizmo show. */
-export function worldCentre(positions: number[], transform: Transform): [number, number, number] {
+export function worldCentre(positions: ArrayLike<number>, transform: Transform): [number, number, number] {
   const offset = rotateScale(localCentre(positions), transform.rotation_deg, transform.scale);
   return [
     transform.translation[0] + offset[0],
@@ -57,7 +57,7 @@ export function worldCentre(positions: number[], transform: Transform): [number,
 
 /** Mesh-origin translation that puts the part centre at `centre`. */
 export function translationForCentre(
-  positions: number[],
+  positions: ArrayLike<number>,
   transform: Transform,
   centre: [number, number, number],
 ): [number, number, number] {

@@ -105,6 +105,12 @@ impl ImportedMesh {
     }
 }
 
+/// Faces above this are tessellated with a coarser chord and fewer refinement
+/// passes: a 6 500-face assembly otherwise spends an hour chasing 0.1 mm.
+const HEAVY_FACE_COUNT: usize = 3_000;
+const HEAVY_CHORDAL_MM: f64 = 0.35;
+const HEAVY_ANGULAR_DEG: f64 = 25.0;
+
 pub fn import_step(bytes: &[u8], tolerance: &TessellationTolerance) -> Result<ImportedMesh, Error> {
     let started = Instant::now();
     let text = std::str::from_utf8(bytes)
@@ -117,6 +123,21 @@ pub fn import_step(bytes: &[u8], tolerance: &TessellationTolerance) -> Result<Im
             "STEP file has no shell Shale can tessellate. Solids from a boolean, or a format truck-stepio 0.3 does not read, are the usual cause.".into(),
         ));
     }
+    // A part with thousands of faces costs minutes at a 0.1 mm chord, and the
+    // refinement loop multiplies that by five. For those parts a coarser first
+    // pass is the difference between an import that lands and one that appears
+    // to hang, so the tolerance is relaxed and the loop shortened.
+    let faces = text.matches("ADVANCED_FACE").count();
+    let heavy = faces > HEAVY_FACE_COUNT;
+    let working = if heavy {
+        TessellationTolerance {
+            chordal_mm: tolerance.chordal_mm.max(HEAVY_CHORDAL_MM),
+            angular_deg: tolerance.angular_deg.max(HEAVY_ANGULAR_DEG),
+        }
+    } else {
+        *tolerance
+    };
+    let passes = if heavy { 2 } else { 5 };
     let mut vertices = Vec::new();
     let mut triangles = Vec::new();
     let mut max_deviation = 0.0_f64;
@@ -124,22 +145,50 @@ pub fn import_step(bytes: &[u8], tolerance: &TessellationTolerance) -> Result<Im
     let mut any = false;
     let mut failures = Vec::new();
     for shell in table.shell.values() {
-        match table.to_compressed_shell(shell) {
-            Ok(shape) => {
-                let (mesh, deviation, turning) = tessellate_shell(&shape, tolerance)?;
-                let base = vertices.len() as u32;
-                vertices.extend(mesh.vertices);
-                triangles.extend(
-                    mesh.triangles
-                        .into_iter()
-                        .map(|tri| [tri[0] + base, tri[1] + base, tri[2] + base]),
-                );
-                max_deviation = max_deviation.max(deviation);
-                max_turning = max_turning.max(turning);
-                any = true;
+        let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            table.to_compressed_shell(shell)
+        }));
+        let shape = match built {
+            Ok(Ok(shape)) => shape,
+            Ok(Err(err)) => {
+                failures.push(err.to_string());
+                continue;
             }
-            Err(err) => failures.push(err.to_string()),
-        }
+            // truck fills in a zero radius when it cannot deserialize a
+            // surface, and `Torus::new` panics on it. Rhino and SolidWorks
+            // both write tori that trigger this, so the panic becomes a
+            // reported failure instead of a dead import task.
+            Err(payload) => {
+                failures.push(format!(
+                    "a surface could not be evaluated ({})",
+                    panic_text(payload.as_ref())
+                ));
+                continue;
+            }
+        };
+        let (mesh, deviation, turning) = match tessellate_shell(&shape, &working, passes) {
+            Ok(result) => result,
+            Err(err) => {
+                failures.push(err.to_string());
+                continue;
+            }
+        };
+        let base = vertices.len() as u32;
+        vertices.extend(mesh.vertices);
+        triangles.extend(
+            mesh.triangles
+                .into_iter()
+                .map(|tri| [tri[0] + base, tri[1] + base, tri[2] + base]),
+        );
+        max_deviation = max_deviation.max(deviation);
+        max_turning = max_turning.max(turning);
+        any = true;
+    }
+    if !failures.is_empty() {
+        return Err(Error::Mesh(format!(
+            "STEP file could not be read in full: {}. Re-export the part as STL or 3MF.",
+            failures.join("; ")
+        )));
     }
     if !any {
         return Err(Error::Mesh(format!(
@@ -178,13 +227,24 @@ pub fn import_step(bytes: &[u8], tolerance: &TessellationTolerance) -> Result<Im
     })
 }
 
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(text) = payload.downcast_ref::<&str>() {
+        return (*text).to_string();
+    }
+    if let Some(text) = payload.downcast_ref::<String>() {
+        return text.clone();
+    }
+    "unknown failure".to_string()
+}
+
 fn tessellate_shell(
     shell: &CompressedShell<Point3, Curve3D, Surface>,
     tolerance: &TessellationTolerance,
+    passes: usize,
 ) -> Result<(TriangleMesh, f64, f64), Error> {
     let mut tol = tolerance.chordal_mm.clamp(1.0e-4, 2.0);
     let mut best: Option<(TriangleMesh, f64, f64)> = None;
-    for _ in 0..5 {
+    for _ in 0..passes.max(1) {
         let meshed = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             shell.robust_triangulation(tol)
         })) {
@@ -394,7 +454,7 @@ mod tests {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../examples")
                 .join(format!("{name}.step"));
-            std::fs::write(&path, &step).unwrap();
+            std::fs::write(&path, step).unwrap();
         }
         let imported = import_step(step.as_bytes(), &tolerance).unwrap_or_else(|err| {
             panic!("{name}: {err}");
@@ -408,6 +468,15 @@ mod tests {
             tolerance.chordal_mm,
         );
         imported
+    }
+
+    #[test]
+    fn panic_payload_text_is_extracted() {
+        let text = std::panic::catch_unwind(|| panic!("radius must be larger than 0")).unwrap_err();
+        assert_eq!(panic_text(text.as_ref()), "radius must be larger than 0");
+        let owned =
+            std::panic::catch_unwind(|| std::panic::panic_any(String::from("boom"))).unwrap_err();
+        assert_eq!(panic_text(owned.as_ref()), "boom");
     }
 
     #[test]
@@ -551,7 +620,7 @@ mod tests {
             "creality_ender3",
             Some("0.4mm Nozzle".into()),
             Some("draft".into()),
-            Some("generic_pla".into()),
+            &[Some("generic_pla".into())],
             crate::UserSettings {
                 layer_height: Some(0.2),
                 infill_sparse_density: Some(15.0),
@@ -562,9 +631,12 @@ mod tests {
                 name: "cylinder".into(),
                 mesh: imported.mesh,
                 transform,
+                settings: Vec::new(),
+                slot: None,
             }],
             &[],
             None,
+            &[],
             std::env::temp_dir().join("shale-step-cylinder.gcode"),
             &mut |_| {},
         )

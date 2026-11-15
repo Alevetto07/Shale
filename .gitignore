@@ -10,3 +10,4 @@ apps/desktop/src-tauri/gen
 .tauri
 *.gcode
 /tmp
+.shale-verify

@@ -216,7 +216,7 @@ fn map_lines(body: &str, mut edit: impl FnMut(&str) -> String) -> String {
 }
 
 fn rewrite_fan(line: &str, percent: f64) -> String {
-    let code = line.trim().split_whitespace().next().unwrap_or("");
+    let code = line.split_whitespace().next().unwrap_or("");
     if code != "M106" && code != "M107" {
         return line.to_string();
     }
@@ -230,7 +230,7 @@ fn rewrite_fan(line: &str, percent: f64) -> String {
 fn rewrite_setpoint(line: &str, codes: &[&str], value: f64) -> Option<String> {
     let trimmed = line.trim();
     let code = trimmed.split_whitespace().next()?;
-    if !codes.iter().any(|candidate| *candidate == code) {
+    if !codes.contains(&code) {
         return None;
     }
     let mut words: Vec<String> = trimmed.split_whitespace().map(str::to_string).collect();
@@ -299,7 +299,6 @@ fn split_layers(gcode: &str) -> Document {
                 layers.push(layer);
             }
             let index = rest
-                .trim()
                 .split_whitespace()
                 .next()
                 .and_then(|value| value.parse().ok())
@@ -638,7 +637,12 @@ mod tests {
             filament_change: false,
             message: None,
         };
-        let reprap = apply(&sample(), &[pause.clone()], GcodeFlavour::RepRap).unwrap();
+        let reprap = apply(
+            &sample(),
+            std::slice::from_ref(&pause),
+            GcodeFlavour::RepRap,
+        )
+        .unwrap();
         assert!(reprap.contains("M226"));
         assert!(!reprap.contains("\nM0 "));
         let klipper = apply(&sample(), &[pause], GcodeFlavour::Klipper).unwrap();

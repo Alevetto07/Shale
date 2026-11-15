@@ -1,6 +1,6 @@
 [package]
 name = "shale-desktop"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Shale desktop shell"
 publish = false
@@ -12,9 +12,17 @@ tauri-build = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 shale-core = { path = "../../../crates/shale-core" }
+shale-host = { path = "../../../crates/shale-host" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+[target.'cfg(windows)'.dependencies]
+# The printer's LAN access code and the cloud's tokens are passwords, so they go
+# to the Windows Credential Manager rather than the WebView profile. `keyring`
+# is that store under its own name; `windows-native` is the Credential Manager
+# backend, and no other backend is built here.
+keyring = { version = "3", default-features = false, features = ["windows-native"] }

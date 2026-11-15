@@ -1,1 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="172" height="224" viewBox="24 8 172 224"><polygon points="96,14 176,62 104,104" fill="#EDEDED"/><polygon points="96,14 104,104 30,110" fill="#B8B8B8"/><polygon points="176,62 190,140 150,134 104,104" fill="#8C8C8C"/><polygon points="30,110 104,104 52,200" fill="#636363"/><polygon points="104,104 150,134 128,226 52,200" fill="#424242"/><polygon points="190,140 128,226 150,134" fill="#2C2C2C"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="172" height="224" viewBox="24 8 172 224">
+  <polygon points="96,14 176,62 104,104" fill="#b9b3ff"/>
+  <polygon points="96,14 104,104 30,110" fill="#c4c2d2"/>
+  <polygon points="176,62 190,140 150,134 104,104" fill="#8a8798"/>
+  <polygon points="30,110 104,104 52,200" fill="#5c596c"/>
+  <polygon points="104,104 150,134 128,226 52,200" fill="#3a3848"/>
+  <polygon points="190,140 128,226 150,134" fill="#221f2c"/>
+</svg>

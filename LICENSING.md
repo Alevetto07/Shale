@@ -24,13 +24,45 @@ Shale reads those files as data. It does not link Cura, and it does not use Uran
 
 Material profiles come from [fdm_materials](https://github.com/Ultimaker/fdm_materials), dedicated to the public domain under CC0-1.0. The fetch script pins commit `82f433b2cfe0ac36c974443b80c9294f31b79224` and leaves that repository's `LICENSE` beside the XML files in `vendor/fdm_materials/`.
 
-## Space Grotesk (SIL Open Font License 1.1)
+## Andromeda Galaxy (NASA, not subject to copyright in the United States)
 
-The wordmark is set in Space Grotesk, weight 600. Interface text is IBM Plex Mono. Both are SIL Open Font License 1.1. The font files and the OFL texts are in `apps/desktop/src/fonts/` (`OFL.txt` for Space Grotesk, `IBMPlexMono-OFL.txt` for Plex). They are bundled with the app and are not loaded from a font host at runtime.
+The start screen draws an ASCII rendering of the Andromeda Galaxy, M31. The photograph is the ultraviolet portrait from NASA's Galaxy Evolution Explorer (GALEX), showing the whole galaxy. NASA's record lists the credit as NASA/JPL-Caltech and a creation date of 16 May 2012.
+
+The source page is [Andromeda (PIA15416) on images.nasa.gov](https://images.nasa.gov/details/PIA15416). The file downloaded from NASA's asset API is `http://images-assets.nasa.gov/image/PIA15416/PIA15416~medium.jpg` (1280×953). Shale bundles only a 640×477 downscale, `apps/desktop/src/field/andromeda.jpg`.
+
+[NASA’s images and media guidelines](https://www.nasa.gov/nasa-brand-center/images-and-media/) say NASA image content is generally not subject to copyright in the United States, and that NASA should be acknowledged as the source. This file is the NASA/JPL-Caltech release, not a third-party astrophotograph and not an ESA/Hubble file, so the CC BY 4.0 credit that applies to many ESA/Hubble images is not the licence here.
+
+## Fonts (SIL Open Font License 1.1)
+
+The wordmark is Space Grotesk, weight 600. Panels and controls are Geist Mono. Longer text (banners, hints, the empty-plate line) is Inter. Shale does not use Instrument Serif or IBM Plex Mono. All three families are SIL Open Font License 1.1. The font files and the OFL texts are in `apps/desktop/src/fonts/` (`OFL.txt` for Space Grotesk, `GeistMono-OFL.txt`, `Inter-OFL.txt`). They are bundled with the app and are not loaded from a font host at runtime.
 
 ## STEP tessellation (Apache-2.0)
 
 Shale tessellates STEP boundary representation itself, instead of asking for an STL. The kernel is [truck](https://github.com/ricosjp/truck): `truck-stepio`, `truck-modeling`, `truck-meshalgo`, and `truck-topology`, all Apache-2.0. The STEP parser underneath (`ruststep`) is Apache-2.0. The constrained Delaunay step uses `spade`, which is MIT OR Apache-2.0. Cargo fetches them. Their source is not copied into this repository. Shale's own code is still unlicensed, as stated at the top of this file.
+
+## The libraries the host brought in
+
+The printer host (`crates/shale-host`) speaks MQTT over TLS and FTPS without a
+TLS stack of its own, so it links:
+
+- **rustls 0.23** — Apache-2.0 OR MIT (ISC for some files);
+- **ring** (through rustls' `ring` backend) — ISC-style, with its own
+  per-file notices;
+- **rustls-pki-types** and **untrusted** — MIT OR Apache-2.0, both ISC-compatible
+  in the parts rustls uses;
+- **windows-sys** on Windows — MIT OR Apache-2.0.
+
+None of these is copyleft, and all have terms that permit redistribution in a
+binary provided the notices travel with it. A release build should ship their
+licence texts; this file is a pointer, not the texts themselves.
+
+## The BSP kernel is csg.js's
+
+`crates/shale-core/src/csg.rs` is a port of **csg.js** by Evan Wallace, which is
+MIT licensed (Copyright (c) 2011 Evan Wallace). The polygon splitting, the node
+structure and the union/subtract/intersect operations are that design; the
+split-plane choice and the open-edge accounting here are Shale's. Keep the MIT
+notice with any redistribution of that file.
 
 Open CASCADE (OCCT) was the other candidate. It is LGPL-2.1 with an additional exception. The exception lets a program use an unmodified OCCT under terms other than the LGPL, provided OCCT stays replaceable: if you modify OCCT, those changes must be released under LGPL-2.1 plus the same exception, and a combined binary still has to let a recipient swap in their own OCCT. Shipping Shale linked to OCCT would mean shipping that licence, offering OCCT's source, and keeping the library separable. That is a real distribution obligation, so Shale does not link OCCT. truck covers the STEP files this version tessellates (planes, cylinders, spheres, NURBS shells). Files that only a boolean kernel can rebuild are reported as unsupported rather than sent through OCCT.
 

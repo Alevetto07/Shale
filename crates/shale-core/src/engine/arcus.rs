@@ -75,6 +75,10 @@ impl SlicingEngine for ArcusEngine {
         })?;
 
         let stream = accept_engine(&listener, &mut child)?;
+        // On Windows an accepted socket inherits the listener's non-blocking
+        // mode, which also disables the read timeout below. Put the connection
+        // back into blocking mode with a short receive timeout.
+        stream.set_nonblocking(false)?;
         stream.set_nodelay(true)?;
         stream.set_read_timeout(Some(Duration::from_millis(200)))?;
         let mut stream = stream;
@@ -152,10 +156,10 @@ impl SlicingEngine for ArcusEngine {
                     )));
                 }
             }
-            let size = read_u32(&mut stream)? as usize;
-            let type_id = read_u32(&mut stream)?;
+            let size = read_u32_retrying(&mut stream)? as usize;
+            let type_id = read_u32_retrying(&mut stream)?;
             let mut body = vec![0u8; size];
-            read_exact(&mut stream, &mut body)?;
+            read_exact_retrying(&mut stream, &mut body)?;
             match proto::decode(type_id, &body) {
                 Incoming::Progress(amount) => {
                     let fraction = if amount > 1.0 { amount / 100.0 } else { amount };
@@ -214,11 +218,19 @@ impl SlicingEngine for ArcusEngine {
 
 fn objects_from_request(request: &EngineRequest) -> Result<Vec<ObjectMesh>, Error> {
     let mut objects = Vec::new();
-    for path in &request.models {
-        objects.push(mesh_from_path(path, Vec::new())?);
+    for model in &request.models {
+        objects.push(mesh_from_path(
+            &model.path,
+            model.settings.clone(),
+            model.extruder,
+        )?);
     }
     for modifier in &request.modifiers {
-        objects.push(mesh_from_path(&modifier.path, modifier.settings.clone())?);
+        objects.push(mesh_from_path(
+            &modifier.path,
+            modifier.settings.clone(),
+            modifier.extruder,
+        )?);
     }
     Ok(objects)
 }
@@ -226,6 +238,7 @@ fn objects_from_request(request: &EngineRequest) -> Result<Vec<ObjectMesh>, Erro
 fn mesh_from_path(
     path: &std::path::Path,
     settings: Vec<(String, String)>,
+    extruder: Option<usize>,
 ) -> Result<ObjectMesh, Error> {
     let mesh = mesh::load_mesh(path)?;
     // CuraEngine treats `vertices` as a triangle soup: three XYZ floats per
@@ -240,7 +253,9 @@ fn mesh_from_path(
     }
     let mut settings = settings;
     if !settings.iter().any(|(key, _)| key == "extruder_nr") {
-        settings.push(("extruder_nr".into(), "0".into()));
+        // The mesh group carries the extruder, so a part on the second spool asks
+        // the engine for the second tool even though the printer has one nozzle.
+        settings.push(("extruder_nr".into(), extruder.unwrap_or(0).to_string()));
     }
     let name = path
         .file_stem()
@@ -302,8 +317,32 @@ fn read_u32(stream: &mut TcpStream) -> std::io::Result<u32> {
     Ok(u32::from_be_bytes(buf))
 }
 
+/// A message body is read after its header has already announced it, so a
+/// timeout in the middle must be retried instead of aborting the slice.
+fn read_u32_retrying(stream: &mut TcpStream) -> std::io::Result<u32> {
+    let mut buf = [0u8; 4];
+    read_exact_retrying(stream, &mut buf)?;
+    Ok(u32::from_be_bytes(buf))
+}
+
 fn read_exact(stream: &mut TcpStream, buf: &mut [u8]) -> std::io::Result<()> {
+    read_exact_with(stream, buf, 0)
+}
+
+fn read_exact_retrying(stream: &mut TcpStream, buf: &mut [u8]) -> std::io::Result<()> {
+    read_exact_with(stream, buf, 150)
+}
+
+/// `stall_limit` is the number of consecutive 200 ms receive timeouts that are
+/// retried before the read fails. Zero means a timeout is returned at once,
+/// which is what the header read wants so it can poll the engine.
+fn read_exact_with(
+    stream: &mut TcpStream,
+    buf: &mut [u8],
+    stall_limit: u32,
+) -> std::io::Result<()> {
     let mut filled = 0;
+    let mut stalled = 0u32;
     while filled < buf.len() {
         match stream.read(&mut buf[filled..]) {
             Ok(0) => {
@@ -312,8 +351,20 @@ fn read_exact(stream: &mut TcpStream, buf: &mut [u8]) -> std::io::Result<()> {
                     "Arcus connection closed",
                 ))
             }
-            Ok(n) => filled += n,
+            Ok(n) => {
+                filled += n;
+                stalled = 0;
+            }
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err)
+                if err.kind() == std::io::ErrorKind::WouldBlock
+                    || err.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                if stalled >= stall_limit {
+                    return Err(err);
+                }
+                stalled += 1;
+            }
             Err(err) => return Err(err),
         }
     }

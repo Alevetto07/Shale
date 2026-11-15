@@ -346,7 +346,7 @@ endsolid cube
         "creality_ender3",
         Some("0.4mm Nozzle".into()),
         Some("draft".into()),
-        Some("generic_pla".into()),
+        &[Some("generic_pla".into())],
         UserSettings {
             layer_height: Some(0.2),
             infill_sparse_density: Some(20.0),
@@ -359,6 +359,8 @@ endsolid cube
             name: "cube".into(),
             mesh,
             transform: shale_core::Transform::default(),
+            settings: Vec::new(),
+            slot: None,
         }],
         &[shale_core::CustomInstruction::Pause {
             layer: Some(10),
@@ -367,6 +369,7 @@ endsolid cube
             message: Some("swap".into()),
         }],
         None,
+        &[],
         dir.join("cube.gcode"),
         &mut |progress| eprintln!("{:.0}% {}", progress.fraction * 100.0, progress.message),
     );
@@ -430,7 +433,7 @@ fn arcus_slices_the_cube_when_configured() {
         "creality_ender3",
         Some("0.4mm Nozzle".into()),
         Some("draft".into()),
-        Some("generic_pla".into()),
+        &[Some("generic_pla".into())],
         UserSettings {
             layer_height: Some(0.2),
             infill_sparse_density: Some(15.0),
@@ -443,9 +446,12 @@ fn arcus_slices_the_cube_when_configured() {
             name: "cube".into(),
             mesh,
             transform: shale_core::Transform::default(),
+            settings: Vec::new(),
+            slot: None,
         }],
         &[],
         None,
+        &[],
         std::env::temp_dir().join("shale-arcus-cube.gcode"),
         &mut |progress| {
             peak = peak.max(progress.fraction);
@@ -468,4 +474,47 @@ fn arcus_slices_the_cube_when_configured() {
         }
         Err(err) => panic!("{err}"),
     }
+}
+
+/// Cura's own UI treats cool_fan_enabled as the switch over the fan and leaves
+/// the speeds alone. The engine keeps emitting M106 at cool_fan_speed whatever
+/// the switch says, so "part cooling off" has to carry the speeds down with it
+/// or the switch changes nothing at all.
+#[test]
+fn turning_cooling_off_takes_the_fan_speeds_with_it() {
+    let catalog = catalog();
+    let resolve = |enabled: &str| {
+        catalog
+            .resolve(&shale_core::ResolveRequest {
+                printer_id: "demo_ender".into(),
+                variant_name: None,
+                quality_type: None,
+                material_id: Some("generic_pla".into()),
+                intent_category: None,
+                settings: UserSettings {
+                    extra: vec![("cool_fan_enabled".to_string(), enabled.to_string())],
+                    ..Default::default()
+                },
+            })
+            .unwrap()
+    };
+
+    let on = resolve("True");
+    let off = resolve("False");
+
+    let speed = |resolved: &shale_core::ResolvedSettings| {
+        resolved
+            .global
+            .get("cool_fan_speed")
+            .and_then(|value| value.parse::<f64>().ok())
+    };
+    // The fixture profile carries no fan speed of its own; the engine would use
+    // its built-in hundred percent. What matters is that the off switch writes a
+    // speed of zero over whatever the profile said.
+    assert!(!on.global.contains_key("cool_fan_speed"));
+    assert_eq!(speed(&off), Some(0.0), "cooling off means the fan is off");
+    assert_eq!(
+        off.global.get("cool_fan_speed_max").map(String::as_str),
+        Some("0")
+    );
 }

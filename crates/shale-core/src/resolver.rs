@@ -17,7 +17,7 @@ use crate::definition::RawSetting;
 use crate::formula::{self, Expr, FormulaError, FormulaHost};
 use crate::value::Value;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct UserSettings {
     pub layer_height: Option<f64>,
     pub infill_sparse_density: Option<f64>,
@@ -242,6 +242,18 @@ impl Catalog {
         }
 
         apply_user(&request.settings, &mut global, &mut extruder);
+        if std::env::var_os("SHALE_TRACE_RESOLVE").is_some() {
+            eprintln!(
+                "RESOLVE material={:?} print={:?} bed={:?}",
+                material_id,
+                global
+                    .get("material_print_temperature")
+                    .map(|s| format!("{s:?}")),
+                global
+                    .get("material_bed_temperature")
+                    .map(|s| format!("{s:?}"))
+            );
+        }
 
         let mut ctx = EvalCtx {
             global,
@@ -565,6 +577,18 @@ fn parse_literal(text: &str) -> Value {
 
 fn select_material_id(catalog: &Catalog, wanted: Option<&str>, diameter: f64) -> Option<String> {
     let wanted = wanted?;
+    // An exact id is the answer, and it has to be checked first. The fuzzy pass
+    // below is for a `wanted` that names a family rather than an entry; run for
+    // an exact id, its nearest-diameter tie-break keeps the *first* material it
+    // meets, which is a 1.75 mm PLA — so every material used to slice as PLA,
+    // whatever the sheet said.
+    if catalog
+        .materials
+        .iter()
+        .any(|material| material.id == wanted)
+    {
+        return Some(wanted.to_string());
+    }
     let mut best: Option<(&crate::material::Material, f64)> = None;
     for material in &catalog.materials {
         if !material_ok(Some(&material.id), Some(wanted)) && material.id != wanted {
@@ -618,7 +642,40 @@ fn apply_material(
             }
         }
     }
-    values.insert("material_diameter".to_string(), material.diameter);
+    // Cura's own definition links the machine's temperatures to the material's
+    // defaults with a formula (`material_print_temperature` reads
+    // `default_material_print_temperature`). Definitions are read as data here,
+    // so the link is made explicit: without it a material contributes its
+    // "print temperature" under a key nothing reads, and every material slices
+    // at the definition's 200 C whatever the sheet says.
+    for (from, to) in [
+        (
+            "default_material_print_temperature",
+            "material_print_temperature",
+        ),
+        (
+            "default_material_print_temperature",
+            "material_print_temperature_layer_0",
+        ),
+        (
+            "default_material_bed_temperature",
+            "material_bed_temperature",
+        ),
+        (
+            "default_material_bed_temperature",
+            "material_bed_temperature_layer_0",
+        ),
+    ] {
+        if let Some(value) = values.get(from).copied() {
+            values.entry(to.to_string()).or_insert(value);
+        }
+    }
+    // The filament diameter belongs to the machine, not to the spool. A 2.85 mm
+    // material on a 1.75 mm printer used to rewrite `material_diameter`, which
+    // stretches every flow figure computed from it; `select_material_id` already
+    // keeps a spool that does not fit out of the running, so the machine's value
+    // stands.
+    values.remove("material_diameter");
     for (key, value) in values {
         set_literal(global, &key, Value::Num(value));
         set_literal(extruder, &key, Value::Num(value));
@@ -668,6 +725,27 @@ fn apply_user(
         let literal = parse_literal(value);
         force_literal(global, key, literal.clone());
         force_literal(extruder, key, literal);
+    }
+    // Cura's own UI treats cool_fan_enabled as the switch and leaves the speeds
+    // alone; the engine does not, and keeps emitting M106 at cool_fan_speed. So
+    // "part cooling off" would be a switch that changes nothing. Zero the
+    // speeds with it, which is what the person turning it off means.
+    let cooling_off = settings
+        .extra
+        .iter()
+        .find(|(key, _)| key == "cool_fan_enabled")
+        .map(|(_, value)| matches!(parse_literal(value), Value::Bool(false)))
+        .unwrap_or(false);
+    if cooling_off {
+        for key in [
+            "cool_fan_speed",
+            "cool_fan_speed_0",
+            "cool_fan_speed_min",
+            "cool_fan_speed_max",
+        ] {
+            force_literal(global, key, Value::Num(0.0));
+            force_literal(extruder, key, Value::Num(0.0));
+        }
     }
 }
 
@@ -1331,17 +1409,17 @@ mod golden {
                     continue;
                 }
                 checked += 1;
-                if item.get("match").and_then(|value| value.as_bool()) != Some(true) {
-                    if mismatches.len() < 25 {
-                        mismatches.push(format!(
-                            "{printer} {}: shale {:?} cura {:?}",
-                            item.get("key")
-                                .and_then(|value| value.as_str())
-                                .unwrap_or("?"),
-                            item.get("shale"),
-                            item.get("cura")
-                        ));
-                    }
+                if item.get("match").and_then(|value| value.as_bool()) != Some(true)
+                    && mismatches.len() < 25
+                {
+                    mismatches.push(format!(
+                        "{printer} {}: shale {:?} cura {:?}",
+                        item.get("key")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("?"),
+                        item.get("shale"),
+                        item.get("cura")
+                    ));
                 }
             }
         }

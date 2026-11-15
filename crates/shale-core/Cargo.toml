@@ -1,11 +1,15 @@
 [package]
 name = "shale-core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Job model, Cura profile resolution, and CuraEngine orchestration for Shale"
 publish = false
 
 [dependencies]
+# Manifold 3.5.3 (Apache-2.0) through the manifold3d 0.4.1 bindings (Apache-2.0 OR
+# MIT). The booleans in csg.rs are answered by it; see src/manifold_csg.rs for
+# why, and THIRD-PARTY-NOTICES.md for the licence text the installer ships.
+manifold3d = "0.4.1"
 quick-xml = "0.37"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
