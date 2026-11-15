@@ -274,57 +274,51 @@ code { font-family: var(--mono); }
   background: var(--panel);
 }
 
-.frame-rule {
-  display: flex;
-  color: var(--line);
-  white-space: nowrap;
-  overflow: hidden;
-  user-select: none;
+.frame {
+  border: 1px solid var(--line);
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--panel) 82%, var(--bg));
 }
+.frame-bar {
+  border-bottom: 1px solid var(--line);
+  padding: 0.2rem 0.45rem;
+}
+.frame--closed .frame-bar { border-bottom-color: transparent; }
 .frame-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  flex: none;
-  padding: 0 0.25rem;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.1rem 0.15rem;
   background: none;
   border: none;
   color: inherit;
   font: inherit;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: 2px;
+  text-align: left;
 }
 .frame-toggle:hover { background: rgba(233, 232, 242, 0.05); }
 .frame-caret {
   color: var(--ink-3);
   font-size: 9px;
   line-height: 1;
-  opacity: 0.7;
+  flex: none;
+  opacity: 0.85;
 }
-.frame-toggle:hover .frame-caret { opacity: 1; color: var(--accent); }
+.frame-toggle:hover .frame-caret { color: var(--accent); }
 .frame-title {
   color: var(--ink-3);
-  flex: none;
+  flex: 1 1 auto;
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 .frame-toggle:hover .frame-title { color: var(--ink-2); }
-.frame.closed .frame-title { opacity: 0.75; }
-.rule {
-  overflow: hidden;
-  white-space: nowrap;
-  min-width: 0;
-}
-.frame-body {
-  display: grid;
-  grid-template-columns: 1ch 1fr 1ch;
-  color: var(--dim);
-}
-.frame-side { text-align: center; }
+.frame--closed .frame-title { opacity: 0.75; }
 .frame-content {
   color: var(--ink);
-  padding: 0.35rem 0.7rem 0.55rem;
+  padding: 0.4rem 0.7rem 0.6rem;
   display: grid;
   gap: 0.35rem;
 }
@@ -418,14 +412,32 @@ input[type="number"] { -moz-appearance: textfield; }
 
 .ascii-select { position: relative; min-width: 0; }
 .ascii-select-closed {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
   width: 100%;
+  min-height: 1.55rem;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 65%, transparent);
   text-align: left;
   color: var(--ink);
-  white-space: nowrap;
+}
+.ascii-select-label {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.ascii-select-caret {
+  flex: none;
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 1;
+}
+.ascii-select-closed:hover .ascii-select-caret { color: var(--accent); }
 .ascii-menu {
   position: absolute;
   z-index: 8;
@@ -2678,27 +2690,7 @@ input[type="checkbox"]:focus-visible {
   padding: 1.1rem 1rem 0.9rem;
   margin-top: 1.1rem;
 }
-.box::before,
-.box::after {
-  content: "";
-  position: absolute;
-  width: 5px;
-  height: 5px;
-  border: 1px solid var(--accent, #b9b3ff);
-  opacity: 0.55;
-}
-.box::before {
-  left: -1px;
-  top: -1px;
-  border-right: 0;
-  border-bottom: 0;
-}
-.box::after {
-  right: -1px;
-  bottom: -1px;
-  border-left: 0;
-  border-top: 0;
-}
+/* Corner ticks were accent-coloured and misaligned under Geist Mono / WebView2. */
 .box-inline {
   display: inline-flex;
   margin-top: 0;

@@ -32,6 +32,7 @@ import { StartScreen } from "./StartScreen";
 import { DevicePane, TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
 import { FeatureLegend } from "./Legend";
 import { thumbnailJpeg } from "./thumbnail";
+import { variantOptionLabel } from "./profile-labels";
 import { Frame, meter, track } from "./theme";
 import { MenuBar, type SliceSettings } from "./MenuBar";
 import { TitleBar } from "./TitleBar";
@@ -256,6 +257,7 @@ export function App() {
   const recents = useRecents();
   const [notice, setNotice] = useState<string | null>(null);
   const restore = useRef<Restore | null>(null);
+  const catalogLoadingRef = useRef(false);
   const saveRef = useRef<(asNew: boolean) => void>(() => {});
   const openRef = useRef<(path?: string) => void>(() => {});
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -363,6 +365,8 @@ export function App() {
   useEffect(() => {
     let stopped = false;
     let retry: number | undefined;
+    let catalogPoll: number | undefined;
+    let catalogAttempts = 0;
     // A demo scenario slices before the window opens, so the first boot can
     // legitimately see an empty plate. Ask again instead of filming the start
     // screen.
@@ -375,14 +379,23 @@ export function App() {
         const next = await api.status();
         if (stopped) return;
         setStatus(next);
+        catalogLoadingRef.current = !next.resources_ok && !!next.catalog_loading;
         setEnginePath(next.engine_path);
         setLibDir(next.engine_lib_dir || "");
         setBackend(next.engine_backend || "cli");
         if (!next.resources_ok && next.catalog_loading) {
+          catalogAttempts += 1;
+          if (catalogAttempts > 180) {
+            setError(
+              "Reading the printer and material profiles timed out — close other heavy builds and relaunch, or check SHALE_CURA_DIR.",
+            );
+            return;
+          }
           window.clearTimeout(retry);
           retry = window.setTimeout(() => void boot(), 700);
           return;
         }
+        catalogAttempts = 0;
         if (!next.resources_ok) {
           setError(next.resources_message);
         }
@@ -490,15 +503,29 @@ export function App() {
         if (!stopped) setError(messageOf(err));
       }
     };
-    void boot();
-    const unlisten = listen("catalogue", () => {
+    let offCatalogue: (() => void) | undefined;
+    const onCatalogue = () => {
       window.clearTimeout(retry);
       void boot();
+    };
+    void listen("catalogue", onCatalogue).then((off) => {
+      offCatalogue = off;
+      if (!stopped) void boot();
     });
+    catalogPoll = window.setInterval(() => {
+      if (stopped) return;
+      if (catalogLoadingRef.current) void boot();
+    }, 1500);
+    const onFocus = () => {
+      if (!stopped) void boot();
+    };
+    window.addEventListener("focus", onFocus);
     return () => {
       stopped = true;
       window.clearTimeout(retry);
-      void unlisten.then((off) => off());
+      window.clearInterval(catalogPoll);
+      window.removeEventListener("focus", onFocus);
+      offCatalogue?.();
     };
   }, []);
 
@@ -2718,6 +2745,8 @@ export function App() {
       ) : (
       <div className="workspace">
         <aside className="panel">
+          {pane === "prepare" && (
+          <>
           <Frame title="plates">
             <div className="row plates">
               {plates.map((plate) => (
@@ -2857,6 +2886,7 @@ export function App() {
                     <span>mm</span>
                   </label>
                 </div>
+                {(paintArmed || patches.length > 0 || painted > 0 || blocked > 0) && (
                 <div className="row paint-patches">
                   {paintArmed && (
                     <p className="paint-hint">
@@ -2885,6 +2915,7 @@ export function App() {
                     </>
                   )}
                 </div>
+                )}
                 <p className="hint">
                   a painted face is held up by a column to the bed, and painting turns the plate's own
                   support off: what you paint is the whole of it.
@@ -2892,6 +2923,8 @@ export function App() {
               </>
             )}
           </Frame>
+          </>
+          )}
 
           {/* Prepare owns the machine and the process: these are the things a
               slice is made from. Preview is a reading of the result and offers
@@ -2919,7 +2952,10 @@ export function App() {
               <AsciiSelect
                 label="nozzle"
                 value={variant ?? ""}
-                options={variants.map((item) => ({ value: item.name, label: item.name }))}
+                options={variants.map((item) => ({
+                  value: item.name,
+                  label: variantOptionLabel(item),
+                }))}
                 onChange={(next) => setVariant(next || null)}
               />
             </label>
@@ -3841,7 +3877,6 @@ export function App() {
                     {layerZ[layer] != null ? `   z ${layerZ[layer].toFixed(2)}` : ""}
                     {minutes == null ? "" : `   ~${minutes} min`}
                     {marksHere.length > 0 ? `   + ${marksHere.map((item) => item.summary).join(" / ")}` : ""}
-                    {"   [ ]"}
                   </div>
                   <div className="glyphs" aria-hidden="true">
                     {Array.from(track(layer, Math.max(0, layerCount - 1), 28, marks)).map((glyph, index) =>

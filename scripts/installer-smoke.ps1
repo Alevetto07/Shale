@@ -6,7 +6,10 @@
 # the first failure, so a partial pass cannot read as a pass.
 $ErrorActionPreference = "Stop"
 
-$setup = "C:\Users\Alessio\Shale\target\release\bundle\nsis\Shale_0.1.1_x64-setup.exe"
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$confPath = Join-Path $repoRoot "apps\desktop\src-tauri\tauri.conf.json"
+$version = (Get-Content $confPath -Raw | ConvertFrom-Json).version
+$setup = Join-Path $repoRoot "target\release\bundle\nsis\Shale_${version}_x64-setup.exe"
 $project = "C:\Users\Alessio\probe\roundtrip.shale"
 $appDir = Join-Path $env:LOCALAPPDATA "Shale"
 $exe = Join-Path $appDir "Shale.exe"

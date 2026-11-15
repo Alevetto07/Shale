@@ -236,7 +236,7 @@ fn app_status(state: State<AppState>) -> Result<Status, String> {
     let printer_count = inner
         .catalog
         .as_ref()
-        .map(|c| c.printers().len())
+        .map(|c| c.selectable_printers().len())
         .unwrap_or(0);
     let engine_ok = inner.engine.available();
     Ok(Status {

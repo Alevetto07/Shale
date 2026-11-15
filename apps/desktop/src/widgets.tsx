@@ -159,7 +159,10 @@ export function AsciiSelect({
         aria-controls={listId}
         onClick={() => setOpen((next) => !next)}
       >
-        [ {shown} v]
+        <span className="ascii-select-label">{shown}</span>
+        <span className="ascii-select-caret" aria-hidden="true">
+          ▾
+        </span>
       </button>
       {open && (
         <div className="ascii-menu" id={listId} role="listbox" aria-label={label}>

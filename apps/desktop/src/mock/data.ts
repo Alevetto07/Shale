@@ -49,8 +49,8 @@ export const MOCK_PRINTERS: PrinterInfo[] = [
 export const MOCK_VARIANTS: VariantInfo[] = [{ name: "0.4mm Nozzle", nozzle_size: 0.4 }];
 
 export const MOCK_QUALITIES: QualityInfo[] = [
-  { quality_type: "normal", name: "0.20mm Standard" },
-  { quality_type: "draft", name: "0.28mm Extra Draft" },
+  { quality_type: "0.20mm Standard @BBL A1", name: "0.20mm Standard @BBL A1" },
+  { quality_type: "0.28mm Extra Draft @BBL A1", name: "0.28mm Extra Draft @BBL A1" },
 ];
 
 export const MOCK_MATERIALS: MaterialInfo[] = [

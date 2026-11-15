@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { MaterialInfo, PrinterInfo, QualityInfo, VariantInfo } from "./api";
+import { variantOptionLabel } from "./profile-labels";
 import { ProcessSheet } from "./ProcessSheet";
 import type { ViewStyle } from "./Viewport";
 
@@ -341,8 +342,7 @@ export function MenuBar(props: MenuBarProps) {
               <option value="">Default</option>
               {props.variants.map((entry) => (
                 <option key={entry.name} value={entry.name}>
-                  {entry.name}
-                  {entry.nozzle_size ? ` (${entry.nozzle_size} mm)` : ""}
+                  {variantOptionLabel(entry)}
                 </option>
               ))}
             </select>

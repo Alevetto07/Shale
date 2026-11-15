@@ -514,7 +514,20 @@ impl Catalog {
             }
         }
         let mut qualities: Vec<_> = by_type.into_values().map(|(_, info)| info).collect();
-        qualities.sort_by(|a, b| a.name.cmp(&b.name));
+        // Orca/Bambu profiles are named like `0.20mm Standard @BBL A1`. Cura's
+        // generic quality tabs (`Draft`, `Normal`, …) still inherit into the same
+        // machine and would clutter the v0.1 UI beside the six A1 presets.
+        if self.external.contains(printer_id) {
+            qualities.retain(|info| info.name.contains("@BBL"));
+            qualities.sort_by(|a, b| {
+                layer_hint_mm(&a.name)
+                    .partial_cmp(&layer_hint_mm(&b.name))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+        } else {
+            qualities.sort_by(|a, b| a.name.cmp(&b.name));
+        }
         qualities
     }
 
@@ -610,6 +623,13 @@ impl Catalog {
         }
         Ok(merged)
     }
+}
+
+/// Sort key for `0.20mm Standard @BBL A1`-style profile names.
+fn layer_hint_mm(name: &str) -> f64 {
+    let head = name.split_whitespace().next().unwrap_or("");
+    let value = head.trim_end_matches("mm");
+    value.parse().unwrap_or(f64::MAX)
 }
 
 pub(crate) fn specificity(definition_id: &str, ancestry: &[String]) -> usize {

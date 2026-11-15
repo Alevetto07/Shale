@@ -531,7 +531,6 @@ export function DevicePane({
       <section className="device-head">
         <p className="device-kicker">device</p>
         <h2 className="device-title">{machine}</h2>
-        <pre className="ascii-rule">{"·----------------------------------------·"}</pre>
         <p className="device-sub">
           {source === "bambu" ? "Bambu Studio profile" : "Cura profile"} ·{" "}
           {bedWidth.toFixed(0)} × {bedDepth.toFixed(0)} × {bedHeight.toFixed(0)} mm ·{" "}
