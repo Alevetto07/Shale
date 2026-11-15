@@ -30,7 +30,7 @@ mod tests {
     fn unity_on_flat_plateau() {
         let mesh = box_mesh(10.0, 10.0, 5.0);
         let grid = build_height_field(&mesh, 1.0, 30.0, 1.0);
-        let field = build_deform_field(grid, 1.0, 0.2, 0.2);
+        let field = build_deform_field(grid, 1.0, 0.2, 0.2, 30.0);
         let s = extrusion_scale(&field, 0.0, 0.0, 2.0, 1.0, 0.0, 2.2);
         assert!((s - 1.0).abs() < 0.15);
     }

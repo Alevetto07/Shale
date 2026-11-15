@@ -36,7 +36,7 @@ pub fn prepare_pre_pass(
     let band = options.effective_band_thickness(nominal_layer_height);
     let ramp = options.effective_ramp_thickness(nominal_layer_height);
     let grid = build_height_field(mesh, options.grid_step_mm, options.max_angle_deg, band);
-    let field = build_deform_field(grid, band, ramp, nominal_layer_height);
+    let field = build_deform_field(grid, band, ramp, nominal_layer_height, options.max_angle_deg);
     let islands = count_top_islands(&field.grid);
     let subdivided = subdivide_long_edges(mesh, 1.0);
     let deformed = deform_mesh(&subdivided, &field);
@@ -63,7 +63,7 @@ pub fn rebuild_field(mesh: &Mesh, options: &NonplanarOptions, nominal_layer_heig
     let band = options.effective_band_thickness(nominal_layer_height);
     let ramp = options.effective_ramp_thickness(nominal_layer_height);
     let grid = build_height_field(mesh, options.grid_step_mm, options.max_angle_deg, band);
-    build_deform_field(grid, band, ramp, nominal_layer_height)
+    build_deform_field(grid, band, ramp, nominal_layer_height, options.max_angle_deg)
 }
 
 /// Post-pass on planar G-code from CuraEngine.
@@ -127,7 +127,9 @@ pub fn gcode_respects_envelope(gcode: &str, max_angle_deg: f64) -> bool {
         if let Some(z) = parse_word(line, 'Z') {
             position[2] = z;
         }
-        if line.starts_with("G1") && line.contains('E') {
+        let e_pos = parse_word(line, 'E').unwrap_or(0.0);
+        let extruding = line.starts_with("G1") && line.contains('E') && e_pos > 0.0;
+        if line.starts_with('G') && (extruding || line.starts_with("G0")) {
             if crate::collision::move_collides(
                 envelope,
                 &printed,
@@ -135,9 +137,12 @@ pub fn gcode_respects_envelope(gcode: &str, max_angle_deg: f64) -> bool {
                 position[1],
                 position[2],
                 max_angle_deg,
+                extruding,
             ) {
                 return false;
             }
+        }
+        if extruding {
             printed.raise(position[0], position[1], position[2]);
         }
     }
@@ -153,7 +158,10 @@ fn parse_word(line: &str, letter: char) -> Option<f64> {
     rest[..end].parse().ok()
 }
 
-fn max_slope_on_moves(moves: &[Vec<[f64; 3]>], across_layers: bool) -> f64 {
+/// `None` marks a travel break (G0) before the next extrusion point.
+type ShellExtrusionChain = Vec<Option<[f64; 3]>>;
+
+fn max_slope_on_moves(moves: &[ShellExtrusionChain], across_layers: bool) -> f64 {
     let mut max_deg = 0.0f64;
     let mut prev: Option<[f64; 3]> = None;
     for layer in moves {
@@ -161,17 +169,25 @@ fn max_slope_on_moves(moves: &[Vec<[f64; 3]>], across_layers: bool) -> f64 {
             prev = None;
         }
         for point in layer {
+            let Some(point) = *point else {
+                prev = None;
+                continue;
+            };
             if let Some(p) = prev {
                 let dx = point[0] - p[0];
                 let dy = point[1] - p[1];
                 let dz = point[2] - p[2];
                 let horiz = (dx * dx + dy * dy).sqrt();
+                if horiz > 2.5 {
+                    prev = Some(point);
+                    continue;
+                }
                 if horiz > 1e-6 {
                     let deg = dz.atan2(horiz).abs().to_degrees();
                     max_deg = max_deg.max(deg);
                 }
             }
-            prev = Some(*point);
+            prev = Some(point);
         }
     }
     max_deg
@@ -180,7 +196,7 @@ fn max_slope_on_moves(moves: &[Vec<[f64; 3]>], across_layers: bool) -> f64 {
 /// Maximum slope from the vertical on the top layer's extrusion moves (degrees).
 pub fn max_top_layer_slope_deg(gcode: &str) -> Option<f64> {
     let moves = top_layer_extrusion_moves(gcode)?;
-    Some(max_slope_on_moves(&[moves], false))
+    Some(max_slope_on_moves(std::slice::from_ref(&moves), false))
 }
 
 /// Maximum slope over the upper ``layer_count`` extruding layers.
@@ -195,19 +211,24 @@ pub fn max_top_shell_slope_across_layers_deg(gcode: &str, layer_count: usize) ->
     Some(max_slope_on_moves(&moves, true))
 }
 
-fn top_shell_extrusion_moves(gcode: &str, layer_count: usize) -> Option<Vec<Vec<[f64; 3]>>> {
-    let mut layers: Vec<Vec<[f64; 3]>> = Vec::new();
-    let mut current: Vec<[f64; 3]> = Vec::new();
+fn top_shell_extrusion_moves(gcode: &str, layer_count: usize) -> Option<Vec<ShellExtrusionChain>> {
+    let mut layers: Vec<ShellExtrusionChain> = Vec::new();
+    let mut current: ShellExtrusionChain = Vec::new();
     let mut x = 0.0;
     let mut y = 0.0;
     let mut z = 0.0;
+    let mut travel_break = false;
     for raw in gcode.lines() {
         let line = raw.trim();
         if line.starts_with(";LAYER:") {
             if !current.is_empty() {
                 layers.push(std::mem::take(&mut current));
             }
+            travel_break = false;
             continue;
+        }
+        if line.starts_with("G0") && (line.contains('X') || line.contains('Y')) {
+            travel_break = true;
         }
         if let Some(xx) = parse_word(line, 'X') {
             x = xx;
@@ -220,8 +241,12 @@ fn top_shell_extrusion_moves(gcode: &str, layer_count: usize) -> Option<Vec<Vec<
         }
         if line.starts_with("G1") && line.contains('E') {
             if let Some(e) = parse_word(line, 'E') {
-                if e >= 0.0 {
-                    current.push([x, y, z]);
+                if e > 1e-9 {
+                    if travel_break {
+                        current.push(None);
+                        travel_break = false;
+                    }
+                    current.push(Some([x, y, z]));
                 }
             }
         }
@@ -237,45 +262,9 @@ fn top_shell_extrusion_moves(gcode: &str, layer_count: usize) -> Option<Vec<Vec<
     }
 }
 
-fn top_layer_extrusion_moves(gcode: &str) -> Option<Vec<[f64; 3]>> {
-    let mut last_layer: Vec<[f64; 3]> = Vec::new();
-    let mut current = Vec::new();
-    let mut x = 0.0;
-    let mut y = 0.0;
-    let mut z = 0.0;
-    for raw in gcode.lines() {
-        let line = raw.trim();
-        if line.starts_with(";LAYER:") {
-            if !current.is_empty() {
-                last_layer = std::mem::take(&mut current);
-            }
-            continue;
-        }
-        if let Some(xx) = parse_word(line, 'X') {
-            x = xx;
-        }
-        if let Some(yy) = parse_word(line, 'Y') {
-            y = yy;
-        }
-        if let Some(zz) = parse_word(line, 'Z') {
-            z = zz;
-        }
-        if line.starts_with("G1") && line.contains('E') {
-            if let Some(e) = parse_word(line, 'E') {
-                if e >= 0.0 {
-                    current.push([x, y, z]);
-                }
-            }
-        }
-    }
-    if !current.is_empty() {
-        last_layer = current;
-    }
-    if last_layer.is_empty() {
-        None
-    } else {
-        Some(last_layer)
-    }
+fn top_layer_extrusion_moves(gcode: &str) -> Option<ShellExtrusionChain> {
+  let moves = top_shell_extrusion_moves(gcode, 1)?;
+  moves.into_iter().next()
 }
 
 /// Z variation on the upper ``layer_count`` extruding layers (default top shell).
@@ -346,4 +335,46 @@ pub fn top_layer_z_variation(gcode: &str) -> Option<(f64, f64)> {
     let min_z = last.iter().cloned().fold(f64::INFINITY, f64::min);
     let max_z = last.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     Some((min_z, max_z))
+}
+
+/// Histogram of in-layer segment slopes (degrees) over the upper shell extrusion moves.
+pub fn in_layer_slope_histogram(
+    gcode: &str,
+    layer_count: usize,
+    bin_width_deg: f64,
+) -> Vec<(f64, usize)> {
+    let Some(layers) = top_shell_extrusion_moves(gcode, layer_count) else {
+        return Vec::new();
+    };
+    use std::collections::BTreeMap;
+    let mut bins: BTreeMap<i32, usize> = BTreeMap::new();
+    let width = bin_width_deg.max(0.1);
+    for layer in &layers {
+        let mut prev: Option<[f64; 3]> = None;
+        for point in layer {
+            let Some(point) = *point else {
+                prev = None;
+                continue;
+            };
+            if let Some(p) = prev {
+                let dx = point[0] - p[0];
+                let dy = point[1] - p[1];
+                let dz = point[2] - p[2];
+                let horiz = (dx * dx + dy * dy).sqrt();
+                if horiz > 2.5 {
+                    prev = Some(point);
+                    continue;
+                }
+                if horiz > 1e-6 {
+                    let deg = dz.atan2(horiz).abs().to_degrees();
+                    let bin = (deg / width).floor() as i32;
+                    *bins.entry(bin).or_default() += 1;
+                }
+            }
+            prev = Some(point);
+        }
+    }
+    bins.into_iter()
+        .map(|(b, n)| ((b as f64 + 0.5) * width, n))
+        .collect()
 }

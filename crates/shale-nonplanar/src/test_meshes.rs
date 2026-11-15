@@ -72,3 +72,22 @@ pub fn sphere_mesh(radius: f64) -> Mesh {
     }
     Mesh { vertices, triangles }
 }
+
+/// Low deck with a tall pillar beside it (for collision regression tests).
+#[cfg(test)]
+pub fn pillar_beside_mesh() -> Mesh {
+    let mut mesh = box_mesh(40.0, 20.0, 2.0);
+    let pillar = box_mesh(8.0, 8.0, 30.0);
+    let offset = mesh.vertices.len() as u32;
+    for v in pillar.vertices {
+        mesh.vertices.push([v[0] + 20.0, v[1], v[2]]);
+    }
+    for tri in pillar.triangles {
+        mesh.triangles.push([
+            tri[0] + offset,
+            tri[1] + offset,
+            tri[2] + offset,
+        ]);
+    }
+    mesh
+}

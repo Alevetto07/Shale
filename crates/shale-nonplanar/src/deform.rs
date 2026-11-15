@@ -17,6 +17,8 @@ pub struct DeformField {
     pub nominal_layer: f64,
     /// Island-wise flattening strength in \[0, 1\]; 1 = full bend.
     pub island_strength: Vec<f64>,
+    /// Slope limit applied when inverse-mapping G-code segments (degrees).
+    pub max_angle_deg: f64,
 }
 
 impl DeformField {
@@ -28,6 +30,18 @@ impl DeformField {
             .unwrap_or(self.deformed_top_z);
         let strength = self.island_strength_at(x, y);
         Some((z_band, h_top, strength, self.deformed_top_z))
+    }
+
+    /// True when this G-code point lies in the curved-top shell (deformed coordinates).
+    pub fn gcode_needs_inverse(&self, x: f64, y: f64, z_def: f64) -> bool {
+        let Some((z_band, _, strength, _)) = self.column_limits(x, y) else {
+            return false;
+        };
+        if strength <= 0.0 {
+            return false;
+        }
+        let z_phys = self.inverse_z(x, y, z_def);
+        z_phys > z_band + 1e-9 && (z_phys - z_def).abs() > 5e-3
     }
 
     /// Forward map: physical Z → deformed Z. Linear and monotone within the top band.
@@ -137,6 +151,7 @@ pub fn build_deform_field(
     band_thickness: f64,
     ramp_thickness: f64,
     nominal_layer: f64,
+    max_angle_deg: f64,
 ) -> DeformField {
     let mut max_top = 0.0f64;
     for z in &grid.z_top_smooth {
@@ -157,6 +172,7 @@ pub fn build_deform_field(
         max_layer,
         nominal_layer,
         island_strength: vec![1.0; len],
+        max_angle_deg,
     }
 }
 
@@ -241,7 +257,7 @@ mod tests {
     fn forward_map_is_monotone_in_z() {
         let mesh = sphere_mesh(10.0);
         let grid = build_height_field(&mesh, 1.0, 45.0, 2.0);
-        let field = build_deform_field(grid, 2.0, 0.4, 0.2);
+        let field = build_deform_field(grid, 2.0, 0.4, 0.2, 45.0);
         assert!(field.verify_monotone(20), "dh/dz must stay positive");
     }
 
@@ -249,7 +265,7 @@ mod tests {
     fn layer_thickness_ratio_is_clamped() {
         let mesh = crate::test_meshes::box_mesh(10.0, 10.0, 10.0);
         let grid = build_height_field(&mesh, 1.0, 30.0, 2.0);
-        let field = build_deform_field(grid, 2.0, 0.4, 0.2);
+        let field = build_deform_field(grid, 2.0, 0.4, 0.2, 30.0);
         let r = field.layer_thickness_ratio(0.0, 0.0, 8.0, 9.0);
         assert!(r >= 0.08 / 0.2 - 0.01);
         assert!(r <= 0.28 / 0.2 + 0.01);

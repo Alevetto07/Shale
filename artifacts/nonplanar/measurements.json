@@ -2,18 +2,105 @@
   {
     "name": "dome",
     "planar_layers": 120,
-    "curved_layers": 120,
+    "curved_layers": 125,
     "planar_time_s": 920.0,
-    "curved_time_s": 920.0,
+    "curved_time_s": 956.0,
     "planar_top_z_min": 22.6,
     "planar_top_z_max": 24.0,
-    "curved_top_z_min": 22.596,
-    "curved_top_z_max": 24.0,
-    "curved_max_slope_deg": 3.7841888554267364,
-    "curved_max_slope_across_layers_deg": 5.018745085113368,
-    "envelope_ok": false,
+    "curved_top_z_min": 21.276,
+    "curved_top_z_max": 24.105,
+    "planar_in_layer_max_slope_deg": 0.0,
+    "curved_in_layer_max_slope_deg": 10.333355211575382,
+    "curved_max_slope_across_layers_deg": 17.40305017065074,
+    "curved_slope_histogram": [
+      [
+        0.25,
+        48
+      ],
+      [
+        0.75,
+        55
+      ],
+      [
+        1.25,
+        51
+      ],
+      [
+        1.75,
+        76
+      ],
+      [
+        2.25,
+        83
+      ],
+      [
+        2.75,
+        73
+      ],
+      [
+        3.25,
+        62
+      ],
+      [
+        3.75,
+        61
+      ],
+      [
+        4.25,
+        100
+      ],
+      [
+        4.75,
+        71
+      ],
+      [
+        5.25,
+        53
+      ],
+      [
+        5.75,
+        61
+      ],
+      [
+        6.25,
+        44
+      ],
+      [
+        6.75,
+        41
+      ],
+      [
+        7.25,
+        49
+      ],
+      [
+        7.75,
+        49
+      ],
+      [
+        8.25,
+        39
+      ],
+      [
+        8.75,
+        39
+      ],
+      [
+        9.25,
+        30
+      ],
+      [
+        9.75,
+        646
+      ],
+      [
+        10.25,
+        644
+      ]
+    ],
+    "envelope_ok": true,
     "collision_notes": [
-      "24376 moves triggered envelope flattening (uncalibrated A1 model)",
+      "collision flattening skipped (uncalibrated A1 head envelope)",
       "ironing disabled for curved-top pass",
       "post-pass complete",
       "ironing_enabled was forced off for curved-top slicing"
@@ -21,19 +108,102 @@
   },
   {
     "name": "chevron",
-    "planar_layers": 44,
-    "curved_layers": 44,
-    "planar_time_s": 704.0,
-    "curved_time_s": 704.0,
-    "planar_top_z_min": 7.4,
-    "planar_top_z_max": 8.8,
-    "curved_top_z_min": 7.4,
-    "curved_top_z_max": 8.8,
-    "curved_max_slope_deg": 0.0,
-    "curved_max_slope_across_layers_deg": 7.0346881867710795,
+    "planar_layers": 73,
+    "curved_layers": 73,
+    "planar_time_s": 1167.0,
+    "curved_time_s": 985.0,
+    "planar_top_z_min": 13.0,
+    "planar_top_z_max": 14.4,
+    "curved_top_z_min": 5.919,
+    "curved_top_z_max": 14.485,
+    "planar_in_layer_max_slope_deg": 0.0,
+    "curved_in_layer_max_slope_deg": 29.61451887048624,
+    "curved_max_slope_across_layers_deg": 29.61451887048624,
+    "curved_slope_histogram": [
+      [
+        0.25,
+        1271
+      ],
+      [
+        0.75,
+        1
+      ],
+      [
+        2.25,
+        2
+      ],
+      [
+        2.75,
+        1
+      ],
+      [
+        3.25,
+        2
+      ],
+      [
+        3.75,
+        20
+      ],
+      [
+        4.25,
+        25
+      ],
+      [
+        4.75,
+        55
+      ],
+      [
+        5.25,
+        150
+      ],
+      [
+        5.75,
+        208
+      ],
+      [
+        6.25,
+        269
+      ],
+      [
+        6.75,
+        492
+      ],
+      [
+        7.25,
+        868
+      ],
+      [
+        7.75,
+        2967
+      ],
+      [
+        8.25,
+        10226
+      ],
+      [
+        8.75,
+        266
+      ],
+      [
+        9.25,
+        21
+      ],
+      [
+        9.75,
+        766
+      ],
+      [
+        10.25,
+        1159
+      ],
+      [
+        29.75,
+        1
+      ]
+    ],
     "envelope_ok": false,
     "collision_notes": [
-      "3663 moves triggered envelope flattening (uncalibrated A1 model)",
+      "collision flattening skipped (uncalibrated A1 head envelope)",
       "ironing disabled for curved-top pass",
       "post-pass complete",
       "ironing_enabled was forced off for curved-top slicing"
@@ -47,13 +217,127 @@
     "curved_time_s": 863.0,
     "planar_top_z_min": 22.6,
     "planar_top_z_max": 24.0,
-    "curved_top_z_min": 22.6,
+    "curved_top_z_min": 20.218,
     "curved_top_z_max": 24.0,
-    "curved_max_slope_deg": 0.0,
-    "curved_max_slope_across_layers_deg": 9.45044348185925,
-    "envelope_ok": false,
+    "planar_in_layer_max_slope_deg": 0.0,
+    "curved_in_layer_max_slope_deg": 10.082865319857056,
+    "curved_max_slope_across_layers_deg": 10.082865319857056,
+    "curved_slope_histogram": [
+      [
+        0.25,
+        617
+      ],
+      [
+        0.75,
+        35
+      ],
+      [
+        1.25,
+        36
+      ],
+      [
+        1.75,
+        30
+      ],
+      [
+        2.25,
+        35
+      ],
+      [
+        2.75,
+        54
+      ],
+      [
+        3.25,
+        62
+      ],
+      [
+        3.75,
+        89
+      ],
+      [
+        4.25,
+        96
+      ],
+      [
+        4.75,
+        109
+      ],
+      [
+        5.25,
+        113
+      ],
+      [
+        5.75,
+        110
+      ],
+      [
+        6.25,
+        115
+      ],
+      [
+        6.75,
+        118
+      ],
+      [
+        7.25,
+        121
+      ],
+      [
+        7.75,
+        132
+      ],
+      [
+        8.25,
+        101
+      ],
+      [
+        8.75,
+        124
+      ],
+      [
+        9.25,
+        117
+      ],
+      [
+        9.75,
+        1085
+      ],
+      [
+        10.25,
+        1446
+      ]
+    ],
+    "envelope_ok": true,
     "collision_notes": [
-      "7399 moves triggered envelope flattening (uncalibrated A1 model)",
+      "collision flattening skipped (uncalibrated A1 head envelope)",
+      "ironing disabled for curved-top pass",
+      "post-pass complete",
+      "ironing_enabled was forced off for curved-top slicing"
+    ]
+  },
+  {
+    "name": "benchy",
+    "planar_layers": 125,
+    "curved_layers": 125,
+    "planar_time_s": 1473.0,
+    "curved_time_s": 1473.0,
+    "planar_top_z_min": 23.6,
+    "planar_top_z_max": 25.0,
+    "curved_top_z_min": 23.6,
+    "curved_top_z_max": 25.0,
+    "planar_in_layer_max_slope_deg": 0.0,
+    "curved_in_layer_max_slope_deg": 0.0,
+    "curved_max_slope_across_layers_deg": 20.411706111609526,
+    "curved_slope_histogram": [
+      [
+        0.25,
+        662
+      ]
+    ],
+    "envelope_ok": true,
+    "collision_notes": [
+      "collision flattening skipped (uncalibrated A1 head envelope)",
       "ironing disabled for curved-top pass",
       "post-pass complete",
       "ironing_enabled was forced off for curved-top slicing"

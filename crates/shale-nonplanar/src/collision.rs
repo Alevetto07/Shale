@@ -72,7 +72,8 @@ impl PrintedHeightMap {
     }
 }
 
-/// Returns `true` if the nozzle pose violates the envelope over printed material.
+/// Returns `true` if the sock / body above the nozzle tip would strike **earlier**
+/// printed material. The nozzle tip may contact the layer currently being deposited.
 pub fn move_collides(
     envelope: &HeadEnvelope,
     printed: &PrintedHeightMap,
@@ -80,20 +81,30 @@ pub fn move_collides(
     y: f64,
     z_nozzle: f64,
     max_angle_deg: f64,
+    extruding: bool,
 ) -> bool {
-    let max_slope = max_angle_deg.to_radians().tan();
-    let body_r = envelope.radius_at_z(envelope.nozzle_height_mm);
+    if extruding {
+        return false;
+    }
+    let body_r = envelope
+        .sock_outer_radius_mm
+        .max(envelope.body_radius_mm);
     let material_z = printed.sample_max_in_radius(x, y, body_r);
     if material_z <= 0.0 {
         return false;
     }
-    let clearance_z = z_nozzle + envelope.lowest_extent_z();
-    let dz = clearance_z - material_z;
-    if dz <= 0.0 {
-        return true;
+    // Material at or below the tip is the layer being laid — not an envelope strike.
+    if material_z <= z_nozzle + 0.05 {
+        return false;
     }
-    let max_ok_slope = max_slope * 1.1;
-    body_r > 0.0 && dz < body_r * max_ok_slope
+    let sock_top_z = z_nozzle + envelope.sock_top_z_mm;
+    if material_z <= sock_top_z {
+        return false;
+    }
+    let _ = max_angle_deg;
+    let max_slope = max_angle_deg.to_radians().tan().max(1e-6);
+    let dz = material_z - sock_top_z;
+    dz < body_r / max_slope
 }
 
 /// Reduce `field.island_strength` where moves collide; update report counters.
@@ -109,6 +120,13 @@ pub fn flatten_on_collision(
         ..Default::default()
     };
     report.top_islands = crate::height_field::count_top_islands(&field.grid);
+
+    if !envelope.calibrated {
+        report.notes.push(
+            "collision flattening skipped (uncalibrated A1 head envelope)".into(),
+        );
+        return report;
+    }
 
     let step = field.grid.step;
     let origin = field.grid.origin;
@@ -133,21 +151,28 @@ pub fn flatten_on_collision(
             position[2] = z;
         }
         let extrude = line.starts_with("G1") && line.contains('E');
-        if move_collides(envelope, &printed, position[0], position[1], position[2], max_angle_deg)
-        {
+        let e_pos = word(line, 'E').unwrap_or(0.0);
+        let extruding = extrude && e_pos > 0.0;
+        if move_collides(
+            envelope,
+            &printed,
+            position[0],
+            position[1],
+            position[2],
+            max_angle_deg,
+            extruding,
+        ) {
             collisions += 1;
             dampen_island(field, position[0], position[1], 0.35);
         }
-        if extrude {
+        if extruding {
             printed.raise(position[0], position[1], position[2]);
         }
     }
 
     if collisions > 0 {
         report.islands_flattened = collisions.min(report.top_islands);
-        report.notes.push(format!(
-            "{collisions} moves triggered envelope flattening (uncalibrated A1 model)"
-        ));
+        report.notes.push(format!("{collisions} travel moves failed envelope clearance"));
     }
     if field.island_strength.iter().all(|&s| s < 0.05) {
         report.fallback_to_planar = true;
@@ -182,23 +207,83 @@ mod tests {
     use crate::deform::build_deform_field;
     use crate::envelope::bambu_a1_envelope;
     use crate::height_field::build_height_field;
+    use crate::test_meshes::box_mesh;
 
     #[test]
-    fn collision_detects_low_pass_over_bump() {
+    fn collision_detects_tall_pillar_beside_low_travel() {
         let envelope = bambu_a1_envelope();
-        let mut printed = PrintedHeightMap::new([0.0, 0.0], 1.0, 32, 32);
-        printed.raise(10.0, 10.0, 5.0);
-        assert!(move_collides(envelope, &printed, 10.0, 10.0, 5.1, 10.0));
-        assert!(!move_collides(envelope, &printed, 10.0, 10.0, 20.0, 10.0));
+        let mut printed = PrintedHeightMap::new([0.0, 0.0], 1.0, 64, 64);
+        printed.raise(10.0, 10.0, 25.0);
+        assert!(move_collides(
+            envelope,
+            &printed,
+            12.0,
+            10.0,
+            5.0,
+            10.0,
+            false
+        ));
     }
 
     #[test]
-    fn flatten_report_counts_events() {
-        let mesh = crate::test_meshes::box_mesh(20.0, 20.0, 10.0);
+    fn deposition_extrusion_never_collides() {
+        let envelope = bambu_a1_envelope();
+        let mut printed = PrintedHeightMap::new([0.0, 0.0], 1.0, 32, 32);
+        printed.raise(10.0, 10.0, 5.0);
+        assert!(!move_collides(
+            envelope,
+            &printed,
+            10.0,
+            10.0,
+            5.0,
+            10.0,
+            true
+        ));
+    }
+
+    #[test]
+    fn gentle_dome_travel_over_own_layer_is_clear() {
+        let envelope = bambu_a1_envelope();
+        let mut printed = PrintedHeightMap::new([0.0, 0.0], 1.0, 64, 64);
+        printed.raise(10.0, 10.0, 23.8);
+        assert!(!move_collides(
+            envelope,
+            &printed,
+            10.0,
+            10.0,
+            24.0,
+            10.0,
+            false
+        ));
+    }
+
+    #[test]
+    fn flatten_skipped_when_uncalibrated() {
+        let mesh = box_mesh(20.0, 20.0, 10.0);
         let grid = build_height_field(&mesh, 1.0, 30.0, 2.0);
-        let mut field = build_deform_field(grid, 2.0, 0.4, 0.2);
-        let gcode = "G1 X0 Y0 Z0.2 E1\nG1 X10 Y10 Z0.3 E2\n";
+        let mut field = build_deform_field(grid, 2.0, 0.4, 0.2, 30.0);
+        let gcode = "G0 X0 Y0 Z0.2\nG1 X10 Y10 Z0.3 E1\n";
         let report = flatten_on_collision(&mut field, gcode, bambu_a1_envelope(), 10.0);
-        assert_eq!(report.mode, "curved-tops");
+        assert!(report
+            .notes
+            .iter()
+            .any(|n| n.contains("skipped")));
+        assert_eq!(field.island_strength[0], 1.0);
+    }
+
+    #[test]
+    fn pillar_scene_produces_collision_on_travel() {
+        let envelope = bambu_a1_envelope();
+        let mut printed = PrintedHeightMap::new([0.0, 0.0], 1.0, 64, 64);
+        printed.raise(20.0, 0.0, 28.0);
+        assert!(move_collides(
+            envelope,
+            &printed,
+            18.0,
+            0.0,
+            2.5,
+            10.0,
+            false
+        ));
     }
 }

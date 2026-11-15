@@ -78,8 +78,11 @@ pub fn build_height_field(
     let origin = [min[0] as f64 - pad, min[1] as f64 - pad];
     let width = (((max[0] - min[0]) as f64 + 2.0 * pad) / step).ceil() as usize + 1;
     let height = (((max[1] - min[1]) as f64 + 2.0 * pad) / step).ceil() as usize + 1;
-    let max_slope = max_angle_deg.to_radians().tan();
-    let cos_limit = (1.0 / (1.0 + max_slope * max_slope).sqrt()).max(0.0); // slope from vertical
+    // Ray acceptance uses a generous angle so shallow ramps (e.g. 12°) are still
+    // detected; `max_angle_deg` is enforced later via slope clamping on the grid.
+    let detection_angle_deg = max_angle_deg.max(55.0).min(89.0);
+    let detect_slope = detection_angle_deg.to_radians().tan();
+    let cos_limit = (1.0 / (1.0 + detect_slope * detect_slope).sqrt()).max(0.0);
 
     let mut z_top = vec![None; width * height];
     let ray_top = max[2] as f64 + 1.0;
@@ -88,27 +91,38 @@ pub fn build_height_field(
         for ix in 0..width {
             let x = origin[0] + ix as f64 * step;
             let y = origin[1] + iy as f64 * step;
-            let mut hits = Vec::new();
+            let mut hits: Vec<(f64, [f64; 3])> = Vec::new();
             for triangle in &mesh.triangles {
                 if let Some((z, normal)) = ray_triangle_z(x, y, ray_top, mesh, triangle) {
                     if normal[2] >= cos_limit {
-                        hits.push(z);
+                        hits.push((z, normal));
+                    }
+                }
+            }
+            if hits.is_empty() {
+                // Relax slope filter slightly so 12° ramps still register as tops, but
+                // ignore near-vertical walls that would otherwise pin every column to max Z.
+                let cos_fallback = (max_angle_deg + 5.0).to_radians().cos();
+                for triangle in &mesh.triangles {
+                    if let Some((z, normal)) = ray_triangle_z(x, y, ray_top, mesh, triangle) {
+                        if normal[2] >= cos_fallback {
+                            hits.push((z, normal));
+                        }
                     }
                 }
             }
             if hits.is_empty() {
                 continue;
             }
-            // Odd total intersection count with full solid: use highest upward-facing hit.
-            hits.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
             let count_all = count_ray_hits(x, y, ray_top, mesh);
             if count_all % 2 == 1 || !hits.is_empty() {
-                z_top[iy * width + ix] = Some(hits[0]);
+                z_top[iy * width + ix] = select_exterior_top_hit(&hits, max_angle_deg, band_thickness);
             }
         }
     }
 
-    let z_top_smooth = gaussian_blur_optional(&z_top, width, height, 1.0);
+    let mut z_top_smooth = gaussian_blur_optional(&z_top, width, height, 1.0);
+    clamp_top_surface_slopes(&mut z_top_smooth, width, height, step, max_angle_deg);
     let mut z_band_start = vec![None; width * height];
     for (top, start) in z_top_smooth.iter().zip(z_band_start.iter_mut()) {
         *start = top.map(|z| z - band_thickness);
@@ -123,6 +137,49 @@ pub fn build_height_field(
         z_top_smooth,
         z_band_start,
     }
+}
+
+/// When a thin curved skin sits below a flat deck, keep the sloped exterior shell.
+fn select_exterior_top_hit(
+    hits: &[(f64, [f64; 3])],
+    max_angle_deg: f64,
+    band_thickness: f64,
+) -> Option<f64> {
+    if hits.is_empty() {
+        return None;
+    }
+    let cos_print = max_angle_deg.to_radians().cos();
+    let mut printable: Vec<(f64, [f64; 3])> = hits
+        .iter()
+        .copied()
+        .filter(|(_, n)| n[2] >= cos_print)
+        .collect();
+    if printable.is_empty() {
+        let mut sorted = hits.to_vec();
+        sorted.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        return Some(sorted[0].0);
+    }
+    printable.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+  // Deduplicate heights within one layer.
+    let mut layers: Vec<(f64, [f64; 3])> = Vec::new();
+    for h in printable {
+        if layers
+            .last()
+            .map(|(z, _)| (h.0 - z).abs() < 0.08)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        layers.push(h);
+    }
+    if layers.len() >= 2 {
+        let (z_hi, n_hi) = layers[0];
+        let (z_lo, n_lo) = layers[1];
+        if z_hi - z_lo >= band_thickness * 0.45 && n_hi[2] > 0.94 && n_lo[2] >= cos_print {
+            return Some(z_lo);
+        }
+    }
+    Some(layers[0].0)
 }
 
 fn count_ray_hits(x: f64, y: f64, z_high: f64, mesh: &Mesh) -> usize {
@@ -198,6 +255,54 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 }
 
 /// Separable Gaussian blur on optional samples; missing cells borrow neighbours.
+/// Limit neighbour height steps so the printable top does not exceed `max_angle_deg`.
+pub fn clamp_top_surface_slopes(
+    field: &mut [Option<f64>],
+    width: usize,
+    height: usize,
+    step: f64,
+    max_angle_deg: f64,
+) {
+    let max_dz = max_angle_deg.to_radians().tan() * step * 1.001;
+    if max_dz <= 1e-9 {
+        return;
+    }
+    for _ in 0..48 {
+        let mut changed = false;
+        for iy in 0..height {
+            for ix in 0..width {
+                let i = iy * width + ix;
+                let Some(z0) = field[i] else { continue };
+                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let nx = ix as isize + dx;
+                    let ny = iy as isize + dy;
+                    if nx < 0 || ny < 0 || nx >= width as isize || ny >= height as isize {
+                        continue;
+                    }
+                    let j = ny as usize * width + nx as usize;
+                    let Some(z1) = field[j] else { continue };
+                    let dz = (z1 - z0).abs();
+                    if dz > max_dz + 1e-9 {
+                        let mid = 0.5 * (z0 + z1);
+                        let half = max_dz * 0.5;
+                        if z0 > z1 {
+                            field[i] = Some(mid + half);
+                            field[j] = Some(mid - half);
+                        } else {
+                            field[i] = Some(mid - half);
+                            field[j] = Some(mid + half);
+                        }
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
 pub fn gaussian_blur_optional(
     field: &[Option<f64>],
     width: usize,
@@ -279,6 +384,22 @@ fn flood(start: usize, grid: &HeightGrid, visited: &mut [bool]) {
 }
 
 #[cfg(test)]
+fn tilted_slab_mesh(w: f64, d: f64, t: f64, tilt_deg: f64) -> crate::mesh::Mesh {
+    use crate::test_meshes::box_mesh;
+    let tilt = tilt_deg.to_radians();
+    let mut mesh = box_mesh(w, d, t);
+    let lift = |v: [f64; 3]| -> [f64; 3] {
+        let x = v[0];
+        let z = v[2];
+        [x, v[1], z + x * tilt.tan()]
+    };
+    for v in &mut mesh.vertices {
+        *v = lift(*v);
+    }
+    mesh
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_meshes::{box_mesh, sphere_mesh};
@@ -301,6 +422,45 @@ mod tests {
             assert!((z - mean).abs() < 0.5, "flat top should be level, got spread around {mean}");
             assert!((z - 10.0).abs() < 0.5);
         }
+    }
+
+    #[test]
+    fn tilted_top_detected_and_clamped_to_max_angle() {
+        let mesh = tilted_slab_mesh(40.0, 24.0, 0.5, 12.0);
+        let grid = build_height_field(&mesh, 1.0, 10.0, 1.6);
+        let mut zs = Vec::new();
+        for iy in 0..grid.height {
+            for ix in 0..grid.width {
+                if let Some(z) = grid.z_top_smooth[iy * grid.width + ix] {
+                    zs.push((ix, z));
+                }
+            }
+        }
+        assert!(!zs.is_empty(), "12° slab must be detected at 10° print limit");
+        let z_min = zs.iter().map(|(_, z)| *z).fold(f64::INFINITY, f64::min);
+        let z_max = zs.iter().map(|(_, z)| *z).fold(f64::NEG_INFINITY, f64::max);
+        let spread = z_max - z_min;
+        let expected = 40.0_f64.to_radians().tan() * 0.1 - 1.0;
+        assert!(
+            spread > 0.2,
+            "height field must vary along ramp, spread={spread:.3}"
+        );
+        let max_step = 10.0_f64.to_radians().tan() * grid.step;
+        for iy in 0..grid.height {
+            for ix in 1..grid.width {
+                let a = grid.z_top_smooth[iy * grid.width + ix - 1];
+                let b = grid.z_top_smooth[iy * grid.width + ix];
+                if let (Some(za), Some(zb)) = (a, b) {
+                    assert!(
+                        (zb - za).abs() <= max_step + 0.05,
+                        "neighbour step {:.3} exceeds {:.3}",
+                        (zb - za).abs(),
+                        max_step
+                    );
+                }
+            }
+        }
+        let _ = expected;
     }
 
     #[test]
