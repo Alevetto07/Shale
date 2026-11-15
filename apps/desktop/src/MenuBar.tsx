@@ -355,7 +355,6 @@ export function MenuBar(props: MenuBarProps) {
               value={props.quality ?? ""}
               onChange={(event) => props.onQuality(event.target.value || null)}
             >
-              <option value="">Default</option>
               {props.qualities.map((entry) => (
                 <option key={entry.quality_type} value={entry.quality_type}>
                   {entry.name}

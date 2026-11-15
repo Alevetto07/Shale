@@ -486,7 +486,7 @@ impl Catalog {
         variants
     }
 
-    pub fn qualities_for(&self, printer_id: &str) -> Vec<QualityInfo> {
+    pub fn qualities_for(&self, printer_id: &str, variant_name: Option<&str>) -> Vec<QualityInfo> {
         let Some(ancestry) = self.ancestry_ids(printer_id) else {
             return Vec::new();
         };
@@ -523,6 +523,11 @@ impl Catalog {
         // beside the machine's own layer-height presets.
         if self.external.contains(printer_id) {
             qualities.retain(|info| is_layer_preset_name(&info.name));
+            if let Some(variant) = variant_name {
+                if let Some(tag) = crate::bambu::variant_nozzle_tag(variant) {
+                    qualities.retain(|info| info.quality_type.ends_with(&tag));
+                }
+            }
             qualities.sort_by(|a, b| {
                 layer_hint_mm(&a.name)
                     .partial_cmp(&layer_hint_mm(&b.name))

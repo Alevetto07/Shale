@@ -13,6 +13,8 @@ export interface Status {
   demo?: string | null;
   /** The profile library is still being read; the window is usable meanwhile. */
   catalog_loading?: boolean;
+  /** The full Cura resource tree has finished loading (not just the fast pass). */
+  catalog_full?: boolean;
   version: string;
 }
 
@@ -409,7 +411,8 @@ export const api = {
   cancelImport: () => invoke<void>("cancel_import"),
   printers: () => invoke<PrinterInfo[]>("list_printers"),
   variants: (printerId: string) => invoke<VariantInfo[]>("list_variants", { printerId }),
-  qualities: (printerId: string) => invoke<QualityInfo[]>("list_qualities", { printerId }),
+  qualities: (printerId: string, variantName?: string | null) =>
+    invoke<QualityInfo[]>("list_qualities", { printerId, variantName: variantName ?? null }),
   materials: (printerId: string) => invoke<MaterialInfo[]>("list_materials", { printerId }),
   bed: (printerId: string, variantName: string | null, qualityType: string | null, materialId: string | null) =>
     invoke<Bed>("printer_bed", { printerId, variantName, qualityType, materialId }),

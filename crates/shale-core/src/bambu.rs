@@ -188,6 +188,7 @@ impl Library {
                 &id,
                 &names,
                 &base.default_quality,
+                &nozzles,
             ));
             let first_material = self.materials.len();
             self.materials
@@ -531,16 +532,41 @@ fn variant_instance(printer: &str, nozzle: &str) -> InstanceFile {
     }
 }
 
+/// Slug tail for a nozzle diameter, e.g. `0.4` → `0_4_nozzle`, used to match
+/// process file stems such as `0.20mm Standard @BBL A1 0.4 nozzle`.
+pub fn nozzle_slug_tag(nozzle_diameter: &str) -> String {
+    slug(&format!("{} nozzle", nozzle_diameter.trim()))
+}
+
+pub fn variant_nozzle_tag(variant_name: &str) -> Option<String> {
+    let token = variant_name.split_whitespace().next()?;
+    if token.is_empty() {
+        return None;
+    }
+    Some(nozzle_slug_tag(token))
+}
+
 fn quality_instances(
     processes: &[(String, Json)],
     printer: &str,
     machine_names: &[String],
     default_quality: &str,
+    nozzles: &[String],
 ) -> Vec<InstanceFile> {
+    let nozzle_tags: HashSet<String> = nozzles
+        .iter()
+        .map(|nozzle| nozzle_slug_tag(nozzle))
+        .collect();
     let mut out = Vec::new();
     for (stem, values) in processes {
         if !applies_to(values, machine_names) {
             continue;
+        }
+        let stem_slug = slug(stem);
+        if stem_slug.contains("_nozzle") {
+            if !nozzle_tags.iter().any(|tag| stem_slug.ends_with(tag)) {
+                continue;
+            }
         }
         let Some(layer_height) = values.get("layer_height").and_then(number_value) else {
             continue;
@@ -569,12 +595,16 @@ fn quality_instances(
             );
         }
         let name = pretty_quality(stem);
+        let variant = nozzles.iter().find_map(|nozzle| {
+            let tag = nozzle_slug_tag(nozzle);
+            stem_slug.ends_with(&tag).then(|| format!("{nozzle} mm"))
+        });
         out.push(InstanceFile {
             name,
             definition: printer.to_string(),
             type_name: "quality".to_string(),
-            quality_type: Some(slug(stem)),
-            variant: None,
+            quality_type: Some(stem_slug),
+            variant,
             material: None,
             global_quality: true,
             weight: 0,
@@ -597,7 +627,6 @@ fn quality_instances(
         };
         (preferred, instance.name.clone())
     });
-    out.truncate(MAX_QUALITIES);
     out
 }
 

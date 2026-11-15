@@ -82,6 +82,7 @@ export function mockStatus(): Status {
     printer_count: MOCK_PRINTERS.length,
     version: "0.1.0",
     catalog_loading: false,
+    catalog_full: true,
   };
 }
 

@@ -128,6 +128,8 @@ struct Status {
     /// True while the profile library is still being read. The window is up
     /// and usable; the printer list arrives when this goes false.
     catalog_loading: bool,
+    /// The full Cura quality tree has finished loading (not just the fast pass).
+    catalog_full: bool,
     /// The version this binary was built as, so the window never has to
     /// hold a copy that can drift from Cargo.toml.
     version: String,
@@ -274,7 +276,9 @@ fn spawn_catalog_loader(app: AppHandle) {
                         "ui-fast {:?} printers={} qualities-a1={}",
                         fast_started.elapsed(),
                         fast.selectable_printers().len(),
-                        fast.qualities_for("bambu_lab_a1").len()
+                        fast
+                            .qualities_for("bambu_lab_a1", Some("0.4 mm"))
+                            .len()
                     ),
                 );
                 let state = app.state::<AppState>();
@@ -336,7 +340,7 @@ fn catalog(inner: &mut Inner) -> Result<&Catalog, String> {
 
 #[tauri::command]
 fn app_status(state: State<AppState>) -> Result<Status, String> {
-    let mut inner = lock(&state)?;
+    let inner = lock(&state)?;
     let selectable = inner
         .catalog
         .as_ref()
@@ -376,6 +380,7 @@ fn app_status(state: State<AppState>) -> Result<Status, String> {
         demo_model: std::env::var("SHALE_DEMO_MODEL").ok(),
         demo: std::env::var("SHALE_DEMO").ok(),
         catalog_loading: inner.catalog_loading || (inner.catalog.is_none() && inner.catalog_error.is_none()),
+        catalog_full: inner.catalog_full,
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }
@@ -429,10 +434,17 @@ fn list_variants(state: State<AppState>, printer_id: String) -> Result<Vec<Varia
 }
 
 #[tauri::command]
-fn list_qualities(state: State<AppState>, printer_id: String) -> Result<Vec<QualityInfo>, String> {
+fn list_qualities(
+    state: State<AppState>,
+    printer_id: String,
+    variant_name: Option<String>,
+) -> Result<Vec<QualityInfo>, String> {
     let mut inner = lock(&state)?;
     let catalog = catalog(&mut inner)?;
-    Ok(catalog.qualities_for(&printer_id))
+    Ok(catalog.qualities_for(
+        &printer_id,
+        variant_name.as_deref(),
+    ))
 }
 
 #[tauri::command]
@@ -2412,6 +2424,18 @@ fn profile_settings(
     material_id: Option<String>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
     let mut inner = lock(&state)?;
+    if !inner.catalog_full {
+        if inner
+            .catalog
+            .as_ref()
+            .is_some_and(|cat| !cat.external.contains(&printer_id))
+        {
+            return Err(
+                "The full printer library is still loading — wait a moment before opening settings."
+                    .into(),
+            );
+        }
+    }
     let catalogue = catalog(&mut inner).map_err(|error| error.to_string())?;
     let resolved = catalogue
         .resolve(&shale_core::ResolveRequest {
@@ -2469,6 +2493,18 @@ async fn slice_model(
         }
         if !inner.models.iter().any(|model| model.visible) {
             return Err("Import a model first".into());
+        }
+        if !inner.catalog_full {
+            if inner
+                .catalog
+                .as_ref()
+                .is_some_and(|cat| !cat.external.contains(&printer_id))
+            {
+                return Err(
+                    "The full printer library is still loading — wait before slicing on this printer."
+                        .into(),
+                );
+            }
         }
         // Wait for the catalogue, then drop the lock: the engine runs outside.
         let _ = catalog(&mut inner)?;

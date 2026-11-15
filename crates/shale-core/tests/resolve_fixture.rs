@@ -138,37 +138,108 @@ fn real_cura_profiles_when_resources_are_present() {
         "selectable list should be smaller than the full catalogue"
     );
 
-    let a1_presets = catalog.qualities_for("bambu_lab_a1");
-  assert!(
-      a1_presets.len() >= 6,
-      "expected Bambu A1 layer presets, got {}: {:?}",
-      a1_presets.len(),
-      a1_presets
-  );
-  let mins: Vec<f64> = a1_presets
-      .iter()
-      .map(|q| {
-          q.name
-              .split_whitespace()
-              .next()
-              .unwrap_or("")
-              .trim_end_matches("mm")
-              .parse()
-              .unwrap_or(0.0)
-      })
-      .collect();
-  assert!(
-      mins.iter().any(|v| (*v - 0.08).abs() < 0.02),
-      "missing 0.08 mm preset"
-  );
-  assert!(
-      mins.iter().any(|v| (*v - 0.28).abs() < 0.02),
-      "missing 0.28 mm preset"
-  );
-  assert!(
-      !a1_presets.iter().any(|q| q.name == "Normal" || q.name == "Draft"),
-      "generic Cura tabs should not appear for Bambu A1"
-  );
+    let a1_04 = catalog.qualities_for("bambu_lab_a1", Some("0.4 mm"));
+    let expected_04 = [
+        "0.08 mm Extra Fine",
+        "0.12 mm Fine",
+        "0.16 mm Optimal",
+        "0.20 mm Standard",
+        "0.24 mm Draft",
+        "0.28 mm Extra Draft",
+    ];
+    let names_04: Vec<&str> = a1_04.iter().map(|q| q.name.as_str()).collect();
+    assert_eq!(
+        names_04.len(),
+        expected_04.len(),
+        "A1 0.4 mm presets: got {:?}",
+        names_04
+    );
+    for want in expected_04 {
+        assert!(
+            names_04.iter().any(|name| *name == want),
+            "missing A1 0.4 preset {want}; got {:?}",
+            names_04
+        );
+    }
+    assert!(
+        !a1_04
+            .iter()
+            .any(|q| q.quality_type.contains("_0_2_nozzle") || q.quality_type.contains("_0_6_nozzle")),
+        "other-nozzle slugs leaked into 0.4 list: {:?}",
+        a1_04
+    );
+    assert!(
+        !a1_04.iter().any(|q| q.name == "Normal" || q.name == "Draft"),
+        "generic Cura tabs should not appear for Bambu A1"
+    );
+
+    let a1_02 = catalog.qualities_for("bambu_lab_a1", Some("0.2 mm"));
+    assert!(
+        a1_02.len() >= 4,
+        "expected A1 0.2 mm presets, got {}: {:?}",
+        a1_02.len(),
+        a1_02
+    );
+    assert!(
+        a1_02
+            .iter()
+            .all(|q| q.quality_type.ends_with("_0_2_nozzle")),
+        "0.2 mm list should be nozzle-specific: {:?}",
+        a1_02
+    );
+    assert!(
+        a1_02.iter().any(|q| q.name.contains("0.12 mm")),
+        "expected 0.12 mm class preset on 0.2 nozzle"
+    );
+
+    let material = catalog
+        .materials_for_printer("bambu_lab_a1", 1.75)
+        .into_iter()
+        .find(|m| m.id.contains("pla"))
+        .map(|m| m.id)
+        .unwrap_or_else(|| "bambu_pla_basic".into());
+    let draft = a1_04
+        .iter()
+        .find(|q| q.name == "0.24 mm Draft")
+        .expect("0.24 mm Draft preset");
+    let standard = a1_04
+        .iter()
+        .find(|q| q.name == "0.20 mm Standard")
+        .expect("0.20 mm Standard preset");
+    let resolved_draft = catalog
+        .resolve(&shale_core::ResolveRequest {
+            printer_id: "bambu_lab_a1".into(),
+            variant_name: Some("0.4 mm".into()),
+            quality_type: Some(draft.quality_type.clone()),
+            material_id: Some(material.clone()),
+            intent_category: None,
+            settings: UserSettings::default(),
+        })
+        .expect("resolve draft");
+    let resolved_standard = catalog
+        .resolve(&shale_core::ResolveRequest {
+            printer_id: "bambu_lab_a1".into(),
+            variant_name: Some("0.4 mm".into()),
+            quality_type: Some(standard.quality_type.clone()),
+            material_id: Some(material),
+            intent_category: None,
+            settings: UserSettings::default(),
+        })
+        .expect("resolve standard");
+    assert!(
+        (resolved_draft.summary.layer_height - 0.24).abs() < 0.02,
+        "draft layer_height {}",
+        resolved_draft.summary.layer_height
+    );
+    assert!(
+        (resolved_standard.summary.layer_height - 0.20).abs() < 0.02,
+        "standard layer_height {}",
+        resolved_standard.summary.layer_height
+    );
+    assert!(
+        (resolved_draft.summary.layer_height - resolved_standard.summary.layer_height).abs() > 0.02,
+        "preset should change layer_height"
+    );
 
     let resolved = catalog
         .resolve(&shale_core::ResolveRequest {

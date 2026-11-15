@@ -133,7 +133,7 @@ impl Session {
         let id = self.printer(printer_id)?.to_string();
         Ok((
             self.catalog.variants_for(&id),
-            self.catalog.qualities_for(&id),
+            self.catalog.qualities_for(&id, None),
         ))
     }
 

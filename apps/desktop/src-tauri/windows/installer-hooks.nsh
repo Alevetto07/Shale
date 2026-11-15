@@ -17,6 +17,11 @@
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
+  ; Let a polite close finish before files are removed; taskkill is the last resort.
+  nsExec::ExecToLog 'powershell -NoProfile -Command "$p = Get-Process Shale -ErrorAction SilentlyContinue; if ($p) { $p | ForEach-Object { $_.CloseMainWindow() | Out-Null }; $deadline=(Get-Date).AddSeconds(20); while ((Get-Date) -lt $deadline -and (Get-Process Shale -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 250 } }"'
+  Sleep 500
+  nsExec::ExecToLog 'taskkill /IM Shale.exe /F /T'
+  Sleep 1000
   DeleteRegValue HKCU "Software\Classes\.3mf\OpenWithProgids" "Shale project"
   DeleteRegValue HKCU "Software\Classes\.stl\OpenWithProgids" "Shale project"
   DeleteRegValue HKCU "Software\Classes\.step\OpenWithProgids" "Shale project"

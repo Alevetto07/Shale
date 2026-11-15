@@ -40,6 +40,17 @@ import { useRecents } from "./recents";
 import { Viewport, type TransformMode, type ViewStyle , type ColourMode } from "./Viewport";
 import { AsciiCheck, AsciiField, AsciiSelect, AsciiStepper } from "./widgets";
 
+function defaultQualityType(qualities: QualityInfo[], printer?: PrinterInfo): string | null {
+  return (
+    qualities.find((item) => item.name.includes("0.20 mm Standard"))?.quality_type ??
+    qualities.find((item) => item.quality_type === printer?.preferred_quality_type)?.quality_type ??
+    qualities.find((item) => item.name.toLowerCase().includes("standard"))?.quality_type ??
+    qualities.find((item) => item.quality_type === "draft")?.quality_type ??
+    qualities[0]?.quality_type ??
+    null
+  );
+}
+
 interface Progress {
   fraction: number;
   message: string;
@@ -379,7 +390,8 @@ export function App() {
         const next = await api.status();
         if (stopped) return;
         setStatus(next);
-        catalogLoadingRef.current = !next.resources_ok && !!next.catalog_loading;
+        catalogLoadingRef.current =
+          !!next.catalog_loading || (next.resources_ok && next.catalog_full === false);
         setEnginePath(next.engine_path);
         setLibDir(next.engine_lib_dir || "");
         setBackend(next.engine_backend || "cli");
@@ -550,25 +562,21 @@ export function App() {
     if (fallback) setPrinterId(fallback);
   }, [printers, printerId]);
 
+  const pendingQuality = useRef<string | null | undefined>(undefined);
+  const lastVariant = useRef<string | null>(null);
+
   useEffect(() => {
     if (!printerId) return;
     let cancelled = false;
     void (async () => {
       try {
-        const [nextVariants, nextQualities, nextMaterials] = await Promise.all([
+        const [nextVariants, nextMaterials] = await Promise.all([
           api.variants(printerId),
-          api.qualities(printerId),
           api.materials(printerId),
         ]);
         if (cancelled) return;
         setVariants(nextVariants);
-        setQualities(nextQualities);
         setMaterials(nextMaterials);
-        // A remembered choice is only a choice if the machine still offers it.
-        // The profile used to be restored wholesale, so a null written into
-        // storage once — by a window that had not loaded the catalogue yet —
-        // left the nozzle and quality reading "none" for ever while the
-        // resolver quietly used the machine's own defaults.
         const pending = restore.current;
         restore.current = null;
         const known = <T,>(wanted: T | null | undefined, offers: (item: T) => boolean) =>
@@ -579,30 +587,20 @@ export function App() {
         )
           ? (pending?.variant as string)
           : nextVariants.some((item) => item.name === printer?.preferred_variant)
-            ? printer?.preferred_variant ?? nextVariants[0]?.name ?? null
-            : nextVariants[0]?.name ?? null;
-        const nextQuality = known(pending?.quality ?? null, (type) =>
-          nextQualities.some((item) => item.quality_type === type),
-        )
-          ? (pending?.quality as string)
-            : nextQualities.find((item) => item.name.includes("0.20 mm Standard"))?.quality_type ??
-              nextQualities.find((item) => item.quality_type === printer?.preferred_quality_type)
-                ?.quality_type ??
-              nextQualities.find((item) => item.name.toLowerCase().includes("standard"))?.quality_type ??
-              nextQualities.find((item) => item.quality_type === "draft")?.quality_type ??
-              nextQualities[0]?.quality_type ??
-              null;
+            ? (printer?.preferred_variant ?? nextVariants[0]?.name ?? null)
+            : (nextVariants[0]?.name ?? null);
+        pendingQuality.current = pending?.quality ?? null;
         const nextMaterial = known(pending?.material ?? null, (id) =>
           nextMaterials.some((item) => item.id === id),
         )
           ? (pending?.material as string)
           : nextMaterials.some((item) => item.id === printer?.preferred_material)
-            ? printer?.preferred_material ?? nextMaterials[0]?.id ?? null
-            : nextMaterials.find((item) => item.id.startsWith("generic_pla"))?.id ??
+            ? (printer?.preferred_material ?? nextMaterials[0]?.id ?? null)
+            : (nextMaterials.find((item) => item.id.startsWith("generic_pla"))?.id ??
               nextMaterials[0]?.id ??
-              null;
+              null);
+        lastVariant.current = null;
         setVariant(nextVariant);
-        setQuality(nextQuality);
         setMaterial(nextMaterial);
       } catch (err) {
         if (!cancelled) setError(messageOf(err));
@@ -612,6 +610,40 @@ export function App() {
       cancelled = true;
     };
   }, [printerId, printers]);
+
+  useEffect(() => {
+    if (!printerId || !variant) {
+      setQualities([]);
+      return;
+    }
+    let cancelled = false;
+    const nozzleChanged = lastVariant.current !== null && lastVariant.current !== variant;
+    lastVariant.current = variant;
+    void (async () => {
+      try {
+        const nextQualities = await api.qualities(printerId, variant);
+        if (cancelled) return;
+        setQualities(nextQualities);
+        const printer = printers.find((item) => item.id === printerId);
+        const remembered = pendingQuality.current;
+        pendingQuality.current = undefined;
+        const pickRemembered =
+          !nozzleChanged &&
+          typeof remembered === "string" &&
+          nextQualities.some((item) => item.quality_type === remembered);
+        setQuality(
+          pickRemembered
+            ? remembered
+            : defaultQualityType(nextQualities, printer),
+        );
+      } catch (err) {
+        if (!cancelled) setError(messageOf(err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [printerId, variant, printers]);
 
   useEffect(() => {
     if (!printerId) return;
@@ -2604,7 +2636,10 @@ export function App() {
           onVariant={setVariant}
           qualities={qualities}
           quality={quality}
-          onQuality={setQuality}
+          onQuality={(next) => {
+            setQuality(next);
+            void resetScopedOverrides();
+          }}
           materials={materials}
           material={material}
           onMaterial={setMaterial}
@@ -2624,6 +2659,11 @@ export function App() {
 
       {status && !status.resources_ok && (
         <p className="banner error" role="status">
+          {status.resources_message}
+        </p>
+      )}
+      {status && status.resources_ok && status.catalog_loading && !status.catalog_full && (
+        <p className="banner subtle" role="status">
           {status.resources_message}
         </p>
       )}
@@ -2980,7 +3020,10 @@ export function App() {
                 label="quality"
                 value={quality ?? ""}
                 options={qualities.map((item) => ({ value: item.quality_type, label: item.name }))}
-                onChange={(next) => setQuality(next || null)}
+                onChange={(next) => {
+                  setQuality(next || null);
+                  void resetScopedOverrides();
+                }}
               />
             </label>
             <label>

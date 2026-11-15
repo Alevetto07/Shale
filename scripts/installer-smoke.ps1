@@ -72,10 +72,34 @@ Check "the first window is still up" (-not $proc.HasExited)
 for ($i = 0; $i -lt 30; $i++) { Start-Sleep -Milliseconds 300; if ($proc.HasExited) { break } }
 if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
 
+function Wait-ProcessExit($process, $timeoutSeconds) {
+  if (-not $process) { return $true }
+  $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+  $process.Refresh()
+  if ($process.HasExited) { return $true }
+  Start-Sleep -Milliseconds 250
+  }
+  return $process.HasExited
+  }
+
+function Wait-ShaleGone($timeoutSeconds) {
+  $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    if (-not (Test-Path $exe) -and -not (Get-Process -Name "Shale" -ErrorAction SilentlyContinue)) {
+      return $true
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  return (-not (Test-Path $exe)) -and -not (Get-Process -Name "Shale" -ErrorAction SilentlyContinue)
+}
+
 Write-Host "== uninstall"
-Start-Process -FilePath (Join-Path $appDir "uninstall.exe") -ArgumentList "/S" -Wait
-Start-Sleep -Seconds 4
-Check "app directory removed" (-not (Test-Path $exe))
+Check "Shale.exe is not running" (Wait-ProcessExit $proc 15)
+$uninstaller = Join-Path $appDir "uninstall.exe"
+$uninst = Start-Process -FilePath $uninstaller -ArgumentList "/S" -PassThru
+Check "uninstaller finished" (Wait-ProcessExit $uninst 120)
+Check "Shale process and install dir are gone" (Wait-ShaleGone 30)
 Check ".shale association removed" (-not (Test-Path $shaleKey))
 foreach ($ext in @(".3mf", ".stl", ".step", ".stp")) {
   $offer = (Get-ItemProperty "HKCU:\Software\Classes\$ext\OpenWithProgids" -ErrorAction SilentlyContinue)

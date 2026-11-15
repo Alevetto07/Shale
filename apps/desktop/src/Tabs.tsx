@@ -677,6 +677,7 @@ export function DevicePane({
             access code
             <input
               type="password"
+              className="access-code"
               aria-label="printer access code"
               placeholder="8 characters from the printer"
               value={code}

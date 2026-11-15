@@ -254,6 +254,12 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   overflow: auto;
 }
 .banner.error { color: var(--ink); }
+.banner.subtle {
+  color: var(--ink-3);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.2rem;
+}
 .banner .banner-action {
   margin-left: 0.75rem;
   font-size: 11px;
@@ -1841,6 +1847,17 @@ button.recent-row.dim { color: var(--ink-3); }
 }
 .device-form input:focus { border-color: var(--accent); outline: none; }
 .device-form input::placeholder { color: rgba(233, 232, 242, 0.28); }
+.device-form input.access-code {
+  min-width: 18rem;
+}
+.device-form input.access-code::placeholder {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
 
 .device-form select {
   background: transparent;
