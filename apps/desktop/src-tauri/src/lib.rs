@@ -336,12 +336,17 @@ fn list_materials(state: State<AppState>, printer_id: String) -> Result<Vec<Mate
         })
         .map(|resolved| resolved.summary.material_diameter)
         .unwrap_or(1.75);
-    // Bambu printers get their own tuned filaments, already narrowed to the
-    // machine; Cura printers keep the short generic-first list they had.
-    if catalog.external.contains(&printer_id)
-    {
-        return Ok(catalog.materials_for_printer(&printer_id, diameter));
-    }
+  // Bambu printers get their own tuned filaments, already narrowed to the
+  // machine; Cura printers keep the short generic-first list they had.
+  let external_printer = catalog
+    .printers()
+    .iter()
+    .find(|info| info.id == printer_id)
+    .map(|info| info.source == "bambu")
+    .unwrap_or(false);
+  if external_printer {
+    return Ok(catalog.materials_for_printer(&printer_id, diameter));
+  }
     let mut materials: Vec<MaterialInfo> = catalog
         .materials_for(diameter)
         .into_iter()
