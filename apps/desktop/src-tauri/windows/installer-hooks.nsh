@@ -1,5 +1,9 @@
 ; Shale installs per user and claims only its own file type.
 ;
+; Optional CLI/MCP: Tauri 2's bundled NSIS template has no component sections, so
+; we do not ship shale-cli/shale-mcp as a tick-box here. Package them with
+; scripts/package-cli.ps1 and document the zip beside the GUI installer.
+;
 ; .shale is ours, so the bundle registers it as the default handler. Model
 ; files are somebody else's: Bambu Studio or Cura is probably the default, and
 ; an installer that quietly takes .stl away from it is rude. So Shale only

@@ -28,6 +28,9 @@
     }
   },
   "bundle": {
+    "shortDescription": "The last slicer you'll ever download.",
+    "longDescription": "Shale is a desktop 3D-printing slicer for Bambu Lab printers — prepare, slice, preview and send from one window.",
+    "copyright": "Copyright © Alessio",
     "active": true,
     "fileAssociations": [
       {
@@ -40,7 +43,15 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "installerHooks": "windows/installer-hooks.nsh"
+        "installerHooks": "windows/installer-hooks.nsh",
+        "headerImage": "windows/nsis/header.bmp",
+        "sidebarImage": "windows/nsis/sidebar.bmp",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "startMenuFolder": "Shale",
+        "customLanguageFiles": {
+          "English": "windows/nsis/English.nsh"
+        }
       }
     },
     "targets": ["deb", "appimage", "nsis", "app", "dmg"],

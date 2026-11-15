@@ -56,3 +56,13 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
 Smoke test expects the installer path above and checks associations, launch, second-instance handover, and clean uninstall.
+
+Regenerate NSIS bitmaps after editing colours:
+
+```powershell
+python scripts/generate-nsis-art.py
+```
+
+### Optional CLI/MCP component
+
+Tauri 2's bundled NSIS script has no checkbox component sections without forking the entire installer template. Shale ships headless tools via `scripts/package-cli.ps1` beside the GUI installer instead; see `apps/desktop/src-tauri/windows/installer-hooks.nsh`.

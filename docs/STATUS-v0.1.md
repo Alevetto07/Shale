@@ -12,7 +12,11 @@ Branch `cursor/v01-bambu-release-8dd2` (PR into `cursor/deep-field-75ee`).
 
 **Version.** Workspace bumped back to **0.1.0** (`tauri.conf.json`, crates, `package.json`). Windows build steps live in [docs/WINDOWS-RELEASE.md](WINDOWS-RELEASE.md).
 
-**Tests (Linux agent, `shale-desktop` excluded).** `cargo test --workspace --locked --exclude shale-desktop`: **239 passed, 0 failed, 3 ignored** when resources are present; `npm run build` in `apps/desktop` clean. Full NSIS build and UI screenshots need Alessio's Windows laptop (WebView2).
+**UI mock + screenshots.** `VITE_SHALE_MOCK=1` drives the React UI without Tauri (`docs/UI-MOCK.md`). Playwright captures land in `docs/screens/before/` and `docs/screens/after/` at 1280×800 and 1920×1080 (13 screens each). Headless Chromium uses a mock plate viewport instead of WebGL.
+
+**NSIS art.** Custom `header.bmp` (150×57) and `sidebar.bmp` (164×314), installer icons, English copy with slogan, `startMenuFolder: Shale`. Optional CLI/MCP remains a separate zip — see `installer-hooks.nsh`.
+
+**Tests (Linux agent, `shale-desktop` excluded).** `cargo test --workspace --locked --exclude shale-desktop`: **239 passed, 0 failed, 3 ignored** when resources are present; `npm run build` in `apps/desktop` clean. NSIS `.exe` still builds on Alessio's Windows machine.
 
 ---
 

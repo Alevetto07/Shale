@@ -1,0 +1,20 @@
+{
+  "width": 1280,
+  "height": 800,
+  "captured_at": "2026-11-15T15:41:26.880Z",
+  "files": [
+    "docs/screens/before/home-1280x800.png",
+    "docs/screens/before/home-empty-1280x800.png",
+    "docs/screens/before/home-about-1280x800.png",
+    "docs/screens/before/home-settings-1280x800.png",
+    "docs/screens/before/home-printers-1280x800.png",
+    "docs/screens/before/prepare-1280x800.png",
+    "docs/screens/before/preview-1280x800.png",
+    "docs/screens/before/device-lan-1280x800.png",
+    "docs/screens/before/device-cloud-in-1280x800.png",
+    "docs/screens/before/device-cloud-out-1280x800.png",
+    "docs/screens/before/process-sheet-1280x800.png",
+    "docs/screens/before/visibility-sheet-1280x800.png",
+    "docs/screens/before/titlebar-menu-1280x800.png"
+  ]
+}
