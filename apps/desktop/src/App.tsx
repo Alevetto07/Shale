@@ -1043,6 +1043,39 @@ export function App() {
     };
   }, [preview, busy, layerCount]);
 
+  // A slice restored at boot (or mock data) fills the plate but not the history
+  // list until the user presses slice again — keep the sidebar in sync with the
+  // job card.
+  useEffect(() => {
+    if (!preview || layerCount <= 0 || paths.length === 0) return;
+    setHistory((records) => {
+      if (records.length > 0) return records;
+      return [
+        {
+          n: 1,
+          seconds: printSeconds,
+          metres: filamentMetres,
+          grams: estimate?.grams ?? null,
+          layers: layerCount,
+          total: estimate?.total ?? null,
+          plate: plateKey,
+          settings: settingsKey,
+          paths,
+        },
+      ];
+    });
+    setViewing((current) => (current == null ? 1 : current));
+  }, [
+    preview,
+    layerCount,
+    paths,
+    printSeconds,
+    filamentMetres,
+    plateKey,
+    settingsKey,
+    estimate,
+  ]);
+
   /** Cura ships every material in a 1.75 mm and a 2.85 mm cut, and the list used
    * to offer both: picking the 2.85 mm PETG on a 1.75 mm machine left the sheet
    * saying PETG while the resolver, unable to match a spool at that diameter,
@@ -3641,7 +3674,7 @@ export function App() {
               />
             </label>
             <label>
-              price per kg
+              price / kg
               <AsciiField
                 label="price per kg"
                 value={String(cost.price_per_kg)}
@@ -3652,7 +3685,7 @@ export function App() {
               />
             </label>
             <label>
-              printer power, W
+              power, W
               <AsciiField
                 label="printer power"
                 value={String(cost.watts)}
@@ -3663,7 +3696,7 @@ export function App() {
               />
             </label>
             <label>
-              electricity per kWh
+              energy / kWh
               <AsciiField
                 label="electricity price"
                 value={String(cost.electricity_per_kwh)}
@@ -3736,7 +3769,12 @@ export function App() {
           )}
           {/* `data-show-model` is what the viewport is actually told to draw:
               the parts list can be right and the bed still empty. */}
-          <div className="plate" data-show-model={solidShown ? "yes" : "no"} data-models={models.length}>
+          <div
+            className="plate"
+            data-preview={preview ? "yes" : "no"}
+            data-show-model={solidShown ? "yes" : "no"}
+            data-models={models.length}
+          >
           {/* What the plate will cost to print, the way a slicer's corner card
               reads: time, filament, weight, layers. Every figure comes from the
               slice that is on screen, and a plate that changed shows none of
@@ -3863,9 +3901,8 @@ export function App() {
           )}
           </div>
           <footer className="scrubber">
-            <span className="scrub-group">
+            <div className="scrub-bar" role="group" aria-label="View style">
               <em>view</em>
-              {""}
               {(["solid", "wire", "ascii"] as const).map((item) => (
                 <button
                   key={item}
@@ -3876,11 +3913,10 @@ export function App() {
                   {item}
                 </button>
               ))}
-            </span>
+            </div>
             {preview && (
-            <span className="scrub-group">
+            <div className="scrub-bar" role="group" aria-label="Toolpath colour">
               <em>colour</em>
-              {""}
               {(["type", "speed"] as const).map((item) => (
                 <button
                   key={item}
@@ -3891,13 +3927,12 @@ export function App() {
                   {item}
                 </button>
               ))}
-            </span>
+            </div>
             )}
             {preview ? (
               <>
-                <span className="scrub-group">
+                <div className="scrub-bar" role="group" aria-label="Preview playback">
                   <em>preview</em>
-                  {""}
                 <button
                   type="button"
                   className={playing ? "selected" : ""}
@@ -3922,7 +3957,7 @@ export function App() {
                 <AsciiCheck checked={showModel} onChange={setShowModel}>
                   ghost
                 </AsciiCheck>
-                </span>
+                </div>
                 <div className="ascii-slider">
                   <div className="readout">
                     layer <span className="active">{String(layer + 1).padStart(3, " ")}</span> / {layerCount}

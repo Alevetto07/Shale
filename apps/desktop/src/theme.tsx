@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 /** Default UI theme id; must match `data-ui-theme` and `themes/<id>.css`. */
 export const UI_THEME_ID = "deep-field" as const;
@@ -83,6 +83,7 @@ function writeFolded(titles: string[]) {
 
 export function Frame({ title, children }: { title: string; children: ReactNode }) {
   const [open, setOpen] = useState(() => !readFolded().includes(title));
+  const contentId = useId();
 
   function toggle() {
     const next = !open;
@@ -93,12 +94,13 @@ export function Frame({ title, children }: { title: string; children: ReactNode 
   }
 
   return (
-    <section className={open ? "frame" : "frame frame--closed"}>
+    <section className={open ? "frame frame--open" : "frame frame--closed"}>
       <header className="frame-bar">
         <button
           type="button"
           className="frame-toggle"
           aria-expanded={open}
+          aria-controls={contentId}
           title={open ? `fold ${title}` : `unfold ${title}`}
           onClick={toggle}
         >
@@ -108,7 +110,14 @@ export function Frame({ title, children }: { title: string; children: ReactNode 
           <span className="frame-title">{title}</span>
         </button>
       </header>
-      {open && <div className="frame-content">{children}</div>}
+      <div
+        id={contentId}
+        className="frame-body"
+        data-open={open ? "yes" : "no"}
+        aria-hidden={!open}
+      >
+        <div className="frame-content">{children}</div>
+      </div>
     </section>
   );
 }

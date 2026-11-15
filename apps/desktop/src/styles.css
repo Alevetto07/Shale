@@ -77,17 +77,15 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   flex-direction: column;
   min-height: 0;
 }
+/* Main workspaces fill the window below the tab strip. */
 .app > .workspace,
-.app > /* Home is a workspace, not a different window: the top bar and its tabs stay
-   where they are while the start screen sits in the main area. */
-/* Home is a workspace, not a different window: the start screen sits inside this
-   pane, so the tab strip and the four chips stay overhead. The pane is the
-   containing block for `.start` (which is inset: 0); without this it would take
-   the whole window and hide the very bar that got you here. */
+.app > .home-pane,
+.app > .device {
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .home-pane {
   position: relative;
-  flex: 1;
-  min-height: 0;
   overflow: hidden;
 }
 
@@ -101,8 +99,15 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   width: 100%;
   height: 100%;
   min-height: 320px;
+  padding: 1.5rem 1rem 7.5rem;
+  box-sizing: border-box;
   background: #06070b;
   color: var(--ink-2);
+}
+.plate[data-preview="yes"] .viewport-mock {
+  justify-content: flex-start;
+  padding-top: 2rem;
+  padding-bottom: 9.5rem;
 }
 .viewport-mock-meta {
   margin: 0 0 0.6rem;
@@ -249,20 +254,30 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 code { font-family: var(--mono); }
 
 .workspace {
+  flex: 1 1 auto;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(280px, 360px) 1fr;
+  grid-template-rows: minmax(0, 1fr);
   gap: 0.5rem;
   padding: 0.4rem 1rem 1rem;
 }
 
 .panel {
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0.2rem 0.4rem 1.5rem 0.2rem;
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
   background: var(--panel);
+  min-height: 0;
+  align-content: flex-start;
+}
+.panel > .frame {
+  flex: 0 0 auto;
+  width: 100%;
 }
 
 .frame {
@@ -275,6 +290,29 @@ code { font-family: var(--mono); }
   padding: 0.2rem 0.45rem;
 }
 .frame--closed .frame-bar { border-bottom-color: transparent; }
+.frame-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--duration-slow, 220ms) var(--ease-out, ease);
+}
+.frame-body[data-open="yes"] {
+  grid-template-rows: 1fr;
+}
+.frame-body > .frame-content {
+  overflow: hidden;
+  min-height: 0;
+}
+.frame--closed .frame-body > .frame-content {
+  visibility: hidden;
+}
+.frame--open .frame-body > .frame-content {
+  visibility: visible;
+}
+@media (prefers-reduced-motion: reduce) {
+  .frame-body {
+    transition: none;
+  }
+}
 .frame-toggle {
   display: inline-flex;
   align-items: center;
@@ -2048,18 +2086,19 @@ button.recent-row.dim { color: var(--ink-3); }
 
 .job-card {
   position: absolute;
-  left: 1.1rem;
-  top: 1.1rem;
+  left: 1rem;
+  bottom: 5.25rem;
   z-index: 4;
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
   min-width: 9.5rem;
+  max-width: 13.5rem;
   padding: 0.7rem 0.9rem 0.8rem;
   background: color-mix(in srgb, var(--panel) 88%, transparent);
   border: 1px solid var(--line);
   backdrop-filter: blur(6px);
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .job-state {

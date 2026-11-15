@@ -61,6 +61,18 @@ textarea {
   padding: var(--space-2);
 }
 
+.menubar .menu-slice {
+  border-radius: var(--radius-sm);
+  padding: 0.34rem 1.05rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  transition: var(--transition-interactive);
+}
+.menubar .menu-slice:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
 .tabs {
   padding-inline: var(--space-5);
   gap: var(--space-2);
@@ -107,17 +119,64 @@ textarea {
 .frame {
   border-radius: var(--radius-sm);
   background: var(--surface-inset);
-  overflow: hidden;
+  flex: 0 0 auto;
+}
+.frame-bar {
+  padding: 0.35rem 0.55rem;
 }
 .frame-toggle {
   transition: var(--transition-interactive);
+  min-height: 1.65rem;
 }
 .frame-toggle:hover {
   background: var(--surface-hover);
 }
+.frame-title {
+  font-family: var(--prose);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.frame--open .frame-title {
+  color: var(--ink);
+}
 .frame-content {
-  padding: var(--space-3) var(--space-3) var(--space-4);
+  padding: 0.35rem 0.65rem 0.75rem;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-2);
+}
+
+/* Sidebar fields: sentence labels, not shouty caps. */
+.panel .frame-content label {
+  grid-template-columns: minmax(6.75rem, 8.25rem) minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  font-family: var(--prose);
+  font-size: 11.5px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: var(--ink-2);
+  line-height: 1.25;
+  min-height: 1.75rem;
+}
+.panel .frame-content label input,
+.panel .frame-content label select,
+.panel .frame-content label .ascii-field,
+.panel .frame-content label .ascii-step,
+.panel .frame-content label .ascii-select {
+  font-size: 13px;
+  color: var(--ink);
+}
+.panel .hint,
+.panel .meta {
+  font-size: 12px;
+  line-height: 1.45;
+  letter-spacing: 0;
+  color: var(--ink-3);
 }
 
 .ascii-select-closed {
@@ -304,10 +363,36 @@ textarea {
 .legend {
   border-radius: var(--radius-md);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+.job-card {
+  left: 1rem;
+  right: auto;
+  top: auto;
+  bottom: 5.25rem;
+  max-width: 13.5rem;
+}
+.legend {
+  top: 1rem;
+  right: 1rem;
+  max-height: min(16rem, calc(100% - 7rem));
+  overflow-y: auto;
 }
 .job-card.demo-cost {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-float);
+  bottom: auto;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+.plate[data-preview="yes"] .viewport-mock {
+  padding: 0.5rem 1rem 2rem;
+}
+.plate[data-preview="yes"] .viewport-mock-meta {
+  margin-top: 0.25rem;
+  max-width: min(28rem, 70%);
+  text-align: center;
+  line-height: 1.35;
 }
 
 .legend-row {
@@ -320,21 +405,84 @@ textarea {
 }
 
 .scrubber {
-  padding: var(--space-3) var(--space-2) var(--space-2);
-  gap: var(--space-3);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.65rem;
+  margin: 0;
+  padding: 0.55rem 0.65rem 0.45rem;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 92%, var(--bg));
 }
-.scrub-group button {
+.scrub-bar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0.15rem;
+  padding: 0.2rem 0.35rem 0.2rem 0.45rem;
+  border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  padding: 0.12rem 0.35rem;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+.scrub-bar > em {
+  font-family: var(--prose);
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-right: 0.25rem;
+  padding-right: 0.35rem;
+  border-right: 1px solid var(--line);
+}
+.scrub-bar button {
+  border-radius: var(--radius-xs);
+  padding: 0.22rem 0.45rem;
+  font-family: var(--prose);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--ink-2);
   transition: var(--transition-interactive);
 }
-.scrub-group button:hover {
+.scrub-bar button:hover {
   background: var(--surface-hover);
   color: var(--ink);
 }
-.scrub-group button[aria-pressed="true"] {
+.scrub-bar button.selected,
+.scrub-bar button[aria-pressed="true"] {
   color: var(--accent);
   background: var(--accent-soft);
+}
+.scrub-bar .ascii-check {
+  margin-left: 0.15rem;
+  padding-left: 0.35rem;
+  border-left: 1px solid var(--line);
+  font-family: var(--prose);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--ink-2);
+  gap: 0.35rem;
+}
+.scrubber > .hint {
+  flex: 1 1 12rem;
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-3);
+  text-align: right;
+}
+.scrubber > .ascii-slider {
+  flex: 1 1 100%;
+  min-width: 14rem;
+  order: 10;
+  padding-top: 0.15rem;
+}
+.scrubber > .meter {
+  flex: 1 1 auto;
+  order: 11;
 }
 
 .slice-row {
