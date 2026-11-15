@@ -187,6 +187,7 @@ impl Library {
                 &names,
                 &base.default_quality,
                 &nozzles,
+                &base.nozzle,
             ));
             let first_material = self.materials.len();
             self.materials
@@ -544,28 +545,46 @@ pub fn variant_nozzle_tag(variant_name: &str) -> Option<String> {
     Some(nozzle_slug_tag(token))
 }
 
+/// A process preset Bambu Studio would list, not an `instantiation: false` base.
+fn process_is_selectable(values: &Json) -> bool {
+    if let Some(flag) = values.get("instantiation") {
+        return truthy(flag).unwrap_or(false);
+    }
+    // Visible presets carry a setting id; inherited-only rows do not.
+    values.get("setting_id").is_some()
+}
+
 fn quality_instances(
     processes: &[(String, Json)],
     printer: &str,
     machine_names: &[String],
     default_quality: &str,
     nozzles: &[String],
+    base_nozzle: &str,
 ) -> Vec<InstanceFile> {
-    let nozzle_tags: HashSet<String> = nozzles
-        .iter()
-        .map(|nozzle| nozzle_slug_tag(nozzle))
-        .collect();
     let mut out = Vec::new();
     for (stem, values) in processes {
         if !applies_to(values, machine_names) {
             continue;
         }
-        let stem_slug = slug(stem);
-        if stem_slug.contains("_nozzle") {
-            if !nozzle_tags.iter().any(|tag| stem_slug.ends_with(tag)) {
-                continue;
-            }
+        if !process_is_selectable(values) {
+            continue;
         }
+        let stem_slug = slug(stem);
+        let variant = if stem_slug.contains("_nozzle") {
+            nozzles.iter().find_map(|nozzle| {
+                let tag = nozzle_slug_tag(nozzle);
+                stem_slug.ends_with(&tag).then(|| format!("{nozzle} mm"))
+            })
+        } else {
+            nozzles
+                .iter()
+                .find(|nozzle| (number(nozzle) - number(base_nozzle)).abs() < 0.001)
+                .map(|nozzle| format!("{nozzle} mm"))
+        };
+        let Some(variant) = variant else {
+            continue;
+        };
         let Some(layer_height) = values.get("layer_height").and_then(number_value) else {
             continue;
         };
@@ -593,16 +612,12 @@ fn quality_instances(
             );
         }
         let name = pretty_quality(stem);
-        let variant = nozzles.iter().find_map(|nozzle| {
-            let tag = nozzle_slug_tag(nozzle);
-            stem_slug.ends_with(&tag).then(|| format!("{nozzle} mm"))
-        });
         out.push(InstanceFile {
             name,
             definition: printer.to_string(),
             type_name: "quality".to_string(),
             quality_type: Some(stem_slug),
-            variant,
+            variant: Some(variant),
             material: None,
             global_quality: true,
             weight: 0,

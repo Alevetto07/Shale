@@ -36,8 +36,15 @@ jobs:
           npm ci
           npm run build
 
+      - name: Printer resources
+        run: ./scripts/fetch-resources.sh
+
       - name: Rust tests
-        run: cargo test --workspace
+        env:
+          SHALE_CURA_DIR: ${{ github.workspace }}/vendor/Cura
+          SHALE_MATERIALS_DIR: ${{ github.workspace }}/vendor/fdm_materials
+          SHALE_ORCA_DIR: ${{ github.workspace }}/vendor/BambuStudio/resources/profiles
+        run: cargo test --workspace --locked
 
   windows:
     runs-on: windows-latest
@@ -58,8 +65,16 @@ jobs:
           npm ci
           npm run build
 
+      - name: Printer resources
+        shell: bash
+        run: ./scripts/fetch-resources.sh
+
       - name: Rust tests
-        run: cargo test --workspace
+        env:
+          SHALE_CURA_DIR: ${{ github.workspace }}/vendor/Cura
+          SHALE_MATERIALS_DIR: ${{ github.workspace }}/vendor/fdm_materials
+          SHALE_ORCA_DIR: ${{ github.workspace }}/vendor/BambuStudio/resources/profiles
+        run: cargo test --workspace --locked
 
       - name: NSIS installer
         working-directory: apps/desktop

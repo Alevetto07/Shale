@@ -507,6 +507,13 @@ impl Catalog {
             if !ancestry.iter().any(|id| id == &instance.definition) {
                 continue;
             }
+            if self.external.contains(printer_id) {
+                if let Some(variant) = variant_name {
+                    if instance.variant.as_deref() != Some(variant) {
+                        continue;
+                    }
+                }
+            }
             let rank = specificity(&instance.definition, &ancestry);
             let info = QualityInfo {
                 quality_type: quality_type.clone(),
@@ -529,11 +536,6 @@ impl Catalog {
         // beside the machine's own layer-height presets.
         if self.external.contains(printer_id) {
             qualities.retain(|info| is_layer_preset_name(&info.name));
-            if let Some(variant) = variant_name {
-                if let Some(tag) = crate::bambu::variant_nozzle_tag(variant) {
-                    qualities.retain(|info| info.quality_type.ends_with(&tag));
-                }
-            }
             qualities.sort_by(|a, b| {
                 layer_hint_mm(&a.name)
                     .partial_cmp(&layer_hint_mm(&b.name))

@@ -54,6 +54,24 @@ Cura ${CURA_TAG} ${CURA_COMMIT}
 fdm_materials ${MATERIALS_COMMIT}
 EOF
 
+BAMBU_REPO="$DEST/BambuStudio"
+BAMBU_PROFILES="$BAMBU_REPO/resources/profiles"
+if [[ ! -d "$BAMBU_REPO/.git" ]]; then
+  git clone --filter=blob:none --sparse --depth 1 \
+    https://github.com/bambulab/BambuStudio.git "$BAMBU_REPO"
+fi
+git -C "$BAMBU_REPO" sparse-checkout set --no-cone /resources/profiles
+if [[ ! -d "$BAMBU_PROFILES/BBL/process" ]]; then
+  echo "Bambu BBL process profiles did not check out." >&2
+  exit 1
+fi
+
+cat >> "$DEST/REVISIONS" <<EOF
+BambuStudio profiles (sparse HEAD of master)
+EOF
+
 echo "Resources ready in $DEST"
 echo "  Cura ${CURA_TAG} (${CURA_COMMIT})"
 echo "  fdm_materials ${MATERIALS_COMMIT}"
+echo "  BambuStudio profiles at ${BAMBU_PROFILES}"
+echo "  export SHALE_ORCA_DIR=${BAMBU_PROFILES}"

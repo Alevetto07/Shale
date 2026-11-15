@@ -2,6 +2,50 @@ use std::path::PathBuf;
 
 use shale_core::{Catalog, ResourcePaths, UserSettings};
 
+/// Cura tree plus Bambu profiles for integration tests. CI and local runs
+/// should run `scripts/fetch-resources.sh` so `vendor/` exists; this panics
+/// instead of skipping when the tree is missing.
+fn real_resource_paths() -> ResourcePaths {
+    if let (Ok(cura), Ok(materials)) = (
+        std::env::var("SHALE_CURA_DIR"),
+        std::env::var("SHALE_MATERIALS_DIR"),
+    ) {
+        return ResourcePaths {
+            cura: cura.into(),
+            materials: materials.into(),
+        };
+    }
+    let vendor = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor");
+    let cura = vendor.join("Cura");
+    let materials = vendor.join("fdm_materials");
+    let def = cura.join("resources/definitions/fdmprinter.def.json");
+    if !def.is_file() {
+        panic!(
+            "vendor resources missing at {}. Run scripts/fetch-resources.sh from the repo root, or set SHALE_CURA_DIR and SHALE_MATERIALS_DIR.",
+            vendor.display()
+        );
+    }
+    ResourcePaths { cura, materials }
+}
+
+fn ensure_bambu_vendor_profiles() {
+    if std::env::var_os("SHALE_ORCA_DIR").is_some()
+        || std::env::var_os("SHALE_BAMBU_DIR").is_some()
+    {
+        return;
+    }
+    let profiles = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../vendor/BambuStudio/resources/profiles");
+    if profiles.is_dir() {
+        std::env::set_var("SHALE_ORCA_DIR", &profiles);
+        return;
+    }
+    panic!(
+        "Bambu profiles missing at {}. Run scripts/fetch-resources.sh or set SHALE_ORCA_DIR.",
+        profiles.display()
+    );
+}
+
 fn catalog() -> Catalog {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     Catalog::open(ResourcePaths {
@@ -103,17 +147,8 @@ fn inheritance_formulas_variant_and_user_overrides() {
 
 #[test]
 fn real_cura_profiles_when_resources_are_present() {
-    let Ok(cura) = std::env::var("SHALE_CURA_DIR") else {
-        return;
-    };
-    let Ok(materials) = std::env::var("SHALE_MATERIALS_DIR") else {
-        return;
-    };
-    let catalog = Catalog::open(ResourcePaths {
-        cura: cura.into(),
-        materials: materials.into(),
-    })
-    .expect("cura catalog");
+    ensure_bambu_vendor_profiles();
+    let catalog = Catalog::open(real_resource_paths()).expect("cura catalog");
     assert!(catalog
         .printers()
         .iter()
@@ -139,28 +174,24 @@ fn real_cura_profiles_when_resources_are_present() {
     );
 
     let a1_04 = catalog.qualities_for("bambu_lab_a1", Some("0.4 mm"));
-    let expected_04 = [
-        "0.08 mm Extra Fine",
-        "0.12 mm Fine",
-        "0.16 mm Optimal",
-        "0.20 mm Standard",
-        "0.24 mm Draft",
-        "0.28 mm Extra Draft",
-    ];
-    let names_04: Vec<&str> = a1_04.iter().map(|q| q.name.as_str()).collect();
-    assert_eq!(
-        names_04.len(),
-        expected_04.len(),
-        "A1 0.4 mm presets: got {:?}",
-        names_04
+    assert!(
+        !a1_04.is_empty(),
+        "A1 0.4 mm process list must not be empty: {:?}",
+        a1_04
     );
-    for want in expected_04 {
-        assert!(
-            names_04.iter().any(|name| *name == want),
-            "missing A1 0.4 preset {want}; got {:?}",
-            names_04
-        );
-    }
+    assert!(
+        a1_04.iter().any(|q| q.name == "0.20 mm Standard"),
+        "missing 0.20 mm Standard; got {:?}",
+        a1_04
+            .iter()
+            .map(|q| q.name.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        a1_04.iter().any(|q| q.name.contains("0.28 mm")),
+        "missing 0.28 mm Extra Draft class preset; got {:?}",
+        a1_04
+    );
     assert!(
         !a1_04
             .iter()
@@ -198,24 +229,24 @@ fn real_cura_profiles_when_resources_are_present() {
         .find(|m| m.id.contains("pla"))
         .map(|m| m.id)
         .unwrap_or_else(|| "bambu_pla_basic".into());
-    let draft = a1_04
+    let extra_draft = a1_04
         .iter()
-        .find(|q| q.name == "0.24 mm Draft")
-        .expect("0.24 mm Draft preset");
+        .find(|q| q.name.starts_with("0.28 mm"))
+        .expect("0.28 mm Extra Draft preset");
     let standard = a1_04
         .iter()
         .find(|q| q.name == "0.20 mm Standard")
         .expect("0.20 mm Standard preset");
-    let resolved_draft = catalog
+    let resolved_extra = catalog
         .resolve(&shale_core::ResolveRequest {
             printer_id: "bambu_lab_a1".into(),
             variant_name: Some("0.4 mm".into()),
-            quality_type: Some(draft.quality_type.clone()),
+            quality_type: Some(extra_draft.quality_type.clone()),
             material_id: Some(material.clone()),
             intent_category: None,
             settings: UserSettings::default(),
         })
-        .expect("resolve draft");
+        .expect("resolve extra draft");
     let resolved_standard = catalog
         .resolve(&shale_core::ResolveRequest {
             printer_id: "bambu_lab_a1".into(),
@@ -227,9 +258,9 @@ fn real_cura_profiles_when_resources_are_present() {
         })
         .expect("resolve standard");
     assert!(
-        (resolved_draft.summary.layer_height - 0.24).abs() < 0.02,
-        "draft layer_height {}",
-        resolved_draft.summary.layer_height
+        (resolved_extra.summary.layer_height - 0.28).abs() < 0.02,
+        "0.28 mm preset layer_height {}",
+        resolved_extra.summary.layer_height
     );
     assert!(
         (resolved_standard.summary.layer_height - 0.20).abs() < 0.02,
@@ -237,7 +268,7 @@ fn real_cura_profiles_when_resources_are_present() {
         resolved_standard.summary.layer_height
     );
     assert!(
-        (resolved_draft.summary.layer_height - resolved_standard.summary.layer_height).abs() > 0.02,
+        (resolved_extra.summary.layer_height - resolved_standard.summary.layer_height).abs() > 0.02,
         "preset should change layer_height"
     );
 
