@@ -3616,6 +3616,20 @@ export function App() {
           {/* Every slice is kept, so two outcomes can be put side by side
               instead of one overwriting the other. */}
           {pane === "preview" && (
+            <Frame title="sliced">
+              <JobSummary
+                layerCount={layerCount}
+                printSeconds={printSeconds}
+                filamentMetres={filamentMetres}
+                grams={grams}
+                estimate={estimate}
+                formatMoney={money}
+                formatClock={clockTime}
+              />
+            </Frame>
+          )}
+
+          {pane === "preview" && (
             <Frame title="slices">
               {history.length === 0 ? (
                 <p className="hint">no slices yet</p>
@@ -3796,67 +3810,17 @@ export function App() {
               onNone={() => setHiddenKinds(new Set(paths.map((path) => path.kind)))}
             />
           )}
-          {/* A result, not a setting: the card is Preview's. Prepare used to
-              carry it and showed the last job's numbers over an unsliced plate. */}
-          {preview && (
-          <div
-            className={status?.demo === "cost" ? "job-card demo-cost" : "job-card"}
-            data-sliced={layerCount > 0 ? "yes" : "no"}
-          >
-            {layerCount > 0 ? (
-              <>
-                <span className="job-state">sliced</span>
-                <dl>
-                  <div>
-                    <dt>time</dt>
-                    <dd>{printSeconds == null ? "—" : clockTime(printSeconds)}</dd>
-                  </div>
-                  <div>
-                    <dt>filament</dt>
-                    <dd>{filamentMetres == null ? "—" : `${filamentMetres.toFixed(1)} m`}</dd>
-                  </div>
-                  {grams != null && (
-                    <div>
-                      <dt>weight</dt>
-                      <dd>{grams < 10 ? grams.toFixed(1) : grams.toFixed(0)} g</dd>
-                    </div>
-                  )}
-                  <div>
-                    <dt>layers</dt>
-                    <dd>{layerCount}</dd>
-                  </div>
-                  {estimate && (
-                    <>
-                      <div>
-                        <dt>filament cost</dt>
-                        <dd>{money(estimate.filament_cost)}</dd>
-                      </div>
-                      <div>
-                        <dt>energy</dt>
-                        <dd>
-                          {estimate.kwh.toFixed(3)} kWh · {money(estimate.energy_cost)}
-                        </dd>
-                      </div>
-                      {estimate.spools.map((spool) => (
-                        <div key={spool.slot}>
-                          <dt>{`spool ${spool.slot + 1}`}</dt>
-                          <dd>
-                            {spool.grams.toFixed(0)} g · {money(spool.cost)}
-                          </dd>
-                        </div>
-                      ))}
-                      <div className="job-total">
-                        <dt>total</dt>
-                        <dd>{money(estimate.total)}</dd>
-                      </div>
-                    </>
-                  )}
-                </dl>
-              </>
-            ) : (
-              <span className="job-state quiet">not sliced</span>
-            )}
-          </div>
+          {preview && status?.demo === "cost" && (
+            <JobSummary
+              variant="demo"
+              layerCount={layerCount}
+              printSeconds={printSeconds}
+              filamentMetres={filamentMetres}
+              grams={grams}
+              estimate={estimate}
+              formatMoney={money}
+              formatClock={clockTime}
+            />
           )}
           <Viewport
             width={bed.width}
@@ -4052,4 +4016,81 @@ function messageOf(err: unknown): string {
   if (typeof err === "string") return err;
   if (err instanceof Error) return err.message;
   return "Something went wrong";
+}
+
+function JobSummary({
+  layerCount,
+  printSeconds,
+  filamentMetres,
+  grams,
+  estimate,
+  formatMoney,
+  formatClock,
+  variant = "panel",
+}: {
+  layerCount: number;
+  printSeconds: number | null;
+  filamentMetres: number | null;
+  grams: number | null;
+  estimate: CostEstimate | null;
+  formatMoney: (value: number) => string;
+  formatClock: (seconds: number) => string;
+  variant?: "panel" | "demo";
+}) {
+  const className =
+    variant === "demo" ? "job-card demo-cost" : "job-card job-card--panel";
+  if (layerCount <= 0) {
+    return <span className="job-state quiet">not sliced</span>;
+  }
+  return (
+    <div className={className} data-sliced="yes">
+      {variant !== "panel" && <span className="job-state">sliced</span>}
+      <dl>
+        <div>
+          <dt>time</dt>
+          <dd>{printSeconds == null ? "—" : formatClock(printSeconds)}</dd>
+        </div>
+        <div>
+          <dt>length</dt>
+          <dd>{filamentMetres == null ? "—" : `${filamentMetres.toFixed(1)} m`}</dd>
+        </div>
+        {grams != null && (
+          <div>
+            <dt>weight</dt>
+            <dd>{grams < 10 ? grams.toFixed(1) : grams.toFixed(0)} g</dd>
+          </div>
+        )}
+        <div>
+          <dt>layers</dt>
+          <dd>{layerCount}</dd>
+        </div>
+        {estimate && (
+          <>
+            <div>
+              <dt>material</dt>
+              <dd>{formatMoney(estimate.filament_cost)}</dd>
+            </div>
+            <div>
+              <dt>energy</dt>
+              <dd>
+                {estimate.kwh.toFixed(3)} kWh · {formatMoney(estimate.energy_cost)}
+              </dd>
+            </div>
+            {estimate.spools.map((spool) => (
+              <div key={spool.slot}>
+                <dt>{`spool ${spool.slot + 1}`}</dt>
+                <dd>
+                  {spool.grams.toFixed(0)} g · {formatMoney(spool.cost)}
+                </dd>
+              </div>
+            ))}
+            <div className="job-total">
+              <dt>total</dt>
+              <dd>{formatMoney(estimate.total)}</dd>
+            </div>
+          </>
+        )}
+      </dl>
+    </div>
+  );
 }

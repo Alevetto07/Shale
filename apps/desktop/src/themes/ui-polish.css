@@ -365,34 +365,47 @@ textarea {
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
   pointer-events: auto;
 }
-.job-card {
-  left: 1rem;
-  right: auto;
-  top: auto;
-  bottom: 5.25rem;
-  max-width: 13.5rem;
-}
-.legend {
-  top: 1rem;
-  right: 1rem;
-  max-height: min(16rem, calc(100% - 7rem));
-  overflow-y: auto;
-}
 .job-card.demo-cost {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-float);
-  bottom: auto;
   top: 50%;
+  left: 50%;
+  right: auto;
+  bottom: auto;
   transform: translate(-50%, -50%);
-}
-.plate[data-preview="yes"] .viewport-mock {
-  padding: 0.5rem 1rem 2rem;
+  min-width: 22rem;
+  max-width: min(28rem, calc(100vw - 4rem));
 }
 .plate[data-preview="yes"] .viewport-mock-meta {
-  margin-top: 0.25rem;
-  max-width: min(28rem, 70%);
+  max-width: min(24rem, calc(100% - 2rem));
   text-align: center;
   line-height: 1.35;
+}
+
+/* Overlays and sheets: contain text at laptop widths. */
+.menu-sheet {
+  max-width: min(22rem, calc(100vw - 2rem));
+  overflow-x: hidden;
+}
+.menu-sheet.wide,
+.menu-sheet.settings-sheet {
+  max-width: min(46rem, calc(100vw - 2rem));
+}
+.menu-sheet button,
+.menu-row {
+  min-width: 0;
+}
+.banner.floating {
+  max-width: calc(100% - 3.5rem);
+  overflow: auto;
+}
+.legend-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.legend-row em {
+  flex: 0 0 auto;
 }
 
 .legend-row {
