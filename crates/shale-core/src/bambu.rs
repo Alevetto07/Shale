@@ -30,8 +30,6 @@ const DEFAULT_VENDORS: &str = "BBL";
 
 /// More nozzles than this per model is noise in a dropdown.
 const MAX_VARIANTS: usize = 8;
-/// Quality profiles shown per printer, best-known first.
-const MAX_QUALITIES: usize = 14;
 /// Filaments shown per printer.
 const MAX_MATERIALS: usize = 40;
 /// Depth guard for `inherits` chains; the deepest real chain is 3.

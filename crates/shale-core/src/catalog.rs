@@ -362,6 +362,12 @@ impl Catalog {
         })
     }
 
+    /// `true` when the printer comes from the Bambu/Orca profile library, not
+    /// Cura's own definition tree.
+    pub fn is_external_printer(&self, printer_id: &str) -> bool {
+        self.external.contains(printer_id)
+    }
+
     pub fn printers(&self) -> Vec<PrinterInfo> {
         let mut printers: Vec<PrinterInfo> = self
             .definitions

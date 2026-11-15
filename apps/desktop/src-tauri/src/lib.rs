@@ -2428,7 +2428,7 @@ fn profile_settings(
         if inner
             .catalog
             .as_ref()
-            .is_some_and(|cat| !cat.external.contains(&printer_id))
+            .is_some_and(|cat| !cat.is_external_printer(&printer_id))
         {
             return Err(
                 "The full printer library is still loading — wait a moment before opening settings."
@@ -2498,7 +2498,7 @@ async fn slice_model(
             if inner
                 .catalog
                 .as_ref()
-                .is_some_and(|cat| !cat.external.contains(&printer_id))
+                .is_some_and(|cat| !cat.is_external_printer(&printer_id))
             {
                 return Err(
                     "The full printer library is still loading — wait before slicing on this printer."
