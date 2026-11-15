@@ -299,7 +299,7 @@ fn cancel_import(state: State<AppState>) -> Result<(), String> {
 #[tauri::command]
 fn list_printers(state: State<AppState>) -> Result<Vec<PrinterInfo>, String> {
     let mut inner = lock(&state)?;
-    Ok(catalog(&mut inner)?.printers())
+    Ok(catalog(&mut inner)?.selectable_printers())
 }
 
 #[tauri::command]
@@ -338,10 +338,7 @@ fn list_materials(state: State<AppState>, printer_id: String) -> Result<Vec<Mate
         .unwrap_or(1.75);
     // Bambu printers get their own tuned filaments, already narrowed to the
     // machine; Cura printers keep the short generic-first list they had.
-    if catalog
-        .printers()
-        .iter()
-        .any(|printer| printer.id == printer_id && printer.source == "bambu")
+    if catalog.external.contains(&printer_id)
     {
         return Ok(catalog.materials_for_printer(&printer_id, diameter));
     }
@@ -3430,9 +3427,11 @@ fn preload_demo(
     };
     let mesh = imported.mesh;
     let report = imported.report;
-    let printer_id = if catalog.printer("creality_ender3").is_some() {
-        "creality_ender3".to_string()
-    } else if let Some(printer) = catalog.printers().first() {
+    let printer_id = if catalog.printer("bambu_lab_a1").is_some() {
+        catalog
+            .default_printer_id()
+            .unwrap_or_else(|| "bambu_lab_a1".to_string())
+    } else if let Some(printer) = catalog.selectable_printers().first() {
         printer.id.clone()
     } else {
         return (Vec::new(), Vec::new(), None, None);
@@ -3441,8 +3440,8 @@ fn preload_demo(
         .resolve(&shale_core::ResolveRequest {
             printer_id: printer_id.clone(),
             variant_name: Some("0.4mm Nozzle".into()),
-            quality_type: Some("draft".into()),
-            material_id: Some("generic_pla".into()),
+            quality_type: Some("normal".into()),
+            material_id: Some("bambu_lab_pla_basic".into()),
             intent_category: None,
             settings: UserSettings::default(),
         })

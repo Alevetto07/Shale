@@ -36,8 +36,8 @@ Unzip `shale-0.1.1-windows-x64.zip` anywhere and run from that folder:
 
 ```powershell
 .\shale-cli.exe info
-.\shale-cli.exe printers --search ender
-.\shale-cli.exe slice .\cube.stl --printer creality_ender3 --layer 0.2 --infill 20 -o .\cube.gcode
+.\shale-cli.exe printers --search a1
+.\shale-cli.exe slice .\cube.stl --printer bambu_lab_a1 --layer 0.2 --infill 20 -o .\cube.gcode
 ```
 
 CuraEngine and the resource tree come from an installed UltiMaker Cura 5.x, or

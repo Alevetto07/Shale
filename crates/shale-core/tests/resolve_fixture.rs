@@ -122,6 +122,21 @@ fn real_cura_profiles_when_resources_are_present() {
         .printers()
         .iter()
         .any(|printer| printer.id == "prusa_i3"));
+    let selectable = catalog.selectable_printers();
+    assert!(
+        selectable.iter().any(|printer| printer.id == "bambu_lab_a1"),
+        "Bambu A1 should be selectable"
+    );
+    assert!(
+        !selectable
+            .iter()
+            .any(|printer| printer.id == "creality_ender3"),
+        "Creality should stay in the catalogue but not be selectable"
+    );
+    assert!(
+        selectable.len() < catalog.printers().len(),
+        "selectable list should be smaller than the full catalogue"
+    );
 
     let resolved = catalog
         .resolve(&shale_core::ResolveRequest {

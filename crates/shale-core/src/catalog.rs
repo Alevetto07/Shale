@@ -399,6 +399,27 @@ impl Catalog {
         printers
     }
 
+    /// Bambu Lab printers Shale v0.1 lists in the window, CLI and MCP.
+    ///
+    /// Cura's full catalogue stays loaded for the resolver; only Bambu
+    /// definitions from the bundled library are selectable.
+    pub fn selectable_printers(&self) -> Vec<PrinterInfo> {
+        self.printers()
+            .into_iter()
+            .filter(|printer| printer.source == "bambu")
+            .collect()
+    }
+
+    /// Default machine for a fresh job when nothing is remembered.
+    pub fn default_printer_id(&self) -> Option<String> {
+        let selectable = self.selectable_printers();
+        selectable
+            .iter()
+            .find(|printer| printer.id == "bambu_lab_a1")
+            .or_else(|| selectable.first())
+            .map(|printer| printer.id.clone())
+    }
+
     /// The machine's own start and end sequence for a nozzle, if its profile
     /// library ships one. `None` is a machine whose start is Cura's, which is
     /// right for a Cura printer and wrong for a Bambu one.

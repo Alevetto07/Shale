@@ -78,10 +78,12 @@ struct Loaded {
 
 impl Session {
     pub fn new(catalog: Catalog, engine: Box<dyn SlicingEngine + Send + Sync>) -> Self {
-        let printer_id = catalog
-            .printer("creality_ender3")
-            .map(|_| "creality_ender3".to_string())
-            .or_else(|| catalog.printers().first().map(|printer| printer.id.clone()));
+        let printer_id = catalog.default_printer_id().or_else(|| {
+            catalog
+                .printer("demo_ender")
+                .map(|_| "demo_ender".to_string())
+                .or_else(|| catalog.printers().first().map(|printer| printer.id.clone()))
+        });
         let (variant_name, quality_type, material_id) = printer_id
             .as_deref()
             .and_then(|id| catalog.printer(id))
@@ -112,12 +114,15 @@ impl Session {
     }
 
     pub fn list_printers(&self) -> Vec<PrinterInfo> {
-        self.catalog.printers()
+        self.catalog.selectable_printers()
     }
 
     pub fn list_materials(&self, printer_id: Option<&str>) -> Result<Vec<MaterialInfo>, Error> {
         let id = self.printer(printer_id)?;
         let diameter = self.resolve(Some(id))?.summary.material_diameter;
+        if self.catalog.external.contains(id) {
+            return Ok(self.catalog.materials_for_printer(id, diameter));
+        }
         Ok(self.catalog.materials_for(diameter))
     }
 
@@ -139,6 +144,16 @@ impl Session {
         quality_type: Option<String>,
         material_id: Option<String>,
     ) -> Result<(), Error> {
+        if !self
+            .catalog
+            .selectable_printers()
+            .iter()
+            .any(|printer| printer.id == printer_id)
+        {
+            return Err(Error::message(format!(
+                "printer '{printer_id}' is not available in this release (Bambu Lab only)"
+            )));
+        }
         let (preferred_variant, preferred_quality, preferred_material) = {
             let printer = self
                 .catalog
