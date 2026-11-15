@@ -14,6 +14,7 @@ use shale_core::engine::{CliEngine, EngineProgress};
 use shale_core::job::{slice, PlacedModel};
 use shale_core::mesh::{load_mesh, place_on_bed};
 use shale_core::resolver::{ResolveRequest, UserSettings};
+use shale_core::{NonplanarMode, NonplanarOptions};
 
 const USAGE: &str = "\
 shale — slice a model without the window
@@ -32,6 +33,8 @@ slice options
   --infill PERCENT    sparse infill density
   --supports          enable support
   --set KEY=VALUE     any Cura setting, repeatable
+  --nonplanar MODE    experimental: off or curved-tops (Bambu A1 only)
+  --max-angle DEG     clearance limit for curved tops (default 10)
   -o, --output PATH   where to write the G-code
 
 environment
@@ -171,7 +174,22 @@ fn resolve_request(args: &[String], printer: &str) -> ResolveRequest {
             material_print_temperature: None,
             material_bed_temperature: None,
             extra,
+            nonplanar: nonplanar_options(args),
         },
+    }
+}
+
+fn nonplanar_options(args: &[String]) -> NonplanarOptions {
+    let mode = flag(args, "--nonplanar")
+        .and_then(|name| NonplanarMode::from_cli_name(&name))
+        .unwrap_or(NonplanarMode::Off);
+    let max_angle_deg = flag(args, "--max-angle")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10.0);
+    NonplanarOptions {
+        mode,
+        max_angle_deg,
+        ..NonplanarOptions::default()
     }
 }
 
@@ -285,5 +303,11 @@ fn slice_command(args: &[String]) -> Result<(), String> {
     }
     println!("filament {:.2} m", outcome.filament_metres);
     println!("layers   {}", outcome.toolpath.layers.len());
+    if let Some(report) = &outcome.nonplanar_report {
+        println!(
+            "nonplanar {} islands={} flattened={}",
+            report.mode, report.top_islands, report.islands_flattened
+        );
+    }
     Ok(())
 }

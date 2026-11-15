@@ -81,6 +81,7 @@ fn inheritance_formulas_variant_and_user_overrides() {
                 material_print_temperature: Some(205.0),
                 material_bed_temperature: Some(55.0),
                 extra: Vec::new(),
+                ..UserSettings::default()
             },
         })
         .unwrap();
@@ -336,6 +337,7 @@ fn real_cura_profiles_when_resources_are_present() {
                 material_print_temperature: Some(200.0),
                 material_bed_temperature: Some(60.0),
                 extra: Vec::new(),
+                ..UserSettings::default()
             },
         })
         .expect("resolve ender-3");
@@ -409,6 +411,7 @@ fn real_cura_profiles_when_resources_are_present() {
                 material_print_temperature: Some(210.0),
                 material_bed_temperature: Some(60.0),
                 extra: Vec::new(),
+                ..UserSettings::default()
             },
         })
         .expect("resolve prusa");
@@ -612,6 +615,7 @@ endsolid cube
             material_print_temperature: Some(200.0),
             material_bed_temperature: Some(60.0),
             extra: Vec::new(),
+            ..UserSettings::default()
         },
         &[shale_core::PlacedModel {
             name: "cube".into(),
@@ -699,6 +703,7 @@ fn arcus_slices_the_cube_when_configured() {
             material_print_temperature: Some(200.0),
             material_bed_temperature: Some(60.0),
             extra: Vec::new(),
+            ..UserSettings::default()
         },
         &[shale_core::PlacedModel {
             name: "cube".into(),
