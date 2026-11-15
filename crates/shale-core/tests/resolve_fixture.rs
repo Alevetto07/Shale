@@ -371,6 +371,65 @@ fn real_cura_profiles_when_resources_are_present() {
         .is_some_and(|gcode| gcode.contains("G28")));
 }
 
+fn preset_layer_mm(name: &str) -> Option<f64> {
+    let head = name.split_whitespace().next()?;
+    let value = head.trim_end_matches("mm");
+    value.parse().ok().filter(|layer| *layer < 1.0)
+}
+
+#[test]
+fn a1_every_selectable_process_resolves_layer_height() {
+    ensure_bambu_vendor_profiles();
+    let catalog = Catalog::open(real_resource_paths()).expect("open catalog");
+    let material = catalog
+        .materials_for_printer("bambu_lab_a1", 1.75)
+        .into_iter()
+        .find(|m| m.label.to_ascii_lowercase().contains("pla"))
+        .map(|m| m.id)
+        .expect("PLA material for A1");
+    for variant in ["0.2 mm", "0.4 mm", "0.6 mm", "0.8 mm"] {
+        let presets = catalog.qualities_for("bambu_lab_a1", Some(variant));
+        assert!(
+            !presets.is_empty(),
+            "no presets for A1 at {variant}"
+        );
+        for preset in presets {
+            let want = preset_layer_mm(&preset.name).unwrap_or_else(|| {
+                panic!("preset name lacks layer hint: {}", preset.name);
+            });
+            let resolved = catalog
+                .resolve(&shale_core::ResolveRequest {
+                    printer_id: "bambu_lab_a1".into(),
+                    variant_name: Some(variant.into()),
+                    quality_type: Some(preset.quality_type.clone()),
+                    material_id: Some(material.clone()),
+                    intent_category: None,
+                    settings: UserSettings::default(),
+                })
+                .unwrap_or_else(|err| panic!("{} @ {}: {err}", preset.name, variant));
+            assert!(
+                (resolved.summary.layer_height - want).abs() < 0.021,
+                "{} @ {}: expected layer_height {want}, summary {}, global {:?}",
+                preset.name,
+                variant,
+                resolved.summary.layer_height,
+                resolved.global.get("layer_height")
+            );
+            let global = resolved
+                .global
+                .get("layer_height")
+                .and_then(|text| text.parse::<f64>().ok())
+                .unwrap_or(resolved.summary.layer_height);
+            assert!(
+                (global - want).abs() < 0.021,
+                "{} @ {}: engine global layer_height {global}, want {want}",
+                preset.name,
+                variant
+            );
+        }
+    }
+}
+
 #[test]
 fn slice_cube_when_engine_present() {
     let Ok(program) = std::env::var("SHALE_CURAENGINE") else {

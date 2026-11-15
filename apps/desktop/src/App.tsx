@@ -162,7 +162,13 @@ export function App() {
     api
       .profileSettings(printerId, variant, quality, material)
       .then((values) => {
-        if (live) setProfileValues(values ?? {});
+        if (!live) return;
+        const profile = values ?? {};
+        setProfileValues(profile);
+        if (!("layer_height" in overridesRef.current)) {
+          const parsed = Number(profile.layer_height);
+          if (Number.isFinite(parsed)) setLayerHeight(round3(parsed));
+        }
       })
       .catch(() => {
         if (live) setProfileValues({});
@@ -1091,19 +1097,35 @@ export function App() {
     };
   }, [selectedId, models]);
 
-  /**
-   * Everything that goes to the engine as an `extra` override: the quick fields
-   * the side panel mirrors, then whatever the settings menu has been told.
-   * Empty strings are dropped so an untouched field stays the profile's.
-   */
+  /** Literal overrides only — quick fields apply to the engine only when named here. */
   function overridesFor(): [string, string][] {
-    const merged: Record<string, string> = {
-      wall_line_count: String(walls),
-      infill_pattern: pattern,
-      speed_print: String(speed),
-      ...overrides,
+    const scoped =
+      scope === "all"
+        ? overrides
+        : (models.find((m) => m.id === Number(scope))?.settings ?? {});
+    return Object.entries(scoped).filter(([, value]) => value !== "");
+  }
+
+  function userSettingsForEngine(): {
+    layer_height?: number;
+    infill_sparse_density?: number;
+    support_enable?: boolean;
+    material_print_temperature?: number;
+    material_bed_temperature?: number;
+    extra: [string, string][];
+  } {
+    const scoped =
+      scope === "all"
+        ? overrides
+        : (models.find((m) => m.id === Number(scope))?.settings ?? {});
+    return {
+      layer_height: "layer_height" in scoped ? layerHeight : undefined,
+      infill_sparse_density: "infill_sparse_density" in scoped ? infill : undefined,
+      support_enable: "support_enable" in scoped ? supports : undefined,
+      material_print_temperature: "material_print_temperature" in scoped ? nozzle : undefined,
+      material_bed_temperature: "material_bed_temperature" in scoped ? bedTemp : undefined,
+      extra: overridesFor(),
     };
-    return Object.entries(merged).filter(([, value]) => value !== "");
   }
 
   const sliceSettings: SliceSettings = {
@@ -1531,16 +1553,7 @@ export function App() {
     setCalibration(null);
     setProgress({ fraction: 0.01, message: "Starting" });
     try {
-      const summary = await api.slice(printerId, variant, quality, material, ams, {
-        layer_height: layerHeight,
-        infill_sparse_density: infill,
-        support_enable: supports,
-        material_print_temperature: nozzle,
-        material_bed_temperature: bedTemp,
-        // The menu bar edits these directly; an empty list used to mean the
-        // selected profile decided and there was no way to change your mind.
-        extra: overridesFor(),
-      });
+      const summary = await api.slice(printerId, variant, quality, material, ams, userSettingsForEngine());
       setLayerCount(summary.layer_count);
       slicedPlate.current = plateKey;
       setLayerZ(summary.layers.map((item) => item.z));
@@ -2068,14 +2081,8 @@ export function App() {
     setSupportBusy(true);
     try {
       const comparison = await api.compareSupports(printerId, variant, quality, material, {
-        layer_height: layerHeight,
-        infill_sparse_density: infill,
+        ...userSettingsForEngine(),
         support_enable: true,
-        material_print_temperature: nozzle,
-        material_bed_temperature: bedTemp,
-        // The menu bar edits these directly; an empty list used to mean the
-        // selected profile decided and there was no way to change your mind.
-        extra: overridesFor(),
       });
       setSupport((current) =>
         current ? { ...current, plan: { ...current.plan, comparison } } : current,
@@ -2125,14 +2132,7 @@ export function App() {
   }, [playing, layer, layerCount]);
 
   function currentSettings() {
-    return {
-      layer_height: layerHeight,
-      infill_sparse_density: infill,
-      support_enable: supports,
-      material_print_temperature: nozzle,
-      material_bed_temperature: bedTemp,
-      extra: [] as [string, string][],
-    };
+    return { ...userSettingsForEngine() };
   }
 
   function printerLabel() {

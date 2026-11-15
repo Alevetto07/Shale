@@ -545,6 +545,97 @@ pub fn variant_nozzle_tag(variant_name: &str) -> Option<String> {
     Some(nozzle_slug_tag(token))
 }
 
+fn scalar_setting_string(value: &Json) -> Option<String> {
+    if let Some(number) = number_value(value) {
+        return Some(number_to_string(number));
+    }
+    text(Some(value))
+}
+
+fn number_to_string(value: f64) -> String {
+    if (value - value.round()).abs() < 1e-9 {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{value}")
+    }
+}
+
+/// Scalar entries from a merged process JSON (inherits already applied),
+/// translated to Cura setting keys the resolver understands.
+fn process_values_for_cura(values: &Json) -> HashMap<String, String> {
+    const SKIP: &[&str] = &[
+        "type",
+        "name",
+        "inherits",
+        "from",
+        "setting_id",
+        "instantiation",
+        "description",
+        "compatible_printers",
+        "compatible_prints",
+        "setting_overrides",
+        "sub_path",
+    ];
+    let Json::Object(map) = values else {
+        return HashMap::new();
+    };
+    let mut out = HashMap::new();
+    for (key, value) in map {
+        if SKIP.contains(&key.as_str()) {
+            continue;
+        }
+        match key.as_str() {
+            "wall_loops" => {
+                if let Some(walls) = number_value(value) {
+                    out.insert("wall_line_count".to_string(), format!("{}", walls.round()));
+                }
+            }
+            "sparse_infill_density" => {
+                if let Some(infill) = percent_value(value) {
+                    out.insert("infill_sparse_density".to_string(), format!("{infill}"));
+                }
+            }
+            "sparse_infill_pattern" => {
+                if let Some(pattern) = text(Some(value)) {
+                    out.insert("infill_pattern".to_string(), cura_infill(&pattern));
+                }
+            }
+            "top_shell_layers" => {
+                if let Some(layers) = number_value(value) {
+                    out.insert("top_layers".to_string(), format!("{}", layers.round()));
+                }
+            }
+            "bottom_shell_layers" => {
+                if let Some(layers) = number_value(value) {
+                    out.insert("bottom_layers".to_string(), format!("{}", layers.round()));
+                }
+            }
+            "enable_support" => {
+                if let Some(support) = truthy(value) {
+                    out.insert(
+                        "support_enable".to_string(),
+                        if support { "True" } else { "False" }.to_string(),
+                    );
+                }
+            }
+            "initial_layer_print_height" | "initial_layer_height" => {
+                if let Some(text) = scalar_setting_string(value) {
+                    out.insert("layer_height_0".to_string(), text);
+                }
+            }
+            _ => {
+                if value.is_array() {
+                    continue;
+                }
+                if let Some(text) = scalar_setting_string(value) {
+                    out.insert(key.clone(), text);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// A process preset Bambu Studio would list, not an `instantiation: false` base.
 fn process_is_selectable(values: &Json) -> bool {
     if let Some(flag) = values.get("instantiation") {
@@ -585,32 +676,10 @@ fn quality_instances(
         let Some(variant) = variant else {
             continue;
         };
-        let Some(layer_height) = values.get("layer_height").and_then(number_value) else {
+        if values.get("layer_height").and_then(number_value).is_none() {
             continue;
-        };
-        let mut settings = HashMap::new();
-        settings.insert("layer_height".to_string(), format!("{layer_height}"));
-        if let Some(walls) = values.get("wall_loops").and_then(number_value) {
-            settings.insert("wall_line_count".to_string(), format!("{}", walls.round()));
         }
-        if let Some(infill) = values.get("sparse_infill_density").and_then(percent_value) {
-            settings.insert("infill_sparse_density".to_string(), format!("{infill}"));
-        }
-        if let Some(pattern) = text(values.get("sparse_infill_pattern")) {
-            settings.insert("infill_pattern".to_string(), cura_infill(&pattern));
-        }
-        if let Some(layers) = values.get("top_shell_layers").and_then(number_value) {
-            settings.insert("top_layers".to_string(), format!("{}", layers.round()));
-        }
-        if let Some(layers) = values.get("bottom_shell_layers").and_then(number_value) {
-            settings.insert("bottom_layers".to_string(), format!("{}", layers.round()));
-        }
-        if let Some(support) = values.get("enable_support").and_then(truthy) {
-            settings.insert(
-                "support_enable".to_string(),
-                if support { "True" } else { "False" }.to_string(),
-            );
-        }
+        let settings = process_values_for_cura(values);
         let name = pretty_quality(stem);
         out.push(InstanceFile {
             name,

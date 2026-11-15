@@ -376,11 +376,11 @@ export interface SupportView {
 }
 
 export interface SliceSettings {
-  layer_height: number;
-  infill_sparse_density: number;
-  support_enable: boolean;
-  material_print_temperature: number;
-  material_bed_temperature: number;
+  layer_height?: number;
+  infill_sparse_density?: number;
+  support_enable?: boolean;
+  material_print_temperature?: number;
+  material_bed_temperature?: number;
   extra: [string, string][];
 }
 

@@ -2447,7 +2447,14 @@ fn profile_settings(
             settings: UserSettings::default(),
         })
         .map_err(|error| error.to_string())?;
-    Ok(resolved.global.into_iter().collect())
+    let mut values: std::collections::HashMap<String, String> =
+        resolved.global.into_iter().collect();
+    if let Some(extruder) = resolved.extruders.first() {
+        for (key, value) in extruder {
+            values.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+    }
+    Ok(values)
 }
 
 /// What a setting is called and what it does, in the words of the printer's own
