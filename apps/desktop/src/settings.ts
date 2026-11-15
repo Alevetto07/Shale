@@ -99,7 +99,7 @@ export const SETTING_GROUPS: SettingGroup[] = [
       { key: "speed_print", label: "Print speed", kind: "number", bambu: "", min: 10, max: 500, step: 1, unit: "mm/s" },
       { key: "speed_layer_0", label: "Initial layer", kind: "number", bambu: "initial_layer_speed", min: 5, max: 200, step: 1, unit: "mm/s" },
       { key: "speed_wall_0", label: "Outer wall", kind: "number", bambu: "outer_wall_speed", min: 5, max: 500, step: 1, unit: "mm/s" },
-      { key: "speed_wall", label: "Inner wall", kind: "number", bambu: "inner_wall_speed", min: 5, max: 500, step: 1, unit: "mm/s" },
+      { key: "speed_wall_x", label: "Inner wall", kind: "number", bambu: "inner_wall_speed", min: 5, max: 500, step: 1, unit: "mm/s" },
       { key: "speed_infill", label: "Sparse infill", kind: "number", bambu: "sparse_infill_speed", min: 5, max: 500, step: 1, unit: "mm/s" },
       { key: "speed_topbottom", label: "Top/bottom", kind: "number", bambu: "top_surface_speed", min: 5, max: 500, step: 1, unit: "mm/s" },
       { key: "speed_travel", label: "Travel", kind: "number", bambu: "travel_speed", min: 10, max: 900, step: 5, unit: "mm/s" },

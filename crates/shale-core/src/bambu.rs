@@ -632,7 +632,6 @@ fn process_values_for_cura(values: &Json) -> HashMap<String, String> {
         ("travel_speed_z", "speed_z_hop"),
         ("support_speed", "speed_support"),
         ("bridge_speed", "speed_bridge"),
-        ("gap_infill_speed", "speed_wall"),
         ("default_acceleration", "acceleration_print"),
         ("outer_wall_acceleration", "acceleration_wall_0"),
         ("inner_wall_acceleration", "acceleration_wall_x"),

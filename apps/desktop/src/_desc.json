@@ -38,7 +38,7 @@
  "speed_print": "The speed every feature falls back to.",
  "speed_layer_0": "The slow first layer, so it sticks.",
  "speed_wall_0": "Speed of the visible outer wall, where quality shows.",
- "speed_wall": "Speed of the inner walls.",
+ "speed_wall_x": "Speed of the inner walls.",
  "speed_infill": "Speed inside the part, where nothing is seen.",
  "speed_topbottom": "Speed of the visible top and bottom surfaces.",
  "speed_travel": "Speed of moves that print nothing.",
