@@ -1,6 +1,6 @@
-import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { listen } from "./platform/event";
+import { getCurrentWindow } from "./platform/window";
+import { open, save } from "./platform/dialog";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
@@ -32,8 +32,17 @@ import { StartScreen } from "./StartScreen";
 import { DevicePane, TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
 import { FeatureLegend } from "./Legend";
 import { thumbnailJpeg } from "./thumbnail";
+import { variantOptionLabel } from "./profile-labels";
 import { Frame, meter, track } from "./theme";
-import { MenuBar, type SliceSettings } from "./MenuBar";
+import { MenuBar } from "./MenuBar";
+import {
+  overridesFromSliceSettings,
+  QUICK_SETTING_KEYS,
+  quickSettingsView,
+  userSettingsForEngine,
+} from "./engine-settings";
+import type { QuickFallbacks } from "./ProcessSheet";
+import { pickQualityType } from "./profile-pick";
 import { TitleBar } from "./TitleBar";
 import { useRecents } from "./recents";
 import { Viewport, type TransformMode, type ViewStyle , type ColourMode } from "./Viewport";
@@ -150,7 +159,9 @@ export function App() {
     api
       .profileSettings(printerId, variant, quality, material)
       .then((values) => {
-        if (live) setProfileValues(values ?? {});
+        if (!live) return;
+        const profile = values ?? {};
+        setProfileValues(profile);
       })
       .catch(() => {
         if (live) setProfileValues({});
@@ -164,19 +175,23 @@ export function App() {
   // string is an empty bay, so the slot count is derived instead of stored.
   const [ams, setAms] = useState<string[]>(["", "", ""]);
   const [bed, setBed] = useState<Bed>(FALLBACK_BED);
-  const [layerHeight, setLayerHeight] = useState(0.2);
-  const [infill, setInfill] = useState(20);
-  const [supports, setSupports] = useState(false);
-  const [walls, setWalls] = useState(2);
-  const [pattern, setPattern] = useState("grid");
-  const [speed, setSpeed] = useState(50);
   // Cura settings the user changed in the menu; anything absent is the profile's.
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   useEffect(() => {
     overridesRef.current = overrides;
   }, [overrides]);
-  const [nozzle, setNozzle] = useState(200);
-  const [bedTemp, setBedTemp] = useState(60);
+  const lastMaterial = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const prev = lastMaterial.current;
+    lastMaterial.current = material;
+    if (prev === undefined || prev === material) return;
+    setOverrides((current) => {
+      const next = { ...current };
+      delete next[QUICK_SETTING_KEYS.nozzle];
+      delete next[QUICK_SETTING_KEYS.bed];
+      return next;
+    });
+  }, [material]);
   const [models, setModels] = useState<ModelView[]>([]);
   /// The part being painted, the patches it offers and how many of its
   /// triangles are painted. Painting is per part, keyed on the part's own
@@ -200,7 +215,7 @@ export function App() {
   // Part counts are the backend's, because it holds the plates that are not in
   // front. A part arriving or leaving is the only thing that changes them.
   useEffect(() => {
-    void api.listPlates().then(setPlates).catch(() => {});
+    void api.listPlates().then((next) => setPlates(next ?? [])).catch(() => setPlates([]));
   }, [models.length]);
 
   /// Which part the settings sheet writes to: "all" for the plate, or a part id.
@@ -256,6 +271,8 @@ export function App() {
   const recents = useRecents();
   const [notice, setNotice] = useState<string | null>(null);
   const restore = useRef<Restore | null>(null);
+  const catalogLoadingRef = useRef(false);
+  const catalogAttemptsRef = useRef(0);
   const saveRef = useRef<(asNew: boolean) => void>(() => {});
   const openRef = useRef<(path?: string) => void>(() => {});
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -311,12 +328,46 @@ export function App() {
     .join("|");
   const slicedPlate = useRef<string | null>(null);
 
+  const scopedOverrides = useMemo(
+    () =>
+      scope === "all"
+        ? overrides
+        : (models.find((m) => m.id === Number(scope))?.settings ?? {}),
+    [scope, overrides, models],
+  );
+
+  const quickFallbacks = useMemo(
+    (): QuickFallbacks => ({
+      layerHeight: bed.layer_height,
+      walls: Number(profileValues.wall_line_count) || 2,
+      infill: bed.infill_sparse_density,
+      pattern: profileValues.infill_pattern || "grid",
+      supports: bed.support_enable,
+      speed: bed.speed_print,
+      nozzle: bed.nozzle_temperature,
+      bed: bed.bed_temperature,
+    }),
+    [bed, profileValues],
+  );
+
+  const quick = useMemo(
+    () => quickSettingsView(profileValues, scopedOverrides, quickFallbacks),
+    [profileValues, scopedOverrides, quickFallbacks],
+  );
+
+  const engineSettings = useMemo(() => userSettingsForEngine(scopedOverrides), [scopedOverrides]);
+
+  const { layerHeight, infill, supports, nozzle, bed: bedTemp } = quick;
+
   /// What a slice was made from. The plate says where the parts are, this says
   /// what the engine was told to do with them; a change to either makes the
   /// last slice a description of something else.
   const settingsKey = JSON.stringify({
-    layerHeight, walls, infill, pattern, supports, speed, nozzle, bedTemp,
-    material, quality, variant, overrides,
+    quick,
+    material,
+    quality,
+    variant,
+    scopedOverrides,
   });
   const lastSlice = history.length > 0 ? history[history.length - 1] : null;
   const stale =
@@ -363,6 +414,7 @@ export function App() {
   useEffect(() => {
     let stopped = false;
     let retry: number | undefined;
+    let catalogPoll: number | undefined;
     // A demo scenario slices before the window opens, so the first boot can
     // legitimately see an empty plate. Ask again instead of filming the start
     // screen.
@@ -375,14 +427,24 @@ export function App() {
         const next = await api.status();
         if (stopped) return;
         setStatus(next);
+        catalogLoadingRef.current =
+          !!next.catalog_loading || (next.resources_ok && next.catalog_full === false);
         setEnginePath(next.engine_path);
         setLibDir(next.engine_lib_dir || "");
         setBackend(next.engine_backend || "cli");
         if (!next.resources_ok && next.catalog_loading) {
+          catalogAttemptsRef.current += 1;
+          if (catalogAttemptsRef.current > 180) {
+            setError(
+              "Reading the printer and material profiles timed out — close other heavy builds and relaunch, or check SHALE_CURA_DIR.",
+            );
+            return;
+          }
           window.clearTimeout(retry);
           retry = window.setTimeout(() => void boot(), 700);
           return;
         }
+        catalogAttemptsRef.current = 0;
         if (!next.resources_ok) {
           setError(next.resources_message);
         }
@@ -401,7 +463,7 @@ export function App() {
             setSelectedId(loaded[0].id);
           }
           const stored = await api.instructions();
-          setInstructions(stored);
+          setInstructions(stored ?? []);
           setSupport(await api.supportPlan());
           // A slice describes the plate it was taken from. If the plate has
           // changed since — a part added, a part taken away — the old numbers
@@ -429,8 +491,7 @@ export function App() {
             : undefined;
           const preferred =
             remembered ??
-            list.find((printer) => printer.id === "creality_ender3") ??
-            list.find((printer) => printer.id === "prusa_i3") ??
+            list.find((printer) => printer.id === "bambu_lab_a1") ??
             list[0];
           // The printer effect below picks the machine's own preferred variant,
           // quality and material unless something is waiting in `restore`; a
@@ -466,21 +527,54 @@ export function App() {
           // A demo scenario is a state, not a script: the queue video starts
           // with the Device pane already open rather than hunting for a tab.
           if (next.demo === "queue") setPane("device");
+          if (import.meta.env.VITE_SHALE_MOCK === "1") {
+            const mockPane = new URLSearchParams(window.location.search).get("pane");
+            if (mockPane === "prepare" || mockPane === "preview" || mockPane === "device") {
+              setScreen("slicer");
+              setWorkspace(true);
+              setPane(mockPane);
+              if (mockPane === "preview") {
+                setPreview(true);
+                setShowModel(false);
+              }
+              if (mockPane === "prepare") {
+                setPreview(false);
+                setShowModel(true);
+              }
+            } else if (mockPane === "home") {
+              setScreen("start");
+              setPane("home");
+            }
+          }
           recents.refresh();
         }
       } catch (err) {
         if (!stopped) setError(messageOf(err));
       }
     };
-    void boot();
-    const unlisten = listen("catalogue", () => {
+    let offCatalogue: (() => void) | undefined;
+    const onCatalogue = () => {
       window.clearTimeout(retry);
       void boot();
+    };
+    void listen("catalogue", onCatalogue).then((off) => {
+      offCatalogue = off;
+      if (!stopped) void boot();
     });
+    catalogPoll = window.setInterval(() => {
+      if (stopped) return;
+      if (catalogLoadingRef.current) void boot();
+    }, 1500);
+    const onFocus = () => {
+      if (!stopped) void boot();
+    };
+    window.addEventListener("focus", onFocus);
     return () => {
       stopped = true;
       window.clearTimeout(retry);
-      void unlisten.then((off) => off());
+      window.clearInterval(catalogPoll);
+      window.removeEventListener("focus", onFocus);
+      offCatalogue?.();
     };
   }, []);
 
@@ -498,24 +592,28 @@ export function App() {
   }, [printerId, variant, quality, material]);
 
   useEffect(() => {
+    if (!printerId || printers.length === 0) return;
+    if (printers.some((printer) => printer.id === printerId)) return;
+    const fallback =
+      printers.find((printer) => printer.id === "bambu_lab_a1")?.id ?? printers[0]?.id;
+    if (fallback) setPrinterId(fallback);
+  }, [printers, printerId]);
+
+  const pendingQuality = useRef<string | null | undefined>(undefined);
+  const lastVariant = useRef<string | null>(null);
+
+  useEffect(() => {
     if (!printerId) return;
     let cancelled = false;
     void (async () => {
       try {
-        const [nextVariants, nextQualities, nextMaterials] = await Promise.all([
+        const [nextVariants, nextMaterials] = await Promise.all([
           api.variants(printerId),
-          api.qualities(printerId),
           api.materials(printerId),
         ]);
         if (cancelled) return;
         setVariants(nextVariants);
-        setQualities(nextQualities);
         setMaterials(nextMaterials);
-        // A remembered choice is only a choice if the machine still offers it.
-        // The profile used to be restored wholesale, so a null written into
-        // storage once — by a window that had not loaded the catalogue yet —
-        // left the nozzle and quality reading "none" for ever while the
-        // resolver quietly used the machine's own defaults.
         const pending = restore.current;
         restore.current = null;
         const known = <T,>(wanted: T | null | undefined, offers: (item: T) => boolean) =>
@@ -526,28 +624,20 @@ export function App() {
         )
           ? (pending?.variant as string)
           : nextVariants.some((item) => item.name === printer?.preferred_variant)
-            ? printer?.preferred_variant ?? nextVariants[0]?.name ?? null
-            : nextVariants[0]?.name ?? null;
-        const nextQuality = known(pending?.quality ?? null, (type) =>
-          nextQualities.some((item) => item.quality_type === type),
-        )
-          ? (pending?.quality as string)
-          : nextQualities.some((item) => item.quality_type === printer?.preferred_quality_type)
-            ? printer?.preferred_quality_type ?? nextQualities[0]?.quality_type ?? null
-            : nextQualities.find((item) => item.quality_type === "draft")?.quality_type ??
-              nextQualities[0]?.quality_type ??
-              null;
+            ? (printer?.preferred_variant ?? nextVariants[0]?.name ?? null)
+            : (nextVariants[0]?.name ?? null);
+        pendingQuality.current = pending?.quality ?? null;
         const nextMaterial = known(pending?.material ?? null, (id) =>
           nextMaterials.some((item) => item.id === id),
         )
           ? (pending?.material as string)
           : nextMaterials.some((item) => item.id === printer?.preferred_material)
-            ? printer?.preferred_material ?? nextMaterials[0]?.id ?? null
-            : nextMaterials.find((item) => item.id.startsWith("generic_pla"))?.id ??
+            ? (printer?.preferred_material ?? nextMaterials[0]?.id ?? null)
+            : (nextMaterials.find((item) => item.id.startsWith("generic_pla"))?.id ??
               nextMaterials[0]?.id ??
-              null;
+              null);
+        lastVariant.current = null;
         setVariant(nextVariant);
-        setQuality(nextQuality);
         setMaterial(nextMaterial);
       } catch (err) {
         if (!cancelled) setError(messageOf(err));
@@ -559,6 +649,39 @@ export function App() {
   }, [printerId, printers]);
 
   useEffect(() => {
+    if (!printerId || !variant) {
+      setQualities([]);
+      return;
+    }
+    let cancelled = false;
+    const nozzleChanged = lastVariant.current !== null && lastVariant.current !== variant;
+    lastVariant.current = variant;
+    void (async () => {
+      try {
+        const nextQualities = await api.qualities(printerId, variant);
+        if (cancelled) return;
+        setQualities(nextQualities);
+        const printer = printers.find((item) => item.id === printerId);
+        const remembered = pendingQuality.current;
+        pendingQuality.current = undefined;
+        setQuality((current) =>
+          pickQualityType(nextQualities, {
+            pending: remembered,
+            current,
+            printer,
+            nozzleChanged,
+          }),
+        );
+      } catch (err) {
+        if (!cancelled) setError(messageOf(err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [printerId, variant, printers]);
+
+  useEffect(() => {
     if (!printerId) return;
     let cancelled = false;
     void (async () => {
@@ -566,21 +689,6 @@ export function App() {
         const next = await api.bed(printerId, variant, quality, material);
         if (cancelled) return;
         setBed(next);
-        const pending = restore.current;
-        if (pending) {
-          if (pending.layerHeight !== undefined) setLayerHeight(pending.layerHeight);
-          if (pending.infill !== undefined) setInfill(pending.infill);
-          if (pending.supports !== undefined) setSupports(pending.supports);
-          if (pending.nozzle !== undefined) setNozzle(pending.nozzle);
-          if (pending.bedTemp !== undefined) setBedTemp(pending.bedTemp);
-          restore.current = null;
-          return;
-        }
-        setLayerHeight(round3(next.layer_height));
-        setInfill(round3(next.infill_sparse_density));
-        setSupports(next.support_enable);
-        setNozzle(round3(next.nozzle_temperature));
-        setBedTemp(round3(next.bed_temperature));
       } catch (err) {
         if (!cancelled) setError(messageOf(err));
       }
@@ -1004,43 +1112,6 @@ export function App() {
     };
   }, [selectedId, models]);
 
-  /**
-   * Everything that goes to the engine as an `extra` override: the quick fields
-   * the side panel mirrors, then whatever the settings menu has been told.
-   * Empty strings are dropped so an untouched field stays the profile's.
-   */
-  function overridesFor(): [string, string][] {
-    const merged: Record<string, string> = {
-      wall_line_count: String(walls),
-      infill_pattern: pattern,
-      speed_print: String(speed),
-      ...overrides,
-    };
-    return Object.entries(merged).filter(([, value]) => value !== "");
-  }
-
-  const sliceSettings: SliceSettings = {
-    layerHeight,
-    walls,
-    infill,
-    pattern,
-    supports,
-    nozzle,
-    bed: bedTemp,
-    speed,
-  };
-
-  function applySliceSettings(patch: Partial<SliceSettings>) {
-    if (patch.layerHeight !== undefined) setLayerHeight(patch.layerHeight);
-    if (patch.walls !== undefined) setWalls(patch.walls);
-    if (patch.infill !== undefined) setInfill(patch.infill);
-    if (patch.pattern !== undefined) setPattern(patch.pattern);
-    if (patch.supports !== undefined) setSupports(patch.supports);
-    if (patch.nozzle !== undefined) setNozzle(patch.nozzle);
-    if (patch.bed !== undefined) setBedTemp(patch.bed);
-    if (patch.speed !== undefined) setSpeed(patch.speed);
-  }
-
   async function importFromPath(picked: string) {
     enterSlicer();
     setError(null);
@@ -1444,16 +1515,7 @@ export function App() {
     setCalibration(null);
     setProgress({ fraction: 0.01, message: "Starting" });
     try {
-      const summary = await api.slice(printerId, variant, quality, material, ams, {
-        layer_height: layerHeight,
-        infill_sparse_density: infill,
-        support_enable: supports,
-        material_print_temperature: nozzle,
-        material_bed_temperature: bedTemp,
-        // The menu bar edits these directly; an empty list used to mean the
-        // selected profile decided and there was no way to change your mind.
-        extra: overridesFor(),
-      });
+      const summary = await api.slice(printerId, variant, quality, material, ams, engineSettings);
       setLayerCount(summary.layer_count);
       slicedPlate.current = plateKey;
       setLayerZ(summary.layers.map((item) => item.z));
@@ -1707,7 +1769,7 @@ export function App() {
       return;
     }
     try {
-      setPatches(await api.overhangPatches(id));
+      setPatches((await api.overhangPatches(id)) ?? []);
       setPainted(0);
     } catch (failure) {
       setPatches([]);
@@ -1981,14 +2043,8 @@ export function App() {
     setSupportBusy(true);
     try {
       const comparison = await api.compareSupports(printerId, variant, quality, material, {
-        layer_height: layerHeight,
-        infill_sparse_density: infill,
+        ...engineSettings,
         support_enable: true,
-        material_print_temperature: nozzle,
-        material_bed_temperature: bedTemp,
-        // The menu bar edits these directly; an empty list used to mean the
-        // selected profile decided and there was no way to change your mind.
-        extra: overridesFor(),
       });
       setSupport((current) =>
         current ? { ...current, plan: { ...current.plan, comparison } } : current,
@@ -2038,14 +2094,7 @@ export function App() {
   }, [playing, layer, layerCount]);
 
   function currentSettings() {
-    return {
-      layer_height: layerHeight,
-      infill_sparse_density: infill,
-      support_enable: supports,
-      material_print_temperature: nozzle,
-      material_bed_temperature: bedTemp,
-      extra: [] as [string, string][],
-    };
+    return { ...engineSettings };
   }
 
   function printerLabel() {
@@ -2228,24 +2277,16 @@ export function App() {
       variant: opened.variant_name,
       quality: opened.quality_type,
       material: opened.material_id,
-      layerHeight: opened.settings.layer_height ?? layerHeight,
-      infill: opened.settings.infill_sparse_density ?? infill,
-      supports: opened.settings.support_enable ?? supports,
-      nozzle: opened.settings.material_print_temperature ?? nozzle,
-      bedTemp: opened.settings.material_bed_temperature ?? bedTemp,
     };
     setProjectPath(opened.path);
     setProjectName(opened.name || "Untitled");
     setPrinterId(opened.printer_id);
     setVariant(opened.variant_name);
+    pendingQuality.current = opened.quality_type;
     setQuality(opened.quality_type);
     setMaterial(opened.material_id);
     setAms([0, 1, 2].map((index) => opened.ams?.[index] ?? ""));
-    if (opened.settings.layer_height != null) setLayerHeight(opened.settings.layer_height);
-    if (opened.settings.infill_sparse_density != null) setInfill(opened.settings.infill_sparse_density);
-    if (opened.settings.support_enable != null) setSupports(opened.settings.support_enable);
-    if (opened.settings.material_print_temperature != null) setNozzle(opened.settings.material_print_temperature);
-    if (opened.settings.material_bed_temperature != null) setBedTemp(opened.settings.material_bed_temperature);
+    setOverrides(overridesFromSliceSettings(opened.settings));
     if (opened.chord_mm > 0) {
       setChord(opened.chord_mm);
       setChordTied(false);
@@ -2549,14 +2590,16 @@ export function App() {
           onVariant={setVariant}
           qualities={qualities}
           quality={quality}
-          onQuality={setQuality}
+          onQuality={(next) => {
+            setQuality(next);
+            void resetScopedOverrides();
+          }}
           materials={materials}
           material={material}
           onMaterial={setMaterial}
-          settings={sliceSettings}
-          onSettings={applySliceSettings}
+          quickFallbacks={quickFallbacks}
           demo={status?.demo ?? null}
-          overrides={scope === "all" ? overrides : (models.find((m) => m.id === Number(scope))?.settings ?? {})}
+          overrides={scopedOverrides}
           profileValues={profileValues}
           onOverride={(key, value) => void setScopedOverride(key, value)}
           onResetOverrides={() => void resetScopedOverrides()}
@@ -2569,6 +2612,11 @@ export function App() {
 
       {status && !status.resources_ok && (
         <p className="banner error" role="status">
+          {status.resources_message}
+        </p>
+      )}
+      {status && status.resources_ok && status.catalog_loading && !status.catalog_full && (
+        <p className="banner subtle" role="status">
           {status.resources_message}
         </p>
       )}
@@ -2589,6 +2637,19 @@ export function App() {
       {error && (
         <p className="banner error" role="alert">
           {error}
+          {(error.includes("profiles") || error.includes("timed out")) && (
+            <button
+              type="button"
+              className="banner-action"
+              onClick={() => {
+                setError(null);
+                catalogAttemptsRef.current = 0;
+                void api.retryCatalogLoad();
+              }}
+            >
+              retry
+            </button>
+          )}
         </p>
       )}
       {notice && (
@@ -2654,6 +2715,9 @@ export function App() {
             onOpen={() => void openProject()}
             onImport={() => void importModel()}
             onOpenRecent={(path) => void openProject(path)}
+            onForgetRecent={(path) => {
+              recents.remove(path);
+            }}
             onChoosePrinter={setPrinterId}
             onEnginePath={setEnginePath}
             onLibDir={setLibDir}
@@ -2689,6 +2753,8 @@ export function App() {
       ) : (
       <div className="workspace">
         <aside className="panel">
+          {pane === "prepare" && (
+          <>
           <Frame title="plates">
             <div className="row plates">
               {plates.map((plate) => (
@@ -2780,7 +2846,7 @@ export function App() {
                         .filter(Boolean)
                         .join(", ")
                     : patches.length > 0
-                      ? `${patches.length} patches of underside`
+                      ? `${patches.length} patch${patches.length === 1 ? "" : "es"} of underside`
                       : "nothing underneath to hold up"}
                 </p>
                 {/* Two brushes, because they ask for opposite things. A patch is
@@ -2828,6 +2894,7 @@ export function App() {
                     <span>mm</span>
                   </label>
                 </div>
+                {(paintArmed || patches.length > 0 || painted > 0 || blocked > 0) && (
                 <div className="row paint-patches">
                   {paintArmed && (
                     <p className="paint-hint">
@@ -2856,6 +2923,7 @@ export function App() {
                     </>
                   )}
                 </div>
+                )}
                 <p className="hint">
                   a painted face is held up by a column to the bed, and painting turns the plate's own
                   support off: what you paint is the whole of it.
@@ -2863,6 +2931,8 @@ export function App() {
               </>
             )}
           </Frame>
+          </>
+          )}
 
           {/* Prepare owns the machine and the process: these are the things a
               slice is made from. Preview is a reading of the result and offers
@@ -2890,7 +2960,10 @@ export function App() {
               <AsciiSelect
                 label="nozzle"
                 value={variant ?? ""}
-                options={variants.map((item) => ({ value: item.name, label: item.name }))}
+                options={variants.map((item) => ({
+                  value: item.name,
+                  label: variantOptionLabel(item),
+                }))}
                 onChange={(next) => setVariant(next || null)}
               />
             </label>
@@ -2900,7 +2973,10 @@ export function App() {
                 label="quality"
                 value={quality ?? ""}
                 options={qualities.map((item) => ({ value: item.quality_type, label: item.name }))}
-                onChange={(next) => setQuality(next || null)}
+                onChange={(next) => {
+                  setQuality(next || null);
+                  void resetScopedOverrides();
+                }}
               />
             </label>
             <label>
@@ -2988,22 +3064,63 @@ export function App() {
           <Frame title="slice">
             <label>
               layer mm
-              <AsciiStepper label="layer mm" value={layerHeight} min={0.05} max={0.8} step={0.01} digits={2} onChange={setLayerHeight} />
+              <AsciiStepper
+                label="layer mm"
+                value={layerHeight}
+                min={0.05}
+                max={0.8}
+                step={0.01}
+                digits={2}
+                onChange={(value) => void setScopedOverride(QUICK_SETTING_KEYS.layerHeight, String(round3(value)))}
+              />
             </label>
             <label>
               infill %
-              <AsciiStepper label="infill %" value={infill} min={0} max={100} step={1} digits={0} onChange={setInfill} />
+              <AsciiStepper
+                label="infill %"
+                value={infill}
+                min={0}
+                max={100}
+                step={1}
+                digits={0}
+                onChange={(value) =>
+                  void setScopedOverride(QUICK_SETTING_KEYS.infill, String(Math.round(value)))
+                }
+              />
             </label>
-            <AsciiCheck checked={supports} onChange={setSupports}>
+            <AsciiCheck
+              checked={supports}
+              onChange={(value) => void setScopedOverride(QUICK_SETTING_KEYS.supports, value ? "1" : "0")}
+            >
               supports
             </AsciiCheck>
             <label>
               hotend C
-              <AsciiStepper label="hotend C" value={nozzle} min={0} max={400} step={1} digits={0} onChange={setNozzle} />
+              <AsciiStepper
+                label="hotend C"
+                value={nozzle}
+                min={0}
+                max={400}
+                step={1}
+                digits={0}
+                onChange={(value) =>
+                  void setScopedOverride(QUICK_SETTING_KEYS.nozzle, String(Math.round(value)))
+                }
+              />
             </label>
             <label>
               bed C
-              <AsciiStepper label="bed C" value={bedTemp} min={0} max={150} step={1} digits={0} onChange={setBedTemp} />
+              <AsciiStepper
+                label="bed C"
+                value={bedTemp}
+                min={0}
+                max={150}
+                step={1}
+                digits={0}
+                onChange={(value) =>
+                  void setScopedOverride(QUICK_SETTING_KEYS.bed, String(Math.round(value)))
+                }
+              />
             </label>
             <p className="hint">layer height also sets the first layer. changing quality reloads these values.</p>
             <label>
@@ -3812,7 +3929,6 @@ export function App() {
                     {layerZ[layer] != null ? `   z ${layerZ[layer].toFixed(2)}` : ""}
                     {minutes == null ? "" : `   ~${minutes} min`}
                     {marksHere.length > 0 ? `   + ${marksHere.map((item) => item.summary).join(" / ")}` : ""}
-                    {"   [ ]"}
                   </div>
                   <div className="glyphs" aria-hidden="true">
                     {Array.from(track(layer, Math.max(0, layerCount - 1), 28, marks)).map((glyph, index) =>
@@ -3891,14 +4007,6 @@ interface Restore {
   variant: string | null;
   quality: string | null;
   material: string | null;
-  // A project carries its numbers, so opening one restores all of them. The
-  // machine remembered across a restart carries only the choice of machine,
-  // quality and material — the numbers are the profile's, not a project's.
-  layerHeight?: number;
-  infill?: number;
-  supports?: boolean;
-  nozzle?: number;
-  bedTemp?: number;
 }
 
 function round3(value: number): number {

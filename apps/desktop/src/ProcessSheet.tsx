@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { SETTING_GROUPS, type SettingField } from "./settings";
-import { A1_PROCESS_PRESETS } from "./bambu-presets";
+import type { QualityInfo } from "./api";
+import { QUICK_SETTING_KEYS, quickSettingsView } from "./engine-settings";
 import {
   ADVANCED,
   BAMBU_LABEL,
@@ -11,27 +12,27 @@ import {
   type Section,
 } from "./settings-meta";
 
-/// The four simple values live as their own state because the slice command
-/// takes them; everything else is a Cura override. The sheet edits both, so a
-/// person never has to know which is which.
-export interface ProcessSettings {
+export interface QuickFallbacks {
   layerHeight: number;
   walls: number;
   infill: number;
   pattern: string;
   supports: boolean;
+  speed: number;
   nozzle: number;
   bed: number;
-  speed: number;
 }
 
 interface Props {
-  settings: ProcessSettings;
-  onSettings: (patch: Partial<ProcessSettings>) => void;
+  fallbacks: QuickFallbacks;
   overrides: Record<string, string>;
   profileValues?: Record<string, string>;
   onOverride: (key: string, value: string) => void;
   onResetOverrides: () => void;
+  qualities: QualityInfo[];
+  qualityType: string | null;
+  onQuality: (qualityType: string) => void;
+  printerLabel: string;
 }
 
 /// The keys the simple rows already own; showing them twice would let the two
@@ -55,11 +56,6 @@ function loadHidden(): Set<string> {
   } catch {
     return new Set();
   }
-}
-
-function num(value: string | undefined, fallback: number): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
 }
 
 export function ProcessSheet(props: Props) {
@@ -109,34 +105,20 @@ export function ProcessSheet(props: Props) {
     return out;
   }, [search]);
 
-  const presetName = useMemo(() => {
-    const match = A1_PROCESS_PRESETS.find((preset) => {
-      const v = preset.values;
-      return (
-        Math.abs(num(v.layer_height, -1) - props.settings.layerHeight) < 1e-6 &&
-        num(v.wall_line_count, -1) === props.settings.walls &&
-        num(v.infill_sparse_density, -1) === props.settings.infill
-      );
-    });
-    return match?.name ?? null;
-  }, [props.settings]);
-
-  const applyPreset = (name: string) => {
-    const preset = A1_PROCESS_PRESETS.find((entry) => entry.name === name);
-    if (!preset) return;
-    const v = preset.values;
-    props.onSettings({
-      layerHeight: num(v.layer_height, props.settings.layerHeight),
-      walls: num(v.wall_line_count, props.settings.walls),
-      infill: num(v.infill_sparse_density, props.settings.infill),
-      pattern: v.infill_pattern ?? props.settings.pattern,
-      supports: v.support_enable === "1",
-    });
-    for (const [key, value] of Object.entries(v)) {
-      if (BASE_KEYS.has(key)) continue;
-      props.onOverride(key, value);
-    }
+  const applyPreset = (qualityType: string) => {
+    props.onQuality(qualityType);
+    props.onResetOverrides();
   };
+
+  const profile = props.profileValues ?? {};
+  const quick = quickSettingsView(profile, props.overrides, props.fallbacks);
+
+  const quickReset = (key: string) =>
+    key in props.overrides ? (
+      <button type="button" className="setting-revert" onClick={() => props.onOverride(key, "")} title="Use profile value">
+        profile
+      </button>
+    ) : null;
 
   const label = (field: SettingField) => BAMBU_LABEL[field.key] ?? field.label;
 
@@ -215,16 +197,16 @@ export function ProcessSheet(props: Props) {
       </div>
 
       <div className="process-presets">
-        <span className="process-presets-label">A1 process</span>
-        {A1_PROCESS_PRESETS.map((preset) => (
+        <span className="process-presets-label">{props.printerLabel} process</span>
+        {props.qualities.map((preset) => (
           <button
-            key={preset.name}
+            key={preset.quality_type}
             type="button"
-            className={preset.name === presetName ? "process-preset on" : "process-preset"}
-            onClick={() => applyPreset(preset.name)}
+            className={preset.quality_type === props.qualityType ? "process-preset on" : "process-preset"}
+            onClick={() => applyPreset(preset.quality_type)}
             title={preset.name}
           >
-            {preset.name.replace(" @BBL A1", "")}
+            {preset.name}
           </button>
         ))}
       </div>
@@ -284,7 +266,10 @@ export function ProcessSheet(props: Props) {
       ) : (
         <div className="settings-body">
           {section === "Quality" && (
-            <div className="menu-row setting-row">
+            <div
+              className="menu-row setting-row"
+              data-changed={QUICK_SETTING_KEYS.layerHeight in props.overrides ? "yes" : "no"}
+            >
               <span className="setting-name">
                 Layer height
                 <span className="setting-q" title="Height of every layer after the first.">?</span>
@@ -292,19 +277,23 @@ export function ProcessSheet(props: Props) {
               <span className="setting-number">
                 <input
                   type="number"
-                  value={props.settings.layerHeight}
+                  value={quick.layerHeight}
                   min={0.02}
                   max={1}
                   step={0.02}
-                  onChange={(event) => props.onSettings({ layerHeight: Number(event.target.value) })}
+                  onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.layerHeight, event.target.value)}
                 />
                 <em>mm</em>
+                {quickReset(QUICK_SETTING_KEYS.layerHeight)}
               </span>
             </div>
           )}
           {section === "Strength" && (
             <>
-              <div className="menu-row setting-row">
+              <div
+                className="menu-row setting-row"
+                data-changed={QUICK_SETTING_KEYS.walls in props.overrides ? "yes" : "no"}
+              >
                 <span className="setting-name">
                   Wall loops
                   <span className="setting-q" title="How many perimeters are printed around each layer.">?</span>
@@ -312,15 +301,19 @@ export function ProcessSheet(props: Props) {
                 <span className="setting-number">
                   <input
                     type="number"
-                    value={props.settings.walls}
+                    value={quick.walls}
                     min={1}
                     max={12}
                     step={1}
-                    onChange={(event) => props.onSettings({ walls: Number(event.target.value) })}
+                    onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.walls, event.target.value)}
                   />
+                  {quickReset(QUICK_SETTING_KEYS.walls)}
                 </span>
               </div>
-              <div className="menu-row setting-row">
+              <div
+                className="menu-row setting-row"
+                data-changed={QUICK_SETTING_KEYS.infill in props.overrides ? "yes" : "no"}
+              >
                 <span className="setting-name">
                   Sparse infill density
                   <span className="setting-q" title="How much material is laid inside the part.">?</span>
@@ -328,30 +321,41 @@ export function ProcessSheet(props: Props) {
                 <span className="setting-number">
                   <input
                     type="number"
-                    value={props.settings.infill}
+                    value={quick.infill}
                     min={0}
                     max={100}
                     step={5}
-                    onChange={(event) => props.onSettings({ infill: Number(event.target.value) })}
+                    onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.infill, event.target.value)}
                   />
                   <em>%</em>
+                  {quickReset(QUICK_SETTING_KEYS.infill)}
                 </span>
               </div>
-              <div className="menu-row setting-row">
+              <div
+                className="menu-row setting-row"
+                data-changed={QUICK_SETTING_KEYS.pattern in props.overrides ? "yes" : "no"}
+              >
                 <span className="setting-name">
                   Sparse infill pattern
                   <span className="setting-q" title="The shape the sparse infill is drawn in.">?</span>
                 </span>
-                <select value={props.settings.pattern} onChange={(event) => props.onSettings({ pattern: event.target.value })}>
+                <select
+                  value={quick.pattern}
+                  onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.pattern, event.target.value)}
+                >
                   {["grid", "lines", "triangles", "gyroid", "cubic", "honeycomb", "lightning", "concentric", "zigzag", "cross"].map((pattern) => (
                     <option key={pattern} value={pattern}>{pattern}</option>
                   ))}
                 </select>
+                {quickReset(QUICK_SETTING_KEYS.pattern)}
               </div>
             </>
           )}
           {section === "Speed" && (
-            <div className="menu-row setting-row">
+            <div
+              className="menu-row setting-row"
+              data-changed={QUICK_SETTING_KEYS.speed in props.overrides ? "yes" : "no"}
+            >
               <span className="setting-name">
                 Print speed
                 <span className="setting-q" title="The speed every feature falls back to.">?</span>
@@ -359,18 +363,22 @@ export function ProcessSheet(props: Props) {
               <span className="setting-number">
                 <input
                   type="number"
-                  value={props.settings.speed}
+                  value={quick.speed}
                   min={10}
                   max={500}
                   step={5}
-                  onChange={(event) => props.onSettings({ speed: Number(event.target.value) })}
+                  onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.speed, event.target.value)}
                 />
                 <em>mm/s</em>
+                {quickReset(QUICK_SETTING_KEYS.speed)}
               </span>
             </div>
           )}
           {section === "Support" && (
-            <div className="menu-row setting-row">
+            <div
+              className="menu-row setting-row"
+              data-changed={QUICK_SETTING_KEYS.supports in props.overrides ? "yes" : "no"}
+            >
               <span className="setting-name">
                 Enable support
                 <span className="setting-q" title="Print support under overhangs.">?</span>
@@ -378,16 +386,22 @@ export function ProcessSheet(props: Props) {
               <label className="menu-toggle">
                 <input
                   type="checkbox"
-                  checked={props.settings.supports}
-                  onChange={(event) => props.onSettings({ supports: event.target.checked })}
+                  checked={quick.supports}
+                  onChange={(event) =>
+                    props.onOverride(QUICK_SETTING_KEYS.supports, event.target.checked ? "1" : "0")
+                  }
                 />
-                <em>{props.settings.supports ? "on" : "off"}</em>
+                <em>{quick.supports ? "on" : "off"}</em>
               </label>
+              {quickReset(QUICK_SETTING_KEYS.supports)}
             </div>
           )}
           {section === "Others" && (
             <>
-              <div className="menu-row setting-row">
+              <div
+                className="menu-row setting-row"
+                data-changed={QUICK_SETTING_KEYS.nozzle in props.overrides ? "yes" : "no"}
+              >
                 <span className="setting-name">
                   Nozzle temperature
                   <span className="setting-q" title="Hotend temperature for the first layer.">?</span>
@@ -395,16 +409,20 @@ export function ProcessSheet(props: Props) {
                 <span className="setting-number">
                   <input
                     type="number"
-                    value={props.settings.nozzle}
+                    value={quick.nozzle}
                     min={150}
                     max={320}
                     step={5}
-                    onChange={(event) => props.onSettings({ nozzle: Number(event.target.value) })}
+                    onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.nozzle, event.target.value)}
                   />
                   <em>°C</em>
+                  {quickReset(QUICK_SETTING_KEYS.nozzle)}
                 </span>
               </div>
-              <div className="menu-row setting-row">
+              <div
+                className="menu-row setting-row"
+                data-changed={QUICK_SETTING_KEYS.bed in props.overrides ? "yes" : "no"}
+              >
                 <span className="setting-name">
                   Bed temperature
                   <span className="setting-q" title="Bed temperature for the first layer.">?</span>
@@ -412,13 +430,14 @@ export function ProcessSheet(props: Props) {
                 <span className="setting-number">
                   <input
                     type="number"
-                    value={props.settings.bed}
+                    value={quick.bed}
                     min={0}
                     max={120}
                     step={5}
-                    onChange={(event) => props.onSettings({ bed: Number(event.target.value) })}
+                    onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.bed, event.target.value)}
                   />
                   <em>°C</em>
+                  {quickReset(QUICK_SETTING_KEYS.bed)}
                 </span>
               </div>
             </>

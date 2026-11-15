@@ -54,7 +54,7 @@ fn fail(err: impl std::fmt::Display) -> McpError {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct PrinterArgs {
-    /// Printer definition id, such as `creality_ender3`. Omit to use the current printer.
+    /// Printer definition id, such as `bambu_lab_a1`. Omit to use the current printer.
     printer_id: Option<String>,
 }
 

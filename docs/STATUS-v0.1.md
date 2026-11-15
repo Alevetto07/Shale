@@ -1,5 +1,25 @@
 # Shale v0.1 — status
 
+## v0.1 Bambu release pass (15 Nov)
+
+Branch `cursor/v01-bambu-release-8dd2` (PR into `cursor/deep-field-75ee`).
+
+**Bambu-only UI and tools.** `Catalog::selectable_printers()` filters the list to Bambu definitions (`source == "bambu"`). The window, CLI and MCP call that list; default machine is `bambu_lab_a1`. The full Cura catalogue still loads for the resolver. Opening an older project with a non-Bambu printer id migrates to the A1 when the list arrives.
+
+**Title bar.** Close showed literal `\u00d7`; minimise and maximise icons were undersized. Controls now use centred glyphs (CSS box for maximise, multiplication sign for close, red hover on close).
+
+**Home.** PR #9 recent-projects ASCII panel is merged; Andromeda credit stays on About only.
+
+**Version.** Workspace bumped back to **0.1.0** (`tauri.conf.json`, crates, `package.json`). Windows build steps live in [docs/WINDOWS-RELEASE.md](WINDOWS-RELEASE.md).
+
+**UI mock + screenshots.** `VITE_SHALE_MOCK=1` drives the React UI without Tauri (`docs/UI-MOCK.md`). Playwright captures land in `docs/screens/before/` and `docs/screens/after/` at 1280×800 and 1920×1080 (13 screens each). Headless Chromium uses a mock plate viewport instead of WebGL.
+
+**NSIS art.** Custom `header.bmp` (150×57) and `sidebar.bmp` (164×314), installer icons, English copy with slogan, `startMenuFolder: Shale`. Optional CLI/MCP remains a separate zip — see `installer-hooks.nsh`.
+
+**Tests (Linux agent, `shale-desktop` excluded).** `cargo test --workspace --locked --exclude shale-desktop`: **239 passed, 0 failed, 3 ignored** when resources are present; `npm run build` in `apps/desktop` clean. NSIS `.exe` still builds on Alessio's Windows machine.
+
+---
+
 Batch B was the last one: what follows is the state of v0.1 as a whole, with the
 batches below kept because each records a decision and the numbers behind it.
 

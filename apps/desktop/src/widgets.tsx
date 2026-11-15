@@ -17,7 +17,7 @@ export function AsciiCheck({
       aria-checked={checked}
       onClick={() => onChange(!checked)}
     >
-      <span aria-hidden="true">{checked ? "[x]" : "[ ]"}</span>
+      <span className="ascii-check-box" aria-hidden="true" data-on={checked ? "1" : "0"} />
       <span>{children}</span>
     </button>
   );
@@ -85,10 +85,8 @@ export function AsciiField({
   label: string;
 }) {
   return (
-    <span className="ascii-field">
-      <span aria-hidden="true">[</span>
+    <span className="ascii-field box box-inline">
       <input aria-label={label} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
-      <span aria-hidden="true">]</span>
     </span>
   );
 }
@@ -161,7 +159,10 @@ export function AsciiSelect({
         aria-controls={listId}
         onClick={() => setOpen((next) => !next)}
       >
-        [ {shown} v]
+        <span className="ascii-select-label">{shown}</span>
+        <span className="ascii-select-caret" aria-hidden="true">
+          ▾
+        </span>
       </button>
       {open && (
         <div className="ascii-menu" id={listId} role="listbox" aria-label={label}>

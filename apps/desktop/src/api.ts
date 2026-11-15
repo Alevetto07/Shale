@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./platform/invoke";
 
 export interface Status {
   resources_ok: boolean;
@@ -13,6 +13,8 @@ export interface Status {
   demo?: string | null;
   /** The profile library is still being read; the window is usable meanwhile. */
   catalog_loading?: boolean;
+  /** The full Cura resource tree has finished loading (not just the fast pass). */
+  catalog_full?: boolean;
   version: string;
 }
 
@@ -374,11 +376,11 @@ export interface SupportView {
 }
 
 export interface SliceSettings {
-  layer_height: number;
-  infill_sparse_density: number;
-  support_enable: boolean;
-  material_print_temperature: number;
-  material_bed_temperature: number;
+  layer_height?: number;
+  infill_sparse_density?: number;
+  support_enable?: boolean;
+  material_print_temperature?: number;
+  material_bed_temperature?: number;
   extra: [string, string][];
 }
 
@@ -388,6 +390,7 @@ export const api = {
   secretClear,
 
   status: () => invoke<Status>("app_status"),
+  retryCatalogLoad: () => invoke<void>("retry_catalog_load"),
   startupOpen: () => invoke<string | null>("startup_open"),
   takePendingOpen: () => invoke<string | null>("take_pending_open"),
   costSettings: () => invoke<CostSettings>("cost_settings"),
@@ -408,7 +411,8 @@ export const api = {
   cancelImport: () => invoke<void>("cancel_import"),
   printers: () => invoke<PrinterInfo[]>("list_printers"),
   variants: (printerId: string) => invoke<VariantInfo[]>("list_variants", { printerId }),
-  qualities: (printerId: string) => invoke<QualityInfo[]>("list_qualities", { printerId }),
+  qualities: (printerId: string, variantName?: string | null) =>
+    invoke<QualityInfo[]>("list_qualities", { printerId, variantName: variantName ?? null }),
   materials: (printerId: string) => invoke<MaterialInfo[]>("list_materials", { printerId }),
   bed: (printerId: string, variantName: string | null, qualityType: string | null, materialId: string | null) =>
     invoke<Bed>("printer_bed", { printerId, variantName, qualityType, materialId }),

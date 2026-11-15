@@ -92,7 +92,46 @@ export const KIND_COLOR: Record<string, string> = {
   extrusion: "#a39fb4",
 };
 
+function MockPlateFallback({
+  width,
+  depth,
+  models,
+  showToolpaths,
+  layer,
+}: Pick<ViewportProps, "width" | "depth" | "models" | "showToolpaths" | "layer">) {
+  const bed = [
+    "┌" + "─".repeat(48) + "┐",
+    ...Array.from({ length: 22 }, (_, row) => {
+      const y = Math.round((row / 21) * depth);
+      const mark = models.length > 0 ? "│" + "·".repeat(16) + "▣" + "·".repeat(31) + "│" : "│" + "·".repeat(48) + "│";
+      void y;
+      return mark;
+    }),
+    "└" + "─".repeat(48) + "┘",
+  ].join("\n");
+  return (
+    <div className="viewport-mock" aria-hidden>
+      <p className="viewport-mock-meta">
+        mock plate · {width}×{depth} mm · {models.length} part{models.length === 1 ? "" : "s"}
+        {showToolpaths ? ` · layer ${layer + 1}` : ""}
+      </p>
+      <pre className="viewport-mock-bed">{bed}</pre>
+    </div>
+  );
+}
+
 export function Viewport(props: ViewportProps) {
+  if (import.meta.env.VITE_SHALE_MOCK === "1") {
+    return (
+      <MockPlateFallback
+        width={props.width}
+        depth={props.depth}
+        models={props.models}
+        showToolpaths={props.showToolpaths}
+        layer={props.layer}
+      />
+    );
+  }
   const cx = props.centerIsZero ? 0 : props.width / 2;
   const cy = props.centerIsZero ? 0 : props.depth / 2;
   return (

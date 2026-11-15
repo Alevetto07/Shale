@@ -120,7 +120,7 @@ fn info() -> Result<(), String> {
             println!("materials {}", paths.materials.display());
             match Catalog::open(paths) {
                 Ok(catalog) => {
-                    let printers = catalog.printers();
+                    let printers = catalog.selectable_printers();
                     println!("printers {}", printers.len());
                 }
                 Err(err) => println!("catalog  unreadable: {err}"),
@@ -134,7 +134,7 @@ fn info() -> Result<(), String> {
 fn printers(search: Option<String>) -> Result<(), String> {
     let catalog = catalog()?;
     let needle = search.unwrap_or_default().to_lowercase();
-    for printer in catalog.printers() {
+    for printer in catalog.selectable_printers() {
         if !needle.is_empty()
             && !format!("{} {} {}", printer.id, printer.name, printer.manufacturer)
                 .to_lowercase()
@@ -177,11 +177,9 @@ fn resolve_request(args: &[String], printer: &str) -> ResolveRequest {
 
 fn default_printer(catalog: &Catalog) -> Result<String, String> {
     catalog
-        .printers()
-        .first()
-        .map(|printer| printer.id.clone())
+        .default_printer_id()
         .ok_or_else(|| {
-            "the catalogue has no printers; point SHALE_CURA_DIR at a Cura resource tree"
+            "the catalogue has no Bambu printers; point SHALE_CURA_DIR at a Cura resource tree with Bambu profiles"
                 .to_string()
         })
 }

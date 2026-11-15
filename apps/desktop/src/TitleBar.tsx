@@ -1,4 +1,4 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "./platform/window";
 import { useEffect, useState, type ReactNode } from "react";
 import mark from "./brand/shale-mark-dark.svg";
 
@@ -55,15 +55,19 @@ export function TitleBar({
       {children}
       <span className="titlebar-gap" data-tauri-drag-region />
       <div className="titlebar-buttons">
-        <button type="button" aria-label="Minimise" onClick={() => void win.minimize()}>
-          _
+        <button type="button" className="titlebar-minimize" aria-label="Minimise" onClick={() => void win.minimize()}>
+          <span className="titlebar-glyph titlebar-glyph-minimize" aria-hidden />
         </button>
         <button
           type="button"
+          className={maximised ? "titlebar-restore" : "titlebar-maximize"}
           aria-label={maximised ? "Restore" : "Maximise"}
           onClick={() => void win.toggleMaximize()}
         >
-          {maximised ? "\u2750" : "\u25a1"}
+          <span
+            className={maximised ? "titlebar-glyph titlebar-glyph-restore" : "titlebar-glyph titlebar-glyph-maximize"}
+            aria-hidden
+          />
         </button>
         <button
           type="button"
@@ -71,7 +75,9 @@ export function TitleBar({
           className="titlebar-close"
           onClick={() => void win.close()}
         >
-          \u00d7
+          <span className="titlebar-glyph titlebar-glyph-close" aria-hidden>
+            {"\u00d7"}
+          </span>
         </button>
       </div>
     </header>

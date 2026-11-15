@@ -83,9 +83,8 @@ export function Frame({ title, children }: { title: string; children: ReactNode 
   }
 
   return (
-    <section className={open ? "frame" : "frame closed"}>
-      <div className="frame-rule">
-        <span aria-hidden="true">{theme.box.tl}</span>
+    <section className={open ? "frame" : "frame frame--closed"}>
+      <header className="frame-bar">
         <button
           type="button"
           className="frame-toggle"
@@ -98,36 +97,8 @@ export function Frame({ title, children }: { title: string; children: ReactNode 
           </span>
           <span className="frame-title">{title}</span>
         </button>
-        <span className="rule" aria-hidden="true">
-          {theme.box.h.repeat(48)}
-        </span>
-        <span aria-hidden="true">{theme.box.tr}</span>
-      </div>
-      {!open && (
-        <div className="frame-rule" aria-hidden="true">
-          <span>{theme.box.bl}</span>
-          <span className="rule">{theme.box.h.repeat(48)}</span>
-          <span>{theme.box.br}</span>
-        </div>
-      )}
-      {open && (
-        <div className="frame-body">
-          <span className="frame-side" aria-hidden="true">
-            {theme.box.v}
-          </span>
-          <div className="frame-content">{children}</div>
-          <span className="frame-side" aria-hidden="true">
-            {theme.box.v}
-          </span>
-        </div>
-      )}
-      {open && (
-        <div className="frame-rule" aria-hidden="true">
-          <span>{theme.box.bl}</span>
-          <span className="rule">{theme.box.h.repeat(48)}</span>
-          <span>{theme.box.br}</span>
-        </div>
-      )}
+      </header>
+      {open && <div className="frame-content">{children}</div>}
     </section>
   );
 }

@@ -2,6 +2,50 @@ use std::path::PathBuf;
 
 use shale_core::{Catalog, ResourcePaths, UserSettings};
 
+/// Cura tree plus Bambu profiles for integration tests. CI and local runs
+/// should run `scripts/fetch-resources.sh` so `vendor/` exists; this panics
+/// instead of skipping when the tree is missing.
+fn real_resource_paths() -> ResourcePaths {
+    if let (Ok(cura), Ok(materials)) = (
+        std::env::var("SHALE_CURA_DIR"),
+        std::env::var("SHALE_MATERIALS_DIR"),
+    ) {
+        return ResourcePaths {
+            cura: cura.into(),
+            materials: materials.into(),
+        };
+    }
+    let vendor = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor");
+    let cura = vendor.join("Cura");
+    let materials = vendor.join("fdm_materials");
+    let def = cura.join("resources/definitions/fdmprinter.def.json");
+    if !def.is_file() {
+        panic!(
+            "vendor resources missing at {}. Run scripts/fetch-resources.sh from the repo root, or set SHALE_CURA_DIR and SHALE_MATERIALS_DIR.",
+            vendor.display()
+        );
+    }
+    ResourcePaths { cura, materials }
+}
+
+fn ensure_bambu_vendor_profiles() {
+    if std::env::var_os("SHALE_ORCA_DIR").is_some()
+        || std::env::var_os("SHALE_BAMBU_DIR").is_some()
+    {
+        return;
+    }
+    let profiles = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../vendor/BambuStudio/resources/profiles");
+    if profiles.is_dir() {
+        std::env::set_var("SHALE_ORCA_DIR", &profiles);
+        return;
+    }
+    panic!(
+        "Bambu profiles missing at {}. Run scripts/fetch-resources.sh or set SHALE_ORCA_DIR.",
+        profiles.display()
+    );
+}
+
 fn catalog() -> Catalog {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     Catalog::open(ResourcePaths {
@@ -103,17 +147,8 @@ fn inheritance_formulas_variant_and_user_overrides() {
 
 #[test]
 fn real_cura_profiles_when_resources_are_present() {
-    let Ok(cura) = std::env::var("SHALE_CURA_DIR") else {
-        return;
-    };
-    let Ok(materials) = std::env::var("SHALE_MATERIALS_DIR") else {
-        return;
-    };
-    let catalog = Catalog::open(ResourcePaths {
-        cura: cura.into(),
-        materials: materials.into(),
-    })
-    .expect("cura catalog");
+    ensure_bambu_vendor_profiles();
+    let catalog = Catalog::open(real_resource_paths()).expect("cura catalog");
     assert!(catalog
         .printers()
         .iter()
@@ -122,6 +157,170 @@ fn real_cura_profiles_when_resources_are_present() {
         .printers()
         .iter()
         .any(|printer| printer.id == "prusa_i3"));
+    let selectable = catalog.selectable_printers();
+    assert!(
+        selectable.iter().any(|printer| printer.id == "bambu_lab_a1"),
+        "Bambu A1 should be selectable"
+    );
+    assert!(
+        !selectable
+            .iter()
+            .any(|printer| printer.id == "creality_ender3"),
+        "Creality should stay in the catalogue but not be selectable"
+    );
+    assert!(
+        selectable.len() < catalog.printers().len(),
+        "selectable list should be smaller than the full catalogue"
+    );
+
+    let a1_04 = catalog.qualities_for("bambu_lab_a1", Some("0.4 mm"));
+    assert!(
+        !a1_04.is_empty(),
+        "A1 0.4 mm process list must not be empty: {:?}",
+        a1_04
+    );
+    assert!(
+        a1_04.iter().any(|q| q.name == "0.20 mm Standard"),
+        "missing 0.20 mm Standard; got {:?}",
+        a1_04
+            .iter()
+            .map(|q| q.name.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        a1_04.iter().any(|q| q.name.contains("0.28 mm")),
+        "missing 0.28 mm Extra Draft class preset; got {:?}",
+        a1_04
+    );
+    assert!(
+        !a1_04
+            .iter()
+            .any(|q| q.quality_type.contains("_0_2_nozzle") || q.quality_type.contains("_0_6_nozzle")),
+        "other-nozzle slugs leaked into 0.4 list: {:?}",
+        a1_04
+    );
+    assert!(
+        !a1_04.iter().any(|q| q.name == "Normal" || q.name == "Draft"),
+        "generic Cura tabs should not appear for Bambu A1"
+    );
+
+    let a1_02 = catalog.qualities_for("bambu_lab_a1", Some("0.2 mm"));
+    assert!(
+        a1_02.len() >= 4,
+        "expected A1 0.2 mm presets, got {}: {:?}",
+        a1_02.len(),
+        a1_02
+    );
+    assert!(
+        a1_02
+            .iter()
+            .all(|q| q.quality_type.ends_with("_0_2_nozzle")),
+        "0.2 mm list should be nozzle-specific: {:?}",
+        a1_02
+    );
+    assert!(
+        a1_02.iter().any(|q| q.name.contains("0.12 mm")),
+        "expected 0.12 mm class preset on 0.2 nozzle"
+    );
+
+    let material = catalog
+        .materials_for_printer("bambu_lab_a1", 1.75)
+        .into_iter()
+        .find(|m| m.id.contains("pla"))
+        .map(|m| m.id)
+        .unwrap_or_else(|| "bambu_pla_basic".into());
+    let extra_draft = a1_04
+        .iter()
+        .find(|q| q.name.starts_with("0.28 mm"))
+        .expect("0.28 mm Extra Draft preset");
+    let standard = a1_04
+        .iter()
+        .find(|q| q.name == "0.20 mm Standard")
+        .expect("0.20 mm Standard preset");
+    let resolved_extra = catalog
+        .resolve(&shale_core::ResolveRequest {
+            printer_id: "bambu_lab_a1".into(),
+            variant_name: Some("0.4 mm".into()),
+            quality_type: Some(extra_draft.quality_type.clone()),
+            material_id: Some(material.clone()),
+            intent_category: None,
+            settings: UserSettings::default(),
+        })
+        .expect("resolve extra draft");
+    let resolved_standard = catalog
+        .resolve(&shale_core::ResolveRequest {
+            printer_id: "bambu_lab_a1".into(),
+            variant_name: Some("0.4 mm".into()),
+            quality_type: Some(standard.quality_type.clone()),
+            material_id: Some(material.clone()),
+            intent_category: None,
+            settings: UserSettings::default(),
+        })
+        .expect("resolve standard");
+    assert!(
+        (resolved_extra.summary.layer_height - 0.28).abs() < 0.02,
+        "0.28 mm preset layer_height {}",
+        resolved_extra.summary.layer_height
+    );
+    assert!(
+        (resolved_standard.summary.layer_height - 0.20).abs() < 0.02,
+        "standard layer_height {}",
+        resolved_standard.summary.layer_height
+    );
+    let override_standard = catalog
+        .resolve(&shale_core::ResolveRequest {
+            printer_id: "bambu_lab_a1".into(),
+            variant_name: Some("0.4 mm".into()),
+            quality_type: Some(standard.quality_type.clone()),
+            material_id: Some(material.clone()),
+            intent_category: None,
+            settings: UserSettings {
+                layer_height: Some(0.16),
+                ..UserSettings::default()
+            },
+        })
+        .expect("resolve standard with layer_height override");
+    assert_eq!(
+        override_standard
+            .global
+            .get("layer_height")
+            .map(String::as_str),
+        Some("0.16"),
+        "user layer_height should beat 0.20 mm Standard preset"
+    );
+    assert_eq!(
+        resolved_standard.global.get("speed_wall_0").map(String::as_str),
+        Some("200"),
+        "Bambu outer wall speed"
+    );
+    assert_eq!(
+        resolved_standard.global.get("speed_wall_x").map(String::as_str),
+        Some("300"),
+        "Bambu inner wall speed"
+    );
+    assert_eq!(
+        resolved_standard.global.get("speed_infill").map(String::as_str),
+        Some("270"),
+        "Bambu sparse infill speed"
+    );
+    assert_eq!(
+        resolved_standard.global.get("speed_travel").map(String::as_str),
+        Some("700"),
+        "Bambu travel speed on 0.20 mm Standard @ A1"
+    );
+    assert!(
+        resolved_standard
+            .global
+            .get("machine_max_acceleration_x")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0)
+            >= 10_000.0,
+        "A1 machine acceleration limits should flow through"
+    );
+    assert!(
+        (resolved_extra.summary.layer_height - resolved_standard.summary.layer_height).abs() > 0.02,
+        "preset should change layer_height"
+    );
 
     let resolved = catalog
         .resolve(&shale_core::ResolveRequest {
@@ -220,6 +419,65 @@ fn real_cura_profiles_when_resources_are_present() {
         .global
         .get("machine_start_gcode")
         .is_some_and(|gcode| gcode.contains("G28")));
+}
+
+fn preset_layer_mm(name: &str) -> Option<f64> {
+    let head = name.split_whitespace().next()?;
+    let value = head.trim_end_matches("mm");
+    value.parse().ok().filter(|layer| *layer < 1.0)
+}
+
+#[test]
+fn a1_every_selectable_process_resolves_layer_height() {
+    ensure_bambu_vendor_profiles();
+    let catalog = Catalog::open(real_resource_paths()).expect("open catalog");
+    let material = catalog
+        .materials_for_printer("bambu_lab_a1", 1.75)
+        .into_iter()
+        .find(|m| m.label.to_ascii_lowercase().contains("pla"))
+        .map(|m| m.id)
+        .expect("PLA material for A1");
+    for variant in ["0.2 mm", "0.4 mm", "0.6 mm", "0.8 mm"] {
+        let presets = catalog.qualities_for("bambu_lab_a1", Some(variant));
+        assert!(
+            !presets.is_empty(),
+            "no presets for A1 at {variant}"
+        );
+        for preset in presets {
+            let want = preset_layer_mm(&preset.name).unwrap_or_else(|| {
+                panic!("preset name lacks layer hint: {}", preset.name);
+            });
+            let resolved = catalog
+                .resolve(&shale_core::ResolveRequest {
+                    printer_id: "bambu_lab_a1".into(),
+                    variant_name: Some(variant.into()),
+                    quality_type: Some(preset.quality_type.clone()),
+                    material_id: Some(material.clone()),
+                    intent_category: None,
+                    settings: UserSettings::default(),
+                })
+                .unwrap_or_else(|err| panic!("{} @ {}: {err}", preset.name, variant));
+            assert!(
+                (resolved.summary.layer_height - want).abs() < 0.021,
+                "{} @ {}: expected layer_height {want}, summary {}, global {:?}",
+                preset.name,
+                variant,
+                resolved.summary.layer_height,
+                resolved.global.get("layer_height")
+            );
+            let global = resolved
+                .global
+                .get("layer_height")
+                .and_then(|text| text.parse::<f64>().ok())
+                .unwrap_or(resolved.summary.layer_height);
+            assert!(
+                (global - want).abs() < 0.021,
+                "{} @ {}: engine global layer_height {global}, want {want}",
+                preset.name,
+                variant
+            );
+        }
+    }
 }
 
 #[test]

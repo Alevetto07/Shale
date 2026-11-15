@@ -30,8 +30,6 @@ const DEFAULT_VENDORS: &str = "BBL";
 
 /// More nozzles than this per model is noise in a dropdown.
 const MAX_VARIANTS: usize = 8;
-/// Quality profiles shown per printer, best-known first.
-const MAX_QUALITIES: usize = 14;
 /// Filaments shown per printer.
 const MAX_MATERIALS: usize = 40;
 /// Depth guard for `inherits` chains; the deepest real chain is 3.
@@ -188,6 +186,8 @@ impl Library {
                 &id,
                 &names,
                 &base.default_quality,
+                &nozzles,
+                &base.nozzle,
             ));
             let first_material = self.materials.len();
             self.materials
@@ -269,6 +269,8 @@ struct Profile {
     depth: f64,
     height: f64,
     centered: bool,
+    /// Merged machine profile values (`inherits` applied).
+    machine_settings: Json,
 }
 
 impl Profile {
@@ -303,6 +305,7 @@ fn read_machines(dir: &Path) -> Vec<Profile> {
             depth: area.1,
             height,
             centered: area.2,
+            machine_settings: values.clone(),
         });
     }
     out
@@ -417,6 +420,15 @@ fn printer_definition(id: &str, model: &str, vendor: &str, base: &Profile) -> De
     // Bambu's own start G-code is not Marlin and is not used here.
     put("machine_gcode_flavor", "enum", Json::from("marlin"));
     put("machine_heated_bed", "bool", Json::from(true));
+    for (key, text) in machine_values_for_cura(&base.machine_settings) {
+        if text.eq_ignore_ascii_case("true") || text.eq_ignore_ascii_case("false") {
+            put(&key, "bool", Json::from(text.eq_ignore_ascii_case("true")));
+        } else if let Ok(number) = text.parse::<f64>() {
+            put(&key, "float", Json::from(number));
+        } else {
+            put(&key, "str", Json::from(text));
+        }
+    }
     // Bambu's start G-code is not valid Marlin; leave the Cura default in place
     // rather than shipping a template full of {placeholders} the engine cannot
     // resolve for this machine.
@@ -531,50 +543,217 @@ fn variant_instance(printer: &str, nozzle: &str) -> InstanceFile {
     }
 }
 
+/// Slug tail for a nozzle diameter, e.g. `0.4` → `0_4_nozzle`, used to match
+/// process file stems such as `0.20mm Standard @BBL A1 0.4 nozzle`.
+pub fn nozzle_slug_tag(nozzle_diameter: &str) -> String {
+    slug(&format!("{} nozzle", nozzle_diameter.trim()))
+}
+
+pub fn variant_nozzle_tag(variant_name: &str) -> Option<String> {
+    let token = variant_name.split_whitespace().next()?;
+    if token.is_empty() {
+        return None;
+    }
+    Some(nozzle_slug_tag(token))
+}
+
+fn scalar_setting_string(value: &Json) -> Option<String> {
+    if let Some(number) = number_value(value) {
+        return Some(number_to_string(number));
+    }
+    text(Some(value))
+}
+
+fn number_to_string(value: f64) -> String {
+    if (value - value.round()).abs() < 1e-9 {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{value}")
+    }
+}
+
+fn insert_cura_scalar(out: &mut HashMap<String, String>, cura_key: &str, value: &Json) {
+    if let Some(text) = scalar_setting_string(value) {
+        out.insert(cura_key.to_string(), text);
+    }
+}
+
+/// Bambu machine keys that CuraEngine understands for time estimation.
+fn machine_values_for_cura(values: &Json) -> HashMap<String, String> {
+    const MAP: &[(&str, &str)] = &[
+        ("machine_max_acceleration_extruding", "machine_max_acceleration_e"),
+        ("machine_max_acceleration_x", "machine_max_acceleration_x"),
+        ("machine_max_acceleration_y", "machine_max_acceleration_y"),
+        ("machine_max_acceleration_z", "machine_max_acceleration_z"),
+        ("machine_max_jerk_e", "machine_max_jerk_e"),
+        ("machine_max_speed_z", "machine_max_speed_z"),
+    ];
+    let Json::Object(map) = values else {
+        return HashMap::new();
+    };
+    let mut out = HashMap::new();
+    for (bambu, cura) in MAP {
+        if let Some(value) = map.get(*bambu) {
+            insert_cura_scalar(&mut out, cura, value);
+        }
+    }
+    out.insert("acceleration_enabled".to_string(), "True".to_string());
+    out
+}
+
+/// Scalar entries from a merged process JSON (inherits already applied),
+/// translated to Cura setting keys the resolver understands.
+fn process_values_for_cura(values: &Json) -> HashMap<String, String> {
+    const SKIP: &[&str] = &[
+        "type",
+        "name",
+        "inherits",
+        "from",
+        "setting_id",
+        "instantiation",
+        "description",
+        "compatible_printers",
+        "compatible_prints",
+        "setting_overrides",
+        "sub_path",
+    ];
+    let Json::Object(map) = values else {
+        return HashMap::new();
+    };
+    const MAP: &[(&str, &str)] = &[
+        ("outer_wall_speed", "speed_wall_0"),
+        ("inner_wall_speed", "speed_wall_x"),
+        ("sparse_infill_speed", "speed_infill"),
+        ("internal_solid_infill_speed", "speed_topbottom"),
+        ("top_surface_speed", "speed_topbottom"),
+        ("initial_layer_speed", "speed_layer_0"),
+        ("initial_layer_infill_speed", "speed_infill"),
+        ("travel_speed", "speed_travel"),
+        ("travel_speed_z", "speed_z_hop"),
+        ("support_speed", "speed_support"),
+        ("bridge_speed", "speed_bridge"),
+        ("default_acceleration", "acceleration_print"),
+        ("outer_wall_acceleration", "acceleration_wall_0"),
+        ("inner_wall_acceleration", "acceleration_wall_x"),
+        ("initial_layer_acceleration", "acceleration_layer_0"),
+        ("sparse_infill_acceleration", "acceleration_infill"),
+        ("top_surface_acceleration", "acceleration_topbottom"),
+        ("travel_acceleration", "acceleration_travel"),
+    ];
+    let mut out = HashMap::new();
+    for (key, value) in map {
+        if SKIP.contains(&key.as_str()) {
+            continue;
+        }
+        if let Some((_, cura)) = MAP.iter().find(|(bambu, _)| *bambu == key.as_str()) {
+            insert_cura_scalar(&mut out, cura, value);
+            continue;
+        }
+        match key.as_str() {
+            "wall_loops" => {
+                if let Some(walls) = number_value(value) {
+                    out.insert("wall_line_count".to_string(), format!("{}", walls.round()));
+                }
+            }
+            "sparse_infill_density" => {
+                if let Some(infill) = percent_value(value) {
+                    out.insert("infill_sparse_density".to_string(), format!("{infill}"));
+                }
+            }
+            "sparse_infill_pattern" => {
+                if let Some(pattern) = text(Some(value)) {
+                    out.insert("infill_pattern".to_string(), cura_infill(&pattern));
+                }
+            }
+            "top_shell_layers" => {
+                if let Some(layers) = number_value(value) {
+                    out.insert("top_layers".to_string(), format!("{}", layers.round()));
+                }
+            }
+            "bottom_shell_layers" => {
+                if let Some(layers) = number_value(value) {
+                    out.insert("bottom_layers".to_string(), format!("{}", layers.round()));
+                }
+            }
+            "enable_support" => {
+                if let Some(support) = truthy(value) {
+                    out.insert(
+                        "support_enable".to_string(),
+                        if support { "True" } else { "False" }.to_string(),
+                    );
+                }
+            }
+            "initial_layer_print_height" | "initial_layer_height" => {
+                if let Some(text) = scalar_setting_string(value) {
+                    out.insert("layer_height_0".to_string(), text);
+                }
+            }
+            "layer_height" => insert_cura_scalar(&mut out, "layer_height", value),
+            _ => {}
+        }
+    }
+    if let Some(speed) = out
+        .get("speed_infill")
+        .cloned()
+        .or_else(|| out.get("speed_wall_0").cloned())
+    {
+        out.entry("speed_print".to_string()).or_insert(speed);
+    }
+    out.insert("acceleration_enabled".to_string(), "True".to_string());
+    out
+}
+
+/// A process preset Bambu Studio would list, not an `instantiation: false` base.
+fn process_is_selectable(values: &Json) -> bool {
+    if let Some(flag) = values.get("instantiation") {
+        return truthy(flag).unwrap_or(false);
+    }
+    // Visible presets carry a setting id; inherited-only rows do not.
+    values.get("setting_id").is_some()
+}
+
 fn quality_instances(
     processes: &[(String, Json)],
     printer: &str,
     machine_names: &[String],
     default_quality: &str,
+    nozzles: &[String],
+    base_nozzle: &str,
 ) -> Vec<InstanceFile> {
     let mut out = Vec::new();
     for (stem, values) in processes {
         if !applies_to(values, machine_names) {
             continue;
         }
-        let Some(layer_height) = values.get("layer_height").and_then(number_value) else {
+        if !process_is_selectable(values) {
+            continue;
+        }
+        let stem_slug = slug(stem);
+        let variant = if stem_slug.contains("_nozzle") {
+            nozzles.iter().find_map(|nozzle| {
+                let tag = nozzle_slug_tag(nozzle);
+                stem_slug.ends_with(&tag).then(|| format!("{nozzle} mm"))
+            })
+        } else {
+            nozzles
+                .iter()
+                .find(|nozzle| (number(nozzle) - number(base_nozzle)).abs() < 0.001)
+                .map(|nozzle| format!("{nozzle} mm"))
+        };
+        let Some(variant) = variant else {
             continue;
         };
-        let mut settings = HashMap::new();
-        settings.insert("layer_height".to_string(), format!("{layer_height}"));
-        if let Some(walls) = values.get("wall_loops").and_then(number_value) {
-            settings.insert("wall_line_count".to_string(), format!("{}", walls.round()));
+        if values.get("layer_height").and_then(number_value).is_none() {
+            continue;
         }
-        if let Some(infill) = values.get("sparse_infill_density").and_then(percent_value) {
-            settings.insert("infill_sparse_density".to_string(), format!("{infill}"));
-        }
-        if let Some(pattern) = text(values.get("sparse_infill_pattern")) {
-            settings.insert("infill_pattern".to_string(), cura_infill(&pattern));
-        }
-        if let Some(layers) = values.get("top_shell_layers").and_then(number_value) {
-            settings.insert("top_layers".to_string(), format!("{}", layers.round()));
-        }
-        if let Some(layers) = values.get("bottom_shell_layers").and_then(number_value) {
-            settings.insert("bottom_layers".to_string(), format!("{}", layers.round()));
-        }
-        if let Some(support) = values.get("enable_support").and_then(truthy) {
-            settings.insert(
-                "support_enable".to_string(),
-                if support { "True" } else { "False" }.to_string(),
-            );
-        }
+        let settings = process_values_for_cura(values);
         let name = pretty_quality(stem);
         out.push(InstanceFile {
             name,
             definition: printer.to_string(),
             type_name: "quality".to_string(),
-            quality_type: Some(slug(stem)),
-            variant: None,
+            quality_type: Some(stem_slug),
+            variant: Some(variant),
             material: None,
             global_quality: true,
             weight: 0,
@@ -597,7 +776,6 @@ fn quality_instances(
         };
         (preferred, instance.name.clone())
     });
-    out.truncate(MAX_QUALITIES);
     out
 }
 
@@ -946,6 +1124,8 @@ mod tests {
         assert!((height - 0.2).abs() < 1e-9);
         assert!(quality.values.contains_key("infill_sparse_density"));
         assert!(quality.values.contains_key("wall_line_count"));
+        assert_eq!(quality.values.get("speed_wall_0").map(String::as_str), Some("200"));
+        assert_eq!(quality.values.get("speed_travel").map(String::as_str), Some("700"));
     }
 
     #[test]

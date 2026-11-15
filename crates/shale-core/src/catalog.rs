@@ -226,6 +226,9 @@ fn push_ancestors(out: &mut Vec<PathBuf>, mut dir: Option<PathBuf>) {
 
 #[derive(Clone, Debug)]
 pub struct Catalog {
+    /// When false, only Bambu/Orca profiles are loaded; Cura instances may be
+    /// incomplete until `open_full` replaces this catalogue.
+    pub ui_ready: bool,
     pub paths: ResourcePaths,
     pub(crate) definitions: HashMap<String, Definition>,
     pub(crate) instances: Vec<InstanceFile>,
@@ -347,6 +350,7 @@ impl Catalog {
         materials.extend(library.materials);
         inherit_metadata(&mut definitions);
         Ok(Self {
+            ui_ready: true,
             paths,
             definitions,
             instances,
@@ -356,6 +360,12 @@ impl Catalog {
             gcode,
             load_warnings: warnings,
         })
+    }
+
+    /// `true` when the printer comes from the Bambu/Orca profile library, not
+    /// Cura's own definition tree.
+    pub fn is_external_printer(&self, printer_id: &str) -> bool {
+        self.external.contains(printer_id)
     }
 
     pub fn printers(&self) -> Vec<PrinterInfo> {
@@ -397,6 +407,27 @@ impl Catalog {
                 .then(a.name.cmp(&b.name))
         });
         printers
+    }
+
+    /// Bambu Lab printers Shale v0.1 lists in the window, CLI and MCP.
+    ///
+    /// Cura's full catalogue stays loaded for the resolver; only Bambu
+    /// definitions from the bundled library are selectable.
+    pub fn selectable_printers(&self) -> Vec<PrinterInfo> {
+        self.printers()
+            .into_iter()
+            .filter(|printer| printer.source == "bambu")
+            .collect()
+    }
+
+    /// Default machine for a fresh job when nothing is remembered.
+    pub fn default_printer_id(&self) -> Option<String> {
+        let selectable = self.selectable_printers();
+        selectable
+            .iter()
+            .find(|printer| printer.id == "bambu_lab_a1")
+            .or_else(|| selectable.first())
+            .map(|printer| printer.id.clone())
     }
 
     /// The machine's own start and end sequence for a nozzle, if its profile
@@ -461,7 +492,7 @@ impl Catalog {
         variants
     }
 
-    pub fn qualities_for(&self, printer_id: &str) -> Vec<QualityInfo> {
+    pub fn qualities_for(&self, printer_id: &str, variant_name: Option<&str>) -> Vec<QualityInfo> {
         let Some(ancestry) = self.ancestry_ids(printer_id) else {
             return Vec::new();
         };
@@ -475,6 +506,13 @@ impl Catalog {
             };
             if !ancestry.iter().any(|id| id == &instance.definition) {
                 continue;
+            }
+            if self.external.contains(printer_id) {
+                if let Some(variant) = variant_name {
+                    if instance.variant.as_deref() != Some(variant) {
+                        continue;
+                    }
+                }
             }
             let rank = specificity(&instance.definition, &ancestry);
             let info = QualityInfo {
@@ -493,8 +531,86 @@ impl Catalog {
             }
         }
         let mut qualities: Vec<_> = by_type.into_values().map(|(_, info)| info).collect();
-        qualities.sort_by(|a, b| a.name.cmp(&b.name));
+        // Bambu/Orca process names are `0.20 mm Standard`, not `@BBL A1`. Cura's
+        // generic tabs (`Draft`, `Normal`, …) still inherit and must not appear
+        // beside the machine's own layer-height presets.
+        if self.external.contains(printer_id) {
+            qualities.retain(|info| is_layer_preset_name(&info.name));
+            qualities.sort_by(|a, b| {
+                layer_hint_mm(&a.name)
+                    .partial_cmp(&layer_hint_mm(&b.name))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+        } else {
+            qualities.sort_by(|a, b| a.name.cmp(&b.name));
+        }
         qualities
+    }
+
+    /// Enough for the window to list Bambu printers, processes and filaments.
+    /// Skips reading Cura's quality/variant trees (thousands of small files).
+    pub fn open_ui_fast(paths: ResourcePaths) -> Result<Self, Error> {
+        let resources = paths.resources();
+        let mut warnings = Vec::new();
+        let mut definitions = HashMap::new();
+        load_definitions(
+            &resources.join("definitions"),
+            false,
+            &mut definitions,
+            &mut warnings,
+        );
+        load_definitions(
+            &resources.join("extruders"),
+            true,
+            &mut definitions,
+            &mut warnings,
+        );
+        if !definitions.contains_key("fdmprinter") {
+            return Err(Error::message(format!(
+                "fdmprinter.def.json is missing under {}",
+                resources.display()
+            )));
+        }
+        let library = crate::bambu::Library::load();
+        let gcode = library.gcode.clone();
+        let mut external = std::collections::HashSet::new();
+        for definition in library.definitions {
+            external.insert(definition.id.clone());
+            definitions
+                .entry(definition.id.clone())
+                .or_insert(definition);
+        }
+        if let Some(base) = definitions.get("fdmextruder").map(|d| d.settings.clone()) {
+            for definition in definitions
+                .values_mut()
+                .filter(|d| d.is_extruder && external.contains(&d.id))
+            {
+                for (key, setting) in &base {
+                    definition
+                        .settings
+                        .entry(key.clone())
+                        .or_insert_with(|| setting.clone());
+                }
+            }
+        }
+        let external_materials: std::collections::HashSet<String> = library
+            .materials
+            .iter()
+            .map(|material| material.id.clone())
+            .collect();
+        inherit_metadata(&mut definitions);
+        Ok(Self {
+            ui_ready: true,
+            paths,
+            definitions,
+            instances: library.instances,
+            materials: library.materials,
+            external,
+            external_materials,
+            gcode,
+            load_warnings: warnings,
+        })
     }
 
     pub fn materials_for(&self, diameter: f64) -> Vec<MaterialInfo> {
@@ -589,6 +705,17 @@ impl Catalog {
         }
         Ok(merged)
     }
+}
+
+/// Sort key for `0.20 mm Standard`-style profile names.
+fn layer_hint_mm(name: &str) -> f64 {
+    let head = name.split_whitespace().next().unwrap_or("");
+    let value = head.trim_end_matches("mm");
+    value.parse().unwrap_or(f64::MAX)
+}
+
+fn is_layer_preset_name(name: &str) -> bool {
+    layer_hint_mm(name) < 1.0
 }
 
 pub(crate) fn specificity(definition_id: &str, ancestry: &[String]) -> usize {
