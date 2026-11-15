@@ -1,6 +1,6 @@
 [package]
 name = "shale-cli"
-version = "0.1.1"
+version = "0.1.0"
 edition = "2021"
 description = "Shale without the window: slice a model from a terminal"
 publish = false
