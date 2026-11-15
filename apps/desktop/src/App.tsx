@@ -429,8 +429,7 @@ export function App() {
             : undefined;
           const preferred =
             remembered ??
-            list.find((printer) => printer.id === "creality_ender3") ??
-            list.find((printer) => printer.id === "prusa_i3") ??
+            list.find((printer) => printer.id === "bambu_lab_a1") ??
             list[0];
           // The printer effect below picks the machine's own preferred variant,
           // quality and material unless something is waiting in `restore`; a
@@ -496,6 +495,14 @@ export function App() {
       // convenience, not a precondition.
     }
   }, [printerId, variant, quality, material]);
+
+  useEffect(() => {
+    if (!printerId || printers.length === 0) return;
+    if (printers.some((printer) => printer.id === printerId)) return;
+    const fallback =
+      printers.find((printer) => printer.id === "bambu_lab_a1")?.id ?? printers[0]?.id;
+    if (fallback) setPrinterId(fallback);
+  }, [printers, printerId]);
 
   useEffect(() => {
     if (!printerId) return;
@@ -2654,6 +2661,9 @@ export function App() {
             onOpen={() => void openProject()}
             onImport={() => void importModel()}
             onOpenRecent={(path) => void openProject(path)}
+            onForgetRecent={(path) => {
+              recents.remove(path);
+            }}
             onChoosePrinter={setPrinterId}
             onEnginePath={setEnginePath}
             onLibDir={setLibDir}
