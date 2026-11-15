@@ -1,4 +1,4 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "./platform/window";
 import { useEffect, useState, type ReactNode } from "react";
 import mark from "./brand/shale-mark-dark.svg";
 

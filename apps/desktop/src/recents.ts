@@ -35,7 +35,7 @@ export function useRecents(): RecentsApi {
     void api
       .recents()
       .then((list) => {
-        setAll(list);
+        setAll(list ?? []);
         setRead(true);
       })
       .catch(() => setRead(true));

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./platform/invoke";
 
 export interface Status {
   resources_ok: boolean;

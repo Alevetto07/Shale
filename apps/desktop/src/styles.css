@@ -113,6 +113,33 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .device { flex: 1 1 auto; }
 
+.viewport-mock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  background: #06070b;
+  color: var(--ink-2);
+}
+.viewport-mock-meta {
+  margin: 0 0 0.6rem;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.viewport-mock-bed {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.15;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
 /* One strip of chrome: the window is undecorated, so this is the caption as
    well as the menu bar. It is deliberately shorter than the old topbar — the
    start screen's upper part had a title bar's worth of height above it. */
@@ -353,11 +380,19 @@ input[type="number"] { -moz-appearance: textfield; }
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
-.ascii-check span:first-child {
+.ascii-check-box {
   flex: none;
-  width: 3ch;
-  color: var(--muted);
-  font-variant-ligatures: none;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--muted);
+  box-sizing: border-box;
+  position: relative;
+}
+.ascii-check-box[data-on="1"]::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  background: var(--accent);
 }
 
 .ascii-step, .ascii-field {
@@ -1061,6 +1096,7 @@ button.recent-row.dim { color: var(--ink-3); }
   width: min(46rem, calc(100vw - 3rem));
   max-height: min(32rem, calc(100vh - 6rem));
   padding: 0.75rem;
+  z-index: 120;
 }
 .menu-sheet.settings-sheet > .process-sheet { min-width: 0; flex: 1 1 auto; }
 .menu-sheet.settings-sheet .settings-body { overflow-y: auto; min-height: 0; }
@@ -1472,10 +1508,10 @@ button.recent-row.dim { color: var(--ink-3); }
 .process-preset.on { border-color: var(--accent); color: var(--accent); }
 
 .process-tools { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0; }
-.process-search { flex: 1 1 auto; min-width: 0; }
+.process-search { flex: 1 1 12rem; min-width: 10rem; }
 .process-search input {
   width: 100%;
-  min-width: 0;
+  min-width: 9rem;
   background: transparent;
   border: 1px solid var(--line);
   color: var(--ink);
@@ -2741,7 +2777,7 @@ input[type="checkbox"]:focus-visible {
 .cloud-form {
   display: grid;
   gap: 0.45rem;
-  margin: 0.6rem 0 0.2rem;
+  margin: 0.6rem 0 0.75rem;
   max-width: 22rem;
 }
 .cloud-form label {

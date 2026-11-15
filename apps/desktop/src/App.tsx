@@ -1,6 +1,6 @@
-import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { listen } from "./platform/event";
+import { getCurrentWindow } from "./platform/window";
+import { open, save } from "./platform/dialog";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
@@ -200,7 +200,7 @@ export function App() {
   // Part counts are the backend's, because it holds the plates that are not in
   // front. A part arriving or leaving is the only thing that changes them.
   useEffect(() => {
-    void api.listPlates().then(setPlates).catch(() => {});
+    void api.listPlates().then((next) => setPlates(next ?? [])).catch(() => setPlates([]));
   }, [models.length]);
 
   /// Which part the settings sheet writes to: "all" for the plate, or a part id.
@@ -401,7 +401,7 @@ export function App() {
             setSelectedId(loaded[0].id);
           }
           const stored = await api.instructions();
-          setInstructions(stored);
+          setInstructions(stored ?? []);
           setSupport(await api.supportPlan());
           // A slice describes the plate it was taken from. If the plate has
           // changed since — a part added, a part taken away — the old numbers
@@ -465,6 +465,25 @@ export function App() {
           // A demo scenario is a state, not a script: the queue video starts
           // with the Device pane already open rather than hunting for a tab.
           if (next.demo === "queue") setPane("device");
+          if (import.meta.env.VITE_SHALE_MOCK === "1") {
+            const mockPane = new URLSearchParams(window.location.search).get("pane");
+            if (mockPane === "prepare" || mockPane === "preview" || mockPane === "device") {
+              setScreen("slicer");
+              setWorkspace(true);
+              setPane(mockPane);
+              if (mockPane === "preview") {
+                setPreview(true);
+                setShowModel(false);
+              }
+              if (mockPane === "prepare") {
+                setPreview(false);
+                setShowModel(true);
+              }
+            } else if (mockPane === "home") {
+              setScreen("start");
+              setPane("home");
+            }
+          }
           recents.refresh();
         }
       } catch (err) {
@@ -1714,7 +1733,7 @@ export function App() {
       return;
     }
     try {
-      setPatches(await api.overhangPatches(id));
+      setPatches((await api.overhangPatches(id)) ?? []);
       setPainted(0);
     } catch (failure) {
       setPatches([]);

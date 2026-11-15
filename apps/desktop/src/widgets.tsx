@@ -17,7 +17,7 @@ export function AsciiCheck({
       aria-checked={checked}
       onClick={() => onChange(!checked)}
     >
-      <span aria-hidden="true">{checked ? "[x]" : "[ ]"}</span>
+      <span className="ascii-check-box" aria-hidden="true" data-on={checked ? "1" : "0"} />
       <span>{children}</span>
     </button>
   );
