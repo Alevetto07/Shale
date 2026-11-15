@@ -2,20 +2,8 @@ import { useEffect, useRef, useState } from "react";
 
 import type { MaterialInfo, PrinterInfo, QualityInfo, VariantInfo } from "./api";
 import { variantOptionLabel } from "./profile-labels";
-import { ProcessSheet } from "./ProcessSheet";
+import { ProcessSheet, type QuickFallbacks } from "./ProcessSheet";
 import type { ViewStyle } from "./Viewport";
-
-/** Slicing settings that live in the menu bar rather than a side panel. */
-export interface SliceSettings {
-  layerHeight: number;
-  walls: number;
-  infill: number;
-  pattern: string;
-  supports: boolean;
-  nozzle: number;
-  bed: number;
-  speed: number;
-}
 
 export interface MenuBarProps {
   screen: "start" | "slicer";
@@ -72,8 +60,7 @@ export interface MenuBarProps {
   material: string | null;
   onMaterial: (id: string | null) => void;
 
-  settings: SliceSettings;
-  onSettings: (patch: Partial<SliceSettings>) => void;
+  quickFallbacks: QuickFallbacks;
   /** Cura settings the user has changed; anything absent comes from the profile. */
   overrides: Record<string, string>;
   profileValues?: Record<string, string>;
@@ -418,8 +405,7 @@ export function MenuBar(props: MenuBarProps) {
               )}
             </div>
             <ProcessSheet
-              settings={props.settings}
-              onSettings={props.onSettings}
+              fallbacks={props.quickFallbacks}
               overrides={props.overrides}
               profileValues={props.profileValues}
               onOverride={props.onOverride}

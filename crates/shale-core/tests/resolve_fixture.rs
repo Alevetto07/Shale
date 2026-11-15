@@ -252,7 +252,7 @@ fn real_cura_profiles_when_resources_are_present() {
             printer_id: "bambu_lab_a1".into(),
             variant_name: Some("0.4 mm".into()),
             quality_type: Some(standard.quality_type.clone()),
-            material_id: Some(material),
+            material_id: Some(material.clone()),
             intent_category: None,
             settings: UserSettings::default(),
         })
@@ -266,6 +266,27 @@ fn real_cura_profiles_when_resources_are_present() {
         (resolved_standard.summary.layer_height - 0.20).abs() < 0.02,
         "standard layer_height {}",
         resolved_standard.summary.layer_height
+    );
+    let override_standard = catalog
+        .resolve(&shale_core::ResolveRequest {
+            printer_id: "bambu_lab_a1".into(),
+            variant_name: Some("0.4 mm".into()),
+            quality_type: Some(standard.quality_type.clone()),
+            material_id: Some(material.clone()),
+            intent_category: None,
+            settings: UserSettings {
+                layer_height: Some(0.16),
+                ..UserSettings::default()
+            },
+        })
+        .expect("resolve standard with layer_height override");
+    assert_eq!(
+        override_standard
+            .global
+            .get("layer_height")
+            .map(String::as_str),
+        Some("0.16"),
+        "user layer_height should beat 0.20 mm Standard preset"
     );
     assert!(
         (resolved_extra.summary.layer_height - resolved_standard.summary.layer_height).abs() > 0.02,

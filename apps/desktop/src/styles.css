@@ -1201,6 +1201,22 @@ button.recent-row.dim { color: var(--ink-3); }
   border-color: var(--muted);
 }
 
+.setting-revert {
+  margin-left: 0.35rem;
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.setting-revert:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* Plates: a row of chips, the one in front marked. */
 .plates {
   flex-wrap: wrap;
