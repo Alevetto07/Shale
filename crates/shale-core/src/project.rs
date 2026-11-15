@@ -494,6 +494,39 @@ mod tests {
     }
 
     #[test]
+    fn project_round_trip_keeps_bambu_process_and_overrides() {
+        let dir = temp_dir("bambu-round");
+        let path = dir.join("override-roundtrip.shale");
+        let saved = ProjectData {
+            name: "override-roundtrip".into(),
+            printer_id: "bambu_lab_a1".into(),
+            printer_label: "Bambu Lab A1".into(),
+            variant_name: Some("0.4 mm".into()),
+            quality_type: Some("0_20mm_standard_bbl_a1".into()),
+            material_id: Some("bambu_pla_basic".into()),
+            ams: vec![String::new(), String::new(), String::new()],
+            settings: UserSettings {
+                layer_height: Some(0.16),
+                ..UserSettings::default()
+            },
+            chord_mm: 0.0,
+            turn_deg: 0.0,
+            models: Vec::new(),
+            plate_names: Vec::new(),
+            instructions: Vec::new(),
+            support: None,
+            support_model: None,
+            thumbnail: Vec::new(),
+        };
+        write_project(&path, &saved).unwrap();
+        let loaded = read_project(&path).unwrap().data;
+        assert_eq!(loaded.quality_type.as_deref(), Some("0_20mm_standard_bbl_a1"));
+        assert_eq!(loaded.variant_name.as_deref(), Some("0.4 mm"));
+        assert_eq!(loaded.material_id.as_deref(), Some("bambu_pla_basic"));
+        assert_eq!(loaded.settings.layer_height, Some(0.16));
+    }
+
+    #[test]
     fn project_round_trip_keeps_step_bytes_and_choices() {
         let dir = temp_dir("round");
         let path = dir.join("bracket.shale");

@@ -20,15 +20,15 @@ if [[ ! -d "$DEST/Cura/.git" ]]; then
     https://github.com/Ultimaker/Cura.git "$DEST/Cura"
 fi
 
-# Cone mode cannot list a single file such as LICENSE. Non-cone paths with a
-# leading slash check out that file next to the resource directories.
+# Relative paths (no leading slash) materialise on Git for Windows; cone mode
+# cannot list the root LICENSE file on its own.
 git -C "$DEST/Cura" sparse-checkout set --no-cone \
-  /LICENSE \
-  /resources/definitions \
-  /resources/extruders \
-  /resources/quality \
-  /resources/variants \
-  /resources/intent
+  LICENSE \
+  resources/definitions \
+  resources/extruders \
+  resources/quality \
+  resources/variants \
+  resources/intent
 
 if [[ ! -f "$DEST/Cura/resources/definitions/fdmprinter.def.json" ]]; then
   echo "Cura definitions did not check out. Expected fdmprinter.def.json." >&2
@@ -60,7 +60,7 @@ if [[ ! -d "$BAMBU_REPO/.git" ]]; then
   git clone --filter=blob:none --sparse --depth 1 \
     https://github.com/bambulab/BambuStudio.git "$BAMBU_REPO"
 fi
-git -C "$BAMBU_REPO" sparse-checkout set --no-cone /resources/profiles
+git -C "$BAMBU_REPO" sparse-checkout set --no-cone resources/profiles
 if [[ ! -d "$BAMBU_PROFILES/BBL/process" ]]; then
   echo "Bambu BBL process profiles did not check out." >&2
   exit 1

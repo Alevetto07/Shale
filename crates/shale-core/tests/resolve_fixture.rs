@@ -288,6 +288,35 @@ fn real_cura_profiles_when_resources_are_present() {
         Some("0.16"),
         "user layer_height should beat 0.20 mm Standard preset"
     );
+    assert_eq!(
+        resolved_standard.global.get("speed_wall_0").map(String::as_str),
+        Some("200"),
+        "Bambu outer wall speed"
+    );
+    assert_eq!(
+        resolved_standard.global.get("speed_wall_x").map(String::as_str),
+        Some("300"),
+        "Bambu inner wall speed"
+    );
+    assert_eq!(
+        resolved_standard.global.get("speed_infill").map(String::as_str),
+        Some("270"),
+        "Bambu sparse infill speed"
+    );
+    assert_eq!(
+        resolved_standard.global.get("speed_travel").map(String::as_str),
+        Some("700"),
+        "Bambu travel speed on 0.20 mm Standard @ A1"
+    );
+    assert!(
+        resolved_standard
+            .global
+            .get("machine_max_acceleration_x")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0)
+            >= 10_000.0,
+        "A1 machine acceleration limits should flow through"
+    );
     assert!(
         (resolved_extra.summary.layer_height - resolved_standard.summary.layer_height).abs() > 0.02,
         "preset should change layer_height"

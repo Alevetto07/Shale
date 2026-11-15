@@ -269,6 +269,8 @@ struct Profile {
     depth: f64,
     height: f64,
     centered: bool,
+    /// Merged machine profile values (`inherits` applied).
+    machine_settings: Json,
 }
 
 impl Profile {
@@ -303,6 +305,7 @@ fn read_machines(dir: &Path) -> Vec<Profile> {
             depth: area.1,
             height,
             centered: area.2,
+            machine_settings: values.clone(),
         });
     }
     out
@@ -417,6 +420,15 @@ fn printer_definition(id: &str, model: &str, vendor: &str, base: &Profile) -> De
     // Bambu's own start G-code is not Marlin and is not used here.
     put("machine_gcode_flavor", "enum", Json::from("marlin"));
     put("machine_heated_bed", "bool", Json::from(true));
+    for (key, text) in machine_values_for_cura(&base.machine_settings) {
+        if text.eq_ignore_ascii_case("true") || text.eq_ignore_ascii_case("false") {
+            put(&key, "bool", Json::from(text.eq_ignore_ascii_case("true")));
+        } else if let Ok(number) = text.parse::<f64>() {
+            put(&key, "float", Json::from(number));
+        } else {
+            put(&key, "str", Json::from(text));
+        }
+    }
     // Bambu's start G-code is not valid Marlin; leave the Cura default in place
     // rather than shipping a template full of {placeholders} the engine cannot
     // resolve for this machine.
@@ -560,6 +572,35 @@ fn number_to_string(value: f64) -> String {
     }
 }
 
+fn insert_cura_scalar(out: &mut HashMap<String, String>, cura_key: &str, value: &Json) {
+    if let Some(text) = scalar_setting_string(value) {
+        out.insert(cura_key.to_string(), text);
+    }
+}
+
+/// Bambu machine keys that CuraEngine understands for time estimation.
+fn machine_values_for_cura(values: &Json) -> HashMap<String, String> {
+    const MAP: &[(&str, &str)] = &[
+        ("machine_max_acceleration_extruding", "machine_max_acceleration_e"),
+        ("machine_max_acceleration_x", "machine_max_acceleration_x"),
+        ("machine_max_acceleration_y", "machine_max_acceleration_y"),
+        ("machine_max_acceleration_z", "machine_max_acceleration_z"),
+        ("machine_max_jerk_e", "machine_max_jerk_e"),
+        ("machine_max_speed_z", "machine_max_speed_z"),
+    ];
+    let Json::Object(map) = values else {
+        return HashMap::new();
+    };
+    let mut out = HashMap::new();
+    for (bambu, cura) in MAP {
+        if let Some(value) = map.get(*bambu) {
+            insert_cura_scalar(&mut out, cura, value);
+        }
+    }
+    out.insert("acceleration_enabled".to_string(), "True".to_string());
+    out
+}
+
 /// Scalar entries from a merged process JSON (inherits already applied),
 /// translated to Cura setting keys the resolver understands.
 fn process_values_for_cura(values: &Json) -> HashMap<String, String> {
@@ -579,9 +620,34 @@ fn process_values_for_cura(values: &Json) -> HashMap<String, String> {
     let Json::Object(map) = values else {
         return HashMap::new();
     };
+    const MAP: &[(&str, &str)] = &[
+        ("outer_wall_speed", "speed_wall_0"),
+        ("inner_wall_speed", "speed_wall_x"),
+        ("sparse_infill_speed", "speed_infill"),
+        ("internal_solid_infill_speed", "speed_topbottom"),
+        ("top_surface_speed", "speed_topbottom"),
+        ("initial_layer_speed", "speed_layer_0"),
+        ("initial_layer_infill_speed", "speed_infill"),
+        ("travel_speed", "speed_travel"),
+        ("travel_speed_z", "speed_z_hop"),
+        ("support_speed", "speed_support"),
+        ("bridge_speed", "speed_bridge"),
+        ("gap_infill_speed", "speed_wall"),
+        ("default_acceleration", "acceleration_print"),
+        ("outer_wall_acceleration", "acceleration_wall_0"),
+        ("inner_wall_acceleration", "acceleration_wall_x"),
+        ("initial_layer_acceleration", "acceleration_layer_0"),
+        ("sparse_infill_acceleration", "acceleration_infill"),
+        ("top_surface_acceleration", "acceleration_topbottom"),
+        ("travel_acceleration", "acceleration_travel"),
+    ];
     let mut out = HashMap::new();
     for (key, value) in map {
         if SKIP.contains(&key.as_str()) {
+            continue;
+        }
+        if let Some((_, cura)) = MAP.iter().find(|(bambu, _)| *bambu == key.as_str()) {
+            insert_cura_scalar(&mut out, cura, value);
             continue;
         }
         match key.as_str() {
@@ -623,16 +689,18 @@ fn process_values_for_cura(values: &Json) -> HashMap<String, String> {
                     out.insert("layer_height_0".to_string(), text);
                 }
             }
-            _ => {
-                if value.is_array() {
-                    continue;
-                }
-                if let Some(text) = scalar_setting_string(value) {
-                    out.insert(key.clone(), text);
-                }
-            }
+            "layer_height" => insert_cura_scalar(&mut out, "layer_height", value),
+            _ => {}
         }
     }
+    if let Some(speed) = out
+        .get("speed_infill")
+        .cloned()
+        .or_else(|| out.get("speed_wall_0").cloned())
+    {
+        out.entry("speed_print".to_string()).or_insert(speed);
+    }
+    out.insert("acceleration_enabled".to_string(), "True".to_string());
     out
 }
 
@@ -1057,6 +1125,8 @@ mod tests {
         assert!((height - 0.2).abs() < 1e-9);
         assert!(quality.values.contains_key("infill_sparse_density"));
         assert!(quality.values.contains_key("wall_line_count"));
+        assert_eq!(quality.values.get("speed_wall_0").map(String::as_str), Some("200"));
+        assert_eq!(quality.values.get("speed_travel").map(String::as_str), Some("700"));
     }
 
     #[test]

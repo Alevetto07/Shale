@@ -42,21 +42,11 @@ import {
   userSettingsForEngine,
 } from "./engine-settings";
 import type { QuickFallbacks } from "./ProcessSheet";
+import { pickQualityType } from "./profile-pick";
 import { TitleBar } from "./TitleBar";
 import { useRecents } from "./recents";
 import { Viewport, type TransformMode, type ViewStyle , type ColourMode } from "./Viewport";
 import { AsciiCheck, AsciiField, AsciiSelect, AsciiStepper } from "./widgets";
-
-function defaultQualityType(qualities: QualityInfo[], printer?: PrinterInfo): string | null {
-  return (
-    qualities.find((item) => item.name.includes("0.20 mm Standard"))?.quality_type ??
-    qualities.find((item) => item.quality_type === printer?.preferred_quality_type)?.quality_type ??
-    qualities.find((item) => item.name.toLowerCase().includes("standard"))?.quality_type ??
-    qualities.find((item) => item.quality_type === "draft")?.quality_type ??
-    qualities[0]?.quality_type ??
-    null
-  );
-}
 
 interface Progress {
   fraction: number;
@@ -674,14 +664,13 @@ export function App() {
         const printer = printers.find((item) => item.id === printerId);
         const remembered = pendingQuality.current;
         pendingQuality.current = undefined;
-        const pickRemembered =
-          !nozzleChanged &&
-          typeof remembered === "string" &&
-          nextQualities.some((item) => item.quality_type === remembered);
-        setQuality(
-          pickRemembered
-            ? remembered
-            : defaultQualityType(nextQualities, printer),
+        setQuality((current) =>
+          pickQualityType(nextQualities, {
+            pending: remembered,
+            current,
+            printer,
+            nozzleChanged,
+          }),
         );
       } catch (err) {
         if (!cancelled) setError(messageOf(err));
@@ -2293,6 +2282,7 @@ export function App() {
     setProjectName(opened.name || "Untitled");
     setPrinterId(opened.printer_id);
     setVariant(opened.variant_name);
+    pendingQuality.current = opened.quality_type;
     setQuality(opened.quality_type);
     setMaterial(opened.material_id);
     setAms([0, 1, 2].map((index) => opened.ams?.[index] ?? ""));
