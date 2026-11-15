@@ -138,6 +138,38 @@ fn real_cura_profiles_when_resources_are_present() {
         "selectable list should be smaller than the full catalogue"
     );
 
+    let a1_presets = catalog.qualities_for("bambu_lab_a1");
+  assert!(
+      a1_presets.len() >= 6,
+      "expected Bambu A1 layer presets, got {}: {:?}",
+      a1_presets.len(),
+      a1_presets
+  );
+  let mins: Vec<f64> = a1_presets
+      .iter()
+      .map(|q| {
+          q.name
+              .split_whitespace()
+              .next()
+              .unwrap_or("")
+              .trim_end_matches("mm")
+              .parse()
+              .unwrap_or(0.0)
+      })
+      .collect();
+  assert!(
+      mins.iter().any(|v| (*v - 0.08).abs() < 0.02),
+      "missing 0.08 mm preset"
+  );
+  assert!(
+      mins.iter().any(|v| (*v - 0.28).abs() < 0.02),
+      "missing 0.28 mm preset"
+  );
+  assert!(
+      !a1_presets.iter().any(|q| q.name == "Normal" || q.name == "Draft"),
+      "generic Cura tabs should not appear for Bambu A1"
+  );
+
     let resolved = catalog
         .resolve(&shale_core::ResolveRequest {
             printer_id: "creality_ender3".into(),

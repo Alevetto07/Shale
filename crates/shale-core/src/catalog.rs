@@ -226,6 +226,9 @@ fn push_ancestors(out: &mut Vec<PathBuf>, mut dir: Option<PathBuf>) {
 
 #[derive(Clone, Debug)]
 pub struct Catalog {
+    /// When false, only Bambu/Orca profiles are loaded; Cura instances may be
+    /// incomplete until `open_full` replaces this catalogue.
+    pub ui_ready: bool,
     pub paths: ResourcePaths,
     pub(crate) definitions: HashMap<String, Definition>,
     pub(crate) instances: Vec<InstanceFile>,
@@ -347,6 +350,7 @@ impl Catalog {
         materials.extend(library.materials);
         inherit_metadata(&mut definitions);
         Ok(Self {
+            ui_ready: true,
             paths,
             definitions,
             instances,
@@ -514,11 +518,11 @@ impl Catalog {
             }
         }
         let mut qualities: Vec<_> = by_type.into_values().map(|(_, info)| info).collect();
-        // Orca/Bambu profiles are named like `0.20mm Standard @BBL A1`. Cura's
-        // generic quality tabs (`Draft`, `Normal`, …) still inherit into the same
-        // machine and would clutter the v0.1 UI beside the six A1 presets.
+        // Bambu/Orca process names are `0.20 mm Standard`, not `@BBL A1`. Cura's
+        // generic tabs (`Draft`, `Normal`, …) still inherit and must not appear
+        // beside the machine's own layer-height presets.
         if self.external.contains(printer_id) {
-            qualities.retain(|info| info.name.contains("@BBL"));
+            qualities.retain(|info| is_layer_preset_name(&info.name));
             qualities.sort_by(|a, b| {
                 layer_hint_mm(&a.name)
                     .partial_cmp(&layer_hint_mm(&b.name))
@@ -529,6 +533,71 @@ impl Catalog {
             qualities.sort_by(|a, b| a.name.cmp(&b.name));
         }
         qualities
+    }
+
+    /// Enough for the window to list Bambu printers, processes and filaments.
+    /// Skips reading Cura's quality/variant trees (thousands of small files).
+    pub fn open_ui_fast(paths: ResourcePaths) -> Result<Self, Error> {
+        let resources = paths.resources();
+        let mut warnings = Vec::new();
+        let mut definitions = HashMap::new();
+        load_definitions(
+            &resources.join("definitions"),
+            false,
+            &mut definitions,
+            &mut warnings,
+        );
+        load_definitions(
+            &resources.join("extruders"),
+            true,
+            &mut definitions,
+            &mut warnings,
+        );
+        if !definitions.contains_key("fdmprinter") {
+            return Err(Error::message(format!(
+                "fdmprinter.def.json is missing under {}",
+                resources.display()
+            )));
+        }
+        let library = crate::bambu::Library::load();
+        let gcode = library.gcode.clone();
+        let mut external = std::collections::HashSet::new();
+        for definition in library.definitions {
+            external.insert(definition.id.clone());
+            definitions
+                .entry(definition.id.clone())
+                .or_insert(definition);
+        }
+        if let Some(base) = definitions.get("fdmextruder").map(|d| d.settings.clone()) {
+            for definition in definitions
+                .values_mut()
+                .filter(|d| d.is_extruder && external.contains(&d.id))
+            {
+                for (key, setting) in &base {
+                    definition
+                        .settings
+                        .entry(key.clone())
+                        .or_insert_with(|| setting.clone());
+                }
+            }
+        }
+        let external_materials: std::collections::HashSet<String> = library
+            .materials
+            .iter()
+            .map(|material| material.id.clone())
+            .collect();
+        inherit_metadata(&mut definitions);
+        Ok(Self {
+            ui_ready: true,
+            paths,
+            definitions,
+            instances: library.instances,
+            materials: library.materials,
+            external,
+            external_materials,
+            gcode,
+            load_warnings: warnings,
+        })
     }
 
     pub fn materials_for(&self, diameter: f64) -> Vec<MaterialInfo> {
@@ -625,11 +694,15 @@ impl Catalog {
     }
 }
 
-/// Sort key for `0.20mm Standard @BBL A1`-style profile names.
+/// Sort key for `0.20 mm Standard`-style profile names.
 fn layer_hint_mm(name: &str) -> f64 {
     let head = name.split_whitespace().next().unwrap_or("");
     let value = head.trim_end_matches("mm");
     value.parse().unwrap_or(f64::MAX)
+}
+
+fn is_layer_preset_name(name: &str) -> bool {
+    layer_hint_mm(name) < 1.0
 }
 
 pub(crate) fn specificity(definition_id: &str, ancestry: &[String]) -> usize {

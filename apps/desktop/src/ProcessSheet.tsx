@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { SETTING_GROUPS, type SettingField } from "./settings";
-import { A1_PROCESS_PRESETS } from "./bambu-presets";
+import type { QualityInfo } from "./api";
 import {
   ADVANCED,
   BAMBU_LABEL,
@@ -32,6 +32,10 @@ interface Props {
   profileValues?: Record<string, string>;
   onOverride: (key: string, value: string) => void;
   onResetOverrides: () => void;
+  qualities: QualityInfo[];
+  qualityType: string | null;
+  onQuality: (qualityType: string) => void;
+  printerLabel: string;
 }
 
 /// The keys the simple rows already own; showing them twice would let the two
@@ -55,11 +59,6 @@ function loadHidden(): Set<string> {
   } catch {
     return new Set();
   }
-}
-
-function num(value: string | undefined, fallback: number): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
 }
 
 export function ProcessSheet(props: Props) {
@@ -109,33 +108,9 @@ export function ProcessSheet(props: Props) {
     return out;
   }, [search]);
 
-  const presetName = useMemo(() => {
-    const match = A1_PROCESS_PRESETS.find((preset) => {
-      const v = preset.values;
-      return (
-        Math.abs(num(v.layer_height, -1) - props.settings.layerHeight) < 1e-6 &&
-        num(v.wall_line_count, -1) === props.settings.walls &&
-        num(v.infill_sparse_density, -1) === props.settings.infill
-      );
-    });
-    return match?.name ?? null;
-  }, [props.settings]);
-
-  const applyPreset = (name: string) => {
-    const preset = A1_PROCESS_PRESETS.find((entry) => entry.name === name);
-    if (!preset) return;
-    const v = preset.values;
-    props.onSettings({
-      layerHeight: num(v.layer_height, props.settings.layerHeight),
-      walls: num(v.wall_line_count, props.settings.walls),
-      infill: num(v.infill_sparse_density, props.settings.infill),
-      pattern: v.infill_pattern ?? props.settings.pattern,
-      supports: v.support_enable === "1",
-    });
-    for (const [key, value] of Object.entries(v)) {
-      if (BASE_KEYS.has(key)) continue;
-      props.onOverride(key, value);
-    }
+  const applyPreset = (qualityType: string) => {
+    props.onQuality(qualityType);
+    props.onResetOverrides();
   };
 
   const label = (field: SettingField) => BAMBU_LABEL[field.key] ?? field.label;
@@ -215,16 +190,16 @@ export function ProcessSheet(props: Props) {
       </div>
 
       <div className="process-presets">
-        <span className="process-presets-label">A1 process</span>
-        {A1_PROCESS_PRESETS.map((preset) => (
+        <span className="process-presets-label">{props.printerLabel} process</span>
+        {props.qualities.map((preset) => (
           <button
-            key={preset.name}
+            key={preset.quality_type}
             type="button"
-            className={preset.name === presetName ? "process-preset on" : "process-preset"}
-            onClick={() => applyPreset(preset.name)}
+            className={preset.quality_type === props.qualityType ? "process-preset on" : "process-preset"}
+            onClick={() => applyPreset(preset.quality_type)}
             title={preset.name}
           >
-            {preset.name.replace(" @BBL A1", "")}
+            {preset.name}
           </button>
         ))}
       </div>

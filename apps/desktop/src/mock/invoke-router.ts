@@ -33,6 +33,8 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
       return null as T;
     case "list_printers":
       return MOCK_PRINTERS as T;
+    case "retry_catalog_load":
+      return undefined as T;
     case "list_variants":
     case "list_qualities":
     case "list_materials":

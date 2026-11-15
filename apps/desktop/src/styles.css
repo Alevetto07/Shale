@@ -254,6 +254,13 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   overflow: auto;
 }
 .banner.error { color: var(--ink); }
+.banner .banner-action {
+  margin-left: 0.75rem;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  color: var(--accent);
+}
 
 code { font-family: var(--mono); }
 

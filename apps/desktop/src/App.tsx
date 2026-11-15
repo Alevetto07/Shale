@@ -258,6 +258,7 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const restore = useRef<Restore | null>(null);
   const catalogLoadingRef = useRef(false);
+  const catalogAttemptsRef = useRef(0);
   const saveRef = useRef<(asNew: boolean) => void>(() => {});
   const openRef = useRef<(path?: string) => void>(() => {});
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -366,7 +367,6 @@ export function App() {
     let stopped = false;
     let retry: number | undefined;
     let catalogPoll: number | undefined;
-    let catalogAttempts = 0;
     // A demo scenario slices before the window opens, so the first boot can
     // legitimately see an empty plate. Ask again instead of filming the start
     // screen.
@@ -384,8 +384,8 @@ export function App() {
         setLibDir(next.engine_lib_dir || "");
         setBackend(next.engine_backend || "cli");
         if (!next.resources_ok && next.catalog_loading) {
-          catalogAttempts += 1;
-          if (catalogAttempts > 180) {
+          catalogAttemptsRef.current += 1;
+          if (catalogAttemptsRef.current > 180) {
             setError(
               "Reading the printer and material profiles timed out — close other heavy builds and relaunch, or check SHALE_CURA_DIR.",
             );
@@ -395,7 +395,7 @@ export function App() {
           retry = window.setTimeout(() => void boot(), 700);
           return;
         }
-        catalogAttempts = 0;
+        catalogAttemptsRef.current = 0;
         if (!next.resources_ok) {
           setError(next.resources_message);
         }
@@ -585,9 +585,11 @@ export function App() {
           nextQualities.some((item) => item.quality_type === type),
         )
           ? (pending?.quality as string)
-          : nextQualities.some((item) => item.quality_type === printer?.preferred_quality_type)
-            ? printer?.preferred_quality_type ?? nextQualities[0]?.quality_type ?? null
-            : nextQualities.find((item) => item.quality_type === "draft")?.quality_type ??
+            : nextQualities.find((item) => item.name.includes("0.20 mm Standard"))?.quality_type ??
+              nextQualities.find((item) => item.quality_type === printer?.preferred_quality_type)
+                ?.quality_type ??
+              nextQualities.find((item) => item.name.toLowerCase().includes("standard"))?.quality_type ??
+              nextQualities.find((item) => item.quality_type === "draft")?.quality_type ??
               nextQualities[0]?.quality_type ??
               null;
         const nextMaterial = known(pending?.material ?? null, (id) =>
@@ -2642,6 +2644,19 @@ export function App() {
       {error && (
         <p className="banner error" role="alert">
           {error}
+          {(error.includes("profiles") || error.includes("timed out")) && (
+            <button
+              type="button"
+              className="banner-action"
+              onClick={() => {
+                setError(null);
+                catalogAttemptsRef.current = 0;
+                void api.retryCatalogLoad();
+              }}
+            >
+              retry
+            </button>
+          )}
         </p>
       )}
       {notice && (
@@ -2838,7 +2853,7 @@ export function App() {
                         .filter(Boolean)
                         .join(", ")
                     : patches.length > 0
-                      ? `${patches.length} patches of underside`
+                      ? `${patches.length} patch${patches.length === 1 ? "" : "es"} of underside`
                       : "nothing underneath to hold up"}
                 </p>
                 {/* Two brushes, because they ask for opposite things. A patch is

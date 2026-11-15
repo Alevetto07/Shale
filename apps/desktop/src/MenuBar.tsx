@@ -425,6 +425,12 @@ export function MenuBar(props: MenuBarProps) {
               profileValues={props.profileValues}
               onOverride={props.onOverride}
               onResetOverrides={props.onResetOverrides}
+              qualities={props.qualities}
+              qualityType={props.quality}
+              onQuality={(next) => props.onQuality(next)}
+              printerLabel={
+                printer ? `${printer.manufacturer} ${printer.name}` : "machine"
+              }
             />
           </div>
         )}

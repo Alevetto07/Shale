@@ -388,6 +388,7 @@ export const api = {
   secretClear,
 
   status: () => invoke<Status>("app_status"),
+  retryCatalogLoad: () => invoke<void>("retry_catalog_load"),
   startupOpen: () => invoke<string | null>("startup_open"),
   takePendingOpen: () => invoke<string | null>("take_pending_open"),
   costSettings: () => invoke<CostSettings>("cost_settings"),
