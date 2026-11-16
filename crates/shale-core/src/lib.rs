@@ -83,4 +83,11 @@ pub fn remove_legacy_catalog_cache() {
     catalog_cache::remove_legacy_cache_dir();
 }
 
+/// Integration tests redirect catalog cache writes away from the user profile.
+#[cfg(test)]
+#[doc(hidden)]
+pub fn set_test_catalog_cache_dir(dir: std::path::PathBuf) {
+    catalog_cache::set_test_cache_dir(dir);
+}
+
 mod error;
