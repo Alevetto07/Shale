@@ -1,5 +1,6 @@
 import type { ModelView } from "./api";
 import { rotateScale } from "./coords";
+import { themeVar } from "./theme";
 
 /** Small JPEG of the parts on a near-black field, stored in the project zip. */
 export function thumbnailJpeg(models: ModelView[]): number[] {
@@ -8,7 +9,7 @@ export function thumbnailJpeg(models: ModelView[]): number[] {
   canvas.height = 180;
   const context = canvas.getContext("2d");
   if (!context) return [];
-  context.fillStyle = "#06070b";
+  context.fillStyle = themeVar("--bg", "#06070b");
   context.fillRect(0, 0, 320, 180);
   let minX = Infinity;
   let minY = Infinity;

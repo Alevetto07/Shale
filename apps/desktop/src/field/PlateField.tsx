@@ -1,20 +1,27 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
-import fieldUrl from "./andromeda.jpg";
+import { DEFAULT_PLATE_TUNE, type PlateTune } from "./plate-tune";
 import { pointer, prefersStill, subscribe } from "./loop";
 import { createField, type FieldPainter } from "./paint";
 
 /**
- * ASCII Andromeda. Glyphs take their ramp step and tint from the NASA image.
- * The field drifts slowly. Near the pointer a glyph steps up the ramp,
- * brightens, and eases aside, then springs back. A short comet of star
+ * Theme-specific ASCII plate. Glyphs take their ramp step and tint from the
+ * luminance-mapped source image. The field drifts slowly; near the pointer a
+ * glyph steps up the ramp, brightens, and eases aside. A short comet of star
  * glyphs follows the pointer on the start screen only.
- *
- * The painter is bound once, on mount. `live` and `comet` are read through refs
- * inside the shared clock, so opening a panel never rebuilds the painter — and
- * the canvas node is re-bound if React ever replaces it, which leaves a fresh
- * node blank until the next still frame.
  */
-export function PlateField({ live, comet }: { live: boolean; comet: boolean }) {
+export function PlateField({
+  live,
+  comet,
+  imageUrl,
+  backgroundRgb,
+  plateTune = DEFAULT_PLATE_TUNE,
+}: {
+  live: boolean;
+  comet: boolean;
+  imageUrl: string;
+  backgroundRgb: readonly [number, number, number];
+  plateTune?: PlateTune;
+}) {
   const ref = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef(live);
   const cometRef = useRef(comet);
@@ -24,17 +31,21 @@ export function PlateField({ live, comet }: { live: boolean; comet: boolean }) {
   const boundRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const paintStillRef = useRef<() => void>(() => {});
+  const bgRef = useRef(backgroundRgb);
+  const tuneRef = useRef(plateTune);
+  bgRef.current = backgroundRgb;
+  tuneRef.current = plateTune;
 
   useEffect(() => {
     const image = new Image();
-    image.src = fieldUrl;
+    image.src = imageUrl;
     imageRef.current = image;
     let cancelled = false;
     let unsubscribe = () => {};
 
     const bind = (node: HTMLCanvasElement) => {
       boundRef.current = node;
-      const field = createField(node, image);
+      const field = createField(node, image, bgRef.current, tuneRef.current);
       fieldRef.current = field;
       paintStillRef.current = () => field.paint(0, -1e6, -1e6, false);
       paintStillRef.current();
@@ -89,11 +100,11 @@ export function PlateField({ live, comet }: { live: boolean; comet: boolean }) {
     return () => {
       cancelled = true;
       unsubscribe();
+      fieldRef.current = null;
+      boundRef.current = null;
     };
-  }, []);
+  }, [imageUrl, backgroundRgb[0], backgroundRgb[1], backgroundRgb[2], plateTune]);
 
-  // A panel switch can leave a freshly mounted canvas untouched; repaint a still
-  // frame whenever the bitmap turns out to be empty.
   useLayoutEffect(() => {
     const node = ref.current;
     const field = fieldRef.current;
@@ -102,7 +113,7 @@ export function PlateField({ live, comet }: { live: boolean; comet: boolean }) {
       const image = imageRef.current;
       if (!image) return;
       boundRef.current = node;
-      const rebound = createField(node, image);
+      const rebound = createField(node, image, bgRef.current, tuneRef.current);
       fieldRef.current = rebound;
       paintStillRef.current = () => rebound.paint(0, -1e6, -1e6, false);
       paintStillRef.current();

@@ -3,11 +3,14 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./themes/tokens.css";
 import "./themes/deep-field.css";
+import "./themes/saturn.css";
+import "./themes/nebula.css";
+import "./themes/lunar.css";
 import "./styles.css";
 import "./themes/ui-polish.css";
-import { UI_THEME_ID } from "./theme";
+import { applyUiStyle, readUiStyle } from "./ui-styles";
 
-document.documentElement.dataset.uiTheme = UI_THEME_ID;
+applyUiStyle(readUiStyle());
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

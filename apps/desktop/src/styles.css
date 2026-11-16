@@ -101,7 +101,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   min-height: 320px;
   padding: 1.25rem 1rem 6.5rem;
   box-sizing: border-box;
-  background: #06070b;
+  background: var(--bg);
   color: var(--ink-2);
 }
 .plate[data-preview="yes"] .viewport-mock {

@@ -55,6 +55,19 @@ from the repository with `cargo metadata --format-version 1` and
 `cargo license`. This table is the part that is compiled in and worth naming in
 a printed notice; it is not an abridged substitute for those files.
 
+## Home-screen ASCII plate images
+
+Shale's start screen maps public-domain or permissively licensed astronomy
+photographs to an ASCII glyph field. Bundled downscales live under
+`apps/desktop/src/field/`.
+
+| File | Subject | Source | Licence |
+| --- | --- | --- | --- |
+| `andromeda.jpg` | Andromeda Galaxy (M31), GALEX ultraviolet | [NASA PIA15416](https://images.nasa.gov/details/PIA15416) | Not subject to copyright in the United States (NASA) |
+| `saturn.jpg` | Saturn at equinox | [Wikimedia: Saturn during Equinox](https://commons.wikimedia.org/wiki/File:Saturn_during_Equinox.jpg) | Public domain (NASA/JPL/SSI) |
+| `nebula.jpg` | Crab Nebula (M1) | [Wikimedia: Crab Nebula](https://commons.wikimedia.org/wiki/File:Crab_Nebula.jpg) | Public domain (NASA/ESA) |
+| `lunar.jpg` | Moon (half-phase derivative) | [Wikimedia: Full Moon Luc Viatour](https://commons.wikimedia.org/wiki/File:Full_Moon_Luc_Viatour.jpg) | CC BY-SA 3.0 (Luc Viatour; derivative edit for Shale) |
+
 ## What is not in the installer
 
 * **CuraEngine and Cura's resources are not shipped.** Shale runs a CuraEngine

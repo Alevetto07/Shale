@@ -132,6 +132,10 @@ export function Viewport(props: ViewportProps) {
       />
     );
   }
+  const sceneBg =
+    typeof document !== "undefined"
+      ? getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() || "#06070b"
+      : "#06070b";
   const cx = props.centerIsZero ? 0 : props.width / 2;
   const cy = props.centerIsZero ? 0 : props.depth / 2;
   return (
@@ -145,7 +149,7 @@ export function Viewport(props: ViewportProps) {
         camera.lookAt(cx, cy, 0);
       }}
     >
-      <color attach="background" args={["#06070b"]} />
+      <color attach="background" args={[sceneBg]} />
       <ambientLight intensity={0.55} />
       <directionalLight position={[120, -80, 220]} intensity={0.9} color="#e9e8f2" />
       <directionalLight position={[-80, 140, 40]} intensity={0.18} color="#8a8798" />

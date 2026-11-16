@@ -1,7 +1,7 @@
 import { useId, useState, type ReactNode } from "react";
 
-/** Default UI theme id; must match `data-ui-theme` and `themes/<id>.css`. */
-export const UI_THEME_ID = "deep-field" as const;
+export { UI_THEME_ID } from "./ui-styles";
+export type { UiStyleId } from "./ui-styles";
 
 /** Read a design token from the active theme (CSS custom properties on `:root`). */
 export function themeVar(name: string, fallback?: string): string {
@@ -10,7 +10,7 @@ export function themeVar(name: string, fallback?: string): string {
   return value || fallback || "";
 }
 
-/** Deep Field. Colours mirror `themes/deep-field.css` for non-DOM consumers. */
+/** Fallback colours for non-DOM consumers (Andromeda / deep-field defaults). */
 export const theme = {
   color: {
     bg: "#06070b",
