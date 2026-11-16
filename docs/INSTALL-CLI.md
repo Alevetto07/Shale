@@ -17,18 +17,42 @@ separate program, and Shale looks for it rather than linking it.
 2. **The Cura resource tree** — printer definitions, quality profiles and
    materials. This is what makes the printer list non-empty.
 
-Both can be pointed at explicitly, which is the reliable way on a server:
+Both can be pointed at explicitly, which is the reliable way on a server.
+
+Bambu printers also need the Orca/Bambu profile tree (`SHALE_ORCA_DIR`). Without
+it the Bambu machine list is empty and process names such as `standard` cannot be
+resolved.
+
+### Linux and macOS
 
 ```sh
 export SHALE_CURAENGINE=/usr/bin/CuraEngine
 export SHALE_CURA_DIR=/usr/share/cura/resources
 export SHALE_MATERIALS_DIR=/usr/share/cura/resources/materials
+export SHALE_ORCA_DIR=/path/to/BambuStudio/resources/profiles
+# Optional when DLLs or shared libraries sit beside the engine binary:
+export SHALE_CURAENGINE_LIB_DIR=/usr/lib/CuraEngine
 ```
+
+### Windows (PowerShell)
+
+```powershell
+$env:SHALE_CURAENGINE = "C:\Program Files\UltiMaker Cura 5.11\CuraEngine.exe"
+$env:SHALE_CURAENGINE_LIB_DIR = "C:\Program Files\UltiMaker Cura 5.11"
+$env:SHALE_CURA_DIR = "C:\path\to\Shale\Cura"
+$env:SHALE_MATERIALS_DIR = "C:\path\to\Shale\fdm_materials"
+$env:SHALE_ORCA_DIR = "C:\path\to\Shale\vendor\BambuStudio\resources\profiles"
+```
+
+Run `shale-cli info` after setting these; it lists which variables are still
+missing and whether CuraEngine responds.
 
 If the variables are unset, Shale looks next to the working directory and the
 executable (a `Cura/` folder with `fdm_materials/` beside it), then at an
-installed UltiMaker Cura 5.x. The error names every path it tried, so a wrong
-path is a message, not a mystery.
+installed UltiMaker Cura 5.x. `SHALE_ORCA_DIR` falls back to a local
+`vendor/BambuStudio/resources/profiles` checkout, or to an installed Bambu
+Studio. The error names every path it tried, so a wrong path is a message, not a
+mystery.
 
 ## Windows
 
@@ -42,7 +66,7 @@ Unzip `shale-0.1.1-windows-x64.zip` anywhere and run from that folder:
 
 CuraEngine and the resource tree come from an installed UltiMaker Cura 5.x, or
 from `scripts/fetch-resources.ps1` in the repository. To use a copy that is not
-installed, set the three variables above.
+installed, set all five variables above (including `SHALE_ORCA_DIR`).
 
 ## Debian 13 aarch64 (Arduino UNO Q and similar)
 
@@ -95,7 +119,8 @@ entry looks like this (paths adjusted):
       "env": {
         "SHALE_CURAENGINE": "/usr/bin/CuraEngine",
         "SHALE_CURA_DIR": "/usr/share/cura/resources",
-        "SHALE_MATERIALS_DIR": "/usr/share/cura/resources/materials"
+        "SHALE_MATERIALS_DIR": "/usr/share/cura/resources/materials",
+        "SHALE_ORCA_DIR": "/path/to/BambuStudio/resources/profiles"
       }
     }
   }
@@ -133,7 +158,7 @@ pwsh scripts/package-cli.ps1                 # dist/shale-<version>-windows-x64.
 ```
 
 ```sh
-./scripts/package-cli.sh                     # dist/shale-<version>-<target>.tar.gz
+./scripts/package-cli.sh                     # dist/shale-<version>-linux-x64.tar.gz
 ```
 
 Both stage the two binaries with this file, `THIRD-PARTY-NOTICES.md` and

@@ -303,6 +303,59 @@ fn real_cura_profiles_when_resources_are_present() {
         Some("270"),
         "Bambu sparse infill speed"
     );
+
+    let friendly = catalog
+        .resolve(&shale_core::ResolveRequest {
+            printer_id: "bambu_lab_a1".into(),
+            variant_name: Some("0.4 mm".into()),
+            quality_type: Some("standard".into()),
+            material_id: Some(material.clone()),
+            intent_category: None,
+            settings: UserSettings::default(),
+        })
+        .expect("friendly quality standard");
+    assert!(
+        (friendly.summary.layer_height - 0.20).abs() < 0.02,
+        "standard alias layer_height {}",
+        friendly.summary.layer_height
+    );
+    assert_eq!(
+        friendly.quality_type, standard.quality_type,
+        "standard alias should map to {}",
+        standard.quality_type
+    );
+
+    let by_label = catalog
+        .resolve(&shale_core::ResolveRequest {
+            printer_id: "bambu_lab_a1".into(),
+            variant_name: Some("0.4 mm".into()),
+            quality_type: Some("0.20mm Standard".into()),
+            material_id: Some(material.clone()),
+            intent_category: None,
+            settings: UserSettings::default(),
+        })
+        .expect("0.20mm Standard label");
+    assert_eq!(by_label.quality_type, standard.quality_type);
+
+    let err = catalog
+        .resolve(&shale_core::ResolveRequest {
+            printer_id: "bambu_lab_a1".into(),
+            variant_name: Some("0.4 mm".into()),
+            quality_type: Some("definitely-not-a-preset".into()),
+            material_id: Some(material.clone()),
+            intent_category: None,
+            settings: UserSettings::default(),
+        })
+        .unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("unknown quality"),
+        "error should list valid choices: {message}"
+    );
+    assert!(
+        message.contains("0.20 mm Standard"),
+        "error should mention a real preset: {message}"
+    );
     assert_eq!(
         resolved_standard.global.get("speed_travel").map(String::as_str),
         Some("700"),
