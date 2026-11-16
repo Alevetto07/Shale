@@ -4,6 +4,7 @@
 //! CuraEngine binary when `SHALE_CURAENGINE` is set.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use rmcp::model::{CallToolRequestParams, CallToolResult, ContentBlock};
 use rmcp::ServiceExt;
@@ -47,7 +48,14 @@ impl SlicingEngine for FakeEngine {
     }
 }
 
+fn isolated_catalog_cache_dir() {
+    static CACHE: OnceLock<tempfile::TempDir> = OnceLock::new();
+    let dir = CACHE.get_or_init(|| tempfile::tempdir().expect("mcp cache tempdir"));
+    std::env::set_var("SHALE_CACHE_DIR", dir.path().as_os_str());
+}
+
 fn fixture_catalog() -> Catalog {
+    isolated_catalog_cache_dir();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../shale-core/tests/fixtures");
     Catalog::open(ResourcePaths {
         cura: root.join("cura"),
@@ -204,6 +212,7 @@ async fn real_engine_slices_the_20mm_cube_when_configured() {
     }
     let destination =
         std::env::temp_dir().join(format!("shale-mcp-real-{}.gcode", std::process::id()));
+    isolated_catalog_cache_dir();
     let engine = CliEngine::from_env();
     assert!(engine.available(), "CuraEngine did not answer help");
     let catalog = Catalog::open(ResourcePaths::discover().expect("resources")).expect("catalog");

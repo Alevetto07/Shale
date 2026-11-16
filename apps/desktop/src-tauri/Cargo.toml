@@ -26,3 +26,8 @@ custom-protocol = ["tauri/custom-protocol"]
 # is that store under its own name; `windows-native` is the Credential Manager
 # backend, and no other backend is built here.
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_WindowsAndMessaging",
+] }

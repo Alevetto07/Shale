@@ -427,10 +427,9 @@ mod path_tests {
 
     #[test]
     fn a_relative_output_path_becomes_absolute_against_cwd() {
-        let dir = std::env::temp_dir().join(format!("shale-path-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("temp dir");
+        let dir = tempfile::tempdir().expect("temp dir");
         let previous = std::env::current_dir().expect("cwd");
-        std::env::set_current_dir(&dir).expect("chdir");
+        std::env::set_current_dir(dir.path()).expect("chdir");
         let resolved = absolutize_path(std::path::Path::new("nested/out.gcode"))
             .expect("absolutize");
         std::env::set_current_dir(previous).ok();

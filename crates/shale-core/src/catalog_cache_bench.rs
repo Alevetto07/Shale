@@ -10,26 +10,28 @@ mod tests {
     use crate::catalog::{Catalog, ResourcePaths};
     use crate::catalog_cache;
 
-    fn bench_orca_root() -> PathBuf {
-        static ROOT: OnceLock<PathBuf> = OnceLock::new();
-        ROOT.get_or_init(|| {
-            let dir = std::env::temp_dir().join("shale-bench-empty-orca");
-            std::fs::remove_dir_all(&dir).ok();
-            std::fs::create_dir_all(&dir).ok();
-            bambu::set_test_profiles_root(Some(dir.clone()));
-            catalog_cache::set_test_cache_dir(
-                std::env::temp_dir()
-                    .join("shale-bench-cache")
-                    .join("catalog"),
-            );
-            dir
+    struct BenchDirs {
+        _orca: tempfile::TempDir,
+        _cache: tempfile::TempDir,
+    }
+
+    fn bench_dirs() -> &'static BenchDirs {
+        static DIRS: OnceLock<BenchDirs> = OnceLock::new();
+        DIRS.get_or_init(|| {
+            let orca = tempfile::tempdir().expect("bench orca tempdir");
+            bambu::set_test_profiles_root(Some(orca.path().to_path_buf()));
+            let cache = tempfile::tempdir().expect("bench cache tempdir");
+            catalog_cache::set_cache_dir_override(cache.path().to_path_buf());
+            BenchDirs {
+                _orca: orca,
+                _cache: cache,
+            }
         })
-        .clone()
     }
 
     #[test]
     fn fixture_catalog_open_stays_fast() {
-        let _orca = bench_orca_root();
+        let _dirs = bench_dirs();
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
         let paths = ResourcePaths {
             cura: root.join("cura"),

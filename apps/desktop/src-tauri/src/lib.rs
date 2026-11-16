@@ -269,14 +269,38 @@ fn fit_window_to_monitor(window: &tauri::WebviewWindow) {
     };
     let outer_w = outer.width as f64 / scale;
     let outer_h = outer.height as f64 / scale;
-    let Ok(inner) = window.inner_size() else {
-        return;
-    };
-    let inner_h = inner.height as f64 / scale;
-    // Centre the outer frame horizontally and the visible client area vertically.
     let pos_x = work_x + (work_w - outer_w) / 2.0;
-    let chrome_top = (outer_h - inner_h).max(0.0);
-    let pos_y = work_y + (work_h - inner_h) / 2.0 - chrome_top;
+    let mut pos_y = work_y + (work_h - outer_h) / 2.0;
+
+    #[cfg(windows)]
+    if let (Ok(hwnd), Ok(outer_pos)) = (window.hwnd(), window.outer_position()) {
+        use std::mem::MaybeUninit;
+        use windows::Win32::Foundation::RECT;
+        use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+        use windows::Win32::UI::WindowsAndMessaging::HWND;
+
+        let hwnd = HWND(hwnd.0);
+        let mut rect = MaybeUninit::<RECT>::uninit();
+        let ok = unsafe {
+            DwmGetWindowAttribute(
+                hwnd,
+                DWMWA_EXTENDED_FRAME_BOUNDS,
+                rect.as_mut_ptr().cast(),
+                std::mem::size_of::<RECT>() as u32,
+            )
+            .is_ok()
+        };
+        if ok {
+            let rect = unsafe { rect.assume_init() };
+            let frame_h = (rect.bottom - rect.top) as f64 / scale;
+            let frame_top = rect.top as f64 / scale;
+            let outer_y = outer_pos.y as f64 / scale;
+            let lead_in = frame_top - outer_y;
+            let target_top = work_y + (work_h - frame_h) / 2.0;
+            pos_y = target_top - lead_in;
+        }
+    }
+
     let _ = window.set_position(tauri::LogicalPosition::new(pos_x, pos_y));
 }
 

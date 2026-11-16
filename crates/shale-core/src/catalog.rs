@@ -193,8 +193,8 @@ mod discover_tests {
 
     #[test]
     fn an_installed_tree_is_recognised_and_a_miss_names_the_path() {
-        let root = std::env::temp_dir().join(format!("shale-cura-tree-{}", std::process::id()));
-        let cura = root.join("share").join("cura");
+        let root = tempfile::tempdir().unwrap();
+        let cura = root.path().join("share").join("cura");
         let definitions = cura.join("resources").join("definitions");
         fs::create_dir_all(&definitions).unwrap();
         fs::write(definitions.join("fdmprinter.def.json"), b"{}").unwrap();
@@ -202,7 +202,6 @@ mod discover_tests {
         push_cura_tree(&cura, &mut found);
         assert_eq!(found.len(), 1, "looked at {}", cura.display());
         assert!(found[0].has_definitions());
-        let _ = fs::remove_dir_all(&root);
 
         let missing = ResourcePaths::discover();
         if let Err(err) = missing {

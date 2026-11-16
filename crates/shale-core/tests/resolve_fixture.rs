@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use shale_core::{set_test_catalog_cache_dir, Catalog, ResourcePaths, UserSettings};
+use shale_core::{set_catalog_cache_dir, Catalog, ResourcePaths, UserSettings};
 
 static TEST_CACHE: OnceLock<()> = OnceLock::new();
 static REAL_CATALOG: OnceLock<Option<Catalog>> = OnceLock::new();
@@ -12,7 +12,7 @@ fn use_test_cache_dir() {
         let cache = root.join("catalog-cache");
         std::fs::remove_dir_all(&cache).ok();
         std::fs::create_dir_all(&cache).ok();
-        set_test_catalog_cache_dir(cache);
+        set_catalog_cache_dir(cache);
     });
 }
 

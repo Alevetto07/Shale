@@ -1,14 +1,14 @@
 //! On-disk cache for the expensive parts of opening the profile library.
 //!
-//! **Load path:** path-key lookup and at most one marker `stat` — no tree walks.
-//! **Write path:** fingerprint and JSON serialization run on a background thread.
+//! **Load path:** path-key lookup and cheap source markers — no full-tree walks.
+//! **Write path:** JSON serialization on a background thread; prune never deletes
+//! other sources' cache files.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use std::thread;
-use std::time::{Duration, SystemTime};
 use std::{env, fs};
 
 use serde::{Deserialize, Serialize};
@@ -19,24 +19,26 @@ use crate::error::Error;
 use crate::instance::InstanceFile;
 use crate::material::Material;
 
-const CACHE_VERSION: u32 = 4;
-const BAMBU_CACHE_VERSION: u32 = 3;
-const ENV_CACHE_DIR: &str = "SHALE_CACHE_DIR";
+const CACHE_VERSION: u32 = 5;
+const BAMBU_CACHE_VERSION: u32 = 4;
 
-#[cfg(test)]
-static TEST_CACHE_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
+static CACHE_DIR_OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
-struct TreeStamp {
-    newest_secs: u64,
-    file_count: u64,
-    total_bytes: u64,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct FileSig {
+    mtime_secs: u64,
+    size: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct CacheMarkers {
+    entries: Vec<(String, FileSig)>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct BambuLibraryCache {
     version: u32,
-    marker_epoch: u64,
+    markers: CacheMarkers,
     definitions: Vec<Definition>,
     instances: Vec<InstanceFile>,
     materials: Vec<Material>,
@@ -46,35 +48,35 @@ struct BambuLibraryCache {
 #[derive(Serialize, Deserialize)]
 struct CuraExtrasCache {
     version: u32,
-    marker_epoch: u64,
+    markers: CacheMarkers,
     instances: Vec<InstanceFile>,
     materials: Vec<Material>,
 }
 
+/// Sets the on-disk catalogue cache directory for this process (used by tests).
+pub fn set_cache_dir_override(dir: PathBuf) {
+    let _ = fs::create_dir_all(&dir);
+    if let Ok(mut guard) = CACHE_DIR_OVERRIDE.write() {
+        *guard = Some(dir);
+    }
+}
+
 /// User app-data, never next to the install / uninstall layout.
 pub(crate) fn cache_dir() -> PathBuf {
+    if let Ok(guard) = CACHE_DIR_OVERRIDE.read() {
+        if let Some(dir) = guard.as_ref() {
+            return dir.clone();
+        }
+    }
     #[cfg(test)]
     {
-        if let Ok(guard) = TEST_CACHE_DIR.read() {
-            if let Some(dir) = guard.as_ref() {
-                return dir.clone();
-            }
-        }
         let dir = env::temp_dir().join(format!("shale-catalog-cache-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
-        if let Ok(mut guard) = TEST_CACHE_DIR.write() {
-            if guard.is_none() {
-                *guard = Some(dir.clone());
-            }
-            if let Some(set) = guard.as_ref() {
-                return set.clone();
-            }
-        }
         return dir;
     }
     #[cfg(not(test))]
     {
-        if let Ok(dir) = env::var(ENV_CACHE_DIR) {
+        if let Ok(dir) = env::var("SHALE_CACHE_DIR") {
             return PathBuf::from(dir);
         }
         #[cfg(windows)]
@@ -85,21 +87,6 @@ pub(crate) fn cache_dir() -> PathBuf {
             return PathBuf::from(home).join(".cache").join("shale").join("catalog-cache");
         }
         env::temp_dir().join("shale-catalog-cache")
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn set_test_cache_dir(dir: PathBuf) {
-    let _ = fs::create_dir_all(&dir);
-    if let Ok(mut guard) = TEST_CACHE_DIR.write() {
-        *guard = Some(dir);
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn reset_test_cache_dir() {
-    if let Ok(mut guard) = TEST_CACHE_DIR.write() {
-        *guard = None;
     }
 }
 
@@ -120,21 +107,93 @@ fn path_key(parts: &[&Path]) -> u64 {
     hasher.finish()
 }
 
-fn cura_marker_epoch(resources: &Path) -> u64 {
-    metadata_epoch(
-        &resources
-            .join("definitions")
-            .join("fdmprinter.def.json"),
-    )
+fn file_sig(path: &Path) -> Option<FileSig> {
+    let meta = fs::metadata(path).ok()?;
+    let mtime_secs = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    Some(FileSig {
+        mtime_secs,
+        size: meta.len(),
+    })
 }
 
-fn bambu_marker_epoch(root: &Path) -> u64 {
-    let marker = root.join("BBL").join("machine");
-    if marker.is_dir() {
-        metadata_epoch(&marker)
-    } else {
-        metadata_epoch(root)
+fn push_sig(markers: &mut CacheMarkers, label: impl Into<String>, path: &Path) {
+    if let Some(sig) = file_sig(path) {
+        markers.entries.push((label.into(), sig));
     }
+}
+
+/// Immediate children only — catches rewrites and new sibling files without deep walks.
+fn push_shallow_dir(markers: &mut CacheMarkers, label: &str, dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+  let mut count = 0u64;
+    let mut bytes = 0u64;
+    let mut newest = 0u64;
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        count += 1;
+        bytes = bytes.saturating_add(meta.len());
+        if let Ok(modified) = meta.modified() {
+            if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                newest = newest.max(duration.as_secs());
+            }
+        }
+    }
+    markers
+        .entries
+        .push((format!("{label}:shallow"), FileSig {
+            mtime_secs: newest,
+            size: bytes.wrapping_add(count),
+        }));
+}
+
+fn cura_markers(resources: &Path, materials: &Path) -> CacheMarkers {
+    let mut out = CacheMarkers {
+        entries: Vec::new(),
+    };
+    push_sig(&mut out, "fdmprinter", &resources.join("definitions/fdmprinter.def.json"));
+    push_shallow_dir(&mut out, "definitions", &resources.join("definitions"));
+    push_sig(&mut out, "fdmextruder", &resources.join("extruders/fdmextruder.def.json"));
+    for name in ["Version.version", "version.semver"] {
+        let path = resources.join(name);
+        if path.is_file() {
+            push_sig(&mut out, name, &path);
+            break;
+        }
+    }
+    push_shallow_dir(&mut out, "quality", &resources.join("quality"));
+    push_shallow_dir(&mut out, "variants", &resources.join("variants"));
+    push_shallow_dir(&mut out, "materials", materials);
+    out
+}
+
+fn bambu_markers(root: &Path) -> CacheMarkers {
+    let mut out = CacheMarkers {
+        entries: Vec::new(),
+    };
+    push_sig(&mut out, "BBL.json", &root.join("BBL.json"));
+    for name in ["Version.json", "version.json"] {
+        let path = root.join(name);
+        if path.is_file() {
+            push_sig(&mut out, name, &path);
+            break;
+        }
+    }
+    let bbl = root.join("BBL");
+    if bbl.is_dir() {
+        push_shallow_dir(&mut out, "BBL/machine", &bbl.join("machine"));
+        push_shallow_dir(&mut out, "BBL/process", &bbl.join("process"));
+        push_shallow_dir(&mut out, "BBL/filament", &bbl.join("filament"));
+    }
+    out
 }
 
 pub(crate) fn load_cura_extras(
@@ -153,9 +212,20 @@ pub(crate) fn load_cura_extras(
     if cached.version != CACHE_VERSION {
         return Ok(None);
     }
-    if cached.marker_epoch != cura_marker_epoch(resources) {
+    let live = cura_markers(resources, materials);
+    if cached.markers != live {
         return Ok(None);
     }
+    let cura = cura.to_path_buf();
+    let materials = materials.to_path_buf();
+    let resources = resources.to_path_buf();
+    let stored = cached.markers.clone();
+    let path = file.clone();
+    thread::spawn(move || {
+        if cura_markers(&resources, &materials) != stored {
+            let _ = fs::remove_file(&path);
+        }
+    });
     Ok(Some((cached.instances, cached.materials)))
 }
 
@@ -183,15 +253,14 @@ fn store_cura_extras_sync(
     fs::create_dir_all(&dir).map_err(|err| Error::message(err.to_string()))?;
     let body = CuraExtrasCache {
         version: CACHE_VERSION,
-        marker_epoch: cura_marker_epoch(resources),
+        markers: cura_markers(resources, materials),
         instances: instances.to_vec(),
         materials: material_rows.to_vec(),
     };
     let json = serde_json::to_vec(&body).map_err(|err| Error::message(err.to_string()))?;
     let file = dir.join(format!("cura-extras-{key:x}.json"));
     fs::write(&file, json).map_err(|err| Error::message(err.to_string()))?;
-    prune_stale(&dir, "cura-extras-", &file);
-    Ok(())
+  Ok(())
 }
 
 pub(crate) fn load_bambu_library(root: &Path) -> Option<Library> {
@@ -205,9 +274,18 @@ pub(crate) fn load_bambu_library(root: &Path) -> Option<Library> {
     if cached.version != BAMBU_CACHE_VERSION {
         return None;
     }
-    if cached.marker_epoch != bambu_marker_epoch(root) {
+    let live = bambu_markers(root);
+    if cached.markers != live {
         return None;
     }
+    let root = root.to_path_buf();
+    let stored = cached.markers.clone();
+    let path = file.clone();
+    thread::spawn(move || {
+        if bambu_markers(&root) != stored {
+            let _ = fs::remove_file(&path);
+        }
+    });
     Some(Library {
         definitions: cached.definitions,
         instances: cached.instances,
@@ -228,7 +306,7 @@ fn store_bambu_library_sync(root: &Path, library: &Library) -> Result<(), Error>
     fs::create_dir_all(&dir).map_err(|err| Error::message(err.to_string()))?;
     let body = BambuLibraryCache {
         version: BAMBU_CACHE_VERSION,
-        marker_epoch: bambu_marker_epoch(root),
+        markers: bambu_markers(root),
         definitions: library.definitions.clone(),
         instances: library.instances.clone(),
         materials: library.materials.clone(),
@@ -237,45 +315,7 @@ fn store_bambu_library_sync(root: &Path, library: &Library) -> Result<(), Error>
     let json = serde_json::to_vec(&body).map_err(|err| Error::message(err.to_string()))?;
     let file = dir.join(format!("bambu-library-{key:x}.json"));
     fs::write(&file, json).map_err(|err| Error::message(err.to_string()))?;
-    prune_stale(&dir, "bambu-library-", &file);
     Ok(())
-}
-
-fn prune_stale(dir: &Path, prefix: &str, keep: &Path) {
-    let young = SystemTime::now()
-        .checked_sub(Duration::from_secs(60))
-        .unwrap_or(SystemTime::UNIX_EPOCH);
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path == keep {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if !name.starts_with(prefix) || !name.ends_with(".json") {
-            continue;
-        }
-        let modified = fs::metadata(&path)
-            .ok()
-            .and_then(|meta| meta.modified().ok());
-        if modified.is_some_and(|time| time >= young) {
-            continue;
-        }
-        let _ = fs::remove_file(&path);
-    }
-}
-
-fn metadata_epoch(path: &Path) -> u64 {
-    fs::metadata(path)
-        .ok()
-        .and_then(|meta| meta.modified().ok())
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0)
 }
 
 const RESOURCE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -284,78 +324,73 @@ const RESOURCE_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[cfg(test)]
 pub(crate) fn fingerprint_fixture(resources: &Path, materials: &Path) -> u64 {
     let mut hasher = DefaultHasher::new();
-    hash_stamp_tree(&mut hasher, resources);
-    hash_stamp_tree(&mut hasher, materials);
+    let stamp = cura_markers(resources, materials);
+    for (label, sig) in stamp.entries {
+        label.hash(&mut hasher);
+        sig.mtime_secs.hash(&mut hasher);
+        sig.size.hash(&mut hasher);
+    }
+    hash_stamp_tree(&mut hasher, materials, 2);
     hasher.finish()
 }
 
 #[cfg(test)]
-fn hash_stamp_tree(hasher: &mut DefaultHasher, dir: &Path) {
+fn hash_stamp_tree(hasher: &mut DefaultHasher, dir: &Path, depth: u32) {
     RESOURCE_VERSION.hash(hasher);
     dir.display().to_string().hash(hasher);
-    let stamp = stamp_fixture_dir(dir);
-    stamp.newest_secs.hash(hasher);
-    stamp.file_count.hash(hasher);
-    stamp.total_bytes.hash(hasher);
-}
-
-#[cfg(test)]
-fn stamp_fixture_dir(dir: &Path) -> TreeStamp {
-    let mut out = TreeStamp {
-        newest_secs: metadata_epoch(dir),
-        ..Default::default()
-    };
+    if depth == 0 {
+        return;
+    }
     let Ok(entries) = fs::read_dir(dir) else {
-        return out;
+        return;
     };
+    let mut count = 0u64;
+    let mut bytes = 0u64;
+    let mut newest = 0u64;
     for entry in entries.flatten() {
         let path = entry.path();
         let Ok(meta) = fs::metadata(&path) else {
             continue;
         };
-        out.file_count += 1;
-        out.total_bytes = out.total_bytes.saturating_add(meta.len());
+        count += 1;
+        bytes = bytes.saturating_add(meta.len());
         if let Ok(modified) = meta.modified() {
             if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
-                out.newest_secs = out.newest_secs.max(duration.as_secs());
+                newest = newest.max(duration.as_secs());
             }
         }
+        if path.is_dir() {
+            hash_stamp_tree(hasher, &path, depth.saturating_sub(1));
+        }
     }
-    out
+    newest.hash(hasher);
+    count.hash(hasher);
+    bytes.hash(hasher);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::OnceLock;
+    use tempfile::TempDir;
 
-    fn isolated_cache() -> PathBuf {
-        static DIR: OnceLock<PathBuf> = OnceLock::new();
-        DIR.get_or_init(|| {
-            let dir = env::temp_dir().join(format!(
-                "shale-catalog-cache-unit-{}",
-                std::process::id()
-            ));
-            fs::create_dir_all(&dir).ok();
-            set_test_cache_dir(dir.clone());
-            dir
-        })
-        .clone()
+    fn isolated_cache() -> (TempDir, PathBuf) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        set_cache_dir_override(temp.path().to_path_buf());
+        (temp, temp.path().to_path_buf())
     }
 
     #[test]
-    fn cache_writes_under_test_dir_not_user_profile() {
-        let home = isolated_cache();
+    fn cache_writes_under_override_not_user_profile() {
+        let (_guard, home) = isolated_cache();
         let dir = cache_dir();
-        assert!(dir.starts_with(&home), "cache {:?} vs {:?}", dir, home);
+        assert_eq!(dir, home);
     }
 
     #[test]
     fn fingerprint_changes_when_a_file_is_added() {
-        let base = env::temp_dir().join(format!("shale-fp-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&base);
-        let materials = base.join("materials");
-        let resources = base.join("cura");
+        let base = tempfile::tempdir().unwrap();
+        let materials = base.path().join("materials");
+        let resources = base.path().join("cura");
         fs::create_dir_all(resources.join("definitions")).unwrap();
         fs::create_dir_all(&materials).unwrap();
         fs::write(
