@@ -10,7 +10,8 @@ interface Props {
 
 const {
   title = "Shale — Bambu Lab slicer",
-  description = "Shale is a Bambu-Lab-only desktop slicer built on unmodified CuraEngine, with a fast native UI, CLI and MCP tools.",
+  description =
+    "The Bambu Lab slicer with a beautiful dark workspace: instant launch, account sign-in, Studio presets, CLI and MCP for agents.",
 } = Astro.props;
 
 const dl = downloadUrl(primaryDownload.fileName);
@@ -37,7 +38,6 @@ const dl = downloadUrl(primaryDownload.fileName);
           <a href="#features">Features</a>
           <a href="#downloads">Downloads</a>
           <a href="#media">Screenshots</a>
-          <a href="#coming">Roadmap</a>
           <a href={repoUrl}>GitHub</a>
           <a class="btn btn-primary" href={dl} style="padding: 0.45rem 0.9rem; font-size: 0.85rem;">
             Download
@@ -49,5 +49,27 @@ const dl = downloadUrl(primaryDownload.fileName);
       <slot />
     </main>
     <slot name="footer" />
+    <script is:inline>
+      (function () {
+        const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const nodes = document.querySelectorAll("[data-reveal]");
+        if (reduced) {
+          nodes.forEach((el) => el.classList.add("is-visible"));
+          return;
+        }
+        const io = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (entry.isIntersecting) {
+                entry.target.classList.add("is-visible");
+                io.unobserve(entry.target);
+              }
+            }
+          },
+          { rootMargin: "0px 0px -8% 0px", threshold: 0.12 },
+        );
+        nodes.forEach((el) => io.observe(el));
+      })();
+    </script>
   </body>
 </html>

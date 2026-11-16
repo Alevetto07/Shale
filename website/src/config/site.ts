@@ -73,30 +73,39 @@ export const mcpEnvExample = {
   SHALE_MATERIALS_DIR: "/usr/share/cura/resources/materials",
 } as const;
 
+export const underTheHood =
+  "Unmodified CuraEngine · Tauri 2 · WebGL plate · Bambu-only printer list";
+
 export const features = [
   {
-    title: "Bambu Lab account",
-    body: "Sign in to Bambu's cloud, browse the printers on your account, and manage them from Home — the same idea as Bambu Studio, without leaving Shale.",
+    title: "Your Bambu account, built in",
+    icon: "┌◉┐",
+    body: "Sign in, see the printers on your account, and manage them from Home — the same workflow you know from Bambu Studio, without switching apps.",
   },
   {
-    title: "LAN and cloud send",
-    body: "Send a sliced plate over the LAN with MQTT and FTPS, or through Bambu's cloud when you are signed in. Every print still starts only when you press send.",
+    title: "Send when you are ready",
+    icon: "╱▔╲",
+    body: "Push a sliced plate over the LAN or through the cloud after sign-in. Shale never starts a print until you press send.",
   },
   {
-    title: "Bambu Studio presets",
-    body: "Machine, process and filament profiles come from Bambu Studio's resource tree, resolved by the same engine path as the desktop app.",
+    title: "Studio presets, day one",
+    icon: "▤▥",
+    body: "Machines, processes and filaments come from Bambu Studio's profiles — not a hand-rolled shortcut list.",
   },
   {
-    title: "Fast to open",
-    body: "A native Tauri shell and a lean UI mean Shale launches in a fraction of a second on a typical desktop.",
+    title: "Opens instantly",
+    icon: "»»",
+    body: "Shale launches in a fraction of a second, so waiting on the app is not part of your routine.",
   },
   {
-    title: "CLI and MCP",
-    body: "`shale-cli` and `shale-mcp` share `shale-core` with the window — slice, inspect settings and export G-code with no GUI, including on headless Linux.",
+    title: "Script it or agent it",
+    icon: ">_",
+    body: "The same slicer core runs headless: `shale-cli` in a terminal, `shale-mcp` for AI agents — on a full desktop or a small Linux board.",
   },
   {
-    title: ".shale projects",
-    body: "Your plate, settings and multi-plate layout live in a single `.shale` archive Shale owns end to end.",
+    title: "Projects that stay yours",
+    icon: "▣",
+    body: "Plates, settings and layouts live in `.shale` files you can back up, share and reopen exactly as you left them.",
   },
 ] as const;
 

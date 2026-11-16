@@ -1,12 +1,11 @@
 /**
- * Marketing-site Andromeda field — inspired by the desktop start screen ASCII
- * painter, using the same NASA M31 reference image shipped with the app.
+ * Hero Andromeda field — same NASA M31 source and gamma ramp as the desktop app.
  */
 
 import { useEffect, useRef } from "react";
 
 const RAMP = " .:-=+*#%@";
-const CELL = 11;
+const CELL = 9;
 const BG = [6, 7, 11] as const;
 
 function prefersReducedMotion(): boolean {
@@ -31,129 +30,180 @@ export function AndromedaField() {
     let raf = 0;
     let cols = 0;
     let rows = 0;
-    let baseGlyph: Uint8Array = new Uint8Array(0);
-    let baseR: Uint8Array = new Uint8Array(0);
-    let baseG: Uint8Array = new Uint8Array(0);
-    let baseB: Uint8Array = new Uint8Array(0);
+    let pixels: Uint8ClampedArray | null = null;
+    let iw = 0;
+    let ih = 0;
+    let baseGlyph = new Uint8Array(0);
+    let baseR = new Uint8Array(0);
+    let baseG = new Uint8Array(0);
+    let baseB = new Uint8Array(0);
+    let twinkleOn = new Uint8Array(0);
+    let twinkleRate = new Float32Array(0);
+    let twinklePhase = new Float32Array(0);
+    let twinkleAmp = new Uint8Array(0);
+    let twinkleList: number[] = [];
+    let lastTwinkleTick = 0;
+    let fitted = { originX: 0, originY: 0, drawW: 1, drawH: 1 };
+    let width = 0;
+    let height = 0;
 
-    const paintStill = () => {
-      if (!image.complete || image.naturalWidth < 1) return;
+    const layout = () => {
+      if (!image.complete || image.naturalWidth < 1 || !pixels) return false;
       const rect = canvas.getBoundingClientRect();
       const w = Math.max(1, Math.floor(rect.width));
       const h = Math.max(1, Math.floor(rect.height));
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-      }
+      if (w === width && h === height && cols > 0) return false;
+      width = w;
+      height = h;
+      canvas.width = w;
+      canvas.height = h;
       cols = Math.max(1, Math.ceil(w / CELL));
       rows = Math.max(1, Math.ceil(h / CELL));
       const count = cols * rows;
 
-      const sample = document.createElement("canvas");
-      const iw = image.width;
-      const ih = image.height;
-      sample.width = iw;
-      sample.height = ih;
-      const source = sample.getContext("2d", { willReadFrequently: true });
-      if (!source) return;
-      source.drawImage(image, 0, 0);
-      const pixels = source.getImageData(0, 0, iw, ih).data;
-
-      const fit = Math.max(w / iw, h / ih) * 1.05;
+      const fit = Math.max(w / iw, h / ih) * 1.18;
       const drawW = iw * fit;
       const drawH = ih * fit;
-      const originX = (w - drawW) * 0.5;
-      const originY = (h - drawH) * 0.5;
+      fitted = {
+        drawW,
+        drawH,
+        originX: (w - drawW) / 2 - drawW * 0.08,
+        originY: (h - drawH) / 2 - drawH * 0.04,
+      };
 
       baseGlyph = new Uint8Array(count);
       baseR = new Uint8Array(count);
       baseG = new Uint8Array(count);
       baseB = new Uint8Array(count);
+      twinkleOn = new Uint8Array(count);
+      twinkleRate = new Float32Array(count);
+      twinklePhase = new Float32Array(count);
+      twinkleAmp = new Uint8Array(count);
+      twinkleList = [];
+
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          const hash = ((col * 73856093) ^ (row * 19349663)) >>> 0;
+          if (hash % 89 !== 0) continue;
+          const index = row * cols + col;
+          twinkleList.push(index);
+          const wobble = (hash >>> 8) % 1000;
+          twinkleRate[index] = 0.0009 + (wobble / 1000) * 0.0022;
+          twinklePhase[index] = ((hash >>> 3) % 628) / 100;
+          twinkleAmp[index] = wobble % 3 === 0 ? 2 : 1;
+        }
+      }
+
+      return true;
+    };
+
+    const sampleField = (shiftX: number, shiftY: number) => {
+      const { originX, originY, drawW, drawH } = fitted;
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          const index = row * cols + col;
+          const cx = col * CELL + CELL / 2;
+          const cy = row * CELL + CELL / 2;
+          const localX = Math.min(drawW - 0.001, Math.max(0, cx - originX + shiftX));
+          const localY = Math.min(drawH - 0.001, Math.max(0, cy - originY + shiftY));
+          const sx = Math.min(iw - 1, Math.floor((localX / drawW) * iw));
+          const sy = Math.min(ih - 1, Math.floor((localY / drawH) * ih));
+          const pixel = (sy * iw + sx) * 4;
+          const red = pixels![pixel];
+          const green = pixels![pixel + 1];
+          const blue = pixels![pixel + 2];
+          const luma = Math.pow(
+            (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255,
+            0.45,
+          );
+          const step = Math.round(luma * (RAMP.length - 1));
+          baseGlyph[index] = step;
+          baseR[index] = red;
+          baseG[index] = green;
+          baseB[index] = blue;
+        }
+      }
+    };
+
+    const paint = (time: number) => {
+      if (!pixels) return;
+      const resized = layout();
+      const driftX = reduced ? 0 : Math.sin(time * 0.0001) * 14;
+      const driftY = reduced ? 0 : Math.cos(time * 0.000085) * 10;
+      if (resized || time === 0) sampleField(driftX, driftY);
+
+      if (!reduced && twinkleList.length && time - lastTwinkleTick >= 125) {
+        lastTwinkleTick = time;
+        for (const index of twinkleList) {
+          const on =
+            Math.sin(time * twinkleRate[index] + twinklePhase[index]) > 0.74
+              ? 1
+              : 0;
+          twinkleOn[index] = on;
+        }
+      }
 
       context.fillStyle = `rgb(${BG[0]}, ${BG[1]}, ${BG[2]})`;
-      context.fillRect(0, 0, w, h);
+      context.fillRect(0, 0, width, height);
       context.font = `${CELL}px "Geist Mono", ui-monospace, monospace`;
       context.textBaseline = "top";
 
       for (let row = 0; row < rows; row++) {
         for (let col = 0; col < cols; col++) {
-          const x = col * CELL + originX;
-          const y = row * CELL + originY;
-          const cx = Math.floor(((col + 0.5) * CELL - originX) / fit);
-          const cy = Math.floor(((row + 0.5) * CELL - originY) / fit);
-          const i = row * cols + col;
-          if (cx < 0 || cy < 0 || cx >= iw || cy >= ih) {
-            baseGlyph[i] = 0;
-            continue;
-          }
-          const p = (cy * iw + cx) * 4;
-          const r = pixels[p];
-          const g = pixels[p + 1];
-          const b = pixels[p + 2];
-          const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-          const step = Math.min(
-            RAMP.length - 1,
-            Math.floor((lum / 255) * RAMP.length),
-          );
-          baseGlyph[i] = step;
-          baseR[i] = r;
-          baseG[i] = g;
-          baseB[i] = b;
-        }
-      }
+          const index = row * cols + col;
+          let step = baseGlyph[index];
+          const lit = twinkleOn[index] === 1;
+          if (step <= 0 && !lit) continue;
+          if (lit) step = Math.min(RAMP.length - 1, step + twinkleAmp[index]);
+          if (step <= 0) continue;
 
-      for (let row = 0; row < rows; row++) {
-        for (let col = 0; col < cols; col++) {
-          const i = row * cols + col;
-          const step = baseGlyph[i];
-          if (step === 0) continue;
+          const gain = lit ? 1.35 : 1.08;
+          let red = Math.min(255, baseR[index] * gain);
+          let green = Math.min(255, baseG[index] * gain);
+          let blue = Math.min(255, baseB[index] * gain);
+          if (red + green + blue < 28) {
+            const ink = 0.35 + (lit ? 0.35 : 0);
+            red = 233 * ink;
+            green = 232 * ink;
+            blue = 242 * ink;
+          }
+
+          const alpha = 0.55 + (step / (RAMP.length - 1)) * 0.45;
           const ch = RAMP[step];
           const px = col * CELL;
           const py = row * CELL;
-          const r = baseR[i];
-          const g = baseG[i];
-          const b = baseB[i];
-          context.fillStyle = `rgba(${r}, ${g}, ${b}, ${0.35 + step * 0.08})`;
+          context.fillStyle = `rgba(${red | 0}, ${green | 0}, ${blue | 0}, ${alpha})`;
           context.fillText(ch, px, py);
         }
       }
     };
 
-    const paintAnimated = (time: number) => {
-      paintStill();
-      const w = canvas.width;
-      const h = canvas.height;
-      const driftX = Math.sin(time * 0.00012) * 6;
-      const driftY = Math.cos(time * 0.00009) * 4;
-      context.font = `${CELL}px "Geist Mono", ui-monospace, monospace`;
-      context.textBaseline = "top";
-
-      for (let row = 0; row < rows; row++) {
-        for (let col = 0; col < cols; col++) {
-          const i = row * cols + col;
-          const step = baseGlyph[i];
-          if (step < 3) continue;
-          const twinkle =
-            0.85 +
-            0.15 * Math.sin(time * 0.002 + col * 0.4 + row * 0.31 + step);
-          const ch = RAMP[Math.min(RAMP.length - 1, step + (twinkle > 0.97 ? 1 : 0))];
-          const px = col * CELL + driftX * (step / RAMP.length);
-          const py = row * CELL + driftY * (step / RAMP.length);
-          context.fillStyle = `rgba(${baseR[i]}, ${baseG[i]}, ${baseB[i]}, ${twinkle * 0.5})`;
-          context.fillText(ch, px, py);
-        }
-      }
-      raf = requestAnimationFrame(paintAnimated);
+    const loop = (time: number) => {
+      if (cancelled) return;
+      paint(time);
+      raf = requestAnimationFrame(loop);
     };
 
     const start = () => {
       if (cancelled) return;
-      paintStill();
-      if (!reduced) raf = requestAnimationFrame(paintAnimated);
+      iw = image.width;
+      ih = image.height;
+      const sample = document.createElement("canvas");
+      sample.width = iw;
+      sample.height = ih;
+      const source = sample.getContext("2d", { willReadFrequently: true });
+      if (!source) return;
+      source.drawImage(image, 0, 0);
+      pixels = source.getImageData(0, 0, iw, ih).data;
+
+      layout();
+      sampleField(0, 0);
+      paint(0);
+      if (!reduced) raf = requestAnimationFrame(loop);
     };
 
     const onResize = () => {
-      if (reduced) paintStill();
+      paint(reduced ? 0 : performance.now());
     };
 
     image.onload = () => start();
