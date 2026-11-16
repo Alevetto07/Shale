@@ -25,7 +25,12 @@ fn help_names_every_command_and_environment_variable() {
             "help is missing `{expected}`:\n{text}"
         );
     }
-    for variable in ["SHALE_CURA_DIR", "SHALE_MATERIALS_DIR", "SHALE_CURAENGINE"] {
+    for variable in [
+        "SHALE_CURA_DIR",
+        "SHALE_MATERIALS_DIR",
+        "SHALE_ORCA_DIR",
+        "SHALE_CURAENGINE",
+    ] {
         assert!(text.contains(variable), "help is missing {variable}");
     }
 }
