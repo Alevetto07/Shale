@@ -44,7 +44,7 @@
 
 @media (min-width: 900px) {
   .hero-field {
-    left: 42%;
+    left: 50%;
     right: 0;
   }
 
@@ -52,15 +52,23 @@
     background: linear-gradient(
       90deg,
       rgba(6, 7, 11, 0.99) 0%,
-      rgba(6, 7, 11, 0.96) 40%,
-      rgba(6, 7, 11, 0.35) 46%,
-      transparent 52%
+      rgba(6, 7, 11, 0.94) 42%,
+      rgba(6, 7, 11, 0.45) 48%,
+      transparent 54%
     );
   }
 
   .hero-inner {
     max-width: 34rem;
   }
+}
+
+.hero-stat {
+  margin: 0 0 1.35rem;
+  font-family: var(--mono);
+  font-size: 0.92rem;
+  color: var(--accent);
+  letter-spacing: 0.02em;
 }
 
 .andromeda-canvas {

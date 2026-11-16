@@ -86,6 +86,7 @@ export const launchBenchmarks = {
   /** Measured time until the UI is ready to use */
   shaleUsableSeconds: 1.7,
   shaleUsableRounded: "about two seconds",
+  shaleUsableShort: "~2 s",
   competitors: ["OrcaSlicer", "Bambu Studio", "Cura"] as const,
   competitorSecondsMin: 7,
   competitorSecondsMax: 11,
@@ -95,6 +96,10 @@ export const launchBenchmarks = {
 export function launchComparisonSentence(): string {
   const names = launchBenchmarks.competitors.join(", ");
   return `Opens in ${launchBenchmarks.shaleUsableRounded}, while ${names} measured ${launchBenchmarks.competitorRangeLabel} to their main window.`;
+}
+
+export function launchStatLine(): string {
+  return `Opens in ${launchBenchmarks.shaleUsableShort}. Other slicers: ${launchBenchmarks.competitorRangeLabel}.`;
 }
 
 export const features = [

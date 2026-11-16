@@ -11,28 +11,28 @@ const jobs = [
     width: 1440,
     height: 900,
     fullPage: true,
-    heroOnly: false,
+    heroViewport: false,
   },
   {
     name: "site-1440x900-hero",
     width: 1440,
     height: 900,
     fullPage: false,
-    heroOnly: true,
+    heroViewport: true,
   },
   {
     name: "site-390x844",
     width: 390,
     height: 844,
     fullPage: true,
-    heroOnly: false,
+    heroViewport: false,
   },
   {
     name: "site-390x844-hero",
     width: 390,
     height: 844,
     fullPage: false,
-    heroOnly: true,
+    heroViewport: true,
   },
 ];
 
@@ -44,13 +44,17 @@ for (const job of jobs) {
     viewport: { width: job.width, height: job.height },
   });
   await page.goto(baseUrl, { waitUntil: "networkidle" });
-  await page.waitForTimeout(job.heroOnly ? 900 : 600);
+  await page.evaluate(() => window.scrollTo(0, 0));
 
   const path = join(outDir, `${job.name}.png`);
-  if (job.heroOnly) {
-    const hero = page.locator("section.hero");
-    await hero.screenshot({ path });
+  if (job.heroViewport) {
+    await page.waitForTimeout(1400);
+    await page.screenshot({
+      path,
+      clip: { x: 0, y: 0, width: job.width, height: job.height },
+    });
   } else {
+    await page.waitForTimeout(700);
     await page.screenshot({ path, fullPage: job.fullPage });
   }
   await page.close();

@@ -1,11 +1,12 @@
 /**
- * Hero Andromeda field — same NASA M31 source and gamma ramp as the desktop app.
+ * Hero Andromeda — luminance-mapped ASCII of NASA M31, same ramp and gamma as the app.
+ * The full galaxy is letterboxed inside the canvas (contain), never cover-cropped.
  */
 
 import { useEffect, useRef } from "react";
 
 const RAMP = " .:-=+*#%@";
-const CELL = 9;
+const CELL = 8;
 const BG = [6, 7, 11] as const;
 
 function prefersReducedMotion(): boolean {
@@ -61,16 +62,14 @@ export function AndromedaField() {
       rows = Math.max(1, Math.ceil(h / CELL));
       const count = cols * rows;
 
-      const wide = window.innerWidth >= 900;
-      const fit = Math.max(w / iw, h / ih) * (wide ? 1.28 : 1.16);
+      const fit = Math.min(w / iw, h / ih) * 0.96;
       const drawW = iw * fit;
       const drawH = ih * fit;
-      const panX = wide ? drawW * 0.4 : drawW * 0.06;
       fitted = {
         drawW,
         drawH,
-        originX: (w - drawW) / 2 - panX,
-        originY: (h - drawH) / 2 - drawH * 0.02,
+        originX: (w - drawW) / 2,
+        originY: (h - drawH) / 2,
       };
 
       baseGlyph = new Uint8Array(count);
@@ -99,17 +98,32 @@ export function AndromedaField() {
       return true;
     };
 
-    const sampleField = (shiftX: number, shiftY: number) => {
+    const sampleField = () => {
       const { originX, originY, drawW, drawH } = fitted;
       for (let row = 0; row < rows; row++) {
         for (let col = 0; col < cols; col++) {
           const index = row * cols + col;
           const cx = col * CELL + CELL / 2;
           const cy = row * CELL + CELL / 2;
-          const localX = Math.min(drawW - 0.001, Math.max(0, cx - originX + shiftX));
-          const localY = Math.min(drawH - 0.001, Math.max(0, cy - originY + shiftY));
-          const sx = Math.min(iw - 1, Math.floor((localX / drawW) * iw));
-          const sy = Math.min(ih - 1, Math.floor((localY / drawH) * ih));
+          if (
+            cx < originX ||
+            cx > originX + drawW ||
+            cy < originY ||
+            cy > originY + drawH
+          ) {
+            baseGlyph[index] = 0;
+            continue;
+          }
+          const localX = cx - originX;
+          const localY = cy - originY;
+          const sx = Math.min(
+            iw - 1,
+            Math.max(0, Math.floor((localX / drawW) * iw)),
+          );
+          const sy = Math.min(
+            ih - 1,
+            Math.max(0, Math.floor((localY / drawH) * ih)),
+          );
           const pixel = (sy * iw + sx) * 4;
           const red = pixels![pixel];
           const green = pixels![pixel + 1];
@@ -130,13 +144,15 @@ export function AndromedaField() {
     const paint = (time: number) => {
       if (!pixels) return;
       const resized = layout();
-      const driftX = reduced ? 0 : Math.sin(time * 0.0001) * 14;
-      const driftY = reduced ? 0 : Math.cos(time * 0.000085) * 10;
-      if (resized || time === 0) sampleField(driftX, driftY);
+      if (resized) sampleField();
+
+      const driftX = reduced ? 0 : Math.sin(time * 0.0001) * 5;
+      const driftY = reduced ? 0 : Math.cos(time * 0.000085) * 4;
 
       if (!reduced && twinkleList.length && time - lastTwinkleTick >= 125) {
         lastTwinkleTick = time;
         for (const index of twinkleList) {
+          if (baseGlyph[index] < 3) continue;
           const on =
             Math.sin(time * twinkleRate[index] + twinklePhase[index]) > 0.74
               ? 1
@@ -156,24 +172,28 @@ export function AndromedaField() {
           let step = baseGlyph[index];
           const lit = twinkleOn[index] === 1;
           if (step <= 0 && !lit) continue;
-          if (lit) step = Math.min(RAMP.length - 1, step + twinkleAmp[index]);
+          if (lit && step > 0) {
+            step = Math.min(RAMP.length - 1, step + twinkleAmp[index]);
+          }
           if (step <= 0) continue;
 
-          const gain = lit ? 1.45 : 1.18;
+          const gain = lit ? 1.4 : 1.15;
           let red = Math.min(255, baseR[index] * gain);
           let green = Math.min(255, baseG[index] * gain);
           let blue = Math.min(255, baseB[index] * gain);
-          if (red + green + blue < 28) {
-            const ink = 0.42 + (lit ? 0.38 : 0);
+          if (red + green + blue < 32) {
+            const ink = 0.38 + (lit ? 0.32 : 0);
             red = 233 * ink;
             green = 232 * ink;
             blue = 242 * ink;
           }
 
-          const alpha = 0.62 + (step / (RAMP.length - 1)) * 0.38;
+          const t = step / (RAMP.length - 1);
+          const alpha =
+            step === 1 ? 0.22 + t * 0.15 : 0.45 + t * 0.55;
           const ch = RAMP[step];
-          const px = col * CELL;
-          const py = row * CELL;
+          const px = col * CELL + driftX * t;
+          const py = row * CELL + driftY * t;
           context.fillStyle = `rgba(${red | 0}, ${green | 0}, ${blue | 0}, ${alpha})`;
           context.fillText(ch, px, py);
         }
@@ -199,7 +219,7 @@ export function AndromedaField() {
       pixels = source.getImageData(0, 0, iw, ih).data;
 
       layout();
-      sampleField(0, 0);
+      sampleField();
       paint(0);
       if (!reduced) raf = requestAnimationFrame(loop);
     };
