@@ -1,13 +1,23 @@
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 
-/** Deep Field. Dark only. One accent, used sparingly. */
+/** Default UI theme id; must match `data-ui-theme` and `themes/<id>.css`. */
+export const UI_THEME_ID = "deep-field" as const;
+
+/** Read a design token from the active theme (CSS custom properties on `:root`). */
+export function themeVar(name: string, fallback?: string): string {
+  if (typeof document === "undefined") return fallback ?? "";
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback || "";
+}
+
+/** Deep Field. Colours mirror `themes/deep-field.css` for non-DOM consumers. */
 export const theme = {
   color: {
     bg: "#06070b",
     panel: "#0b0d14",
     ink: "#e9e8f2",
-    muted: "rgba(233, 232, 242, 0.72)",
-    dim: "rgba(233, 232, 242, 0.58)",
+    muted: "rgba(233, 232, 242, 0.76)",
+    dim: "rgba(233, 232, 242, 0.56)",
     line: "rgba(233, 232, 242, 0.12)",
     accent: "#b9b3ff",
   },
@@ -73,6 +83,7 @@ function writeFolded(titles: string[]) {
 
 export function Frame({ title, children }: { title: string; children: ReactNode }) {
   const [open, setOpen] = useState(() => !readFolded().includes(title));
+  const contentId = useId();
 
   function toggle() {
     const next = !open;
@@ -83,12 +94,13 @@ export function Frame({ title, children }: { title: string; children: ReactNode 
   }
 
   return (
-    <section className={open ? "frame" : "frame frame--closed"}>
+    <section className={open ? "frame frame--open" : "frame frame--closed"}>
       <header className="frame-bar">
         <button
           type="button"
           className="frame-toggle"
           aria-expanded={open}
+          aria-controls={contentId}
           title={open ? `fold ${title}` : `unfold ${title}`}
           onClick={toggle}
         >
@@ -98,7 +110,14 @@ export function Frame({ title, children }: { title: string; children: ReactNode 
           <span className="frame-title">{title}</span>
         </button>
       </header>
-      {open && <div className="frame-content">{children}</div>}
+      <div
+        id={contentId}
+        className="frame-body"
+        data-open={open ? "yes" : "no"}
+        aria-hidden={!open}
+      >
+        <div className="frame-content">{children}</div>
+      </div>
     </section>
   );
 }

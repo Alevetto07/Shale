@@ -1,0 +1,565 @@
+/**
+ * v0.1 UI polish — spacing, alignment, interaction states, and sheet layout.
+ * Loaded after styles.css so these rules refine rather than fork the base sheet.
+ */
+
+/* ── Global interaction ───────────────────────────────────────────────────── */
+
+button,
+input,
+select,
+textarea {
+  transition: var(--transition-interactive);
+}
+
+.titlebar-buttons button {
+  transition: background-color var(--duration-mid) var(--ease-out), color var(--duration-mid) var(--ease-out);
+}
+.titlebar-buttons button:hover {
+  background: var(--panel-raised);
+}
+.titlebar-buttons .titlebar-close:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+* {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: var(--radius-pill);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--scrollbar-thumb) 85%, var(--ink));
+}
+
+/* Legacy bracket chrome (unused in layout; keep identity bracket-free). */
+.top-actions button::before,
+.top-actions button::after {
+  content: none;
+}
+
+/* ── Chrome & navigation ─────────────────────────────────────────────────── */
+
+.titlebar {
+  border-bottom: 1px solid var(--line);
+  gap: var(--space-3);
+}
+
+.menubar .menu-title {
+  transition: var(--transition-interactive);
+}
+.menubar .menu-title.open {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.menu-sheet {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sheet);
+  padding: var(--space-2);
+}
+
+.menubar .menu-slice {
+  border-radius: var(--radius-sm);
+  padding: 0.34rem 1.05rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  transition: var(--transition-interactive);
+}
+.menubar .menu-slice:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.tabs {
+  padding-inline: var(--space-5);
+  gap: var(--space-2);
+}
+
+.mode-chip {
+  transition: var(--transition-interactive);
+}
+.mode-chip:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+.doc-tab {
+  transition: var(--transition-interactive);
+}
+
+.banner {
+  margin-inline: var(--space-5);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+.banner.error {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+  background: color-mix(in srgb, var(--danger) 8%, var(--panel));
+}
+
+/* ── Workspace & sidebar ─────────────────────────────────────────────────── */
+
+.workspace {
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5) var(--space-5);
+}
+
+.panel {
+  padding: var(--space-2) var(--space-3) var(--space-6) var(--space-2);
+  gap: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.frame {
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  flex: 0 0 auto;
+}
+.frame-bar {
+  padding: 0.35rem 0.55rem;
+}
+.frame-toggle {
+  transition: var(--transition-interactive);
+  min-height: 1.65rem;
+}
+.frame-toggle:hover {
+  background: var(--surface-hover);
+}
+.frame-title {
+  font-family: var(--prose);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.frame--open .frame-title {
+  color: var(--ink);
+}
+.frame-content {
+  padding: 0.35rem 0.65rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Sidebar fields: sentence labels, not shouty caps. */
+.panel .frame-content label {
+  grid-template-columns: minmax(6.75rem, 8.25rem) minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  font-family: var(--prose);
+  font-size: 11.5px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: var(--ink-2);
+  line-height: 1.25;
+  min-height: 1.75rem;
+}
+.panel .frame-content label input,
+.panel .frame-content label select,
+.panel .frame-content label .ascii-field,
+.panel .frame-content label .ascii-step,
+.panel .frame-content label .ascii-select {
+  font-size: 13px;
+  color: var(--ink);
+}
+.panel .hint,
+.panel .meta {
+  font-size: 12px;
+  line-height: 1.45;
+  letter-spacing: 0;
+  color: var(--ink-3);
+}
+
+.ascii-select-closed {
+  border-radius: var(--radius-sm);
+  min-height: 1.65rem;
+  transition: var(--transition-interactive);
+}
+.ascii-select-closed:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+}
+.ascii-menu {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sheet);
+  padding: var(--space-1) 0;
+}
+.ascii-option {
+  padding: 0.22rem 0.5rem;
+  transition: var(--transition-interactive);
+}
+.ascii-option:hover,
+.ascii-option[aria-selected="true"] {
+  background: var(--surface-hover);
+}
+
+/* ── Start screen ─────────────────────────────────────────────────────────── */
+
+.start-menu {
+  left: var(--space-7);
+  bottom: var(--space-7);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  gap: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sheet);
+}
+.start-list button,
+.start-scroll button,
+.start-back,
+.start-panel > button {
+  border-radius: var(--radius-sm);
+  padding: 0.32rem 0.55rem;
+  transition: var(--transition-interactive);
+}
+.start-list button:hover,
+.start-scroll button:hover,
+.start-back:hover,
+.start-panel > button:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+.start-list button[aria-current="true"] {
+  background: var(--surface-active);
+  color: var(--accent);
+}
+
+.start-recents {
+  right: var(--space-7);
+  bottom: var(--space-7);
+}
+
+/* ── Process / slice settings sheet ───────────────────────────────────────── */
+
+.menu-sheet.settings-sheet {
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+  gap: var(--space-3);
+}
+
+.process-head {
+  padding-bottom: var(--space-1);
+}
+.process-tabs button {
+  padding: 0.5rem 0.85rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: var(--transition-interactive);
+}
+.process-tabs button.selected {
+  color: var(--accent);
+  border-bottom-width: 2px;
+}
+
+.process-presets {
+  gap: 0.35rem 0.4rem;
+  padding: var(--space-3) 0;
+}
+.process-presets .process-preset {
+  border-radius: var(--radius-sm);
+  padding: 0.28rem 0.55rem;
+  transition: var(--transition-interactive);
+}
+.process-presets .process-preset:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+}
+.process-presets .process-preset.on {
+  background: var(--accent-soft);
+}
+
+.process-tools {
+  padding: var(--space-2) 0 var(--space-3);
+  gap: var(--space-3);
+  align-items: stretch;
+}
+.process-search input,
+.menu-sheet .process-visibility {
+  border-radius: var(--radius-sm);
+  transition: var(--transition-interactive);
+}
+.process-search input:focus {
+  border-color: var(--accent-muted);
+  outline: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* Setting rows: name flexes, controls and units align on a baseline grid. */
+.menu-row.setting-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, 11.5rem);
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: 0.38rem 0.15rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+}
+.menu-row.setting-row:last-child {
+  border-bottom-color: transparent;
+}
+.setting-name {
+  min-width: 0;
+  font-family: var(--prose);
+  font-size: var(--text-md);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-2);
+  line-height: 1.35;
+}
+.setting-row[data-changed="yes"] .setting-name {
+  color: var(--accent);
+}
+.setting-number {
+  justify-content: flex-end;
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+.setting-number input {
+  text-align: right;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.22rem 0.4rem;
+  background: color-mix(in srgb, var(--panel-raised) 80%, transparent);
+  transition: var(--transition-interactive);
+}
+.setting-number input:focus {
+  border-color: var(--accent-muted);
+  outline: none;
+}
+.setting-number em,
+.menu-field em {
+  flex: 0 0 2.75rem;
+  text-align: left;
+  font-style: normal;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+}
+.menu-row.setting-row select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.28rem 0.45rem;
+  background: var(--panel-raised);
+  font-size: var(--text-md);
+}
+
+.settings-body {
+  padding-right: var(--space-1);
+}
+
+/* ── Preview overlays ────────────────────────────────────────────────────── */
+
+.job-card,
+.legend {
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+.job-card.demo-cost {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+  top: 50%;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+  min-width: 22rem;
+  max-width: min(28rem, calc(100vw - 4rem));
+}
+.plate[data-preview="yes"] .viewport-mock-meta {
+  max-width: min(24rem, calc(100% - 2rem));
+  text-align: center;
+  line-height: 1.35;
+}
+
+/* Overlays and sheets: contain text at laptop widths. */
+.menu-sheet {
+  max-width: min(22rem, calc(100vw - 2rem));
+  overflow-x: hidden;
+}
+.menu-sheet.wide,
+.menu-sheet.settings-sheet {
+  max-width: min(46rem, calc(100vw - 2rem));
+}
+.menu-sheet button,
+.menu-row {
+  min-width: 0;
+}
+.banner.floating {
+  max-width: calc(100% - 3.5rem);
+  overflow: auto;
+}
+.legend-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.legend-row em {
+  flex: 0 0 auto;
+}
+
+.legend-row {
+  border-radius: var(--radius-sm);
+  transition: var(--transition-interactive);
+}
+.legend-row:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.scrubber {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.65rem;
+  margin: 0;
+  padding: 0.55rem 0.65rem 0.45rem;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 92%, var(--bg));
+}
+.scrub-bar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0.15rem;
+  padding: 0.2rem 0.35rem 0.2rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+.scrub-bar > em {
+  font-family: var(--prose);
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-right: 0.25rem;
+  padding-right: 0.35rem;
+  border-right: 1px solid var(--line);
+}
+.scrub-bar button {
+  border-radius: var(--radius-xs);
+  padding: 0.22rem 0.45rem;
+  font-family: var(--prose);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--ink-2);
+  transition: var(--transition-interactive);
+}
+.scrub-bar button:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+.scrub-bar button.selected,
+.scrub-bar button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.scrub-bar .ascii-check {
+  margin-left: 0.15rem;
+  padding-left: 0.35rem;
+  border-left: 1px solid var(--line);
+  font-family: var(--prose);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--ink-2);
+  gap: 0.35rem;
+}
+.scrubber > .hint {
+  flex: 1 1 12rem;
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-3);
+  text-align: right;
+}
+.scrubber > .ascii-slider {
+  flex: 1 1 100%;
+  min-width: 14rem;
+  order: 10;
+  padding-top: 0.15rem;
+}
+.scrubber > .meter {
+  flex: 1 1 auto;
+  order: 11;
+}
+
+.slice-row {
+  border-radius: var(--radius-sm);
+  transition: var(--transition-interactive);
+}
+.slice-row.on {
+  background: var(--accent-soft);
+}
+
+/* ── Device ───────────────────────────────────────────────────────────────── */
+
+.device {
+  padding: var(--space-7) var(--space-5) var(--space-8);
+}
+.device-card,
+.device-panel {
+  border-radius: var(--radius-sm);
+}
+.device-pin,
+.device-confirm {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.device-controls button {
+  border-radius: var(--radius-sm);
+}
+
+.cloud-form input {
+  border-radius: var(--radius-sm);
+  transition: var(--transition-interactive);
+}
+.cloud-device {
+  transition: var(--transition-interactive);
+}
+.cloud-device:hover {
+  background: color-mix(in srgb, var(--panel) 92%, var(--accent) 8%);
+}
+
+.chip {
+  border-radius: var(--radius-sm);
+  transition: var(--transition-interactive);
+}
+.chip:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.box {
+  border-radius: var(--radius-sm);
+}
+
+/* ── Viewport width tuning ─────────────────────────────────────────────────── */
+
+@media (max-width: 1320px) {
+  .mode-chip {
+    min-width: 5.6rem;
+    padding-inline: 0.55rem;
+  }
+  .menu-row.setting-row {
+    grid-template-columns: minmax(0, 1fr) minmax(8rem, 10rem);
+  }
+}
+
+@media (min-width: 1600px) {
+  .workspace {
+    grid-template-columns: minmax(300px, 380px) 1fr;
+  }
+}

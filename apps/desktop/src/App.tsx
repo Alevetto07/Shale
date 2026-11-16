@@ -1043,6 +1043,39 @@ export function App() {
     };
   }, [preview, busy, layerCount]);
 
+  // A slice restored at boot (or mock data) fills the plate but not the history
+  // list until the user presses slice again — keep the sidebar in sync with the
+  // job card.
+  useEffect(() => {
+    if (!preview || layerCount <= 0 || paths.length === 0) return;
+    setHistory((records) => {
+      if (records.length > 0) return records;
+      return [
+        {
+          n: 1,
+          seconds: printSeconds,
+          metres: filamentMetres,
+          grams: estimate?.grams ?? null,
+          layers: layerCount,
+          total: estimate?.total ?? null,
+          plate: plateKey,
+          settings: settingsKey,
+          paths,
+        },
+      ];
+    });
+    setViewing((current) => (current == null ? 1 : current));
+  }, [
+    preview,
+    layerCount,
+    paths,
+    printSeconds,
+    filamentMetres,
+    plateKey,
+    settingsKey,
+    estimate,
+  ]);
+
   /** Cura ships every material in a 1.75 mm and a 2.85 mm cut, and the list used
    * to offer both: picking the 2.85 mm PETG on a 1.75 mm machine left the sheet
    * saying PETG while the resolver, unable to match a spool at that diameter,
@@ -3583,6 +3616,20 @@ export function App() {
           {/* Every slice is kept, so two outcomes can be put side by side
               instead of one overwriting the other. */}
           {pane === "preview" && (
+            <Frame title="sliced">
+              <JobSummary
+                layerCount={layerCount}
+                printSeconds={printSeconds}
+                filamentMetres={filamentMetres}
+                grams={grams}
+                estimate={estimate}
+                formatMoney={money}
+                formatClock={clockTime}
+              />
+            </Frame>
+          )}
+
+          {pane === "preview" && (
             <Frame title="slices">
               {history.length === 0 ? (
                 <p className="hint">no slices yet</p>
@@ -3641,7 +3688,7 @@ export function App() {
               />
             </label>
             <label>
-              price per kg
+              price / kg
               <AsciiField
                 label="price per kg"
                 value={String(cost.price_per_kg)}
@@ -3652,7 +3699,7 @@ export function App() {
               />
             </label>
             <label>
-              printer power, W
+              power, W
               <AsciiField
                 label="printer power"
                 value={String(cost.watts)}
@@ -3663,7 +3710,7 @@ export function App() {
               />
             </label>
             <label>
-              electricity per kWh
+              energy / kWh
               <AsciiField
                 label="electricity price"
                 value={String(cost.electricity_per_kwh)}
@@ -3736,7 +3783,12 @@ export function App() {
           )}
           {/* `data-show-model` is what the viewport is actually told to draw:
               the parts list can be right and the bed still empty. */}
-          <div className="plate" data-show-model={solidShown ? "yes" : "no"} data-models={models.length}>
+          <div
+            className="plate"
+            data-preview={preview ? "yes" : "no"}
+            data-show-model={solidShown ? "yes" : "no"}
+            data-models={models.length}
+          >
           {/* What the plate will cost to print, the way a slicer's corner card
               reads: time, filament, weight, layers. Every figure comes from the
               slice that is on screen, and a plate that changed shows none of
@@ -3758,67 +3810,17 @@ export function App() {
               onNone={() => setHiddenKinds(new Set(paths.map((path) => path.kind)))}
             />
           )}
-          {/* A result, not a setting: the card is Preview's. Prepare used to
-              carry it and showed the last job's numbers over an unsliced plate. */}
-          {preview && (
-          <div
-            className={status?.demo === "cost" ? "job-card demo-cost" : "job-card"}
-            data-sliced={layerCount > 0 ? "yes" : "no"}
-          >
-            {layerCount > 0 ? (
-              <>
-                <span className="job-state">sliced</span>
-                <dl>
-                  <div>
-                    <dt>time</dt>
-                    <dd>{printSeconds == null ? "—" : clockTime(printSeconds)}</dd>
-                  </div>
-                  <div>
-                    <dt>filament</dt>
-                    <dd>{filamentMetres == null ? "—" : `${filamentMetres.toFixed(1)} m`}</dd>
-                  </div>
-                  {grams != null && (
-                    <div>
-                      <dt>weight</dt>
-                      <dd>{grams < 10 ? grams.toFixed(1) : grams.toFixed(0)} g</dd>
-                    </div>
-                  )}
-                  <div>
-                    <dt>layers</dt>
-                    <dd>{layerCount}</dd>
-                  </div>
-                  {estimate && (
-                    <>
-                      <div>
-                        <dt>filament cost</dt>
-                        <dd>{money(estimate.filament_cost)}</dd>
-                      </div>
-                      <div>
-                        <dt>energy</dt>
-                        <dd>
-                          {estimate.kwh.toFixed(3)} kWh · {money(estimate.energy_cost)}
-                        </dd>
-                      </div>
-                      {estimate.spools.map((spool) => (
-                        <div key={spool.slot}>
-                          <dt>{`spool ${spool.slot + 1}`}</dt>
-                          <dd>
-                            {spool.grams.toFixed(0)} g · {money(spool.cost)}
-                          </dd>
-                        </div>
-                      ))}
-                      <div className="job-total">
-                        <dt>total</dt>
-                        <dd>{money(estimate.total)}</dd>
-                      </div>
-                    </>
-                  )}
-                </dl>
-              </>
-            ) : (
-              <span className="job-state quiet">not sliced</span>
-            )}
-          </div>
+          {preview && status?.demo === "cost" && (
+            <JobSummary
+              variant="demo"
+              layerCount={layerCount}
+              printSeconds={printSeconds}
+              filamentMetres={filamentMetres}
+              grams={grams}
+              estimate={estimate}
+              formatMoney={money}
+              formatClock={clockTime}
+            />
           )}
           <Viewport
             width={bed.width}
@@ -3863,9 +3865,8 @@ export function App() {
           )}
           </div>
           <footer className="scrubber">
-            <span className="scrub-group">
+            <div className="scrub-bar" role="group" aria-label="View style">
               <em>view</em>
-              {""}
               {(["solid", "wire", "ascii"] as const).map((item) => (
                 <button
                   key={item}
@@ -3876,11 +3877,10 @@ export function App() {
                   {item}
                 </button>
               ))}
-            </span>
+            </div>
             {preview && (
-            <span className="scrub-group">
+            <div className="scrub-bar" role="group" aria-label="Toolpath colour">
               <em>colour</em>
-              {""}
               {(["type", "speed"] as const).map((item) => (
                 <button
                   key={item}
@@ -3891,13 +3891,12 @@ export function App() {
                   {item}
                 </button>
               ))}
-            </span>
+            </div>
             )}
             {preview ? (
               <>
-                <span className="scrub-group">
+                <div className="scrub-bar" role="group" aria-label="Preview playback">
                   <em>preview</em>
-                  {""}
                 <button
                   type="button"
                   className={playing ? "selected" : ""}
@@ -3922,7 +3921,7 @@ export function App() {
                 <AsciiCheck checked={showModel} onChange={setShowModel}>
                   ghost
                 </AsciiCheck>
-                </span>
+                </div>
                 <div className="ascii-slider">
                   <div className="readout">
                     layer <span className="active">{String(layer + 1).padStart(3, " ")}</span> / {layerCount}
@@ -4017,4 +4016,81 @@ function messageOf(err: unknown): string {
   if (typeof err === "string") return err;
   if (err instanceof Error) return err.message;
   return "Something went wrong";
+}
+
+function JobSummary({
+  layerCount,
+  printSeconds,
+  filamentMetres,
+  grams,
+  estimate,
+  formatMoney,
+  formatClock,
+  variant = "panel",
+}: {
+  layerCount: number;
+  printSeconds: number | null;
+  filamentMetres: number | null;
+  grams: number | null;
+  estimate: CostEstimate | null;
+  formatMoney: (value: number) => string;
+  formatClock: (seconds: number) => string;
+  variant?: "panel" | "demo";
+}) {
+  const className =
+    variant === "demo" ? "job-card demo-cost" : "job-card job-card--panel";
+  if (layerCount <= 0) {
+    return <span className="job-state quiet">not sliced</span>;
+  }
+  return (
+    <div className={className} data-sliced="yes">
+      {variant !== "panel" && <span className="job-state">sliced</span>}
+      <dl>
+        <div>
+          <dt>time</dt>
+          <dd>{printSeconds == null ? "—" : formatClock(printSeconds)}</dd>
+        </div>
+        <div>
+          <dt>length</dt>
+          <dd>{filamentMetres == null ? "—" : `${filamentMetres.toFixed(1)} m`}</dd>
+        </div>
+        {grams != null && (
+          <div>
+            <dt>weight</dt>
+            <dd>{grams < 10 ? grams.toFixed(1) : grams.toFixed(0)} g</dd>
+          </div>
+        )}
+        <div>
+          <dt>layers</dt>
+          <dd>{layerCount}</dd>
+        </div>
+        {estimate && (
+          <>
+            <div>
+              <dt>material</dt>
+              <dd>{formatMoney(estimate.filament_cost)}</dd>
+            </div>
+            <div>
+              <dt>energy</dt>
+              <dd>
+                {estimate.kwh.toFixed(3)} kWh · {formatMoney(estimate.energy_cost)}
+              </dd>
+            </div>
+            {estimate.spools.map((spool) => (
+              <div key={spool.slot}>
+                <dt>{`spool ${spool.slot + 1}`}</dt>
+                <dd>
+                  {spool.grams.toFixed(0)} g · {formatMoney(spool.cost)}
+                </dd>
+              </div>
+            ))}
+            <div className="job-total">
+              <dt>total</dt>
+              <dd>{formatMoney(estimate.total)}</dd>
+            </div>
+          </>
+        )}
+      </dl>
+    </div>
+  );
 }

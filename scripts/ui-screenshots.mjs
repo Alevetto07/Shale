@@ -3,8 +3,9 @@
  * Headless UI capture with VITE_SHALE_MOCK=1 + vite preview.
  * Usage: node scripts/ui-screenshots.mjs --out docs/screens/after --width 1280
  */
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -50,6 +51,8 @@ function arg(name, fallback) {
   return index >= 0 ? process.argv[index + 1] : fallback;
 }
 
+const MIN_CAPTURE_BYTES = 12_000;
+
 async function build() {
   await new Promise((resolve, reject) => {
     const child = spawn("npm", ["run", "build"], {
@@ -59,9 +62,27 @@ async function build() {
     });
     child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error("build failed"))));
   });
+  const assets = path.join(desktop, "dist", "assets");
+  const bundle = readdirSync(assets).find((file) => file.startsWith("index-") && file.endsWith(".js"));
+  if (!bundle) throw new Error("mock build did not produce an index bundle");
+  const source = readFileSync(path.join(assets, bundle), "utf8");
+  if (!source.includes("mock plate")) {
+    throw new Error(
+      "built bundle is not a mock build (missing mock viewport). Set VITE_SHALE_MOCK=1 for capture.",
+    );
+  }
+}
+
+function freePort(port) {
+  try {
+    execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, { stdio: "ignore" });
+  } catch {
+    // nothing listening
+  }
 }
 
 async function previewServer() {
+  freePort(4173);
   const child = spawn("npx", ["vite", "preview", "--host", "127.0.0.1", "--port", "4173", "--strictPort"], {
     cwd: desktop,
     env: { ...process.env, VITE_SHALE_MOCK: "1" },
@@ -98,12 +119,16 @@ async function main() {
   const capture = [];
   for (const shot of shots) {
     const page = await context.newPage();
+    const pageErrors = [];
+    page.on("pageerror", (err) => pageErrors.push(err.message));
     await page.goto(base + shot.url, { waitUntil: "networkidle" });
     await page.waitForTimeout(1800);
-    if (shot.url.includes("pane=prepare") || shot.url.includes("pane=preview") || shot.url.includes("pane=device")) {
-      await page.waitForSelector(".workspace, .device-pane, .viewport-mock", { timeout: 15_000 }).catch(() => {});
+    if (shot.url.includes("pane=prepare") || shot.url.includes("pane=preview")) {
+      await page.waitForSelector(".workspace .viewport-mock, .workspace", { timeout: 15_000 });
+    } else if (shot.url.includes("pane=device")) {
+      await page.waitForSelector(".device", { timeout: 15_000 });
     } else {
-      await page.waitForSelector(".home-pane, .start", { timeout: 15_000 }).catch(() => {});
+      await page.waitForSelector(".home-pane .start, .start", { timeout: 15_000 });
     }
     await page.waitForTimeout(400);
     for (const step of shot.click ?? []) {
@@ -115,11 +140,27 @@ async function main() {
     }
     const file = path.join(outDir, `${shot.name}-${width}x${height}.png`);
     await page.screenshot({ path: file, fullPage: false });
+    const bytes = statSync(file).size;
+    if (bytes < MIN_CAPTURE_BYTES) {
+      throw new Error(
+        `${shot.name} screenshot too small (${bytes} B); likely blank UI. Console: ${pageErrors.join("; ") || "none"}`,
+      );
+    }
+    if (pageErrors.length > 0) {
+      throw new Error(`${shot.name} had page errors: ${pageErrors.join("; ")}`);
+    }
     capture.push(file);
     await page.close();
   }
+  await context.close();
   await browser.close();
   child.kill("SIGTERM");
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // already stopped
+  }
   const manifest = { width, height, captured_at: new Date().toISOString(), files: capture.map((f) => path.relative(root, f)) };
   await writeFile(path.join(outDir, `manifest-${width}x${height}.json`), JSON.stringify(manifest, null, 2));
   console.log(JSON.stringify(manifest, null, 2));
