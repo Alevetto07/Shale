@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value as Json;
 
-use super::{EngineOutput, EngineProgress, EngineRequest, SlicingEngine};
+use super::{absolutize_path, EngineOutput, EngineProgress, EngineRequest, SlicingEngine};
 use crate::error::Error;
 
 #[derive(Clone, Debug)]
@@ -151,18 +151,23 @@ impl SlicingEngine for CliEngine {
         if request.models.is_empty() {
             return Err(Error::Engine("nothing to slice".into()));
         }
-        if let Some(parent) = request.output_gcode.parent() {
+        let output_gcode = absolutize_path(&request.output_gcode)?;
+        if let Some(parent) = output_gcode.parent() {
             fs::create_dir_all(parent)?;
         }
-        let resolved_path = request.output_gcode.with_extension("resolved.json");
-        fs::write(&resolved_path, resolved_document(request)?)?;
+        let resolved_path = output_gcode.with_extension("resolved.json");
+        let resolved_request = EngineRequest {
+            output_gcode: output_gcode.clone(),
+            ..request.clone()
+        };
+        fs::write(&resolved_path, resolved_document(&resolved_request)?)?;
 
         let mut command = Command::new(&self.program);
         command
             .arg("slice")
             .arg("-p")
             .arg("-o")
-            .arg(&request.output_gcode)
+            .arg(&output_gcode)
             .arg("-r")
             .arg(&resolved_path);
         // `-s` applies to the object just loaded, so per-part overrides go
@@ -173,7 +178,7 @@ impl SlicingEngine for CliEngine {
             if let Some(index) = model.extruder {
                 command.arg(extruder_flag(index));
             }
-            command.arg("-l").arg(&model.path);
+            command.arg("-l").arg(absolutize_path(&model.path)?);
             for (key, value) in &model.settings {
                 command.arg("-s").arg(format!("{key}={value}"));
             }
@@ -184,7 +189,7 @@ impl SlicingEngine for CliEngine {
             if let Some(index) = modifier.extruder {
                 command.arg(extruder_flag(index));
             }
-            command.arg("-l").arg(&modifier.path);
+            command.arg("-l").arg(absolutize_path(&modifier.path)?);
             for (key, value) in &modifier.settings {
                 command.arg("-s").arg(format!("{key}={value}"));
             }
@@ -258,7 +263,7 @@ impl SlicingEngine for CliEngine {
                 }
                 push_log(line, &mut log);
             }
-            if let Some(layers) = count_layers(&request.output_gcode) {
+            if let Some(layers) = count_layers(&output_gcode) {
                 if request.estimated_layers > 0 {
                     let estimate =
                         (layers as f32 / request.estimated_layers as f32).clamp(0.05, 0.97);
@@ -303,16 +308,16 @@ impl SlicingEngine for CliEngine {
                 "CuraEngine exited with status {status}.\n{log_tail}"
             )));
         }
-        if !request.output_gcode.is_file() {
+        if !output_gcode.is_file() {
             return Err(Error::Engine(format!(
                 "CuraEngine finished without writing {}",
-                request.output_gcode.display()
+                output_gcode.display()
             )));
         }
         let _ = fs::remove_file(&resolved_path);
         on_progress(EngineProgress::new(1.0, "Slicing finished"));
         Ok(EngineOutput {
-            gcode_path: request.output_gcode.clone(),
+            gcode_path: output_gcode,
             print_time_seconds: print_time(&log_tail),
             log_tail,
         })
@@ -417,6 +422,25 @@ fn count_layers(path: &Path) -> Option<u32> {
 #[cfg(test)]
 mod path_tests {
     use std::path::PathBuf;
+
+    use super::absolutize_path;
+
+    #[test]
+    fn a_relative_output_path_becomes_absolute_against_cwd() {
+        let dir = std::env::temp_dir().join(format!("shale-path-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let previous = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(&dir).expect("chdir");
+        let resolved = absolutize_path(std::path::Path::new("nested/out.gcode"))
+            .expect("absolutize");
+        std::env::set_current_dir(previous).ok();
+        assert!(resolved.is_absolute(), "{}", resolved.display());
+        assert!(
+            resolved.ends_with("nested/out.gcode"),
+            "{}",
+            resolved.display()
+        );
+    }
 
     #[test]
     fn a_temp_path_with_spaces_stays_one_argument() {

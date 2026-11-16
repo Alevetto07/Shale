@@ -548,6 +548,84 @@ impl Catalog {
         qualities
     }
 
+    /// Turn a human process name (`standard`, `0.20 mm Standard`, a Bambu id, …)
+    /// into the catalogue's `quality_type` slug for this printer and nozzle.
+    pub fn resolve_quality_query(
+        &self,
+        printer_id: &str,
+        variant_name: Option<&str>,
+        query: &str,
+    ) -> Result<String, Error> {
+        let qualities = self.qualities_for(printer_id, variant_name);
+        if qualities.is_empty() {
+            let variant = variant_name
+                .map(|name| format!(" and variant '{name}'"))
+                .unwrap_or_default();
+            return Err(Error::message(format!(
+                "no quality profiles for printer '{printer_id}'{variant}"
+            )));
+        }
+
+        if let Some(hit) = qualities
+            .iter()
+            .find(|q| q.quality_type.eq_ignore_ascii_case(query))
+        {
+            return Ok(hit.quality_type.clone());
+        }
+        if let Some(hit) = qualities.iter().find(|q| q.name.eq_ignore_ascii_case(query)) {
+            return Ok(hit.quality_type.clone());
+        }
+
+        let token = normalize_quality_label(query);
+        if let Some(hit) = qualities
+            .iter()
+            .find(|q| normalize_quality_label(&q.name) == token)
+        {
+            return Ok(hit.quality_type.clone());
+        }
+        if let Some(hit) = qualities
+            .iter()
+            .find(|q| normalize_quality_label(&q.quality_type) == token)
+        {
+            return Ok(hit.quality_type.clone());
+        }
+
+        if let Some(mm) = parse_layer_only_query(query) {
+            let mut hits: Vec<&QualityInfo> = qualities
+                .iter()
+                .filter(|q| (layer_hint_mm(&q.name) - mm).abs() < 0.011)
+                .collect();
+            hits = disambiguate_with_label(query, &qualities, hits);
+            if hits.len() == 1 {
+                return Ok(hits[0].quality_type.clone());
+            }
+            if hits.len() > 1 {
+                return Err(ambiguous_quality(query, &hits, &qualities));
+            }
+        }
+
+        let mut partial: Vec<&QualityInfo> = qualities
+            .iter()
+            .filter(|q| {
+                let name = normalize_quality_label(&q.name);
+                name.contains(&token) || token.contains(&name)
+            })
+            .collect();
+        partial = disambiguate_with_label(query, &qualities, partial);
+        if partial.len() == 1 {
+            return Ok(partial[0].quality_type.clone());
+        }
+        if partial.len() > 1 {
+            return Err(ambiguous_quality(query, &partial, &qualities));
+        }
+
+        if let Some(hit) = keyword_quality_match(&token, &qualities) {
+            return Ok(hit.quality_type.clone());
+        }
+
+        Err(unknown_quality(query, variant_name, &qualities))
+    }
+
     /// Enough for the window to list Bambu printers, processes and filaments.
     /// Skips reading Cura's quality/variant trees (thousands of small files).
     pub fn open_ui_fast(paths: ResourcePaths) -> Result<Self, Error> {
@@ -716,6 +794,132 @@ fn layer_hint_mm(name: &str) -> f64 {
 
 fn is_layer_preset_name(name: &str) -> bool {
     layer_hint_mm(name) < 1.0
+}
+
+fn normalize_quality_label(text: &str) -> String {
+    let lower = text.to_ascii_lowercase().replace('_', " ");
+    let mut words = Vec::new();
+    for word in lower.split_whitespace() {
+        if let Some(num) = word.strip_suffix("mm") {
+            if !num.is_empty() && num.chars().all(|ch| ch.is_ascii_digit() || ch == '.') {
+                words.push(format!("{num} mm"));
+                continue;
+            }
+        }
+        words.push(word.to_string());
+    }
+    words.join(" ")
+}
+
+fn parse_layer_only_query(query: &str) -> Option<f64> {
+    let trimmed = query.trim();
+    let head = trimmed
+        .strip_suffix("mm")
+        .or_else(|| trimmed.strip_suffix("MM"))
+        .unwrap_or(trimmed);
+    let value = head.trim().parse::<f64>().ok()?;
+    if !(0.04..=1.0).contains(&value) {
+        return None;
+    }
+    Some(value)
+}
+
+fn disambiguate_with_label<'a>(
+    query: &str,
+    all: &'a [QualityInfo],
+    mut hits: Vec<&'a QualityInfo>,
+) -> Vec<&'a QualityInfo> {
+    let extra: Vec<&QualityInfo> = all
+        .iter()
+        .filter(|q| q.name.to_ascii_lowercase().contains("extra"))
+        .collect();
+    let label = normalize_quality_label(query);
+    if label.contains("extra") {
+        hits.retain(|q| extra.iter().any(|e| e.quality_type == q.quality_type));
+    } else if label.contains("standard") || label.contains("normal") {
+        hits.retain(|q| {
+            let n = q.name.to_ascii_lowercase();
+            n.contains("standard") && !n.contains("extra")
+        });
+    } else if label.contains("draft") && !label.contains("extra") {
+        hits.retain(|q| {
+            let n = q.name.to_ascii_lowercase();
+            n.contains("draft") && !n.contains("extra")
+        });
+        if hits.is_empty() {
+            hits = all
+                .iter()
+                .filter(|q| q.name.to_ascii_lowercase().contains("draft"))
+                .collect();
+        }
+    }
+    hits
+}
+
+fn keyword_quality_match<'a>(token: &str, qualities: &'a [QualityInfo]) -> Option<&'a QualityInfo> {
+    let mut hits: Vec<&QualityInfo> = match token {
+        "standard" | "normal" => qualities
+            .iter()
+            .filter(|q| {
+                let n = q.name.to_ascii_lowercase();
+                n.contains("standard") && !n.contains("extra")
+            })
+            .collect(),
+        "draft" => qualities
+            .iter()
+            .filter(|q| q.name.to_ascii_lowercase().contains("draft"))
+            .collect(),
+        "fine" => qualities
+            .iter()
+            .filter(|q| {
+                let n = q.name.to_ascii_lowercase();
+                n.contains("fine")
+                    || n.contains("quality")
+                    || layer_hint_mm(&q.name) <= 0.14
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    if hits.len() > 1 {
+        hits.sort_by(|a, b| layer_hint_mm(&a.name).total_cmp(&layer_hint_mm(&b.name)));
+        if token == "draft" {
+            hits.reverse();
+        }
+        if token == "fine" {
+            hits.truncate(1);
+        }
+    }
+    hits.into_iter().next()
+}
+
+fn unknown_quality(query: &str, variant: Option<&str>, qualities: &[QualityInfo]) -> Error {
+    let variant = variant
+        .map(|name| format!(" (nozzle {name})"))
+        .unwrap_or_default();
+    let choices: Vec<String> = qualities
+        .iter()
+        .map(|q| format!("{} [{}]", q.name, q.quality_type))
+        .collect();
+    Error::message(format!(
+        "unknown quality '{query}'{variant}. Valid processes:\n{}",
+        choices.join("\n")
+    ))
+}
+
+fn ambiguous_quality(query: &str, hits: &[&QualityInfo], all: &[QualityInfo]) -> Error {
+    let matches: Vec<String> = hits
+        .iter()
+        .map(|q| format!("{} [{}]", q.name, q.quality_type))
+        .collect();
+    let choices: Vec<String> = all
+        .iter()
+        .map(|q| format!("{} [{}]", q.name, q.quality_type))
+        .collect();
+    Error::message(format!(
+        "quality '{query}' matches more than one process:\n{}\nValid processes:\n{}",
+        matches.join("\n"),
+        choices.join("\n")
+    ))
 }
 
 pub(crate) fn specificity(definition_id: &str, ancestry: &[String]) -> usize {

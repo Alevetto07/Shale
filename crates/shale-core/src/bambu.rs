@@ -89,7 +89,7 @@ impl Library {
     /// Load from the configured profile root, or an empty library when no
     /// slicer is installed. Never fails: a missing library is normal.
     pub fn load() -> Self {
-        Self::from_root(root())
+        Self::from_root(profiles_root())
     }
 
     pub fn from_root(root: Option<PathBuf>) -> Self {
@@ -215,7 +215,8 @@ impl Library {
     }
 }
 
-fn root() -> Option<PathBuf> {
+/// Directory that holds Orca/Bambu `resources/profiles`, from env or common installs.
+pub fn profiles_root() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("SHALE_ORCA_DIR") {
         return Some(PathBuf::from(dir));
     }
@@ -1043,7 +1044,7 @@ mod tests {
     use super::*;
 
     fn installed() -> Option<Library> {
-        let root = root()?;
+        let root = profiles_root()?;
         let library = Library::from_root(Some(root));
         (!library.is_empty()).then_some(library)
     }
@@ -1130,7 +1131,7 @@ mod tests {
 
     #[test]
     fn the_whole_library_reads_quickly() {
-        let Some(root) = root() else { return };
+        let Some(root) = profiles_root() else { return };
         // The first read is the disk's time, not the code's: on a cold page
         // cache Windows Defender opens every one of the ~780 profile files and
         // that alone took 38 s on this machine. What this test guards is that

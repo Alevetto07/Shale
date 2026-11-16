@@ -36,7 +36,9 @@ slice options
 
 environment
   SHALE_CURA_DIR, SHALE_MATERIALS_DIR   the Cura resource tree
+  SHALE_ORCA_DIR                        Bambu/Orca profiles (required for Bambu)
   SHALE_CURAENGINE                      the CuraEngine binary
+  SHALE_CURAENGINE_LIB_DIR              folder beside the engine with its libraries (optional)
 ";
 
 fn main() -> ExitCode {
@@ -106,6 +108,14 @@ fn catalog() -> Result<Catalog, String> {
     Catalog::open(paths).map_err(|err| err.to_string())
 }
 
+fn env_line(name: &str, configured: bool, detail: &str) {
+    if configured {
+        println!("{name:<11} set ({detail})");
+    } else {
+        println!("{name:<11} missing — {detail}");
+    }
+}
+
 fn info() -> Result<(), String> {
     let engine = CliEngine::from_env();
     println!("shale {}", env!("CARGO_PKG_VERSION"));
@@ -113,6 +123,52 @@ fn info() -> Result<(), String> {
     match engine.probe() {
         Ok(()) => println!("engine   ok"),
         Err(message) => println!("engine   not usable: {message}"),
+    }
+    if let Ok(path) = std::env::var("SHALE_CURAENGINE") {
+        env_line("SHALE_CURAENGINE", true, &path);
+    } else {
+        env_line(
+            "SHALE_CURAENGINE",
+            false,
+            "set to the CuraEngine binary, or install UltiMaker Cura 5.x",
+        );
+    }
+    if let Ok(path) = std::env::var("SHALE_CURAENGINE_LIB_DIR") {
+        env_line("SHALE_CURAENGINE_LIB_DIR", true, &path);
+    } else {
+        env_line(
+            "SHALE_CURAENGINE_LIB_DIR",
+            false,
+            "optional; defaults to the folder containing the engine",
+        );
+    }
+    if let Ok(path) = std::env::var("SHALE_CURA_DIR") {
+        env_line("SHALE_CURA_DIR", true, &path);
+    } else {
+        env_line("SHALE_CURA_DIR", false, "set with SHALE_MATERIALS_DIR");
+    }
+    if let Ok(path) = std::env::var("SHALE_MATERIALS_DIR") {
+        env_line("SHALE_MATERIALS_DIR", true, &path);
+    } else {
+        env_line("SHALE_MATERIALS_DIR", false, "set with SHALE_CURA_DIR");
+    }
+    match std::env::var("SHALE_ORCA_DIR") {
+        Ok(path) => env_line("SHALE_ORCA_DIR", true, &path),
+        Err(_) => match shale_core::bambu::profiles_root() {
+            Some(path) => env_line(
+                "SHALE_ORCA_DIR",
+                false,
+                &format!(
+                    "not set; using {} — set SHALE_ORCA_DIR to pin the Bambu profile tree",
+                    path.display()
+                ),
+            ),
+            None => env_line(
+                "SHALE_ORCA_DIR",
+                false,
+                "required for Bambu printers — run scripts/fetch-resources.sh",
+            ),
+        },
     }
     match ResourcePaths::discover() {
         Ok(paths) => {
@@ -241,6 +297,7 @@ fn slice_command(args: &[String]) -> Result<(), String> {
         .or_else(|| flag(args, "-o"))
         .map(PathBuf::from)
         .unwrap_or_else(|| model_path.with_extension("gcode"));
+    let output = shale_core::engine::absolutize_path(&output).map_err(|err| err.to_string())?;
 
     let engine = CliEngine::from_env();
     engine.probe().map_err(|message| {
