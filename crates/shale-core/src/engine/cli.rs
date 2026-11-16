@@ -349,8 +349,8 @@ fn map_to_json(values: &std::collections::BTreeMap<String, String>) -> Json {
 }
 
 /// Hide console windows for CuraEngine children when the GUI sets `SHALE_HIDE_ENGINE_CONSOLE`.
+#[cfg(windows)]
 pub(crate) fn hide_engine_console(command: &mut Command) {
-    #[cfg(windows)]
     if std::env::var_os("SHALE_HIDE_ENGINE_CONSOLE")
         .is_some_and(|value| value != "0" && !value.is_empty())
     {
@@ -359,6 +359,9 @@ pub(crate) fn hide_engine_console(command: &mut Command) {
         command.creation_flags(CREATE_NO_WINDOW);
     }
 }
+
+#[cfg(not(windows))]
+pub(crate) fn hide_engine_console(_command: &mut Command) {}
 
 pub(crate) fn apply_lib_dir(command: &mut Command, lib_dir: Option<&Path>) {
     let Some(lib_dir) = lib_dir else {
