@@ -17,9 +17,7 @@ fn use_test_cache_dir() {
 fn shared_real_catalog() -> Option<&'static Catalog> {
     use_test_cache_dir();
     REAL_CATALOG
-        .get_or_init(|| {
-            real_resource_paths().and_then(|paths| Catalog::open(paths).ok())
-        })
+        .get_or_init(|| real_resource_paths().and_then(|paths| Catalog::open(paths).ok()))
         .as_ref()
 }
 
@@ -35,7 +33,8 @@ fn real_resource_paths() -> Option<ResourcePaths> {
             cura: cura.into(),
             materials: materials.into(),
         };
-        if paths.resources()
+        if paths
+            .resources()
             .join("definitions")
             .join("fdmprinter.def.json")
             .is_file()
@@ -161,7 +160,9 @@ fn real_cura_profiles_when_resources_are_present() {
         .any(|printer| printer.id == "prusa_i3"));
     let selectable = catalog.selectable_printers();
     assert!(
-        selectable.iter().any(|printer| printer.id == "bambu_lab_a1"),
+        selectable
+            .iter()
+            .any(|printer| printer.id == "bambu_lab_a1"),
         "Bambu A1 should be selectable"
     );
     assert!(
@@ -184,10 +185,7 @@ fn real_cura_profiles_when_resources_are_present() {
     assert!(
         a1_04.iter().any(|q| q.name == "0.20 mm Standard"),
         "missing 0.20 mm Standard; got {:?}",
-        a1_04
-            .iter()
-            .map(|q| q.name.as_str())
-            .collect::<Vec<_>>()
+        a1_04.iter().map(|q| q.name.as_str()).collect::<Vec<_>>()
     );
     assert!(
         a1_04.iter().any(|q| q.name.contains("0.28 mm")),
@@ -197,12 +195,15 @@ fn real_cura_profiles_when_resources_are_present() {
     assert!(
         !a1_04
             .iter()
-            .any(|q| q.quality_type.contains("_0_2_nozzle") || q.quality_type.contains("_0_6_nozzle")),
+            .any(|q| q.quality_type.contains("_0_2_nozzle")
+                || q.quality_type.contains("_0_6_nozzle")),
         "other-nozzle slugs leaked into 0.4 list: {:?}",
         a1_04
     );
     assert!(
-        !a1_04.iter().any(|q| q.name == "Normal" || q.name == "Draft"),
+        !a1_04
+            .iter()
+            .any(|q| q.name == "Normal" || q.name == "Draft"),
         "generic Cura tabs should not appear for Bambu A1"
     );
 
@@ -291,17 +292,26 @@ fn real_cura_profiles_when_resources_are_present() {
         "user layer_height should beat 0.20 mm Standard preset"
     );
     assert_eq!(
-        resolved_standard.global.get("speed_wall_0").map(String::as_str),
+        resolved_standard
+            .global
+            .get("speed_wall_0")
+            .map(String::as_str),
         Some("200"),
         "Bambu outer wall speed"
     );
     assert_eq!(
-        resolved_standard.global.get("speed_wall_x").map(String::as_str),
+        resolved_standard
+            .global
+            .get("speed_wall_x")
+            .map(String::as_str),
         Some("300"),
         "Bambu inner wall speed"
     );
     assert_eq!(
-        resolved_standard.global.get("speed_infill").map(String::as_str),
+        resolved_standard
+            .global
+            .get("speed_infill")
+            .map(String::as_str),
         Some("270"),
         "Bambu sparse infill speed"
     );
@@ -359,7 +369,10 @@ fn real_cura_profiles_when_resources_are_present() {
         "error should mention a real preset: {message}"
     );
     assert_eq!(
-        resolved_standard.global.get("speed_travel").map(String::as_str),
+        resolved_standard
+            .global
+            .get("speed_travel")
+            .map(String::as_str),
         Some("700"),
         "Bambu travel speed on 0.20 mm Standard @ A1"
     );
@@ -496,10 +509,7 @@ fn a1_every_selectable_process_resolves_layer_height() {
         .expect("PLA material for A1");
     for variant in ["0.2 mm", "0.4 mm", "0.6 mm", "0.8 mm"] {
         let presets = catalog.qualities_for("bambu_lab_a1", Some(variant));
-        assert!(
-            !presets.is_empty(),
-            "no presets for A1 at {variant}"
-        );
+        assert!(!presets.is_empty(), "no presets for A1 at {variant}");
         for preset in presets {
             let want = preset_layer_mm(&preset.name).unwrap_or_else(|| {
                 panic!("preset name lacks layer hint: {}", preset.name);

@@ -11,7 +11,10 @@ mod info_env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use info_env::{env_path_line, cura_engine_lib_path, cura_engine_path, cura_resources_path, materials_path, orca_profiles_path};
+use info_env::{
+    cura_engine_lib_path, cura_engine_path, cura_resources_path, env_path_line, materials_path,
+    orca_profiles_path,
+};
 
 use shale_core::catalog::{Catalog, ResourcePaths};
 use shale_core::engine::{CliEngine, EngineProgress};
@@ -121,7 +124,10 @@ fn info() -> Result<(), String> {
         Err(message) => println!("engine   not usable: {message}"),
     }
     println!("{}", env_path_line("SHALE_CURAENGINE", cura_engine_path()));
-    println!("{}", env_path_line("SHALE_CURAENGINE_LIB_DIR", cura_engine_lib_path()));
+    println!(
+        "{}",
+        env_path_line("SHALE_CURAENGINE_LIB_DIR", cura_engine_lib_path())
+    );
     println!("{}", env_path_line("SHALE_CURA_DIR", cura_resources_path()));
     println!("{}", env_path_line("SHALE_MATERIALS_DIR", materials_path()));
     println!("{}", env_path_line("SHALE_ORCA_DIR", orca_profiles_path()));

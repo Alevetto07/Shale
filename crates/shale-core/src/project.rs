@@ -526,7 +526,10 @@ mod tests {
         };
         write_project(&path, &saved).unwrap();
         let loaded = read_project(&path).unwrap().data;
-        assert_eq!(loaded.quality_type.as_deref(), Some("0_20mm_standard_bbl_a1"));
+        assert_eq!(
+            loaded.quality_type.as_deref(),
+            Some("0_20mm_standard_bbl_a1")
+        );
         assert_eq!(loaded.variant_name.as_deref(), Some("0.4 mm"));
         assert_eq!(loaded.material_id.as_deref(), Some("bambu_pla_basic"));
         assert_eq!(loaded.settings.layer_height, Some(0.16));

@@ -305,27 +305,26 @@ impl Catalog {
                 resources.display()
             )));
         }
-        let (mut instances, mut materials) =
-            if let Ok(Some((cached_instances, cached_materials))) =
-                crate::catalog_cache::load_cura_extras(&paths.cura, &paths.materials, &resources)
-            {
-                (cached_instances, cached_materials)
-            } else {
-                let mut instances = Vec::new();
-                for folder in ["quality", "variants", "intent"] {
-                    load_instances(&resources.join(folder), &mut instances, &mut warnings);
-                }
-                let mut materials = Vec::new();
-                load_materials(&paths.materials, &mut materials, &mut warnings);
-                crate::catalog_cache::store_cura_extras_async(
-                    paths.cura.clone(),
-                    paths.materials.clone(),
-                    resources.clone(),
-                    instances.clone(),
-                    materials.clone(),
-                );
-                (instances, materials)
-            };
+        let (mut instances, mut materials) = if let Ok(Some((cached_instances, cached_materials))) =
+            crate::catalog_cache::load_cura_extras(&paths.cura, &paths.materials, &resources)
+        {
+            (cached_instances, cached_materials)
+        } else {
+            let mut instances = Vec::new();
+            for folder in ["quality", "variants", "intent"] {
+                load_instances(&resources.join(folder), &mut instances, &mut warnings);
+            }
+            let mut materials = Vec::new();
+            load_materials(&paths.materials, &mut materials, &mut warnings);
+            crate::catalog_cache::store_cura_extras_async(
+                paths.cura.clone(),
+                paths.materials.clone(),
+                resources.clone(),
+                instances.clone(),
+                materials.clone(),
+            );
+            (instances, materials)
+        };
         // Bambu Studio's own tree is a second, independent profile library. Its
         // entries are converted into the same shapes Cura's resources produce,
         // so variants, qualities, materials and the resolver need no special
@@ -587,7 +586,10 @@ impl Catalog {
         {
             return Ok(hit.quality_type.clone());
         }
-        if let Some(hit) = qualities.iter().find(|q| q.name.eq_ignore_ascii_case(query)) {
+        if let Some(hit) = qualities
+            .iter()
+            .find(|q| q.name.eq_ignore_ascii_case(query))
+        {
             return Ok(hit.quality_type.clone());
         }
 
@@ -888,9 +890,7 @@ fn keyword_quality_match<'a>(token: &str, qualities: &'a [QualityInfo]) -> Optio
             .iter()
             .filter(|q| {
                 let n = q.name.to_ascii_lowercase();
-                n.contains("fine")
-                    || n.contains("quality")
-                    || layer_hint_mm(&q.name) <= 0.14
+                n.contains("fine") || n.contains("quality") || layer_hint_mm(&q.name) <= 0.14
             })
             .collect(),
         _ => Vec::new(),

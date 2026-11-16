@@ -198,8 +198,7 @@ async fn in_process_client_slices_the_20mm_cube() {
         .suffix(".gcode")
         .tempfile()
         .expect("gcode temp");
-    let summary =
-        slice_cube(fixture_catalog(), Box::new(FakeEngine), destination.path()).await;
+    let summary = slice_cube(fixture_catalog(), Box::new(FakeEngine), destination.path()).await;
     assert_eq!(summary["layer_count"], 100);
 }
 

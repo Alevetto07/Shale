@@ -65,6 +65,7 @@ impl CliEngine {
             command.current_dir(dir);
         }
         apply_lib_dir(&mut command, self.lib_dir.as_deref());
+        hide_engine_console(&mut command);
         if std::env::var_os("SHALE_TRACE").is_some() {
             // The engine's own argv, so a fail-fast (0xc0000409) can be read
             // against the flag it choked on instead of guessed at.
@@ -198,6 +199,7 @@ impl SlicingEngine for CliEngine {
             command.current_dir(dir);
         }
         apply_lib_dir(&mut command, self.lib_dir.as_deref());
+        hide_engine_console(&mut command);
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         if std::env::var_os("SHALE_TRACE").is_some() {
@@ -247,6 +249,7 @@ impl SlicingEngine for CliEngine {
         let started = Instant::now();
         let mut fraction = 0.04;
         let mut log: Vec<String> = Vec::new();
+        let mut layer_counter = LayerCounter::open(&output_gcode);
         on_progress(EngineProgress::new(fraction, "CuraEngine started"));
 
         let push_log = |line: String, log: &mut Vec<String>| {
@@ -263,7 +266,10 @@ impl SlicingEngine for CliEngine {
                 }
                 push_log(line, &mut log);
             }
-            if let Some(layers) = count_layers(&output_gcode) {
+            if layer_counter.is_none() {
+                layer_counter = LayerCounter::open(&output_gcode);
+            }
+            if let Some(layers) = layer_counter.as_mut().and_then(|counter| counter.refresh()) {
                 if request.estimated_layers > 0 {
                     let estimate =
                         (layers as f32 / request.estimated_layers as f32).clamp(0.05, 0.97);
@@ -330,7 +336,7 @@ fn resolved_document(request: &EngineRequest) -> Result<String, Error> {
     for (index, extruder) in request.extruders.iter().enumerate() {
         root.insert(format!("extruder.{index}"), map_to_json(extruder));
     }
-    serde_json::to_string_pretty(&Json::Object(root))
+    serde_json::to_string(&Json::Object(root))
         .map_err(|err| Error::message(format!("could not encode resolved settings: {err}")))
 }
 
@@ -340,6 +346,18 @@ fn map_to_json(values: &std::collections::BTreeMap<String, String>) -> Json {
         object.insert(key.clone(), Json::String(value.clone()));
     }
     Json::Object(object)
+}
+
+/// Hide console windows for CuraEngine children when the GUI sets `SHALE_HIDE_ENGINE_CONSOLE`.
+pub(crate) fn hide_engine_console(command: &mut Command) {
+    #[cfg(windows)]
+    if std::env::var_os("SHALE_HIDE_ENGINE_CONSOLE")
+        .is_some_and(|value| value != "0" && !value.is_empty())
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 }
 
 pub(crate) fn apply_lib_dir(command: &mut Command, lib_dir: Option<&Path>) {
@@ -409,6 +427,51 @@ fn layer_fraction(lower: &str) -> Option<f32> {
     Some((current / total).clamp(0.0, 1.0))
 }
 
+struct LayerCounter {
+    reader: BufReader<std::fs::File>,
+    count: u32,
+    finished: bool,
+}
+
+impl LayerCounter {
+    fn open(path: &Path) -> Option<Self> {
+        let file = std::fs::File::open(path).ok()?;
+        Some(Self {
+            reader: BufReader::new(file),
+            count: 0,
+            finished: false,
+        })
+    }
+
+    fn refresh(&mut self) -> Option<u32> {
+        if self.finished {
+            return if self.count == 0 {
+                None
+            } else {
+                Some(self.count)
+            };
+        }
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let read = self.reader.read_line(&mut line).ok()?;
+            if read == 0 {
+                self.finished = true;
+                break;
+            }
+            if line.contains(";LAYER:") {
+                self.count = self.count.saturating_add(1);
+            }
+        }
+        if self.count == 0 {
+            None
+        } else {
+            Some(self.count)
+        }
+    }
+}
+
+#[cfg(test)]
 fn count_layers(path: &Path) -> Option<u32> {
     let text = fs::read_to_string(path).ok()?;
     let count = text.matches(";LAYER:").count() as u32;
@@ -430,8 +493,8 @@ mod path_tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let previous = std::env::current_dir().expect("cwd");
         std::env::set_current_dir(dir.path()).expect("chdir");
-        let resolved = absolutize_path(std::path::Path::new("nested/out.gcode"))
-            .expect("absolutize");
+        let resolved =
+            absolutize_path(std::path::Path::new("nested/out.gcode")).expect("absolutize");
         std::env::set_current_dir(previous).ok();
         assert!(resolved.is_absolute(), "{}", resolved.display());
         assert!(

@@ -41,11 +41,7 @@ mod tests {
         let _ = Catalog::open(paths).expect("fixture catalog");
         let elapsed = start.elapsed();
         eprintln!("fixture Catalog::open {:?}", elapsed);
-        assert!(
-            elapsed.as_millis() < 600,
-            "fixture open took {:?}",
-            elapsed
-        );
+        assert!(elapsed.as_millis() < 600, "fixture open took {:?}", elapsed);
     }
 
     #[test]

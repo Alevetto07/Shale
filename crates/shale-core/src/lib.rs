@@ -20,10 +20,10 @@
 pub mod bambu;
 pub mod cad;
 pub mod calibrate;
+pub mod catalog;
 pub(crate) mod catalog_cache;
 #[cfg(test)]
 mod catalog_cache_bench;
-pub mod catalog;
 pub mod cost;
 pub mod csg;
 pub mod cut;

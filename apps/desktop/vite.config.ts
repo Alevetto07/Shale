@@ -19,5 +19,14 @@ export default defineConfig({
   build: {
     target: "es2022",
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/three") || id.includes("@react-three")) {
+            return "three-viewport";
+          }
+        },
+      },
+    },
   },
 });

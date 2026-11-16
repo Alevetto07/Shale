@@ -61,9 +61,7 @@ pub fn set_cache_dir_override(dir: PathBuf) {
 }
 
 fn test_mode_active() -> bool {
-    cfg!(test)
-        || env::var_os("SHALE_TEST")
-            .is_some_and(|value| value != "0" && !value.is_empty())
+    cfg!(test) || env::var_os("SHALE_TEST").is_some_and(|value| value != "0" && !value.is_empty())
 }
 
 fn isolated_test_cache_dir() -> PathBuf {
@@ -90,7 +88,10 @@ pub(crate) fn cache_dir() -> PathBuf {
         return PathBuf::from(roaming).join("Shale").join("catalog-cache");
     }
     if let Ok(home) = env::var("HOME") {
-        return PathBuf::from(home).join(".cache").join("shale").join("catalog-cache");
+        return PathBuf::from(home)
+            .join(".cache")
+            .join("shale")
+            .join("catalog-cache");
     }
     env::temp_dir().join("shale-catalog-cache")
 }
@@ -137,7 +138,7 @@ fn push_shallow_dir(markers: &mut CacheMarkers, label: &str, dir: &Path) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
-  let mut count = 0u64;
+    let mut count = 0u64;
     let mut bytes = 0u64;
     let mut newest = 0u64;
     for entry in entries.flatten() {
@@ -152,21 +153,30 @@ fn push_shallow_dir(markers: &mut CacheMarkers, label: &str, dir: &Path) {
             }
         }
     }
-    markers
-        .entries
-        .push((format!("{label}:shallow"), FileSig {
+    markers.entries.push((
+        format!("{label}:shallow"),
+        FileSig {
             mtime_secs: newest,
             size: bytes.wrapping_add(count),
-        }));
+        },
+    ));
 }
 
 fn cura_markers(resources: &Path, materials: &Path) -> CacheMarkers {
     let mut out = CacheMarkers {
         entries: Vec::new(),
     };
-    push_sig(&mut out, "fdmprinter", &resources.join("definitions/fdmprinter.def.json"));
+    push_sig(
+        &mut out,
+        "fdmprinter",
+        &resources.join("definitions/fdmprinter.def.json"),
+    );
     push_shallow_dir(&mut out, "definitions", &resources.join("definitions"));
-    push_sig(&mut out, "fdmextruder", &resources.join("extruders/fdmextruder.def.json"));
+    push_sig(
+        &mut out,
+        "fdmextruder",
+        &resources.join("extruders/fdmextruder.def.json"),
+    );
     for name in ["Version.version", "version.semver"] {
         let path = resources.join(name);
         if path.is_file() {
@@ -255,7 +265,7 @@ fn store_cura_extras_sync(
     let json = serde_json::to_vec(&body).map_err(|err| Error::message(err.to_string()))?;
     let file = dir.join(format!("cura-extras-{key:x}.json"));
     fs::write(&file, json).map_err(|err| Error::message(err.to_string()))?;
-  Ok(())
+    Ok(())
 }
 
 pub(crate) fn load_bambu_library(root: &Path) -> Option<Library> {
@@ -381,11 +391,7 @@ mod tests {
         let resources = base.path().join("cura");
         fs::create_dir_all(resources.join("definitions")).unwrap();
         fs::create_dir_all(&materials).unwrap();
-        fs::write(
-            resources.join("definitions/fdmprinter.def.json"),
-            b"{}",
-        )
-        .unwrap();
+        fs::write(resources.join("definitions/fdmprinter.def.json"), b"{}").unwrap();
         let a = fingerprint_fixture(&resources, &materials);
         fs::write(resources.join("definitions/extra.def.json"), b"{}").unwrap();
         let b = fingerprint_fixture(&resources, &materials);

@@ -84,6 +84,9 @@ struct Inner {
     slicing: bool,
     cancel_import: Arc<AtomicBool>,
     engine_message: String,
+    /// Set after the background CuraEngine probe finishes (avoids probing on every `status`).
+    engine_checked: bool,
+    engine_ok: bool,
 }
 
 #[derive(Default)]
@@ -130,6 +133,8 @@ struct Status {
     catalog_loading: bool,
     /// The full Cura quality tree has finished loading (not just the fast pass).
     catalog_full: bool,
+    /// CuraEngine probe finished (see `engine_ok`).
+    engine_checked: bool,
     /// The version this binary was built as, so the window never has to
     /// hold a copy that can drift from Cargo.toml.
     version: String,
@@ -256,7 +261,11 @@ fn fit_window_to_monitor(window: &tauri::WebviewWindow) {
     let Ok(requested) = window.outer_size() else {
         return;
     };
-    let margin = if std::env::var("SHALE_DEMO").is_ok() { 40.0 } else { 20.0 };
+    let margin = if std::env::var("SHALE_DEMO").is_ok() {
+        40.0
+    } else {
+        20.0
+    };
     let width = (requested.width as f64 / scale)
         .min(work_w - margin)
         .clamp(640.0, 1440.0);
@@ -275,8 +284,8 @@ fn fit_window_to_monitor(window: &tauri::WebviewWindow) {
     #[cfg(windows)]
     if let (Ok(hwnd), Ok(outer_pos)) = (window.hwnd(), window.outer_position()) {
         use std::mem::MaybeUninit;
-        use windows::Win32::Foundation::RECT;
         use windows::Win32::Foundation::HWND;
+        use windows::Win32::Foundation::RECT;
         use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 
         let hwnd = HWND(hwnd.0);
@@ -312,11 +321,7 @@ fn spawn_catalog_loader(app: AppHandle) {
             &app,
             &format!(
                 "discover {}",
-                if discovered.is_ok() {
-                    "ok"
-                } else {
-                    "failed"
-                }
+                if discovered.is_ok() { "ok" } else { "failed" }
             ),
         );
         let Ok(paths) = discovered else {
@@ -337,9 +342,7 @@ fn spawn_catalog_loader(app: AppHandle) {
                         "ui-fast {:?} printers={} qualities-a1={}",
                         fast_started.elapsed(),
                         fast.selectable_printers().len(),
-                        fast
-                            .qualities_for("bambu_lab_a1", Some("0.4 mm"))
-                            .len()
+                        fast.qualities_for("bambu_lab_a1", Some("0.4 mm")).len()
                     ),
                 );
                 let state = app.state::<AppState>();
@@ -422,7 +425,7 @@ fn app_status(state: State<AppState>) -> Result<Status, String> {
         .as_ref()
         .map(|c| c.selectable_printers().len())
         .unwrap_or(0);
-    let engine_ok = inner.engine.available();
+    let engine_ok = inner.engine_checked && inner.engine_ok;
     Ok(Status {
         resources_ok: loaded,
         resources_message,
@@ -440,8 +443,10 @@ fn app_status(state: State<AppState>) -> Result<Status, String> {
         printer_count,
         demo_model: std::env::var("SHALE_DEMO_MODEL").ok(),
         demo: std::env::var("SHALE_DEMO").ok(),
-        catalog_loading: inner.catalog_loading || (inner.catalog.is_none() && inner.catalog_error.is_none()),
+        catalog_loading: inner.catalog_loading
+            || (inner.catalog.is_none() && inner.catalog_error.is_none()),
         catalog_full: inner.catalog_full,
+        engine_checked: inner.engine_checked,
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }
@@ -465,10 +470,14 @@ fn set_engine(
                 "CuraEngine answered at {}",
                 inner.engine.cli.program.display()
             );
+            inner.engine_checked = true;
+            inner.engine_ok = true;
             Ok(true)
         }
         Err(err) => {
             inner.engine_message = err;
+            inner.engine_checked = true;
+            inner.engine_ok = false;
             Ok(false)
         }
     }
@@ -502,10 +511,7 @@ fn list_qualities(
 ) -> Result<Vec<QualityInfo>, String> {
     let mut inner = lock(&state)?;
     let catalog = catalog(&mut inner)?;
-    Ok(catalog.qualities_for(
-        &printer_id,
-        variant_name.as_deref(),
-    ))
+    Ok(catalog.qualities_for(&printer_id, variant_name.as_deref()))
 }
 
 #[tauri::command]
@@ -528,17 +534,17 @@ fn list_materials(state: State<AppState>, printer_id: String) -> Result<Vec<Mate
         })
         .map(|resolved| resolved.summary.material_diameter)
         .unwrap_or(1.75);
-  // Bambu printers get their own tuned filaments, already narrowed to the
-  // machine; Cura printers keep the short generic-first list they had.
-  let external_printer = catalog
-    .printers()
-    .iter()
-    .find(|info| info.id == printer_id)
-    .map(|info| info.source == "bambu")
-    .unwrap_or(false);
-  if external_printer {
-    return Ok(catalog.materials_for_printer(&printer_id, diameter));
-  }
+    // Bambu printers get their own tuned filaments, already narrowed to the
+    // machine; Cura printers keep the short generic-first list they had.
+    let external_printer = catalog
+        .printers()
+        .iter()
+        .find(|info| info.id == printer_id)
+        .map(|info| info.source == "bambu")
+        .unwrap_or(false);
+    if external_printer {
+        return Ok(catalog.materials_for_printer(&printer_id, diameter));
+    }
     let mut materials: Vec<MaterialInfo> = catalog
         .materials_for(diameter)
         .into_iter()
@@ -4630,6 +4636,10 @@ fn apply_demo_flag() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    unsafe {
+        std::env::set_var("SHALE_HIDE_ENGINE_CONSOLE", "1");
+    }
     apply_demo_flag();
     // Before anything opens: WebView2 will not let two processes share the
     // window's profile, and its refusal is a bare HRESULT that unwinds setup.
@@ -4675,11 +4685,7 @@ pub fn run() {
         (None, None, false, true, false)
     };
     trace("catalog", &started);
-    let engine_message = match engine.cli.probe() {
-        Ok(()) => format!("CuraEngine answered at {}", engine.cli.program.display()),
-        Err(err) => err,
-    };
-    trace("engine", &started);
+    let engine_message = "Looking for CuraEngine…".to_string();
     let import_cancel = Arc::new(AtomicBool::new(false));
     let (models, instructions, toolpath, gcode_path) = if demo_catalog {
         match &catalog {
@@ -4756,6 +4762,8 @@ pub fn run() {
             slicing: false,
             cancel_import: import_cancel,
             engine_message,
+            engine_checked: false,
+            engine_ok: false,
             host_config: None,
         })))
         .manage(PrinterHost::default())
@@ -4772,6 +4780,32 @@ pub fn run() {
                 return Ok(());
             }
             spawn_catalog_loader(app.handle().clone());
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let (ok, message) = {
+                    let state = handle.state::<AppState>();
+                    let Ok(inner) = state.0.lock() else {
+                        return;
+                    };
+                    match inner.engine.cli.probe() {
+                        Ok(()) => (
+                            true,
+                            format!(
+                                "CuraEngine answered at {}",
+                                inner.engine.cli.program.display()
+                            ),
+                        ),
+                        Err(err) => (false, err),
+                    }
+                };
+                let state = handle.state::<AppState>();
+                if let Ok(mut inner) = state.0.lock() {
+                    inner.engine_checked = true;
+                    inner.engine_ok = ok;
+                    inner.engine_message = message;
+                }
+                let _ = handle.emit("engine-ready", ());
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

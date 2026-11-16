@@ -79,9 +79,7 @@ pub fn orca_profiles_path() -> EnvPath {
         return EnvPath::Set(format_path_for_display(&path));
     }
     match shale_core::bambu::profiles_root() {
-        Some(path) => {
-            EnvPath::AutoDetected(format_path_for_display(&path.display().to_string()))
-        }
+        Some(path) => EnvPath::AutoDetected(format_path_for_display(&path.display().to_string())),
         None => EnvPath::NotFound(
             "set SHALE_ORCA_DIR to Bambu/Orca profiles, or run scripts/fetch-resources.sh",
         ),
