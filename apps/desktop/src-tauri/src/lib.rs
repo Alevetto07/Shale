@@ -279,9 +279,9 @@ fn fit_window_to_monitor(window: &tauri::WebviewWindow) {
     let outer_w = outer.width as f64 / scale;
     let outer_h = outer.height as f64 / scale;
     let pos_x = work_x + (work_w - outer_w) / 2.0;
+    #[cfg(windows)]
     let pos_y = {
         let mut y = work_y + (work_h - outer_h) / 2.0;
-        #[cfg(windows)]
         if let (Ok(hwnd), Ok(outer_pos)) = (window.hwnd(), window.outer_position()) {
             use std::mem::MaybeUninit;
             use windows::Win32::Foundation::HWND;
@@ -313,6 +313,8 @@ fn fit_window_to_monitor(window: &tauri::WebviewWindow) {
         }
         y
     };
+    #[cfg(not(windows))]
+    let pos_y = work_y + (work_h - outer_h) / 2.0;
 
     let _ = window.set_position(tauri::LogicalPosition::new(pos_x, pos_y));
 }
