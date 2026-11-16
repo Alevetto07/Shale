@@ -120,8 +120,14 @@ export function createField(
         const index = row * cols + col;
         const cx = col * CELL + CELL / 2;
         const cy = row * CELL + CELL / 2;
-        const localX = Math.min(drawW - 0.001, Math.max(0, cx - originX + shiftX));
-        const localY = Math.min(drawH - 0.001, Math.max(0, cy - originY + shiftY));
+        const rawX = cx - originX + shiftX;
+        const rawY = cy - originY + shiftY;
+        if (rawX < 0 || rawY < 0 || rawX >= drawW || rawY >= drawH) {
+          baseGlyph[index] = 0;
+          continue;
+        }
+        const localX = rawX;
+        const localY = rawY;
         const sx = Math.min(iw - 1, Math.floor((localX / drawW) * iw));
         const sy = Math.min(ih - 1, Math.floor((localY / drawH) * ih));
         const pixel = (sy * iw + sx) * 4;

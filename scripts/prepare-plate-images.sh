@@ -12,15 +12,15 @@ curl -fsSL -o "$TMP/saturn-src.jpg" "https://upload.wikimedia.org/wikipedia/comm
 
 # Lunar: moon on near-black; paper tone comes from the canvas background only.
 ffmpeg -y -hide_banner -loglevel error -i "$TMP/moon.jpg" -vf \
-  "scale=640:480:force_original_aspect_ratio=decrease,pad=640:480:20:0:color=0x111318" \
+  "scale=640:480:force_original_aspect_ratio=decrease,pad=640:480:(ow-iw)/2:(oh-ih)/2:color=0x111318,crop=616:480:12:0" \
   -q:v 4 "$FIELD/lunar-base.jpg"
 ffmpeg -y -hide_banner -loglevel error -i "$FIELD/lunar-base.jpg" -vf \
-  "format=gray,geq=lum='lum(X,Y)*if(gt(X,W*0.56),0,min(1,max(0,1-(X-0.32*W)/(0.22*W))))'" \
+  "format=gray,geq=lum='lum(X,Y)*if(lt(X,18),0,if(gt(X,W*0.56),0,min(1,max(0,1-(X-0.34*W)/(0.22*W)))))'" \
   -pix_fmt rgb24 -q:v 4 "$FIELD/lunar.jpg"
 rm -f "$FIELD/lunar-base.jpg"
 
 ffmpeg -y -hide_banner -loglevel error -i "$TMP/crab.jpg" -vf \
-  "scale=360:-1,pad=640:480:200:(oh-ih)/2:color=0x09060E,eq=gamma=1.9:contrast=0.9:brightness=-0.12" \
+  "scale=420:-1,pad=640:480:175:(oh-ih)/2:color=0x09060E,eq=gamma=1.28:contrast=1.08:saturation=1.2:brightness=-0.02" \
   -q:v 4 "$FIELD/nebula.jpg"
 
 ffmpeg -y -hide_banner -loglevel error -i "$TMP/saturn-src.jpg" -vf \
