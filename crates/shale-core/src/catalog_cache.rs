@@ -8,7 +8,6 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
-use std::thread;
 use std::{env, fs};
 
 use serde::{Deserialize, Serialize};
@@ -61,6 +60,18 @@ pub fn set_cache_dir_override(dir: PathBuf) {
     }
 }
 
+fn test_mode_active() -> bool {
+    cfg!(test)
+        || env::var_os("SHALE_TEST")
+            .is_some_and(|value| value != "0" && !value.is_empty())
+}
+
+fn isolated_test_cache_dir() -> PathBuf {
+    let dir = env::temp_dir().join(format!("shale-catalog-cache-{}", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
 /// User app-data, never next to the install / uninstall layout.
 pub(crate) fn cache_dir() -> PathBuf {
     if let Ok(guard) = CACHE_DIR_OVERRIDE.read() {
@@ -68,26 +79,20 @@ pub(crate) fn cache_dir() -> PathBuf {
             return dir.clone();
         }
     }
-    #[cfg(test)]
-    {
-        let dir = env::temp_dir().join(format!("shale-catalog-cache-{}", std::process::id()));
-        let _ = fs::create_dir_all(&dir);
-        return dir;
+    if let Ok(dir) = env::var("SHALE_CACHE_DIR") {
+        return PathBuf::from(dir);
     }
-    #[cfg(not(test))]
-    {
-        if let Ok(dir) = env::var("SHALE_CACHE_DIR") {
-            return PathBuf::from(dir);
-        }
-        #[cfg(windows)]
-        if let Ok(roaming) = env::var("APPDATA") {
-            return PathBuf::from(roaming).join("Shale").join("catalog-cache");
-        }
-        if let Ok(home) = env::var("HOME") {
-            return PathBuf::from(home).join(".cache").join("shale").join("catalog-cache");
-        }
-        env::temp_dir().join("shale-catalog-cache")
+    if test_mode_active() {
+        return isolated_test_cache_dir();
     }
+    #[cfg(windows)]
+    if let Ok(roaming) = env::var("APPDATA") {
+        return PathBuf::from(roaming).join("Shale").join("catalog-cache");
+    }
+    if let Ok(home) = env::var("HOME") {
+        return PathBuf::from(home).join(".cache").join("shale").join("catalog-cache");
+    }
+    env::temp_dir().join("shale-catalog-cache")
 }
 
 pub(crate) fn remove_legacy_cache_dir() {
@@ -216,16 +221,6 @@ pub(crate) fn load_cura_extras(
     if cached.markers != live {
         return Ok(None);
     }
-    let cura = cura.to_path_buf();
-    let materials = materials.to_path_buf();
-    let resources = resources.to_path_buf();
-    let stored = cached.markers.clone();
-    let path = file.clone();
-    thread::spawn(move || {
-        if cura_markers(&resources, &materials) != stored {
-            let _ = fs::remove_file(&path);
-        }
-    });
     Ok(Some((cached.instances, cached.materials)))
 }
 
@@ -236,7 +231,7 @@ pub(crate) fn store_cura_extras_async(
     instances: Vec<InstanceFile>,
     material_rows: Vec<Material>,
 ) {
-    thread::spawn(move || {
+    std::thread::spawn(move || {
         let _ = store_cura_extras_sync(&cura, &materials, &resources, &instances, &material_rows);
     });
 }
@@ -278,14 +273,6 @@ pub(crate) fn load_bambu_library(root: &Path) -> Option<Library> {
     if cached.markers != live {
         return None;
     }
-    let root = root.to_path_buf();
-    let stored = cached.markers.clone();
-    let path = file.clone();
-    thread::spawn(move || {
-        if bambu_markers(&root) != stored {
-            let _ = fs::remove_file(&path);
-        }
-    });
     Some(Library {
         definitions: cached.definitions,
         instances: cached.instances,
@@ -295,7 +282,7 @@ pub(crate) fn load_bambu_library(root: &Path) -> Option<Library> {
 }
 
 pub(crate) fn store_bambu_library_async(root: PathBuf, library: Library) {
-    thread::spawn(move || {
+    std::thread::spawn(move || {
         let _ = store_bambu_library_sync(&root, &library);
     });
 }

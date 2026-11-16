@@ -3,16 +3,18 @@ use std::sync::OnceLock;
 
 use shale_core::{set_catalog_cache_dir, Catalog, ResourcePaths, UserSettings};
 
-static TEST_CACHE: OnceLock<()> = OnceLock::new();
+struct CacheRoot {
+    _dir: tempfile::TempDir,
+}
+
+static TEST_CACHE: OnceLock<CacheRoot> = OnceLock::new();
 static REAL_CATALOG: OnceLock<Option<Catalog>> = OnceLock::new();
 
 fn use_test_cache_dir() {
     TEST_CACHE.get_or_init(|| {
-        let root = std::env::temp_dir().join("shale-core-tests");
-        let cache = root.join("catalog-cache");
-        std::fs::remove_dir_all(&cache).ok();
-        std::fs::create_dir_all(&cache).ok();
-        set_catalog_cache_dir(cache);
+        let dir = tempfile::tempdir().expect("resolve_fixture cache");
+        set_catalog_cache_dir(dir.path().to_path_buf());
+        CacheRoot { _dir: dir }
     });
 }
 

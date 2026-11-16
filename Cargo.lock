@@ -3648,6 +3648,7 @@ name = "shale-cli"
 version = "0.1.2"
 dependencies = [
  "shale-core",
+ "tempfile",
 ]
 
 [[package]]

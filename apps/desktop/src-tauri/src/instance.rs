@@ -12,8 +12,10 @@
 //! The mutex is a courtesy, not a lock on data: if it cannot be created the app
 //! starts anyway, because failing to open must never be the more likely outcome.
 
+#[cfg(windows)]
 use std::sync::atomic::{AtomicPtr, Ordering};
 
+#[cfg(windows)]
 /// The mutex handle, so a retry can let go of the name before it re-execs.
 static MUTEX: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -211,11 +213,6 @@ pub fn release() {}
 #[cfg(not(windows))]
 pub fn focus_existing(_title: &str) -> bool {
     false
-}
-
-#[cfg(not(windows))]
-pub fn say(caption: &str, message: &str) {
-    eprintln!("{caption}: {message}");
 }
 
 #[cfg(not(windows))]

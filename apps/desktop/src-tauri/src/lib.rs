@@ -276,8 +276,8 @@ fn fit_window_to_monitor(window: &tauri::WebviewWindow) {
     if let (Ok(hwnd), Ok(outer_pos)) = (window.hwnd(), window.outer_position()) {
         use std::mem::MaybeUninit;
         use windows::Win32::Foundation::RECT;
+        use windows::Win32::Foundation::HWND;
         use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
-        use windows::Win32::UI::WindowsAndMessaging::HWND;
 
         let hwnd = HWND(hwnd.0);
         let mut rect = MaybeUninit::<RECT>::uninit();

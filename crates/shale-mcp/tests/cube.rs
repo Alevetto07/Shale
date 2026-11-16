@@ -4,7 +4,6 @@
 //! CuraEngine binary when `SHALE_CURAENGINE` is set.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use rmcp::model::{CallToolRequestParams, CallToolResult, ContentBlock};
 use rmcp::ServiceExt;
@@ -48,14 +47,19 @@ impl SlicingEngine for FakeEngine {
     }
 }
 
-fn isolated_catalog_cache_dir() {
-    static CACHE: OnceLock<tempfile::TempDir> = OnceLock::new();
-    let dir = CACHE.get_or_init(|| tempfile::tempdir().expect("mcp cache tempdir"));
-    std::env::set_var("SHALE_CACHE_DIR", dir.path().as_os_str());
+struct IsolatedCache {
+    _dir: tempfile::TempDir,
+}
+
+impl IsolatedCache {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().expect("mcp cache tempdir");
+        shale_core::set_catalog_cache_dir(dir.path().to_path_buf());
+        Self { _dir: dir }
+    }
 }
 
 fn fixture_catalog() -> Catalog {
-    isolated_catalog_cache_dir();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../shale-core/tests/fixtures");
     Catalog::open(ResourcePaths {
         cura: root.join("cura"),
@@ -196,11 +200,15 @@ async fn slice_cube(
 
 #[tokio::test]
 async fn in_process_client_slices_the_20mm_cube() {
-    let destination =
-        std::env::temp_dir().join(format!("shale-mcp-cube-{}.gcode", std::process::id()));
-    let summary = slice_cube(fixture_catalog(), Box::new(FakeEngine), &destination).await;
+    let _cache = IsolatedCache::new();
+    let destination = tempfile::Builder::new()
+        .prefix("shale-mcp-cube-")
+        .suffix(".gcode")
+        .tempfile()
+        .expect("gcode temp");
+    let summary =
+        slice_cube(fixture_catalog(), Box::new(FakeEngine), destination.path()).await;
     assert_eq!(summary["layer_count"], 100);
-    let _ = std::fs::remove_file(&destination);
 }
 
 #[tokio::test]
@@ -210,13 +218,15 @@ async fn real_engine_slices_the_20mm_cube_when_configured() {
     {
         return;
     }
-    let destination =
-        std::env::temp_dir().join(format!("shale-mcp-real-{}.gcode", std::process::id()));
-    isolated_catalog_cache_dir();
+    let _cache = IsolatedCache::new();
+    let destination = tempfile::Builder::new()
+        .prefix("shale-mcp-real-")
+        .suffix(".gcode")
+        .tempfile()
+        .expect("gcode temp");
     let engine = CliEngine::from_env();
     assert!(engine.available(), "CuraEngine did not answer help");
     let catalog = Catalog::open(ResourcePaths::discover().expect("resources")).expect("catalog");
-    let summary = slice_cube(catalog, Box::new(engine), &destination).await;
+    let summary = slice_cube(catalog, Box::new(engine), destination.path()).await;
     assert_eq!(summary["layer_count"], 100, "{summary}");
-    let _ = std::fs::remove_file(&destination);
 }
