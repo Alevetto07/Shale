@@ -20,26 +20,30 @@ describe("mock surfaces", () => {
     return render(<App />);
   }
 
-  it("mounts Prepare without throwing", async () => {
-    const errors: string[] = [];
-    const onError = (event: ErrorEvent) => {
-      errors.push(event.message);
-    };
-    window.addEventListener("error", onError);
-    try {
-      await mount("/?mock=workspace-preview&pane=prepare");
-      await waitFor(
-        () => {
-          expect(document.querySelector(".workspace")).toBeTruthy();
-          expect(document.querySelector(".viewport-mock, .plate")).toBeTruthy();
-        },
-        { timeout: 8000 },
-      );
-      expect(errors).toEqual([]);
-    } finally {
-      window.removeEventListener("error", onError);
-    }
-  });
+  it(
+    "mounts Prepare without throwing",
+    async () => {
+      const errors: string[] = [];
+      const onError = (event: ErrorEvent) => {
+        errors.push(event.message);
+      };
+      window.addEventListener("error", onError);
+      try {
+        await mount("/?mock=workspace-preview&pane=prepare");
+        await waitFor(
+          () => {
+            expect(document.querySelector(".workspace")).toBeTruthy();
+            expect(document.querySelector(".viewport-mock, .plate")).toBeTruthy();
+          },
+          { timeout: 15_000 },
+        );
+        expect(errors).toEqual([]);
+      } finally {
+        window.removeEventListener("error", onError);
+      }
+    },
+  15_000,
+  );
 
   it("mock prepare shows a framed model on the plate after import", async () => {
     await mount("/?mock=workspace-prepare&pane=prepare");

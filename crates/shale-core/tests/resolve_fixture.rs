@@ -1,20 +1,16 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use shale_core::{set_catalog_cache_dir, Catalog, ResourcePaths, UserSettings};
+use shale_core::{
+    integration_test_cache_dir, set_catalog_cache_dir, Catalog, ResourcePaths, UserSettings,
+};
 
-struct CacheRoot {
-    _dir: tempfile::TempDir,
-}
-
-static TEST_CACHE: OnceLock<CacheRoot> = OnceLock::new();
+static TEST_CACHE_READY: OnceLock<()> = OnceLock::new();
 static REAL_CATALOG: OnceLock<Option<Catalog>> = OnceLock::new();
 
 fn use_test_cache_dir() {
-    TEST_CACHE.get_or_init(|| {
-        let dir = tempfile::tempdir().expect("resolve_fixture cache");
-        set_catalog_cache_dir(dir.path().to_path_buf());
-        CacheRoot { _dir: dir }
+    TEST_CACHE_READY.get_or_init(|| {
+        set_catalog_cache_dir(integration_test_cache_dir("shale-core-resolve_fixture"));
     });
 }
 

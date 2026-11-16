@@ -1,15 +1,14 @@
 //! What a person sees before they have read any documentation.
 
 use std::process::Command;
-use std::sync::OnceLock;
 
-static CLI_TEST_CACHE: OnceLock<tempfile::TempDir> = OnceLock::new();
+use shale_core::integration_test_cache_dir;
 
 fn binary() -> Command {
-    let cache = CLI_TEST_CACHE.get_or_init(|| tempfile::tempdir().expect("cli test cache"));
+    let cache = integration_test_cache_dir("shale-cli");
     let mut command = Command::new(env!("CARGO_BIN_EXE_shale-cli"));
     command.env("SHALE_TEST", "1");
-    command.env("SHALE_CACHE_DIR", cache.path());
+    command.env("SHALE_CACHE_DIR", cache);
     command
 }
 

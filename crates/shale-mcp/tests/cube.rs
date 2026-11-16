@@ -47,16 +47,8 @@ impl SlicingEngine for FakeEngine {
     }
 }
 
-struct IsolatedCache {
-    _dir: tempfile::TempDir,
-}
-
-impl IsolatedCache {
-    fn new() -> Self {
-        let dir = tempfile::tempdir().expect("mcp cache tempdir");
-        shale_core::set_catalog_cache_dir(dir.path().to_path_buf());
-        Self { _dir: dir }
-    }
+fn ensure_test_cache() {
+    shale_core::set_catalog_cache_dir(shale_core::integration_test_cache_dir("shale-mcp"));
 }
 
 fn fixture_catalog() -> Catalog {
@@ -200,7 +192,7 @@ async fn slice_cube(
 
 #[tokio::test]
 async fn in_process_client_slices_the_20mm_cube() {
-    let _cache = IsolatedCache::new();
+    ensure_test_cache();
     let destination = tempfile::Builder::new()
         .prefix("shale-mcp-cube-")
         .suffix(".gcode")
@@ -218,7 +210,7 @@ async fn real_engine_slices_the_20mm_cube_when_configured() {
     {
         return;
     }
-    let _cache = IsolatedCache::new();
+    ensure_test_cache();
     let destination = tempfile::Builder::new()
         .prefix("shale-mcp-real-")
         .suffix(".gcode")
