@@ -321,6 +321,14 @@ impl Session {
         if let Some(value) = patch.material_bed_temperature {
             self.settings.material_bed_temperature = Some(value);
         }
+        if let Some(mode) = patch.nonplanar_mode {
+            self.settings.nonplanar.mode =
+                shale_nonplanar::NonplanarMode::from_cli_name(&mode)
+                    .unwrap_or(shale_nonplanar::NonplanarMode::Off);
+        }
+        if let Some(angle) = patch.nonplanar_max_angle_deg {
+            self.settings.nonplanar.max_angle_deg = angle;
+        }
         Ok(())
     }
 
@@ -539,6 +547,8 @@ pub struct SettingsPatch {
     pub support_enable: Option<bool>,
     pub material_print_temperature: Option<f64>,
     pub material_bed_temperature: Option<f64>,
+    pub nonplanar_mode: Option<String>,
+    pub nonplanar_max_angle_deg: Option<f64>,
 }
 
 const DEFAULT_KEYS: &[&str] = &[

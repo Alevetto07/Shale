@@ -1,0 +1,314 @@
+[
+  {
+    "name": "dome",
+    "planar_layers": 120,
+    "curved_layers": 125,
+    "planar_time_s": 920.0,
+    "curved_time_s": 956.0,
+    "planar_top_z_min": 22.6,
+    "planar_top_z_max": 24.0,
+    "curved_top_z_min": 21.276,
+    "curved_top_z_max": 24.105,
+    "planar_in_layer_max_slope_deg": 0.0,
+    "curved_in_layer_max_slope_deg": 10.14992817022778,
+    "curved_max_slope_across_layers_deg": 10.212769306029053,
+    "curved_slope_histogram": [
+      [
+        0.25,
+        49
+      ],
+      [
+        0.75,
+        54
+      ],
+      [
+        1.25,
+        51
+      ],
+      [
+        1.75,
+        75
+      ],
+      [
+        2.25,
+        84
+      ],
+      [
+        2.75,
+        72
+      ],
+      [
+        3.25,
+        64
+      ],
+      [
+        3.75,
+        59
+      ],
+      [
+        4.25,
+        98
+      ],
+      [
+        4.75,
+        69
+      ],
+      [
+        5.25,
+        52
+      ],
+      [
+        5.75,
+        62
+      ],
+      [
+        6.25,
+        43
+      ],
+      [
+        6.75,
+        40
+      ],
+      [
+        7.25,
+        50
+      ],
+      [
+        7.75,
+        48
+      ],
+      [
+        8.25,
+        39
+      ],
+      [
+        8.75,
+        40
+      ],
+      [
+        9.25,
+        31
+      ],
+      [
+        9.75,
+        812
+      ],
+      [
+        10.25,
+        483
+      ]
+    ],
+    "curved_band_max_slope_deg": 10.212769306029053,
+    "max_angle_ok": true,
+    "envelope_ok": true,
+    "collision_notes": [
+      "collision flattening skipped (uncalibrated A1 head envelope)",
+      "ironing disabled for curved-top pass",
+      "slope safety pass 1: 1 violation(s), worst 22.22°",
+      "slope safety pass 2: 1 violation(s), worst 22.22°",
+      "slope safety pass 3: 1 violation(s), worst 22.22°",
+      "slope safety pass 4: 1 violation(s), worst 22.22°",
+      "slope safety pass 5: 1 violation(s), worst 22.22°",
+      "slope safety pass 6: 1 violation(s), worst 22.22°",
+      "slope safety pass 7: 1 violation(s), worst 22.22°",
+      "slope safety pass 8: 1 violation(s), worst 22.22°",
+      "slope safety pass 9: 1 violation(s), worst 22.22°",
+      "slope safety pass 10: 1 violation(s), worst 22.22°",
+      "slope safety pass 11: 1 violation(s), worst 22.22°",
+      "slope safety pass 12: 1 violation(s), worst 22.22°",
+      "slope safety pass 13: 1 violation(s), worst 22.22°",
+      "slope safety pass 14: 1 violation(s), worst 22.22°",
+      "slope safety pass 15: 1 violation(s), worst 22.22°",
+      "slope safety pass 16: 1 violation(s), worst 22.22°",
+      "slope safety: hard clamp applied to curved-band extrusions",
+      "post-pass complete",
+      "ironing_enabled was forced off for curved-top slicing"
+    ]
+  },
+  {
+    "name": "chevron",
+    "planar_layers": 77,
+    "curved_layers": 80,
+    "planar_time_s": 1083.0,
+    "curved_time_s": 1313.0,
+    "planar_top_z_min": 14.0,
+    "planar_top_z_max": 15.4,
+    "curved_top_z_min": 13.95,
+    "curved_top_z_max": 15.35,
+    "planar_in_layer_max_slope_deg": 0.0,
+    "curved_in_layer_max_slope_deg": 0.0,
+    "curved_max_slope_across_layers_deg": 0.0,
+    "curved_slope_histogram": [
+      [
+        0.25,
+        3673
+      ]
+    ],
+    "curved_band_max_slope_deg": 10.065545678483016,
+    "max_angle_ok": true,
+    "envelope_ok": true,
+    "collision_notes": [
+      "collision flattening skipped (uncalibrated A1 head envelope)",
+      "ironing disabled for curved-top pass",
+      "slope safety pass 1: 1 violation(s), worst 10.77°",
+      "slope safety pass 2: 1 violation(s), worst 10.77°",
+      "slope safety pass 3: 1 violation(s), worst 10.77°",
+      "slope safety pass 4: 2 violation(s), worst 15.01°",
+      "slope safety pass 5: 10 violation(s), worst 61.71°",
+      "slope safety pass 6: 12 violation(s), worst 75.83°",
+      "slope safety pass 7: 12 violation(s), worst 78.80°",
+      "slope safety pass 8: 12 violation(s), worst 79.90°",
+      "slope safety pass 9: 12 violation(s), worst 80.39°",
+      "slope safety pass 10: 12 violation(s), worst 80.50°",
+      "slope safety pass 11: 12 violation(s), worst 80.54°",
+      "slope safety pass 12: 13 violation(s), worst 80.56°",
+      "slope safety pass 13: 13 violation(s), worst 80.58°",
+      "slope safety pass 14: 1 violation(s), worst 23.53°",
+      "slope safety pass 15: 1 violation(s), worst 23.53°",
+      "slope safety pass 16: 1 violation(s), worst 23.53°",
+      "slope safety: hard clamp applied to curved-band extrusions",
+      "post-pass complete",
+      "ironing_enabled was forced off for curved-top slicing"
+    ]
+  },
+  {
+    "name": "t-wing",
+    "planar_layers": 120,
+    "curved_layers": 120,
+    "planar_time_s": 863.0,
+    "curved_time_s": 863.0,
+    "planar_top_z_min": 22.6,
+    "planar_top_z_max": 24.0,
+    "curved_top_z_min": 20.218,
+    "curved_top_z_max": 24.0,
+    "planar_in_layer_max_slope_deg": 0.0,
+    "curved_in_layer_max_slope_deg": 10.082865319857056,
+    "curved_max_slope_across_layers_deg": 10.082865319857056,
+    "curved_slope_histogram": [
+      [
+        0.25,
+        617
+      ],
+      [
+        0.75,
+        35
+      ],
+      [
+        1.25,
+        36
+      ],
+      [
+        1.75,
+        30
+      ],
+      [
+        2.25,
+        35
+      ],
+      [
+        2.75,
+        53
+      ],
+      [
+        3.25,
+        63
+      ],
+      [
+        3.75,
+        89
+      ],
+      [
+        4.25,
+        96
+      ],
+      [
+        4.75,
+        109
+      ],
+      [
+        5.25,
+        113
+      ],
+      [
+        5.75,
+        110
+      ],
+      [
+        6.25,
+        115
+      ],
+      [
+        6.75,
+        118
+      ],
+      [
+        7.25,
+        120
+      ],
+      [
+        7.75,
+        133
+      ],
+      [
+        8.25,
+        100
+      ],
+      [
+        8.75,
+        125
+      ],
+      [
+        9.25,
+        117
+      ],
+      [
+        9.75,
+        1123
+      ],
+      [
+        10.25,
+        1408
+      ]
+    ],
+    "curved_band_max_slope_deg": 10.034736080221805,
+    "max_angle_ok": true,
+    "envelope_ok": true,
+    "collision_notes": [
+      "collision flattening skipped (uncalibrated A1 head envelope)",
+      "ironing disabled for curved-top pass",
+      "slope safety: hard clamp applied to curved-band extrusions",
+      "post-pass complete",
+      "ironing_enabled was forced off for curved-top slicing"
+    ]
+  },
+  {
+    "name": "benchy",
+    "planar_layers": 125,
+    "curved_layers": 125,
+    "planar_time_s": 1473.0,
+    "curved_time_s": 1473.0,
+    "planar_top_z_min": 23.6,
+    "planar_top_z_max": 25.0,
+    "curved_top_z_min": 23.6,
+    "curved_top_z_max": 25.0,
+    "planar_in_layer_max_slope_deg": 0.0,
+    "curved_in_layer_max_slope_deg": 0.0,
+    "curved_max_slope_across_layers_deg": 0.0,
+    "curved_slope_histogram": [
+      [
+        0.25,
+        662
+      ]
+    ],
+    "curved_band_max_slope_deg": 0.0,
+    "max_angle_ok": true,
+    "envelope_ok": true,
+    "collision_notes": [
+      "collision flattening skipped (uncalibrated A1 head envelope)",
+      "ironing disabled for curved-top pass",
+      "slope safety: hard clamp applied to curved-band extrusions",
+      "post-pass complete",
+      "ironing_enabled was forced off for curved-top slicing"
+    ]
+  }
+]

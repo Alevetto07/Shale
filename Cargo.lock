@@ -3639,6 +3639,7 @@ dependencies = [
  "quick-xml 0.37.5",
  "serde",
  "serde_json",
+ "shale-nonplanar",
  "thiserror 1.0.69",
  "truck-meshalgo",
  "truck-modeling",
@@ -3690,6 +3691,14 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "shale-nonplanar"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -269,6 +269,8 @@ pub struct SliceOutcome {
     /// The machine's own start and end sequence, filled in, was used for this
     /// slice. `false` is Cura's generic Marlin start.
     pub machine_gcode: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonplanar_report: Option<shale_nonplanar::NonplanarReport>,
 }
 
 pub fn slice(
@@ -381,6 +383,13 @@ pub fn slice(
     }
 
     let layer_height = resolved.summary.layer_height.max(0.05);
+    let nonplanar_active = settings
+        .nonplanar
+        .active_for_printer(printer_id);
+    if nonplanar_active {
+        force_setting(&mut resolved, "ironing_enabled", "false");
+    }
+    let mut pre_deform_meshes: Vec<TriangleMesh> = Vec::new();
     let mut estimated_layers = 1u32;
     let mut baked_paths = Vec::new();
     // The header's bounding box, measured on the same meshes the engine is
@@ -397,12 +406,26 @@ pub fn slice(
         estimated_layers = estimated_layers.max((height / layer_height).ceil().max(1.0) as u32);
         // Height is measured in machine space. The engine then wants bed-centre
         // coordinates, which is a pure XY shift and does not change the height.
+        if nonplanar_active {
+            // Inverse G-code mapping runs in machine coordinates; the height field must
+            // match the coordinates CuraEngine writes after `MeshGroup::finalize`.
+            pre_deform_meshes.push(baked.clone());
+        }
         mesh::to_engine_space(
             &mut baked,
             resolved.summary.machine_width,
             resolved.summary.machine_depth,
             resolved.summary.machine_center_is_zero,
         );
+        if nonplanar_active {
+            let np_in = crate::nonplanar_bridge::to_nonplanar(&baked);
+            let (deformed, _ctx) = shale_nonplanar::prepare_pre_pass(
+                &np_in,
+                &settings.nonplanar,
+                layer_height,
+            );
+            baked = crate::nonplanar_bridge::from_nonplanar(&deformed);
+        }
         let (engine_min, engine_max) = mesh::bounds(&baked);
         for axis in 0..3 {
             scene_min[axis] = scene_min[axis].min(engine_min[axis]);
@@ -514,7 +537,28 @@ pub fn slice(
         },
         on_progress,
     )?;
-    let gcode = fs::read_to_string(&output.gcode_path)?;
+    let mut gcode = fs::read_to_string(&output.gcode_path)?;
+    let mut nonplanar_report = None;
+    if nonplanar_active && !pre_deform_meshes.is_empty() {
+        let reference = shale_nonplanar::merge_meshes(
+            &pre_deform_meshes
+                .iter()
+                .map(crate::nonplanar_bridge::to_nonplanar)
+                .collect::<Vec<_>>(),
+        );
+        let (mapped, report) = shale_nonplanar::apply_post_pass(
+            &gcode,
+            &reference,
+            &settings.nonplanar,
+            layer_height,
+        );
+        gcode = mapped;
+        let mut report = report;
+        report
+            .notes
+            .push("ironing_enabled was forced off for curved-top slicing".into());
+        nonplanar_report = Some(report);
+    }
     // CuraEngine does not always say the print time on stdout; it writes it
     // into the file's own `;TIME:` line. The header is read before the summary
     // is allowed to claim there is no estimate, because for the A1 profile
@@ -554,6 +598,7 @@ pub fn slice(
         flavour,
         machine_gcode: machine_gcode.is_some(),
         log_tail: output.log_tail,
+        nonplanar_report,
     })
 }
 

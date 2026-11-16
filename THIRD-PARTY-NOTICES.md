@@ -8,6 +8,15 @@ licences travel with the program rather than with a web page.
 Shale's own source licence is undecided: see [LICENSING.md](LICENSING.md). That
 question is separate from the ones below, which are settled.
 
+## Non-planar slicing references
+
+Shale v0.2’s `shale-nonplanar` crate implements an original deform → planar slice →
+map-back pipeline informed by published work (CurviSlicer, Ahlers, S³-Slicer). No
+AGPL non-planar slicer source or head-envelope JSON was copied. Physical A1
+measurements cited in `crates/shale-nonplanar/data/bambu_a1_head.json` come from
+public BambuStudio machine presets and Alpaca Engineering’s A1-mini clearance
+discussion; the envelope file is marked uncalibrated.
+
 ## The mesh engine
 
 | Component | Version | Licence |

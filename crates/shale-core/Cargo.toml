@@ -19,3 +19,4 @@ truck-modeling = "0.6"
 truck-stepio = "0.3"
 truck-topology = "0.6"
 zip = "2.2"
+shale-nonplanar = { path = "../shale-nonplanar" }

@@ -106,6 +106,10 @@ struct SettingsArgs {
     support_enable: Option<bool>,
     material_print_temperature: Option<f64>,
     material_bed_temperature: Option<f64>,
+    /// `off` or `curved-tops` (Bambu A1 only, experimental).
+    nonplanar_mode: Option<String>,
+    /// Maximum surface angle in degrees (default 10).
+    nonplanar_max_angle_deg: Option<f64>,
 }
 
 impl From<SettingsArgs> for SettingsPatch {
@@ -120,6 +124,8 @@ impl From<SettingsArgs> for SettingsPatch {
             support_enable: args.support_enable,
             material_print_temperature: args.material_print_temperature,
             material_bed_temperature: args.material_bed_temperature,
+            nonplanar_mode: args.nonplanar_mode,
+            nonplanar_max_angle_deg: args.nonplanar_max_angle_deg,
         }
     }
 }

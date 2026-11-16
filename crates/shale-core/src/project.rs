@@ -553,6 +553,7 @@ mod tests {
                 material_print_temperature: Some(210.0),
                 material_bed_temperature: Some(60.0),
                 extra: vec![("adhesion_type".into(), "brim".into())],
+                ..UserSettings::default()
             },
             chord_mm: 0.08,
             turn_deg: 12.0,

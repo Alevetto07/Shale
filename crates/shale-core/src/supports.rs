@@ -1107,6 +1107,7 @@ mod tests {
             material_print_temperature: Some(200.0),
             material_bed_temperature: Some(60.0),
             extra: Vec::new(),
+            ..Default::default()
         };
         let placed = [crate::PlacedModel {
             name: "bridge".into(),

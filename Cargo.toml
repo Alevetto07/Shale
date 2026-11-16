@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/shale-core",
+    "crates/shale-nonplanar",
     "crates/shale-host",
     "crates/shale-mcp",
     "crates/shale-cli",
