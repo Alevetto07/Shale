@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
+import { DEFAULT_PLATE_TUNE, type PlateTune } from "./plate-tune";
 import { pointer, prefersStill, subscribe } from "./loop";
 import { createField, type FieldPainter } from "./paint";
 
@@ -13,11 +14,13 @@ export function PlateField({
   comet,
   imageUrl,
   backgroundRgb,
+  plateTune = DEFAULT_PLATE_TUNE,
 }: {
   live: boolean;
   comet: boolean;
   imageUrl: string;
   backgroundRgb: readonly [number, number, number];
+  plateTune?: PlateTune;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const liveRef = useRef(live);
@@ -29,7 +32,9 @@ export function PlateField({
   const imageRef = useRef<HTMLImageElement | null>(null);
   const paintStillRef = useRef<() => void>(() => {});
   const bgRef = useRef(backgroundRgb);
+  const tuneRef = useRef(plateTune);
   bgRef.current = backgroundRgb;
+  tuneRef.current = plateTune;
 
   useEffect(() => {
     const image = new Image();
@@ -40,7 +45,7 @@ export function PlateField({
 
     const bind = (node: HTMLCanvasElement) => {
       boundRef.current = node;
-      const field = createField(node, image, bgRef.current);
+      const field = createField(node, image, bgRef.current, tuneRef.current);
       fieldRef.current = field;
       paintStillRef.current = () => field.paint(0, -1e6, -1e6, false);
       paintStillRef.current();
@@ -98,7 +103,7 @@ export function PlateField({
       fieldRef.current = null;
       boundRef.current = null;
     };
-  }, [imageUrl, backgroundRgb[0], backgroundRgb[1], backgroundRgb[2]]);
+  }, [imageUrl, backgroundRgb[0], backgroundRgb[1], backgroundRgb[2], plateTune]);
 
   useLayoutEffect(() => {
     const node = ref.current;
@@ -108,7 +113,7 @@ export function PlateField({
       const image = imageRef.current;
       if (!image) return;
       boundRef.current = node;
-      const rebound = createField(node, image, bgRef.current);
+      const rebound = createField(node, image, bgRef.current, tuneRef.current);
       fieldRef.current = rebound;
       paintStillRef.current = () => rebound.paint(0, -1e6, -1e6, false);
       paintStillRef.current();

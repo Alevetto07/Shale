@@ -313,6 +313,15 @@ textarea {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sheet);
+  background: var(--panel);
+}
+
+.start-recents:not(.start-recents--collapsed) {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sheet);
+  padding-bottom: var(--space-1);
 }
 .start-list button,
 .start-scroll button,

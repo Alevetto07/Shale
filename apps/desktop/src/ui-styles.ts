@@ -2,6 +2,7 @@ import andromedaPlate from "./field/andromeda.jpg";
 import lunarPlate from "./field/lunar.jpg";
 import nebulaPlate from "./field/nebula.jpg";
 import saturnPlate from "./field/saturn.jpg";
+import type { PlateTune } from "./field/plate-tune";
 
 export const UI_STYLE_STORAGE_KEY = "shale.ui-style";
 
@@ -30,6 +31,7 @@ export interface UiStyleDefinition {
   swatch: { bg: string; panel: string; accent: string; ink: string };
   /** RGB background behind the ASCII plate painter. */
   plateBackground: readonly [number, number, number];
+  plateTune?: PlateTune;
 }
 
 export const UI_STYLES: readonly UiStyleDefinition[] = [
@@ -62,6 +64,12 @@ export const UI_STYLES: readonly UiStyleDefinition[] = [
     },
     swatch: { bg: "#0c0906", panel: "#15100a", accent: "#e8b86a", ink: "#f2e8dc" },
     plateBackground: [12, 9, 6],
+    plateTune: {
+      lumaPower: 0.5,
+      lumaGain: 1.08,
+      lumaFloor: 0.04,
+      fitScaleMul: 0.95,
+    },
   },
   {
     id: "nebula",
@@ -77,6 +85,16 @@ export const UI_STYLES: readonly UiStyleDefinition[] = [
     },
     swatch: { bg: "#09060e", panel: "#120a1a", accent: "#e07aff", ink: "#efe6f8" },
     plateBackground: [9, 6, 14],
+    plateTune: {
+      lumaPower: 0.9,
+      lumaGain: 0.44,
+      lumaFloor: 0.12,
+      fitScaleMul: 0.8,
+      fitBiasX: -0.16,
+      fitBiasY: -0.04,
+      glyphFrom: "nebula",
+      twinklePeriod: 0,
+    },
   },
   {
     id: "lunar",
@@ -85,13 +103,24 @@ export const UI_STYLES: readonly UiStyleDefinition[] = [
     plateCredit: {
       name: "Moon near first quarter",
       object: "Moon",
-      credit: "Luc Viatour / Lviatour (derivative half-phase edit for Shale)",
+      credit: "Luc Viatour / Lviatour (half-phase derivative for Shale)",
       release: "2009",
       page: "https://commons.wikimedia.org/wiki/File:Full_Moon_Luc_Viatour.jpg",
       licence: "CC BY-SA 3.0",
     },
     swatch: { bg: "#eef0f4", panel: "#ffffff", accent: "#1d5fd6", ink: "#141820" },
     plateBackground: [238, 240, 244],
+    plateTune: {
+      lumaPower: 0.55,
+      lumaGain: 1.12,
+      lumaFloor: 0.05,
+      fitScaleMul: 0.82,
+      fitBiasX: -0.06,
+      glyphFrom: "graphite",
+      glyphTintLo: [108, 118, 136],
+      glyphTintHi: [42, 50, 68],
+      twinklePeriod: 0,
+    },
   },
 ] as const;
 

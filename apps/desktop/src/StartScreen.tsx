@@ -163,6 +163,7 @@ export function StartScreen({
         comet={live}
         imageUrl={plate.plateImage}
         backgroundRgb={plate.plateBackground}
+        plateTune={plate.plateTune}
       />
       <nav className="start-menu" aria-label="Start">
         {panel === "menu" && (

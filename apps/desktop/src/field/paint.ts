@@ -6,6 +6,8 @@
  * the shared clock is capped at about 30 fps by the caller.
  */
 
+import { DEFAULT_PLATE_TUNE, type PlateTune } from "./plate-tune";
+
 export const RAMP = " .:-=+*#%@";
 export const CELL = 11;
 const LENS = 96;
@@ -19,6 +21,7 @@ export function createField(
   canvas: HTMLCanvasElement,
   image: HTMLImageElement,
   backgroundRgb: readonly [number, number, number] = DEFAULT_BG,
+  tune: PlateTune = DEFAULT_PLATE_TUNE,
 ): FieldPainter {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) {
@@ -78,12 +81,12 @@ export function createField(
     baseB = new Uint8Array(count);
     offsetX = new Float32Array(count);
     offsetY = new Float32Array(count);
-    const fit = Math.max(width / iw, height / ih) * 1.03;
+    const fit = Math.max(width / iw, height / ih) * (tune.fitScaleMul ?? 1.03);
     fitted = {
       drawW: iw * fit,
       drawH: ih * fit,
-      originX: (width - iw * fit) / 2,
-      originY: (height - ih * fit) / 2,
+      originX: (width - iw * fit) / 2 + (tune.fitBiasX ?? 0) * width,
+      originY: (height - ih * fit) / 2 + (tune.fitBiasY ?? 0) * height,
     };
     // The picture is fixed. Only a sparse, deterministic set of cells pulses,
     // each on its own period, so the field reads as a still frame with a few
@@ -96,7 +99,8 @@ export function createField(
     for (let row = 0; row < rows; row += 1) {
       for (let col = 0; col < cols; col += 1) {
         const hash = ((col * 73856093) ^ (row * 19349663)) >>> 0;
-        if (hash % 97 !== 0) continue;
+        const period = tune.twinklePeriod ?? 97;
+        if (period <= 0 || hash % period !== 0) continue;
         const index = row * cols + col;
         twinkleList.push(index);
         const wobble = (hash >>> 8) % 1000;
@@ -124,12 +128,46 @@ export function createField(
         const red = pixels[pixel];
         const green = pixels[pixel + 1];
         const blue = pixels[pixel + 2];
-        const luma = Math.pow((0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255, 0.45);
-        const step = Math.round(luma * (RAMP.length - 1));
+        if (tune.matchBackgroundEmpty) {
+          const dr = Math.abs(red - backgroundRgb[0]);
+          const dg = Math.abs(green - backgroundRgb[1]);
+          const db = Math.abs(blue - backgroundRgb[2]);
+          if (dr + dg + db < 22) {
+            baseGlyph[index] = 0;
+            continue;
+          }
+        }
+        let luma = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
+        luma = Math.pow(luma, tune.lumaPower ?? 0.45);
+        luma *= tune.lumaGain ?? 1;
+        const floor = tune.lumaFloor ?? 0;
+        if (luma < floor) {
+          baseGlyph[index] = 0;
+          baseR[index] = 0;
+          baseG[index] = 0;
+          baseB[index] = 0;
+          continue;
+        }
+        const step = Math.round(Math.min(1, luma) * (RAMP.length - 1));
         baseGlyph[index] = step;
-        baseR[index] = red;
-        baseG[index] = green;
-        baseB[index] = blue;
+        const mode = tune.glyphFrom ?? "pixel";
+        if (mode === "graphite") {
+          const lo = tune.glyphTintLo ?? [78, 88, 104];
+          const hi = tune.glyphTintHi ?? [38, 44, 58];
+          const t = step / Math.max(1, RAMP.length - 1);
+          baseR[index] = Math.round(lo[0] + (hi[0] - lo[0]) * t);
+          baseG[index] = Math.round(lo[1] + (hi[1] - lo[1]) * t);
+          baseB[index] = Math.round(lo[2] + (hi[2] - lo[2]) * t);
+        } else if (mode === "nebula") {
+          const t = step / Math.max(1, RAMP.length - 1);
+          baseR[index] = Math.round(120 + 100 * t);
+          baseG[index] = Math.round(70 + 40 * t);
+          baseB[index] = Math.round(160 + 70 * t);
+        } else {
+          baseR[index] = red;
+          baseG[index] = green;
+          baseB[index] = blue;
+        }
       }
     }
   };
@@ -279,9 +317,20 @@ export function createField(
         let blue = Math.min(255, baseB[index] * gain);
         if (red + green + blue < 24) {
           const ink = 0.22 + influence * 0.5 + (lit ? 0.3 : 0);
-          red = 233 * ink;
-          green = 232 * ink;
-          blue = 242 * ink;
+          const mode = tune.glyphFrom ?? "pixel";
+          if (mode === "graphite") {
+            red = 72 * ink;
+            green = 80 * ink;
+            blue = 96 * ink;
+          } else if (mode === "nebula") {
+            red = 140 * ink;
+            green = 90 * ink;
+            blue = 200 * ink;
+          } else {
+            red = 233 * ink;
+            green = 232 * ink;
+            blue = 242 * ink;
+          }
         }
         stamp(
           buffer,
