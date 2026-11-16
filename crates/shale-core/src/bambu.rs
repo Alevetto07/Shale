@@ -16,6 +16,17 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
+
+#[cfg(test)]
+static TEST_PROFILES_ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+#[cfg(test)]
+pub(crate) fn set_test_profiles_root(dir: Option<PathBuf>) {
+    if let Ok(mut guard) = TEST_PROFILES_ROOT.write() {
+        *guard = dir;
+    }
+}
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
@@ -228,6 +239,12 @@ impl Library {
 
 /// Directory that holds Orca/Bambu `resources/profiles`, from env or common installs.
 pub fn profiles_root() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Ok(guard) = TEST_PROFILES_ROOT.read() {
+        if let Some(dir) = guard.as_ref() {
+            return Some(dir.clone());
+        }
+    }
     if let Some(dir) = std::env::var_os("SHALE_ORCA_DIR") {
         return Some(PathBuf::from(dir));
     }

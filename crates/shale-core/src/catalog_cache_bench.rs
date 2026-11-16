@@ -3,17 +3,33 @@
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::OnceLock;
     use std::time::Instant;
 
+    use crate::bambu;
     use crate::catalog::{Catalog, ResourcePaths};
     use crate::catalog_cache;
 
+    fn bench_orca_root() -> PathBuf {
+        static ROOT: OnceLock<PathBuf> = OnceLock::new();
+        ROOT.get_or_init(|| {
+            let dir = std::env::temp_dir().join("shale-bench-empty-orca");
+            std::fs::remove_dir_all(&dir).ok();
+            std::fs::create_dir_all(&dir).ok();
+            bambu::set_test_profiles_root(Some(dir.clone()));
+            catalog_cache::set_test_cache_dir(
+                std::env::temp_dir()
+                    .join("shale-bench-cache")
+                    .join("catalog"),
+            );
+            dir
+        })
+        .clone()
+    }
+
     #[test]
     fn fixture_catalog_open_stays_fast() {
-        let dir = std::env::temp_dir().join(format!("shale-bench-cache-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).ok();
-        std::env::set_var("SHALE_CACHE_DIR", &dir);
-
+        let _orca = bench_orca_root();
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
         let paths = ResourcePaths {
             cura: root.join("cura"),
@@ -25,22 +41,22 @@ mod tests {
         eprintln!("fixture Catalog::open {:?}", elapsed);
         assert!(
             elapsed.as_millis() < 600,
-            "fixture open took {:?}; cache fingerprint should stay cheap",
+            "fixture open took {:?}",
             elapsed
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn cheap_fingerprint_is_millisecond_scale() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
         let resources = root.join("cura");
+        let materials = root.join("materials");
         let start = Instant::now();
         for _ in 0..20 {
-            let _ = catalog_cache::fingerprint_cura(&resources, &resources, &resources);
+            let _ = catalog_cache::fingerprint_fixture(&resources, &materials);
         }
         let elapsed = start.elapsed();
-        eprintln!("20 fingerprints {:?}", elapsed);
+        eprintln!("20 fixture fingerprints {:?}", elapsed);
         assert!(
             elapsed.as_millis() < 200,
             "fingerprinting took {:?} for 20 runs",

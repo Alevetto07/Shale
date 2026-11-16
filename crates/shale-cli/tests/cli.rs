@@ -92,6 +92,7 @@ fn info_never_prints_contradictory_env_lines() {
             assert!(
                 line.contains("set: ")
                     || line.contains("not set (auto-detected: ")
+                    || line.contains("not set (optional")
                     || line.contains("not found — "),
                 "unexpected env line format: {line}"
             );

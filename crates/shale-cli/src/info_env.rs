@@ -7,15 +7,32 @@ pub enum EnvPath {
     Set(String),
     /// Shale found a usable path without the variable.
     AutoDetected(String),
+    /// The variable is unset but the default is acceptable.
+    UnsetOptional(&'static str),
     /// Nothing usable was found.
     NotFound(&'static str),
 }
 
+const NAME_WIDTH: usize = 26;
+
+fn format_path_for_display(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        return path.replace('/', "\\");
+    }
+    #[cfg(not(windows))]
+    path.to_string()
+}
+
 pub fn env_path_line(name: &str, path: EnvPath) -> String {
     match path {
-        EnvPath::Set(value) => format!("{name:<22} set: {value}"),
-        EnvPath::AutoDetected(value) => format!("{name:<22} not set (auto-detected: {value})"),
-        EnvPath::NotFound(hint) => format!("{name:<22} not found — {hint}"),
+        EnvPath::Set(value) => format!("{name:<NAME_WIDTH$}set: {value}"),
+        EnvPath::AutoDetected(value) => {
+            let value = format_path_for_display(&value);
+            format!("{name:<NAME_WIDTH$}not set (auto-detected: {value})")
+        }
+        EnvPath::UnsetOptional(hint) => format!("{name:<NAME_WIDTH$}not set ({hint})"),
+        EnvPath::NotFound(hint) => format!("{name:<NAME_WIDTH$}not found — {hint}"),
     }
 }
 
@@ -59,10 +76,12 @@ pub fn materials_path() -> EnvPath {
 
 pub fn orca_profiles_path() -> EnvPath {
     if let Ok(path) = std::env::var("SHALE_ORCA_DIR") {
-        return EnvPath::Set(path);
+        return EnvPath::Set(format_path_for_display(&path));
     }
     match shale_core::bambu::profiles_root() {
-        Some(path) => EnvPath::AutoDetected(path.display().to_string()),
+        Some(path) => {
+            EnvPath::AutoDetected(format_path_for_display(&path.display().to_string()))
+        }
         None => EnvPath::NotFound(
             "set SHALE_ORCA_DIR to Bambu/Orca profiles, or run scripts/fetch-resources.sh",
         ),
@@ -73,7 +92,7 @@ pub fn cura_engine_lib_path() -> EnvPath {
     if let Ok(path) = std::env::var("SHALE_CURAENGINE_LIB_DIR") {
         EnvPath::Set(path)
     } else {
-        EnvPath::NotFound("optional; defaults to the folder containing the engine")
+        EnvPath::UnsetOptional("optional; uses the engine's folder")
     }
 }
 
@@ -84,7 +103,8 @@ mod tests {
     #[test]
     fn set_line_format() {
         let line = env_path_line("SHALE_CURA_DIR", EnvPath::Set("/cura".into()));
-        assert_eq!(line, "SHALE_CURA_DIR         set: /cura");
+        assert!(line.starts_with("SHALE_CURA_DIR"));
+        assert!(line.contains("set: /cura"));
     }
 
     #[test]
@@ -95,7 +115,21 @@ mod tests {
         );
         assert!(line.contains("not set (auto-detected: C:\\profiles)"));
         assert!(!line.contains("missing"));
-        assert!(!line.contains("set ("));
+        let value = line.get(NAME_WIDTH..).unwrap_or("").trim_start();
+        assert!(
+            value.starts_with("not set (auto-detected:"),
+            "value should be auto-detected, got {:?}",
+            value
+        );
+    }
+
+    #[test]
+    fn unset_optional_line_format() {
+        let line = env_path_line(
+            "SHALE_CURAENGINE_LIB_DIR",
+            EnvPath::UnsetOptional("optional; uses the engine's folder"),
+        );
+        assert!(line.contains("not set (optional; uses the engine's folder)"));
     }
 
     #[test]

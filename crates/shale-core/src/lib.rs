@@ -78,4 +78,9 @@ pub use supports::{
 };
 pub use value::Value;
 
+/// Removes the pre-v0.1.2 per-install cache under `%LOCALAPPDATA%\\Shale\\cache`.
+pub fn remove_legacy_catalog_cache() {
+    catalog_cache::remove_legacy_cache_dir();
+}
+
 mod error;

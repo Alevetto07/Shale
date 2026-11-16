@@ -1,16 +1,19 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use shale_core::catalog_cache;
 use shale_core::{Catalog, ResourcePaths, UserSettings};
 
 static TEST_CACHE: OnceLock<()> = OnceLock::new();
-static REAL_CATALOG: OnceLock<Option<Catalog>> = OnceLock::new();
+static REAL_CATALOG: OnceLock<Option<Catalog>> = OnceLock::new>();
 
 fn use_test_cache_dir() {
     TEST_CACHE.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!("shale-resolve-cache-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).ok();
-        std::env::set_var("SHALE_CACHE_DIR", dir);
+        let root = std::env::temp_dir().join("shale-core-tests");
+        let cache = root.join("catalog-cache");
+        std::fs::remove_dir_all(&cache).ok();
+        std::fs::create_dir_all(&cache).ok();
+        catalog_cache::set_test_cache_dir(cache);
     });
 }
 

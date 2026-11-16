@@ -269,10 +269,15 @@ fn fit_window_to_monitor(window: &tauri::WebviewWindow) {
     };
     let outer_w = outer.width as f64 / scale;
     let outer_h = outer.height as f64 / scale;
-    let _ = window.set_position(tauri::LogicalPosition::new(
-        work_x + (work_w - outer_w) / 2.0,
-        work_y + (work_h - outer_h) / 2.0,
-    ));
+    let Ok(inner) = window.inner_size() else {
+        return;
+    };
+    let inner_h = inner.height as f64 / scale;
+    // Centre the outer frame horizontally and the visible client area vertically.
+    let pos_x = work_x + (work_w - outer_w) / 2.0;
+    let chrome_top = (outer_h - inner_h).max(0.0);
+    let pos_y = work_y + (work_h - inner_h) / 2.0 - chrome_top;
+    let _ = window.set_position(tauri::LogicalPosition::new(pos_x, pos_y));
 }
 
 fn spawn_catalog_loader(app: AppHandle) {
@@ -4735,6 +4740,7 @@ pub fn run() {
         // command, so no command ever blocks on the disk. When it lands, the
         // window is told and asks for the printer list again.
         .setup(move |app| {
+            shale_core::remove_legacy_catalog_cache();
             if let Some(window) = app.get_webview_window("main") {
                 fit_window_to_monitor(&window);
             }
