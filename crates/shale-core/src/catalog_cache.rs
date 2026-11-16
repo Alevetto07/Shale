@@ -152,7 +152,7 @@ fn stamp_path(dir: &Path) -> TreeStamp {
 }
 
 fn stamp_version_marker(resources: &Path) -> TreeStamp {
-    let mut candidates = [
+    let mut candidates = vec![
         resources.join("version.json"),
         resources.join("definitions/fdmprinter.def.json"),
     ];

@@ -74,6 +74,7 @@ fn machine_gcode(dir: &Path, profile_file: &str) -> Option<MachineGcode> {
     })
 }
 
+#[derive(Clone)]
 pub struct Library {
     pub definitions: Vec<Definition>,
     pub instances: Vec<InstanceFile>,
