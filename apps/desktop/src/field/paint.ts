@@ -81,7 +81,11 @@ export function createField(
     baseB = new Uint8Array(count);
     offsetX = new Float32Array(count);
     offsetY = new Float32Array(count);
-    const fit = Math.max(width / iw, height / ih) * (tune.fitScaleMul ?? 1.03);
+    const scaleBase =
+      tune.fitMode === "contain"
+        ? Math.min(width / iw, height / ih)
+        : Math.max(width / iw, height / ih);
+    const fit = scaleBase * (tune.fitScaleMul ?? (tune.fitMode === "contain" ? 0.94 : 1.03));
     fitted = {
       drawW: iw * fit,
       drawH: ih * fit,
@@ -128,12 +132,22 @@ export function createField(
         }
         const localX = rawX;
         const localY = rawY;
-        const sx = Math.min(iw - 1, Math.floor((localX / drawW) * iw));
-        const sy = Math.min(ih - 1, Math.floor((localY / drawH) * ih));
+        const inset = tune.sampleInset ?? 0;
+        let sx = Math.min(iw - 1, Math.floor((localX / drawW) * iw));
+        let sy = Math.min(ih - 1, Math.floor((localY / drawH) * ih));
+        if (sx <= inset || sx >= iw - 1 - inset || sy <= inset || sy >= ih - 1 - inset) {
+          baseGlyph[index] = 0;
+          continue;
+        }
         const pixel = (sy * iw + sx) * 4;
         const red = pixels[pixel];
         const green = pixels[pixel + 1];
         const blue = pixels[pixel + 2];
+        const emptyMax = tune.emptyPixelMax;
+        if (emptyMax != null && Math.max(red, green, blue) <= emptyMax) {
+          baseGlyph[index] = 0;
+          continue;
+        }
         if (tune.matchBackgroundEmpty) {
           const dr = Math.abs(red - backgroundRgb[0]);
           const dg = Math.abs(green - backgroundRgb[1]);

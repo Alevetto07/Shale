@@ -79,6 +79,9 @@ export function StartScreen({
   const buttons = useRef<Array<HTMLButtonElement | null>>([]);
   const recentsRef = useRef<RecentProjectsPanelHandle>(null);
   const plate = uiStyleById(uiStyle);
+  const plateStill =
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("plateStill") === "1";
+  const fieldLive = live && !plateStill;
 
   const items = menuItems({
     panel,
@@ -159,8 +162,8 @@ export function StartScreen({
   return (
     <div className="start">
       <PlateField
-        live={live}
-        comet={live}
+        live={fieldLive}
+        comet={fieldLive}
         imageUrl={plate.plateImage}
         backgroundRgb={plate.plateBackground}
         plateTune={plate.plateTune}

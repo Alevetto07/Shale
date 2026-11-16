@@ -8,6 +8,12 @@ export interface PlateTune {
   lumaFloor?: number;
   /** Multiplier on cover-fit scale (default 1.03). */
   fitScaleMul?: number;
+  /** `contain` keeps the whole plate visible; default is cover. */
+  fitMode?: "cover" | "contain";
+  /** Pixels at or below this max channel value paint empty (e.g. lunar sky). */
+  emptyPixelMax?: number;
+  /** Ignore this many pixels at each edge of the plate bitmap when sampling. */
+  sampleInset?: number;
   /** Shift the fitted image horizontally, as a fraction of canvas width. */
   fitBiasX?: number;
   fitBiasY?: number;

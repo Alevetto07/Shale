@@ -60,7 +60,9 @@ async function main() {
     const page = await browser.newPage({
       viewport: { width: shot.w, height: shot.h },
     });
-    await page.goto(`${base}/?mock=home&recents=1&uiStyle=${shot.theme}`, { waitUntil: "networkidle" });
+    await page.goto(`${base}/?mock=home&recents=1&plateStill=1&uiStyle=${shot.theme}`, {
+      waitUntil: "networkidle",
+    });
     await page.waitForSelector(".start", { timeout: 15000 });
     await page.waitForTimeout(2200);
     await page.screenshot({ path: path.join(outDir, file) });
