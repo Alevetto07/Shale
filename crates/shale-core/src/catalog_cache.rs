@@ -375,8 +375,9 @@ mod tests {
 
     fn isolated_cache() -> (TempDir, PathBuf) {
         let temp = tempfile::tempdir().expect("tempdir");
-        set_cache_dir_override(temp.path().to_path_buf());
-        (temp, temp.path().to_path_buf())
+        let path = temp.path().to_path_buf();
+        set_cache_dir_override(path.clone());
+        (temp, path)
     }
 
     #[test]
