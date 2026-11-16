@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Headless UI capture with VITE_SHALE_MOCK=1 + vite preview.
- * Usage: node scripts/ui-screenshots.mjs --out docs/screens/after --width 1280
+ * Usage: node scripts/ui-screenshots.mjs --out docs/screens/ui-styles --width 1280
  */
 import { spawn, execSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -15,36 +15,29 @@ const desktop = path.join(root, "apps/desktop");
 const require = createRequire(path.join(desktop, "package.json"));
 const { chromium } = require("playwright");
 
-const shots = [
+const UI_THEMES = [
+  { id: "deep-field", slug: "andromeda" },
+  { id: "saturn", slug: "saturn" },
+  { id: "nebula", slug: "nebula" },
+  { id: "lunar", slug: "lunar" },
+];
+
+const TEMPLATE_SHOTS = [
   { name: "home", url: "/?mock=home&recents=1" },
-  { name: "home-empty", url: "/?mock=home-empty&recents=0" },
-  { name: "home-about", url: "/?mock=home", click: [{ text: "About and credits", role: "button" }] },
-  { name: "home-settings", url: "/?mock=home", click: [{ text: "Settings", role: "button" }] },
-  { name: "home-printers", url: "/?mock=home", click: [{ text: "Printers", role: "button" }] },
+  {
+    name: "home-settings",
+    url: "/?mock=home",
+    click: [{ text: "Settings", role: "button", within: ".start-menu" }],
+  },
   { name: "prepare", url: "/?mock=workspace-preview&pane=prepare" },
   { name: "preview", url: "/?mock=workspace-preview&pane=preview" },
-  { name: "device-lan", url: "/?mock=device-lan&pane=device" },
-  { name: "device-cloud-in", url: "/?mock=device-cloud-in&cloud=in&pane=device" },
-  { name: "device-cloud-out", url: "/?mock=device-cloud-out&cloud=out&pane=device" },
-  {
-    name: "process-sheet",
-    url: "/?mock=workspace-preview&pane=prepare",
-    click: [{ text: "Slice settings", role: "button" }],
-  },
-  {
-    name: "visibility-sheet",
-    url: "/?mock=workspace-preview&pane=prepare",
-    click: [
-      { text: "Slice settings", role: "button" },
-      { text: "settings shown", role: "button" },
-    ],
-  },
-  {
-    name: "titlebar-menu",
-    url: "/?mock=workspace-preview&pane=prepare",
-    click: [{ text: "File", role: "button" }],
-  },
+  { name: "device", url: "/?mock=device-lan&pane=device" },
 ];
+
+function withTheme(url, themeId) {
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}uiStyle=${themeId}`;
+}
 
 function arg(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -102,8 +95,32 @@ async function previewServer() {
   throw new Error("vite preview did not start");
 }
 
+function buildShotList(width, height) {
+  const shots = [];
+  for (const theme of UI_THEMES) {
+    for (const template of TEMPLATE_SHOTS) {
+      shots.push({
+        name: `${theme.slug}-${template.name}`,
+        url: withTheme(template.url, theme.id),
+        click: template.click,
+        width,
+        height,
+      });
+    }
+    if (width === 1280) {
+      shots.push({
+        name: `${theme.slug}-home-1080p`,
+        url: withTheme("/?mock=home&recents=1", theme.id),
+        width: 1920,
+        height: 1080,
+      });
+    }
+  }
+  return shots;
+}
+
 async function main() {
-  const outDir = path.resolve(root, arg("--out", "docs/screens/after"));
+  const outDir = path.resolve(root, arg("--out", "docs/screens/ui-styles"));
   const width = Number(arg("--width", "1280"));
   const height = Number(arg("--height", "800"));
   await mkdir(outDir, { recursive: true });
@@ -112,12 +129,15 @@ async function main() {
   const browser = await chromium.launch({
     args: ["--use-angle=swiftshader-webgl", "--enable-webgl", "--ignore-gpu-blocklist"],
   });
-  const context = await browser.newContext({
-    viewport: { width, height },
-    deviceScaleFactor: 1,
-  });
+  const shots = buildShotList(width, height);
   const capture = [];
   for (const shot of shots) {
+    const shotWidth = shot.width ?? width;
+    const shotHeight = shot.height ?? height;
+    const context = await browser.newContext({
+      viewport: { width: shotWidth, height: shotHeight },
+      deviceScaleFactor: 1,
+    });
     const page = await context.newPage();
     const pageErrors = [];
     page.on("pageerror", (err) => pageErrors.push(err.message));
@@ -132,13 +152,14 @@ async function main() {
     }
     await page.waitForTimeout(400);
     for (const step of shot.click ?? []) {
-      const locator = page.getByRole(step.role, { name: step.text, exact: false }).first();
+      const root = step.within ? page.locator(step.within) : page;
+      const locator = root.getByRole(step.role, { name: step.text, exact: false }).first();
       if (await locator.count()) {
         await locator.click();
         await page.waitForTimeout(600);
       }
     }
-    const file = path.join(outDir, `${shot.name}-${width}x${height}.png`);
+    const file = path.join(outDir, `${shot.name}-${shotWidth}x${shotHeight}.png`);
     await page.screenshot({ path: file, fullPage: false });
     const bytes = statSync(file).size;
     if (bytes < MIN_CAPTURE_BYTES) {
@@ -150,9 +171,8 @@ async function main() {
       throw new Error(`${shot.name} had page errors: ${pageErrors.join("; ")}`);
     }
     capture.push(file);
-    await page.close();
+    await context.close();
   }
-  await context.close();
   await browser.close();
   child.kill("SIGTERM");
   await new Promise((resolve) => setTimeout(resolve, 400));
@@ -161,7 +181,12 @@ async function main() {
   } catch {
     // already stopped
   }
-  const manifest = { width, height, captured_at: new Date().toISOString(), files: capture.map((f) => path.relative(root, f)) };
+  const manifest = {
+    width,
+    height,
+    captured_at: new Date().toISOString(),
+    files: capture.map((f) => path.relative(root, f)),
+  };
   await writeFile(path.join(outDir, `manifest-${width}x${height}.json`), JSON.stringify(manifest, null, 2));
   console.log(JSON.stringify(manifest, null, 2));
 }

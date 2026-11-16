@@ -1,0 +1,49 @@
+/**
+ * Lunar — light theme, cool greys, high contrast (WCAG AA body text).
+ */
+
+[data-ui-theme="lunar"] {
+  color-scheme: light;
+
+  --bg: #eef0f4;
+  --panel: #ffffff;
+  --panel-raised: #f6f7f9;
+  --ink: #141820;
+  --ink-2: rgba(20, 24, 32, 0.82);
+  --ink-3: rgba(20, 24, 32, 0.58);
+  --line: rgba(20, 24, 32, 0.14);
+  --line-strong: rgba(20, 24, 32, 0.28);
+  --accent: #1d5fd6;
+  --accent-soft: rgba(29, 95, 214, 0.12);
+  --accent-muted: rgba(29, 95, 214, 0.55);
+  --danger: #b42318;
+  --danger-hover: #c93428;
+
+  --muted: var(--ink-2);
+  --dim: var(--ink-3);
+
+  --surface-hover: rgba(20, 24, 32, 0.06);
+  --surface-active: rgba(29, 95, 214, 0.1);
+  --surface-inset: color-mix(in srgb, var(--panel) 88%, var(--bg));
+
+  --scrollbar-thumb: rgba(20, 24, 32, 0.28);
+  --scrollbar-track: var(--panel-raised);
+
+  --shadow-sheet: 0 16px 40px rgba(20, 24, 32, 0.12);
+  --shadow-float: 0 28px 72px rgba(20, 24, 32, 0.16);
+
+  font-family: var(--mono);
+  font-weight: 400;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: var(--text-base);
+  line-height: 1.45;
+}
+
+[data-ui-theme="lunar"] .titlebar-buttons .titlebar-close:hover {
+  color: #fff;
+}
+
+[data-ui-theme="lunar"] .plate-field {
+  opacity: 0.92;
+}

@@ -1,0 +1,31 @@
+{
+  "width": 1280,
+  "height": 800,
+  "captured_at": "2026-11-16T00:52:44.487Z",
+  "files": [
+    "docs/screens/ui-styles/andromeda-home-1280x800.png",
+    "docs/screens/ui-styles/andromeda-home-settings-1280x800.png",
+    "docs/screens/ui-styles/andromeda-prepare-1280x800.png",
+    "docs/screens/ui-styles/andromeda-preview-1280x800.png",
+    "docs/screens/ui-styles/andromeda-device-1280x800.png",
+    "docs/screens/ui-styles/andromeda-home-1080p-1920x1080.png",
+    "docs/screens/ui-styles/saturn-home-1280x800.png",
+    "docs/screens/ui-styles/saturn-home-settings-1280x800.png",
+    "docs/screens/ui-styles/saturn-prepare-1280x800.png",
+    "docs/screens/ui-styles/saturn-preview-1280x800.png",
+    "docs/screens/ui-styles/saturn-device-1280x800.png",
+    "docs/screens/ui-styles/saturn-home-1080p-1920x1080.png",
+    "docs/screens/ui-styles/nebula-home-1280x800.png",
+    "docs/screens/ui-styles/nebula-home-settings-1280x800.png",
+    "docs/screens/ui-styles/nebula-prepare-1280x800.png",
+    "docs/screens/ui-styles/nebula-preview-1280x800.png",
+    "docs/screens/ui-styles/nebula-device-1280x800.png",
+    "docs/screens/ui-styles/nebula-home-1080p-1920x1080.png",
+    "docs/screens/ui-styles/lunar-home-1280x800.png",
+    "docs/screens/ui-styles/lunar-home-settings-1280x800.png",
+    "docs/screens/ui-styles/lunar-prepare-1280x800.png",
+    "docs/screens/ui-styles/lunar-preview-1280x800.png",
+    "docs/screens/ui-styles/lunar-device-1280x800.png",
+    "docs/screens/ui-styles/lunar-home-1080p-1920x1080.png"
+  ]
+}

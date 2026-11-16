@@ -9,7 +9,7 @@
 export const RAMP = " .:-=+*#%@";
 export const CELL = 11;
 const LENS = 96;
-const BG = [6, 7, 11] as const;
+const DEFAULT_BG = [6, 7, 11] as const;
 
 export interface FieldPainter {
   paint(time: number, pointerX: number, pointerY: number, comet: boolean): void;
@@ -18,6 +18,7 @@ export interface FieldPainter {
 export function createField(
   canvas: HTMLCanvasElement,
   image: HTMLImageElement,
+  backgroundRgb: readonly [number, number, number] = DEFAULT_BG,
 ): FieldPainter {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) {
@@ -104,7 +105,7 @@ export function createField(
         twinkleAmp[index] = wobble % 3 === 0 ? 2 : 1;
       }
     }
-    fillBackground(buffer, width, height);
+    fillBackground(buffer, width, height, backgroundRgb);
     return true;
   };
 
@@ -252,7 +253,7 @@ export function createField(
       if (x1 <= x0 || y1 <= y0) return;
     }
 
-    clearRect(buffer, width, x0, y0, x1 - x0, y1 - y0);
+    clearRect(buffer, width, x0, y0, x1 - x0, y1 - y0, backgroundRgb);
     const c0 = Math.max(0, Math.floor((x0 - CELL - 16) / CELL));
     const c1 = Math.min(cols - 1, Math.ceil((x1 + 16) / CELL));
     const r0 = Math.max(0, Math.floor((y0 - CELL - 16) / CELL));
@@ -344,8 +345,13 @@ function glyphMasks(): Uint8Array[] {
   return masks;
 }
 
-function fillBackground(buffer: Uint8ClampedArray, width: number, height: number) {
-  clearRect(buffer, width, 0, 0, width, height);
+function fillBackground(
+  buffer: Uint8ClampedArray,
+  width: number,
+  height: number,
+  bg: readonly [number, number, number],
+) {
+  clearRect(buffer, width, 0, 0, width, height, bg);
 }
 
 function clearRect(
@@ -355,6 +361,7 @@ function clearRect(
   y: number,
   w: number,
   h: number,
+  bg: readonly [number, number, number],
 ) {
   const x0 = Math.max(0, x);
   const y0 = Math.max(0, y);
@@ -363,9 +370,9 @@ function clearRect(
   for (let row = y0; row < y1; row += 1) {
     let index = (row * width + x0) * 4;
     for (let col = x0; col < x1; col += 1) {
-      buffer[index] = BG[0];
-      buffer[index + 1] = BG[1];
-      buffer[index + 2] = BG[2];
+      buffer[index] = bg[0];
+      buffer[index + 1] = bg[1];
+      buffer[index + 2] = bg[2];
       buffer[index + 3] = 255;
       index += 4;
     }

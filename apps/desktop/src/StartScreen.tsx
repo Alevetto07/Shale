@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { PrinterInfo, RecentProject } from "./api";
-import { andromeda } from "./field/credit";
 import { PlateField } from "./field/PlateField";
 import { RecentProjectsPanel, type RecentProjectsPanelHandle } from "./RecentProjectsPanel";
+import { UiStylePicker } from "./UiStylePicker";
+import { uiStyleById, type UiStyleId } from "./ui-styles";
 import { AsciiField, AsciiSelect } from "./widgets";
 
 type Panel = "menu" | "printers" | "settings" | "about";
@@ -42,8 +43,12 @@ export function StartScreen({
   onBackend,
   onApplyEngine,
   onQuit,
+  uiStyle,
+  onUiStyle,
 }: {
   live: boolean;
+  uiStyle: UiStyleId;
+  onUiStyle: (id: UiStyleId) => void;
   canReturn: boolean;
   recents: RecentProject[];
   /// False until the list has been read once: an empty list means "none yet",
@@ -73,6 +78,7 @@ export function StartScreen({
   const [printerQuery, setPrinterQuery] = useState("");
   const buttons = useRef<Array<HTMLButtonElement | null>>([]);
   const recentsRef = useRef<RecentProjectsPanelHandle>(null);
+  const plate = uiStyleById(uiStyle);
 
   const items = menuItems({
     panel,
@@ -152,7 +158,12 @@ export function StartScreen({
 
   return (
     <div className="start">
-      <PlateField live={live} comet={live} />
+      <PlateField
+        live={live}
+        comet={live}
+        imageUrl={plate.plateImage}
+        backgroundRgb={plate.plateBackground}
+      />
       <nav className="start-menu" aria-label="Start">
         {panel === "menu" && (
           <div className="start-list">
@@ -204,6 +215,7 @@ export function StartScreen({
             <button type="button" className="start-back" onClick={() => setPanel("menu")}>
               Back
             </button>
+            <UiStylePicker compact value={uiStyle} onChange={onUiStyle} />
             <label>
               backend
               <AsciiSelect
@@ -241,11 +253,11 @@ export function StartScreen({
               undecided (see LICENSING.md).
             </p>
             <p className="credit">
-              {andromeda.name} ({andromeda.object}), {andromeda.credit}. Released {andromeda.release}.{" "}
-              {andromeda.licence}.
+              Home screen: {plate.plateCredit.name} ({plate.plateCredit.object}),{" "}
+              {plate.plateCredit.credit}. Released {plate.plateCredit.release}. {plate.plateCredit.licence}.
             </p>
             <p className="credit">
-              <a href={andromeda.page}>{andromeda.page}</a>
+              <a href={plate.plateCredit.page}>{plate.plateCredit.page}</a>
             </p>
             <p className="credit">
               Space Grotesk, Geist Mono, and Inter are used under the SIL Open Font License 1.1.

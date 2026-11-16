@@ -35,6 +35,7 @@ import { thumbnailJpeg } from "./thumbnail";
 import { variantOptionLabel } from "./profile-labels";
 import { Frame, meter, track } from "./theme";
 import { MenuBar } from "./MenuBar";
+import { applyUiStyle, readUiStyle, writeUiStyle, type UiStyleId } from "./ui-styles";
 import {
   overridesFromSliceSettings,
   QUICK_SETTING_KEYS,
@@ -248,6 +249,12 @@ export function App() {
   const [measureMarks, setMeasureMarks] = useState<Array<[number, number, number]>>([]);
   const [measureSpan, setMeasureSpan] = useState<MeasureSpan | null>(null);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("solid");
+  const [uiStyle, setUiStyle] = useState<UiStyleId>(() => readUiStyle());
+  const chooseUiStyle = (id: UiStyleId) => {
+    setUiStyle(id);
+    writeUiStyle(id);
+    applyUiStyle(id);
+  };
   /// What the toolpath is coloured by, as Bambu's preview lets you choose.
   const [colourMode, setColourMode] = useState<ColourMode>("type");
   const [busy, setBusy] = useState(false);
@@ -2640,6 +2647,8 @@ export function App() {
           parts={models.map((model) => ({ id: model.id, name: model.name }))}
           onScope={setScope}
           onSlice={() => void slice()}
+          uiStyle={uiStyle}
+          onUiStyle={chooseUiStyle}
         />
       </TitleBar>
 
@@ -2757,6 +2766,8 @@ export function App() {
             onBackend={setBackend}
             onApplyEngine={() => void applyEngine()}
             onQuit={() => void quit()}
+            uiStyle={uiStyle}
+            onUiStyle={chooseUiStyle}
           />
         </div>
       ) : pane === "device" ? (
