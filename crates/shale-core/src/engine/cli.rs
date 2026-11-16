@@ -474,7 +474,6 @@ impl LayerCounter {
     }
 }
 
-
 #[cfg(test)]
 mod path_tests {
     use std::path::PathBuf;
