@@ -18,7 +18,7 @@ const NAME_WIDTH: usize = 26;
 fn format_path_for_display(path: &str) -> String {
     #[cfg(windows)]
     {
-        return path.replace('/', "\\");
+        path.replace('/', "\\")
     }
     #[cfg(not(windows))]
     path.to_string()

@@ -2491,17 +2491,16 @@ fn profile_settings(
     material_id: Option<String>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
     let mut inner = lock(&state)?;
-    if !inner.catalog_full {
-        if inner
+    if !inner.catalog_full
+        && inner
             .catalog
             .as_ref()
             .is_some_and(|cat| !cat.is_external_printer(&printer_id))
-        {
-            return Err(
-                "The full printer library is still loading — wait a moment before opening settings."
-                    .into(),
-            );
-        }
+    {
+        return Err(
+            "The full printer library is still loading — wait a moment before opening settings."
+                .into(),
+        );
     }
     let catalogue = catalog(&mut inner).map_err(|error| error.to_string())?;
     let resolved = catalogue
@@ -2568,17 +2567,16 @@ async fn slice_model(
         if !inner.models.iter().any(|model| model.visible) {
             return Err("Import a model first".into());
         }
-        if !inner.catalog_full {
-            if inner
+        if !inner.catalog_full
+            && inner
                 .catalog
                 .as_ref()
                 .is_some_and(|cat| !cat.is_external_printer(&printer_id))
-            {
-                return Err(
-                    "The full printer library is still loading — wait before slicing on this printer."
-                        .into(),
-                );
-            }
+        {
+            return Err(
+                "The full printer library is still loading — wait before slicing on this printer."
+                    .into(),
+            );
         }
         // Wait for the catalogue, then drop the lock: the engine runs outside.
         let _ = catalog(&mut inner)?;

@@ -471,16 +471,6 @@ impl LayerCounter {
     }
 }
 
-#[cfg(test)]
-fn count_layers(path: &Path) -> Option<u32> {
-    let text = fs::read_to_string(path).ok()?;
-    let count = text.matches(";LAYER:").count() as u32;
-    if count == 0 {
-        None
-    } else {
-        Some(count)
-    }
-}
 
 #[cfg(test)]
 mod path_tests {
