@@ -24,7 +24,7 @@ fi
 
 rm -rf "$stage"
 mkdir -p "$stage"
-cp "target/$target/release/shale-cli" "$stage/"
+cp "target/$target/release/shale-cli" "$stage/shale"
 cp "target/$target/release/shale-mcp" "$stage/"
 cp docs/INSTALL-CLI.md THIRD-PARTY-NOTICES.md LICENSING.md "$stage/"
 

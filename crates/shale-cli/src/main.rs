@@ -36,7 +36,7 @@ slice options
 
 environment
   SHALE_CURA_DIR, SHALE_MATERIALS_DIR   the Cura resource tree
-  SHALE_ORCA_DIR                        Bambu/Orca profiles (required for Bambu)
+  SHALE_ORCA_DIR                        Bambu/Orca profiles (optional; auto-detected)
   SHALE_CURAENGINE                      the CuraEngine binary
   SHALE_CURAENGINE_LIB_DIR              folder beside the engine with its libraries (optional)
 ";
@@ -127,11 +127,14 @@ fn info() -> Result<(), String> {
     if let Ok(path) = std::env::var("SHALE_CURAENGINE") {
         env_line("SHALE_CURAENGINE", true, &path);
     } else {
-        env_line(
-            "SHALE_CURAENGINE",
-            false,
-            "set to the CuraEngine binary, or install UltiMaker Cura 5.x",
-        );
+        let usable = engine.probe();
+        let detail = format!("not set (auto-detected: {})", engine.program.display());
+        env_line("SHALE_CURAENGINE", usable.is_ok(), &detail);
+        if usable.is_err() {
+            eprintln!(
+                "shale: set SHALE_CURAENGINE to the CuraEngine binary, or install UltiMaker Cura 5.x"
+            );
+        }
     }
     if let Ok(path) = std::env::var("SHALE_CURAENGINE_LIB_DIR") {
         env_line("SHALE_CURAENGINE_LIB_DIR", true, &path);
@@ -158,15 +161,12 @@ fn info() -> Result<(), String> {
             Some(path) => env_line(
                 "SHALE_ORCA_DIR",
                 false,
-                &format!(
-                    "not set; using {} — set SHALE_ORCA_DIR to pin the Bambu profile tree",
-                    path.display()
-                ),
+                &format!("not set (auto-detected: {})", path.display()),
             ),
             None => env_line(
                 "SHALE_ORCA_DIR",
                 false,
-                "required for Bambu printers — run scripts/fetch-resources.sh",
+                "missing — set to Bambu/Orca profiles or run scripts/fetch-resources.sh",
             ),
         },
     }

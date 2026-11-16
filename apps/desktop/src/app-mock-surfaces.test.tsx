@@ -41,6 +41,18 @@ describe("mock surfaces", () => {
     }
   });
 
+  it("mock prepare shows a framed model on the plate after import", async () => {
+    await mount("/?mock=workspace-prepare&pane=prepare");
+    await waitFor(
+      () => {
+        const bed = document.querySelector(".viewport-mock-bed");
+        expect(bed?.textContent).toContain("▣");
+        expect(document.querySelector('.plate[data-models="1"]')).toBeTruthy();
+      },
+      { timeout: 8000 },
+    );
+  });
+
   it("mounts Preview without throwing", async () => {
     const errors: string[] = [];
     const onError = (event: ErrorEvent) => {

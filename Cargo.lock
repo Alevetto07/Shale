@@ -3626,14 +3626,14 @@ dependencies = [
 
 [[package]]
 name = "shale-cli"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "shale-core",
 ]
 
 [[package]]
 name = "shale-core"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "manifold3d",
  "quick-xml 0.37.5",
@@ -3649,7 +3649,7 @@ dependencies = [
 
 [[package]]
 name = "shale-desktop"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "keyring",
  "serde",
@@ -3663,7 +3663,7 @@ dependencies = [
 
 [[package]]
 name = "shale-host"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "rustls",
  "rustls-pki-types",
@@ -3677,7 +3677,7 @@ dependencies = [
 
 [[package]]
 name = "shale-mcp"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "axum",

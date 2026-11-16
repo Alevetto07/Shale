@@ -243,6 +243,33 @@ fn catalog_log(app: &AppHandle, line: &str) {
     }
 }
 
+fn fit_window_to_monitor(window: &tauri::WebviewWindow) {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return;
+    };
+    let scale = monitor.scale_factor();
+    let work = monitor.work_area();
+    let work_w = work.size.width as f64 / scale;
+    let work_h = work.size.height as f64 / scale;
+    let work_x = work.position.x as f64 / scale;
+    let work_y = work.position.y as f64 / scale;
+    let Ok(requested) = window.outer_size() else {
+        return;
+    };
+    let margin = if std::env::var("SHALE_DEMO").is_ok() { 40.0 } else { 20.0 };
+    let width = (requested.width as f64 / scale)
+        .min(work_w - margin)
+        .clamp(640.0, 1440.0);
+    let height = (requested.height as f64 / scale)
+        .min(work_h - margin)
+        .clamp(480.0, 900.0);
+    let _ = window.set_size(tauri::LogicalSize::new(width, height));
+    let _ = window.set_position(tauri::LogicalPosition::new(
+        work_x + (work_w - width) / 2.0,
+        work_y + (work_h - height) / 2.0,
+    ));
+}
+
 fn spawn_catalog_loader(app: AppHandle) {
     std::thread::spawn(move || {
         catalog_log(&app, "discover begin");
@@ -4703,20 +4730,8 @@ pub fn run() {
         // command, so no command ever blocks on the disk. When it lands, the
         // window is told and asks for the printer list again.
         .setup(move |app| {
-            // A demo recording should fit the screen it is filmed on: the normal
-            // window is 1440x900, which is larger than this laptop's desktop at
-            // 200% scaling, and a window that hangs off the edge films badly.
-            if std::env::var("SHALE_DEMO").is_ok() {
-                if let Some(window) = app.get_webview_window("main") {
-                    if let Ok(Some(monitor)) = window.current_monitor() {
-                        let scale = monitor.scale_factor();
-                        let width =
-                            (monitor.size().width as f64 / scale - 80.0).clamp(900.0, 1440.0);
-                        let height =
-                            (monitor.size().height as f64 / scale - 120.0).clamp(640.0, 900.0);
-                        let _ = window.set_size(tauri::LogicalSize::new(width, height));
-                    }
-                }
+            if let Some(window) = app.get_webview_window("main") {
+                fit_window_to_monitor(&window);
             }
             if demo_wanted {
                 return Ok(());

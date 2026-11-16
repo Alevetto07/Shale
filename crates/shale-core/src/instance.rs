@@ -8,9 +8,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::Error;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InstanceFile {
     pub name: String,
     pub definition: String,

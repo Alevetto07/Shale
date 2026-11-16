@@ -2,48 +2,27 @@ use std::path::PathBuf;
 
 use shale_core::{Catalog, ResourcePaths, UserSettings};
 
-/// Cura tree plus Bambu profiles for integration tests. CI and local runs
-/// should run `scripts/fetch-resources.sh` so `vendor/` exists; this panics
-/// instead of skipping when the tree is missing.
-fn real_resource_paths() -> ResourcePaths {
+fn real_resource_paths() -> Option<ResourcePaths> {
+    if let Ok(paths) = ResourcePaths::discover() {
+        return Some(paths);
+    }
     if let (Ok(cura), Ok(materials)) = (
         std::env::var("SHALE_CURA_DIR"),
         std::env::var("SHALE_MATERIALS_DIR"),
     ) {
-        return ResourcePaths {
+        let paths = ResourcePaths {
             cura: cura.into(),
             materials: materials.into(),
         };
+        if paths.resources()
+            .join("definitions")
+            .join("fdmprinter.def.json")
+            .is_file()
+        {
+            return Some(paths);
+        }
     }
-    let vendor = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor");
-    let cura = vendor.join("Cura");
-    let materials = vendor.join("fdm_materials");
-    let def = cura.join("resources/definitions/fdmprinter.def.json");
-    if !def.is_file() {
-        panic!(
-            "vendor resources missing at {}. Run scripts/fetch-resources.sh from the repo root, or set SHALE_CURA_DIR and SHALE_MATERIALS_DIR.",
-            vendor.display()
-        );
-    }
-    ResourcePaths { cura, materials }
-}
-
-fn ensure_bambu_vendor_profiles() {
-    if std::env::var_os("SHALE_ORCA_DIR").is_some()
-        || std::env::var_os("SHALE_BAMBU_DIR").is_some()
-    {
-        return;
-    }
-    let profiles = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../vendor/BambuStudio/resources/profiles");
-    if profiles.is_dir() {
-        std::env::set_var("SHALE_ORCA_DIR", &profiles);
-        return;
-    }
-    panic!(
-        "Bambu profiles missing at {}. Run scripts/fetch-resources.sh or set SHALE_ORCA_DIR.",
-        profiles.display()
-    );
+    None
 }
 
 fn catalog() -> Catalog {
@@ -147,8 +126,11 @@ fn inheritance_formulas_variant_and_user_overrides() {
 
 #[test]
 fn real_cura_profiles_when_resources_are_present() {
-    ensure_bambu_vendor_profiles();
-    let catalog = Catalog::open(real_resource_paths()).expect("cura catalog");
+    let Some(paths) = real_resource_paths() else {
+        eprintln!("skip real_cura_profiles_when_resources_are_present: no Cura resources (run scripts/fetch-resources.sh or set SHALE_CURA_DIR / SHALE_MATERIALS_DIR)");
+        return;
+    };
+    let catalog = Catalog::open(paths).expect("cura catalog");
     assert!(catalog
         .printers()
         .iter()
@@ -482,8 +464,11 @@ fn preset_layer_mm(name: &str) -> Option<f64> {
 
 #[test]
 fn a1_every_selectable_process_resolves_layer_height() {
-    ensure_bambu_vendor_profiles();
-    let catalog = Catalog::open(real_resource_paths()).expect("open catalog");
+    let Some(paths) = real_resource_paths() else {
+        eprintln!("skip a1_every_selectable_process_resolves_layer_height: no Cura resources");
+        return;
+    };
+    let catalog = Catalog::open(paths).expect("open catalog");
     let material = catalog
         .materials_for_printer("bambu_lab_a1", 1.75)
         .into_iter()

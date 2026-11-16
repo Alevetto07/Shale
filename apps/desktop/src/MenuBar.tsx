@@ -107,7 +107,10 @@ export function MenuBar(props: MenuBarProps) {
       }
     };
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(null);
+      if (event.key !== "Escape") return;
+      setOpen(null);
+      const active = document.activeElement;
+      if (active instanceof HTMLElement) active.blur();
     };
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", escape);

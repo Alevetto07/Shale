@@ -1,4 +1,5 @@
 //! Loads the Cura resource tree and the fdm_materials library into memory.
+
 //!
 //! Definitions are small enough to keep resident. Instance containers and
 //! materials are indexed once so picking a printer does not re-read disk.
@@ -305,12 +306,27 @@ impl Catalog {
                 resources.display()
             )));
         }
-        let mut instances = Vec::new();
-        for folder in ["quality", "variants", "intent"] {
-            load_instances(&resources.join(folder), &mut instances, &mut warnings);
-        }
-        let mut materials = Vec::new();
-        load_materials(&paths.materials, &mut materials, &mut warnings);
+        let (mut instances, mut materials) =
+            if let Ok(Some((cached_instances, cached_materials))) =
+                crate::catalog_cache::load_cura_extras(&paths.cura, &paths.materials, &resources)
+            {
+                (cached_instances, cached_materials)
+            } else {
+                let mut instances = Vec::new();
+                for folder in ["quality", "variants", "intent"] {
+                    load_instances(&resources.join(folder), &mut instances, &mut warnings);
+                }
+                let mut materials = Vec::new();
+                load_materials(&paths.materials, &mut materials, &mut warnings);
+                let _ = crate::catalog_cache::store_cura_extras(
+                    &paths.cura,
+                    &paths.materials,
+                    &resources,
+                    &instances,
+                    &materials,
+                );
+                (instances, materials)
+            };
         // Bambu Studio's own tree is a second, independent profile library. Its
         // entries are converted into the same shapes Cura's resources produce,
         // so variants, qualities, materials and the resolver need no special

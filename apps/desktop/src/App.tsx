@@ -1170,6 +1170,7 @@ export function App() {
         fraction: 1,
         message: added.length > 1 ? `${added.length} parts, ${triangles} triangles` : `${triangles} triangles`,
       });
+      setFrameToken((token) => token + 1);
     } catch (err) {
       const message = messageOf(err);
       // Only a deliberate cancel stays quiet; any other failure is shown.
@@ -2748,7 +2749,7 @@ export function App() {
             enginePath={enginePath}
             libDir={libDir}
             backend={backend}
-            version={status?.version ?? "0.1.0"}
+            version={status?.version ?? "0.1.2"}
             onReturn={() => {
               setScreen("slicer");
               setPane("prepare");

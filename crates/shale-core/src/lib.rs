@@ -20,6 +20,7 @@
 pub mod bambu;
 pub mod cad;
 pub mod calibrate;
+pub(crate) mod catalog_cache;
 pub mod catalog;
 pub mod cost;
 pub mod csg;

@@ -17,8 +17,10 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
+use crate::catalog_cache::{load_bambu_library, store_bambu_library};
 use crate::definition::{Definition, RawSetting};
 use crate::instance::InstanceFile;
 use crate::material::{MachineMaterial, Material};
@@ -39,7 +41,7 @@ const MAX_DEPTH: usize = 12;
 /// Bambu Studio keeps them in files beside the machine profile rather than in
 /// the profile itself, and they are templates, not G-code: see
 /// `crate::template` for the filling.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MachineGcode {
     pub start: String,
     pub end: String,
@@ -89,7 +91,15 @@ impl Library {
     /// Load from the configured profile root, or an empty library when no
     /// slicer is installed. Never fails: a missing library is normal.
     pub fn load() -> Self {
-        Self::from_root(profiles_root())
+        let Some(root) = profiles_root() else {
+            return Self::empty();
+        };
+        if let Some(library) = load_bambu_library(&root) {
+            return library;
+        }
+        let library = Self::from_root(Some(root.clone()));
+        let _ = store_bambu_library(&root, &library);
+        library
     }
 
     pub fn from_root(root: Option<PathBuf>) -> Self {

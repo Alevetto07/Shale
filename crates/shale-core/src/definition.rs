@@ -8,11 +8,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
 use crate::error::Error;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RawSetting {
     pub ty: Option<String>,
     pub default_value: Option<Json>,
@@ -45,7 +46,7 @@ impl RawSetting {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Definition {
     pub id: String,
     pub name: String,
