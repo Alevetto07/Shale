@@ -1,0 +1,356 @@
+---
+import Base from "../layouts/Base.astro";
+import { AndromedaField } from "../components/AndromedaField";
+import "../components/Hero.css";
+import {
+  slogan,
+  repoUrl,
+  version,
+  shaleLicense,
+  downloads,
+  downloadUrl,
+  primaryDownload,
+  features,
+  comingNext,
+  mediaSlots,
+  mcpEnvExample,
+} from "../config/site";
+
+const windowsCli = downloads.find((d) => d.id === "windows-cli");
+const linuxCli = downloads.find((d) => d.id === "linux-cli");
+
+const mcpJson = JSON.stringify(
+  {
+    mcpServers: {
+      shale: {
+        command: "/usr/local/bin/shale-mcp",
+        env: { ...mcpEnvExample },
+      },
+    },
+  },
+  null,
+  2,
+);
+---
+
+<Base>
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-field">
+      <AndromedaField client:load />
+    </div>
+    <div class="wrap hero-inner">
+      <p class="hero-kicker">Bambu Lab only · CuraEngine · Tauri</p>
+      <h1 id="hero-title">Shale</h1>
+      <p class="hero-tagline">{slogan}</p>
+      <p class="hero-lede">
+        A desktop slicer with a dark, monospace interface and a WebGL plate. Slicing
+        runs through an unmodified CuraEngine process; profiles come from Bambu Studio.
+        The same core powers <code class="mono">shale-cli</code> and
+        <code class="mono">shale-mcp</code> when you do not need the window.
+      </p>
+      <div class="hero-actions">
+        <a
+          class="btn btn-primary"
+          href={downloadUrl(primaryDownload.fileName)}
+        >
+          Download for Windows
+        </a>
+        <a class="btn btn-ghost" href="#downloads">CLI + MCP packages</a>
+        <a class="btn btn-ghost" href={repoUrl}>View on GitHub</a>
+      </div>
+      <p class="hero-meta">
+        Shale {version} · per-user installer · .shale project files
+      </p>
+    </div>
+  </section>
+
+  <section id="features" aria-labelledby="features-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="features-title">Built for v0.1</h2>
+        <p>
+          Everything here ships today. Shale is deliberately Bambu-only in the UI:
+          the catalogue loads in full, but you pick from Bambu definitions and
+          presets.
+        </p>
+      </div>
+      <div class="grid-3">
+        {
+          features.map((f) => (
+            <article class="card">
+              <h3>{f.title}</h3>
+              <p class="muted">{f.body}</p>
+            </article>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <section id="media" aria-labelledby="media-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="media-title">Inside the window</h2>
+        <p>
+          Captured from the running app. Drop additional shots or short promos into
+          <code class="mono">website/public/media/</code> whenever you are ready.
+        </p>
+      </div>
+      <div class="grid-2 media-grid">
+        {
+          mediaSlots.map((m) =>
+            m.kind === "video" ? (
+              <figure class="card media-card media-card--placeholder">
+                <div
+                  class="media-placeholder"
+                  role="img"
+                  aria-label={m.alt}
+                >
+                  <span class="badge">Video slot</span>
+                </div>
+                <figcaption>{m.caption}</figcaption>
+              </figure>
+            ) : (
+              <figure class="card media-card">
+                <img
+                  src={m.src}
+                  alt={m.alt}
+                  loading="lazy"
+                  width="960"
+                  height="540"
+                />
+                <figcaption class="muted">{m.caption}</figcaption>
+              </figure>
+            ),
+          )
+        }
+      </div>
+    </div>
+  </section>
+
+  <section id="downloads" aria-labelledby="downloads-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="downloads-title">Downloads</h2>
+        <p>
+          Assets are published on GitHub Releases. Checksums and sizes below are
+          placeholders until v{version} is tagged — update
+          <code class="mono">src/config/site.ts</code> when you ship.
+        </p>
+      </div>
+      <div class="grid-3 download-grid">
+        {
+          downloads.map((d) => (
+            <article class="card download-card">
+              <h3>{d.title}</h3>
+              <p class="muted">{d.description}</p>
+              <p class="mono dim file-name">{d.fileName}</p>
+              <dl class="checksums">
+                <div>
+                  <dt>Size</dt>
+                  <dd>{d.sizeLabel}</dd>
+                </div>
+                <div>
+                  <dt>SHA-256</dt>
+                  <dd class="sha">{d.sha256}</dd>
+                </div>
+              </dl>
+              <a class="btn btn-primary" href={downloadUrl(d.fileName)}>
+                Download
+              </a>
+            </article>
+          ))
+        }
+      </div>
+
+      <div class="cli-docs card" style="margin-top: 2rem;">
+        <h3>Headless install</h3>
+        <p class="muted">
+          From <a href={`${repoUrl}/blob/main/docs/INSTALL-CLI.md`}>docs/INSTALL-CLI.md</a>.
+          CuraEngine and the Cura resource tree must be available at run time.
+        </p>
+        {
+          windowsCli && (
+            <div>
+              <h4>Windows</h4>
+              <p class="muted">
+                Unzip <code class="mono">{windowsCli.fileName}</code> anywhere and run from that
+                folder:
+              </p>
+              <pre>{`Expand-Archive .\\${windowsCli.fileName} -DestinationPath .\\shale-cli
+cd shale-cli
+.\\shale-cli.exe info
+.\\shale-cli.exe printers --search a1
+.\\shale-cli.exe slice .\\cube.stl --printer bambu_lab_a1 --layer 0.2 --infill 20 -o .\\cube.gcode`}</pre>
+            </div>
+          )
+        }
+        {
+          linuxCli && (
+            <>
+              <h4>Linux</h4>
+              <p class="muted">
+                Extract <code class="mono">{linuxCli.fileName}</code>, then install the binaries
+                (Debian example):
+              </p>
+              <pre>{`tar -xzf ${linuxCli.fileName}
+cd shale-${version}-linux-x64
+sudo install -m755 shale-cli shale-mcp /usr/local/bin/
+shale-cli info`}</pre>
+              <p class="muted">
+                Point at CuraEngine and resources when they are not on the default path:
+              </p>
+              <pre>{`export SHALE_CURAENGINE=/usr/bin/CuraEngine
+export SHALE_CURA_DIR=/usr/share/cura/resources
+export SHALE_MATERIALS_DIR=/usr/share/cura/resources/materials`}</pre>
+            </>
+          )
+        }
+
+        <h4>MCP client</h4>
+        <p class="muted">
+          The server speaks MCP over stdio. Clients such as Claude Desktop add a
+          subprocess entry with the same environment variables — see
+          <a href={`${repoUrl}/blob/main/README.md`}>README.md</a> and
+          <a href={`${repoUrl}/blob/main/docs/INSTALL-CLI.md`}>INSTALL-CLI.md</a>.
+          Loopback HTTP is available with <code class="mono">shale-mcp --http 127.0.0.1:PORT</code>
+          (non-loopback addresses are refused).
+        </p>
+        <pre><code>{mcpJson}</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section id="coming" aria-labelledby="coming-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="coming-title">Coming next</h2>
+        <p>On the roadmap for Shale after v0.1 — not in this release.</p>
+      </div>
+      <div class="grid-3">
+        {
+          comingNext.map((item) => (
+            <article class="card">
+              <span class="badge">{item.status}</span>
+              <h3 style="margin-top: 0.75rem;">{item.title}</h3>
+              <p class="muted">{item.body}</p>
+            </article>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>
+        <a href={repoUrl}>Shale on GitHub</a> — source, issues and release assets.
+      </p>
+      <p class="dim">Licence notes</p>
+      <ul>
+        <li>
+          <strong>CuraEngine</strong> — AGPL-3.0. Shale starts it as a separate
+          process; you provide the binary.
+        </li>
+        <li>
+          <strong>Bambu Studio profiles</strong> — read as data from an installed
+          Bambu Studio tree (AGPL-3.0 applies to that upstream material).
+        </li>
+        <li>
+          <strong>Shale itself</strong> — {shaleLicense} (see
+          <a href={`${repoUrl}/blob/main/LICENSING.md`}>LICENSING.md</a>).
+        </li>
+      </ul>
+      <p class="dim mono" style="margin-top: 1.5rem;">
+        Andromeda hero background uses the NASA GALEX M31 portrait, as in the app.
+      </p>
+    </div>
+  </footer>
+</Base>
+
+<style>
+  .media-grid img {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: calc(var(--radius) - 2px);
+    border: 1px solid var(--line);
+  }
+
+  .media-card {
+    margin: 0;
+  }
+
+  .media-card figcaption {
+    margin-top: 0.85rem;
+    font-size: 0.92rem;
+  }
+
+  .media-placeholder {
+    aspect-ratio: 16 / 9;
+    display: grid;
+    place-items: center;
+    background: #04050a;
+    border: 1px dashed var(--line);
+    border-radius: calc(var(--radius) - 2px);
+  }
+
+  .download-card h3 {
+    margin-top: 0;
+  }
+
+  .file-name {
+    font-size: 0.82rem;
+    word-break: break-all;
+  }
+
+  .checksums {
+    display: grid;
+    gap: 0.5rem;
+    margin: 1rem 0 1.25rem;
+    font-size: 0.88rem;
+  }
+
+  .checksums div {
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .checksums dt {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-3);
+  }
+
+  .checksums dd {
+    margin: 0;
+    color: var(--ink-2);
+  }
+
+  .sha {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    word-break: break-all;
+  }
+
+  .cli-docs h3,
+  .cli-docs h4 {
+    font-size: 1.05rem;
+    margin: 1.25rem 0 0.5rem;
+  }
+
+  .cli-docs h3:first-child {
+    margin-top: 0;
+  }
+
+  article.card h3 {
+    font-size: 1.1rem;
+    margin: 0 0 0.5rem;
+  }
+
+  article.card p {
+    margin: 0;
+  }
+</style>

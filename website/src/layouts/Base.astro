@@ -1,0 +1,53 @@
+---
+import "../styles/global.css";
+import { repoUrl, version } from "../config/site";
+import { primaryDownload, downloadUrl } from "../config/site";
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = "Shale — Bambu Lab slicer",
+  description = "Shale is a Bambu-Lab-only desktop slicer built on unmodified CuraEngine, with a fast native UI, CLI and MCP tools.",
+} = Astro.props;
+
+const dl = downloadUrl(primaryDownload.fileName);
+---
+
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="dark" />
+    <title>{title}</title>
+    <link rel="icon" type="image/svg+xml" href="/media/shale-mark.svg" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="wrap site-header-inner">
+        <a class="logo" href="/">
+          Shale<span>v{version}</span>
+        </a>
+        <nav class="nav-links" aria-label="Site">
+          <a href="#features">Features</a>
+          <a href="#downloads">Downloads</a>
+          <a href="#media">Screenshots</a>
+          <a href="#coming">Roadmap</a>
+          <a href={repoUrl}>GitHub</a>
+          <a class="btn btn-primary" href={dl} style="padding: 0.45rem 0.9rem; font-size: 0.85rem;">
+            Download
+          </a>
+        </nav>
+      </div>
+    </header>
+    <main id="main">
+      <slot />
+    </main>
+    <slot name="footer" />
+  </body>
+</html>
