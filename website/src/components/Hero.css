@@ -7,32 +7,60 @@
   border-bottom: 1px solid var(--line);
 }
 
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    rgba(6, 7, 11, 0.98) 0%,
+    rgba(6, 7, 11, 0.94) 36%,
+    rgba(6, 7, 11, 0.55) 46%,
+    transparent 58%
+  );
+}
+
 .hero-field {
   position: absolute;
   inset: 0;
   opacity: 1;
   pointer-events: none;
+  z-index: 0;
 }
 
 .hero-field::after {
   content: "";
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(
-      105deg,
-      rgba(6, 7, 11, 0.94) 0%,
-      rgba(6, 7, 11, 0.82) 28%,
-      rgba(6, 7, 11, 0.42) 46%,
-      rgba(6, 7, 11, 0.12) 58%,
-      transparent 72%
-    ),
-    linear-gradient(
-      180deg,
-      rgba(6, 7, 11, 0.35) 0%,
-      transparent 40%,
-      rgba(6, 7, 11, 0.55) 100%
+  background: linear-gradient(
+    180deg,
+    rgba(6, 7, 11, 0.2) 0%,
+    transparent 35%,
+    rgba(6, 7, 11, 0.45) 100%
+  );
+}
+
+@media (min-width: 900px) {
+  .hero-field {
+    left: 42%;
+    right: 0;
+  }
+
+  .hero::before {
+    background: linear-gradient(
+      90deg,
+      rgba(6, 7, 11, 0.99) 0%,
+      rgba(6, 7, 11, 0.96) 40%,
+      rgba(6, 7, 11, 0.35) 46%,
+      transparent 52%
     );
+  }
+
+  .hero-inner {
+    max-width: 34rem;
+  }
 }
 
 .andromeda-canvas {
@@ -43,7 +71,7 @@
 
 .hero-inner {
   position: relative;
-  z-index: 1;
+  z-index: 3;
   max-width: 36rem;
   padding-block: clamp(4.5rem, 11vw, 7.5rem) clamp(3.5rem, 9vw, 5.5rem);
 }
@@ -169,20 +197,20 @@
   margin-inline: auto;
 }
 
-@media (max-width: 640px) {
-  .hero-field::after {
-    background:
-      linear-gradient(
-        180deg,
-        rgba(6, 7, 11, 0.9) 0%,
-        rgba(6, 7, 11, 0.75) 35%,
-        rgba(6, 7, 11, 0.5) 55%,
-        rgba(6, 7, 11, 0.85) 100%
-      );
+@media (max-width: 767px) {
+  .hero::before {
+    background: linear-gradient(
+      180deg,
+      rgba(6, 7, 11, 0.88) 0%,
+      rgba(6, 7, 11, 0.72) 28%,
+      rgba(6, 7, 11, 0.45) 50%,
+      rgba(6, 7, 11, 0.82) 100%
+    );
   }
 
   .hero-inner {
     max-width: none;
+    padding-top: calc(var(--header-h) + 1.35rem);
   }
 
   .hero-actions {

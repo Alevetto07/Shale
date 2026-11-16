@@ -1,7 +1,7 @@
 ---
 import "../styles/global.css";
 import { repoUrl, version } from "../config/site";
-import { primaryDownload, downloadUrl } from "../config/site";
+import { primaryDownload, downloadUrl, launchComparisonSentence } from "../config/site";
 
 interface Props {
   title?: string;
@@ -10,8 +10,7 @@ interface Props {
 
 const {
   title = "Shale — Bambu Lab slicer",
-  description =
-    "The Bambu Lab slicer with a beautiful dark workspace: instant launch, account sign-in, Studio presets, CLI and MCP for agents.",
+  description = `The Bambu Lab slicer with a calm dark workspace and Bambu Studio presets. ${launchComparisonSentence()}`,
 } = Astro.props;
 
 const dl = downloadUrl(primaryDownload.fileName);
@@ -34,15 +33,24 @@ const dl = downloadUrl(primaryDownload.fileName);
         <a class="logo" href="/">
           Shale<span>v{version}</span>
         </a>
-        <nav class="nav-links" aria-label="Site">
+        <nav class="nav-links nav-links-desktop" aria-label="Site">
           <a href="#features">Features</a>
           <a href="#downloads">Downloads</a>
           <a href="#media">Screenshots</a>
           <a href={repoUrl}>GitHub</a>
-          <a class="btn btn-primary" href={dl} style="padding: 0.45rem 0.9rem; font-size: 0.85rem;">
-            Download
-          </a>
         </nav>
+        <div class="header-actions">
+          <details class="nav-menu">
+            <summary class="nav-menu-trigger">Menu</summary>
+            <div class="nav-menu-panel" role="navigation" aria-label="Mobile">
+              <a href="#features">Features</a>
+              <a href="#downloads">Downloads</a>
+              <a href="#media">Screenshots</a>
+              <a href={repoUrl}>GitHub</a>
+            </div>
+          </details>
+          <a class="btn btn-nav-dl" href={dl}>Download</a>
+        </div>
       </div>
     </header>
     <main id="main">
@@ -69,6 +77,15 @@ const dl = downloadUrl(primaryDownload.fileName);
           { rootMargin: "0px 0px -8% 0px", threshold: 0.12 },
         );
         nodes.forEach((el) => io.observe(el));
+
+        const menu = document.querySelector(".nav-menu");
+        if (menu) {
+          menu.querySelectorAll("a").forEach((link) => {
+            link.addEventListener("click", () => {
+              menu.removeAttribute("open");
+            });
+          });
+        }
       })();
     </script>
   </body>

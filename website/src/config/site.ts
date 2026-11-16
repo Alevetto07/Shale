@@ -76,6 +76,27 @@ export const mcpEnvExample = {
 export const underTheHood =
   "Unmodified CuraEngine · Tauri 2 · WebGL plate · Bambu-only printer list";
 
+/**
+ * Cold-start timings to the main, usable window (seconds unless noted).
+ * Re-measure on your machine and update these before the next site release.
+ */
+export const launchBenchmarks = {
+  /** First paint of the window frame — not marketed on the site */
+  shaleFrameMs: 50,
+  /** Measured time until the UI is ready to use */
+  shaleUsableSeconds: 1.7,
+  shaleUsableRounded: "about two seconds",
+  competitors: ["OrcaSlicer", "Bambu Studio", "Cura"] as const,
+  competitorSecondsMin: 7,
+  competitorSecondsMax: 11,
+  competitorRangeLabel: "7–11 s",
+} as const;
+
+export function launchComparisonSentence(): string {
+  const names = launchBenchmarks.competitors.join(", ");
+  return `Opens in ${launchBenchmarks.shaleUsableRounded}, while ${names} measured ${launchBenchmarks.competitorRangeLabel} to their main window.`;
+}
+
 export const features = [
   {
     title: "Your Bambu account, built in",
@@ -93,9 +114,9 @@ export const features = [
     body: "Machines, processes and filaments come from Bambu Studio's profiles — not a hand-rolled shortcut list.",
   },
   {
-    title: "Opens instantly",
+    title: "Ready in about two seconds",
     icon: "»»",
-    body: "Shale launches in a fraction of a second, so waiting on the app is not part of your routine.",
+    body: launchComparisonSentence(),
   },
   {
     title: "Script it or agent it",

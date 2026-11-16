@@ -61,14 +61,16 @@ export function AndromedaField() {
       rows = Math.max(1, Math.ceil(h / CELL));
       const count = cols * rows;
 
-      const fit = Math.max(w / iw, h / ih) * 1.18;
+      const wide = window.innerWidth >= 900;
+      const fit = Math.max(w / iw, h / ih) * (wide ? 1.28 : 1.16);
       const drawW = iw * fit;
       const drawH = ih * fit;
+      const panX = wide ? drawW * 0.4 : drawW * 0.06;
       fitted = {
         drawW,
         drawH,
-        originX: (w - drawW) / 2 - drawW * 0.08,
-        originY: (h - drawH) / 2 - drawH * 0.04,
+        originX: (w - drawW) / 2 - panX,
+        originY: (h - drawH) / 2 - drawH * 0.02,
       };
 
       baseGlyph = new Uint8Array(count);
@@ -157,18 +159,18 @@ export function AndromedaField() {
           if (lit) step = Math.min(RAMP.length - 1, step + twinkleAmp[index]);
           if (step <= 0) continue;
 
-          const gain = lit ? 1.35 : 1.08;
+          const gain = lit ? 1.45 : 1.18;
           let red = Math.min(255, baseR[index] * gain);
           let green = Math.min(255, baseG[index] * gain);
           let blue = Math.min(255, baseB[index] * gain);
           if (red + green + blue < 28) {
-            const ink = 0.35 + (lit ? 0.35 : 0);
+            const ink = 0.42 + (lit ? 0.38 : 0);
             red = 233 * ink;
             green = 232 * ink;
             blue = 242 * ink;
           }
 
-          const alpha = 0.55 + (step / (RAMP.length - 1)) * 0.45;
+          const alpha = 0.62 + (step / (RAMP.length - 1)) * 0.38;
           const ch = RAMP[step];
           const px = col * CELL;
           const py = row * CELL;

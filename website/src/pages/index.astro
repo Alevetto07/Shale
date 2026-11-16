@@ -16,6 +16,7 @@ import {
   mediaSlots,
   mcpEnvExample,
   underTheHood,
+  launchComparisonSentence,
 } from "../config/site";
 
 const windowsCli = downloads.find((d) => d.id === "windows-cli");
@@ -49,9 +50,9 @@ const mcpJson = JSON.stringify(
       <p class="hero-lede">
         A slicer that looks as good as it slices: a calm dark workspace, your Bambu
         account and printers where you expect them, and Bambu Studio presets without
-        the friction. Open it in a fraction of a second, send over LAN or cloud when
-        you choose, and drive the same job from the terminal or through MCP when an
-        agent should do the busywork.
+        the friction. {launchComparisonSentence()} Send over LAN or cloud when you
+        choose, and drive the same job from the terminal or through MCP when an agent
+        should do the busywork.
       </p>
       <p class="hero-under">
         <span class="dim">Under the hood:</span> {underTheHood}
