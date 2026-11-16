@@ -1,6 +1,27 @@
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use shale_core::{Catalog, ResourcePaths, UserSettings};
+
+static TEST_CACHE: OnceLock<()> = OnceLock::new();
+static REAL_CATALOG: OnceLock<Option<Catalog>> = OnceLock::new();
+
+fn use_test_cache_dir() {
+    TEST_CACHE.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("shale-resolve-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).ok();
+        std::env::set_var("SHALE_CACHE_DIR", dir);
+    });
+}
+
+fn shared_real_catalog() -> Option<&'static Catalog> {
+    use_test_cache_dir();
+    REAL_CATALOG
+        .get_or_init(|| {
+            real_resource_paths().and_then(|paths| Catalog::open(paths).ok())
+        })
+        .as_ref()
+}
 
 fn real_resource_paths() -> Option<ResourcePaths> {
     if let Ok(paths) = ResourcePaths::discover() {
@@ -126,11 +147,10 @@ fn inheritance_formulas_variant_and_user_overrides() {
 
 #[test]
 fn real_cura_profiles_when_resources_are_present() {
-    let Some(paths) = real_resource_paths() else {
+    let Some(catalog) = shared_real_catalog() else {
         eprintln!("skip real_cura_profiles_when_resources_are_present: no Cura resources (run scripts/fetch-resources.sh or set SHALE_CURA_DIR / SHALE_MATERIALS_DIR)");
         return;
     };
-    let catalog = Catalog::open(paths).expect("cura catalog");
     assert!(catalog
         .printers()
         .iter()
@@ -464,11 +484,10 @@ fn preset_layer_mm(name: &str) -> Option<f64> {
 
 #[test]
 fn a1_every_selectable_process_resolves_layer_height() {
-    let Some(paths) = real_resource_paths() else {
+    let Some(catalog) = shared_real_catalog() else {
         eprintln!("skip a1_every_selectable_process_resolves_layer_height: no Cura resources");
         return;
     };
-    let catalog = Catalog::open(paths).expect("open catalog");
     let material = catalog
         .materials_for_printer("bambu_lab_a1", 1.75)
         .into_iter()

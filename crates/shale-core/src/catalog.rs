@@ -318,12 +318,12 @@ impl Catalog {
                 }
                 let mut materials = Vec::new();
                 load_materials(&paths.materials, &mut materials, &mut warnings);
-                let _ = crate::catalog_cache::store_cura_extras(
-                    &paths.cura,
-                    &paths.materials,
-                    &resources,
-                    &instances,
-                    &materials,
+                crate::catalog_cache::store_cura_extras_async(
+                    paths.cura.clone(),
+                    paths.materials.clone(),
+                    resources.clone(),
+                    instances.clone(),
+                    materials.clone(),
                 );
                 (instances, materials)
             };

@@ -33,4 +33,9 @@
   ; leaves an empty .shale key behind, so the key goes last: Shale was the only
   ; owner of that extension.
   DeleteRegKey HKCU "Software\Classes\.shale"
+  ; Parsed catalogue cache lives in roaming app data, not beside the binary.
+  RMDir /r "$APPDATA\Shale\catalog-cache"
+  ; Earlier builds used this folder; remove it if nothing else is there.
+  RMDir /r "$LOCALAPPDATA\Shale\cache"
+  RMDir "$LOCALAPPDATA\Shale"
 !macroend

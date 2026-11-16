@@ -6,8 +6,12 @@
 //! that has no desktop at all, so every path can be given by environment
 //! variable and every failure names the path it tried.
 
+mod info_env;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
+
+use info_env::{env_path_line, cura_engine_lib_path, cura_engine_path, cura_resources_path, materials_path, orca_profiles_path};
 
 use shale_core::catalog::{Catalog, ResourcePaths};
 use shale_core::engine::{CliEngine, EngineProgress};
@@ -108,14 +112,6 @@ fn catalog() -> Result<Catalog, String> {
     Catalog::open(paths).map_err(|err| err.to_string())
 }
 
-fn env_line(name: &str, configured: bool, detail: &str) {
-    if configured {
-        println!("{name:<11} set ({detail})");
-    } else {
-        println!("{name:<11} missing — {detail}");
-    }
-}
-
 fn info() -> Result<(), String> {
     let engine = CliEngine::from_env();
     println!("shale {}", env!("CARGO_PKG_VERSION"));
@@ -124,65 +120,20 @@ fn info() -> Result<(), String> {
         Ok(()) => println!("engine   ok"),
         Err(message) => println!("engine   not usable: {message}"),
     }
-    if let Ok(path) = std::env::var("SHALE_CURAENGINE") {
-        env_line("SHALE_CURAENGINE", true, &path);
-    } else {
-        let usable = engine.probe();
-        let detail = format!("not set (auto-detected: {})", engine.program.display());
-        env_line("SHALE_CURAENGINE", usable.is_ok(), &detail);
-        if usable.is_err() {
-            eprintln!(
-                "shale: set SHALE_CURAENGINE to the CuraEngine binary, or install UltiMaker Cura 5.x"
-            );
-        }
-    }
-    if let Ok(path) = std::env::var("SHALE_CURAENGINE_LIB_DIR") {
-        env_line("SHALE_CURAENGINE_LIB_DIR", true, &path);
-    } else {
-        env_line(
-            "SHALE_CURAENGINE_LIB_DIR",
-            false,
-            "optional; defaults to the folder containing the engine",
-        );
-    }
-    if let Ok(path) = std::env::var("SHALE_CURA_DIR") {
-        env_line("SHALE_CURA_DIR", true, &path);
-    } else {
-        env_line("SHALE_CURA_DIR", false, "set with SHALE_MATERIALS_DIR");
-    }
-    if let Ok(path) = std::env::var("SHALE_MATERIALS_DIR") {
-        env_line("SHALE_MATERIALS_DIR", true, &path);
-    } else {
-        env_line("SHALE_MATERIALS_DIR", false, "set with SHALE_CURA_DIR");
-    }
-    match std::env::var("SHALE_ORCA_DIR") {
-        Ok(path) => env_line("SHALE_ORCA_DIR", true, &path),
-        Err(_) => match shale_core::bambu::profiles_root() {
-            Some(path) => env_line(
-                "SHALE_ORCA_DIR",
-                false,
-                &format!("not set (auto-detected: {})", path.display()),
-            ),
-            None => env_line(
-                "SHALE_ORCA_DIR",
-                false,
-                "missing — set to Bambu/Orca profiles or run scripts/fetch-resources.sh",
-            ),
-        },
-    }
+    println!("{}", env_path_line("SHALE_CURAENGINE", cura_engine_path()));
+    println!("{}", env_path_line("SHALE_CURAENGINE_LIB_DIR", cura_engine_lib_path()));
+    println!("{}", env_path_line("SHALE_CURA_DIR", cura_resources_path()));
+    println!("{}", env_path_line("SHALE_MATERIALS_DIR", materials_path()));
+    println!("{}", env_path_line("SHALE_ORCA_DIR", orca_profiles_path()));
     match ResourcePaths::discover() {
-        Ok(paths) => {
-            println!("cura     {}", paths.cura.display());
-            println!("materials {}", paths.materials.display());
-            match Catalog::open(paths) {
-                Ok(catalog) => {
-                    let printers = catalog.selectable_printers();
-                    println!("printers {}", printers.len());
-                }
-                Err(err) => println!("catalog  unreadable: {err}"),
+        Ok(paths) => match Catalog::open(paths) {
+            Ok(catalog) => {
+                let printers = catalog.selectable_printers();
+                println!("printers {}", printers.len());
             }
-        }
-        Err(err) => println!("cura     not found: {err}"),
+            Err(err) => println!("catalog  unreadable: {err}"),
+        },
+        Err(err) => println!("catalog  not found — {err}"),
     }
     Ok(())
 }

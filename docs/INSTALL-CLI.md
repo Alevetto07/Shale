@@ -102,8 +102,8 @@ TARGET=aarch64-unknown-linux-gnu ./scripts/package-cli.sh
 Install:
 
 ```sh
-sudo install -m755 target/release/shale-cli target/release/shale-mcp /usr/local/bin/shale /usr/local/bin/
-sudo ln -sf /usr/local/bin/shale-cli /usr/local/bin/shale 2>/dev/null || cp target/release/shale-cli /usr/local/bin/shale
+sudo install -m755 target/release/shale-cli /usr/local/bin/shale
+sudo install -m755 target/release/shale-mcp /usr/local/bin/
 shale info
 ```
 

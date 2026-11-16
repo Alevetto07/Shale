@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
-use crate::catalog_cache::{load_bambu_library, store_bambu_library};
+use crate::catalog_cache::{load_bambu_library, store_bambu_library_async};
 use crate::definition::{Definition, RawSetting};
 use crate::instance::InstanceFile;
 use crate::material::{MachineMaterial, Material};
@@ -98,7 +98,7 @@ impl Library {
             return library;
         }
         let library = Self::from_root(Some(root.clone()));
-        let _ = store_bambu_library(&root, &library);
+        store_bambu_library_async(root, library.clone());
         library
     }
 

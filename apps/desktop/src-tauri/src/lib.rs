@@ -264,9 +264,14 @@ fn fit_window_to_monitor(window: &tauri::WebviewWindow) {
         .min(work_h - margin)
         .clamp(480.0, 900.0);
     let _ = window.set_size(tauri::LogicalSize::new(width, height));
+    let Ok(outer) = window.outer_size() else {
+        return;
+    };
+    let outer_w = outer.width as f64 / scale;
+    let outer_h = outer.height as f64 / scale;
     let _ = window.set_position(tauri::LogicalPosition::new(
-        work_x + (work_w - width) / 2.0,
-        work_y + (work_h - height) / 2.0,
+        work_x + (work_w - outer_w) / 2.0,
+        work_y + (work_h - outer_h) / 2.0,
     ));
 }
 

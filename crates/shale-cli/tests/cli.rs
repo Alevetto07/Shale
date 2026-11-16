@@ -69,3 +69,32 @@ fn slice_without_a_model_explains_what_is_missing() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("needs a model path"));
 }
+
+#[test]
+fn info_never_prints_contradictory_env_lines() {
+    let output = binary().arg("info").output().expect("run info");
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !text.contains("set (not set"),
+        "contradictory set/auto line:\n{text}"
+    );
+    assert!(
+        !text.contains("missing — not set"),
+        "contradictory missing/auto line:\n{text}"
+    );
+    assert!(
+        !text.contains("missing — missing"),
+        "empty not-found hint:\n{text}"
+    );
+    for line in text.lines() {
+        if line.starts_with("SHALE_") {
+            assert!(
+                line.contains("set: ")
+                    || line.contains("not set (auto-detected: ")
+                    || line.contains("not found — "),
+                "unexpected env line format: {line}"
+            );
+        }
+    }
+}
