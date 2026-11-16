@@ -157,8 +157,10 @@ pub fn map_gcode_inverse(field: &DeformField, gcode: &str, nominal_layer: f64) -
             continue;
         }
 
-        if !field.gcode_needs_inverse(position[0], position[1], position[2])
-            && !field.gcode_needs_inverse(target[0], target[1], target[2])
+        let band_floor = field.global_band_floor_z();
+        if (position[2] < band_floor - 1e-6 && target[2] < band_floor - 1e-6)
+            || (!field.gcode_needs_inverse(position[0], position[1], position[2])
+                && !field.gcode_needs_inverse(target[0], target[1], target[2]))
         {
             out.push_str(raw);
             out.push('\n');

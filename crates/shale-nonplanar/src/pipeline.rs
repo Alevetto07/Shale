@@ -8,7 +8,7 @@ use crate::config::{NonplanarOptions, NonplanarReport};
 use crate::deform::{build_deform_field, deform_mesh, subdivide_long_edges, DeformField};
 use crate::envelope::bambu_a1_envelope;
 use crate::height_field::{build_height_field, count_top_islands};
-use crate::inverse::map_gcode_inverse;
+use crate::safety::enforce_slope_safety;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NonplanarContext {
@@ -83,7 +83,7 @@ pub fn apply_post_pass(
     report.notes.push("ironing disabled for curved-top pass".into());
     report.top_islands = field.grid.width * field.grid.height; // refined below
     report.top_islands = count_top_islands(&field.grid);
-    let mapped = map_gcode_inverse(&field, gcode, nominal_layer_height);
+    let mapped = enforce_slope_safety(&mut field, gcode, nominal_layer_height, &mut report);
     let header = format_nonplanar_header(&report);
     ok_attach_header(mapped, &header, report)
 }
@@ -161,6 +161,9 @@ fn parse_word(line: &str, letter: char) -> Option<f64> {
 /// `None` marks a travel break (G0) before the next extrusion point.
 type ShellExtrusionChain = Vec<Option<[f64; 3]>>;
 
+/// Same-XY layer hops are not nozzle tilt in XY (see curved-band slope safety).
+const VERTICAL_STEP_HORIZ_MM: f64 = 0.05;
+
 fn max_slope_on_moves(moves: &[ShellExtrusionChain], across_layers: bool) -> f64 {
     let mut max_deg = 0.0f64;
     let mut prev: Option<[f64; 3]> = None;
@@ -182,7 +185,7 @@ fn max_slope_on_moves(moves: &[ShellExtrusionChain], across_layers: bool) -> f64
                     prev = Some(point);
                     continue;
                 }
-                if horiz > 1e-6 {
+                if horiz > VERTICAL_STEP_HORIZ_MM && horiz > 1e-6 {
                     let deg = dz.atan2(horiz).abs().to_degrees();
                     max_deg = max_deg.max(deg);
                 }
@@ -191,6 +194,54 @@ fn max_slope_on_moves(moves: &[ShellExtrusionChain], across_layers: bool) -> f64
         }
     }
     max_deg
+}
+
+/// Maximum in-layer extrusion slope for moves with Z at or above `z_min` (degrees).
+pub fn max_extrusion_slope_above_z(gcode: &str, z_min: f64) -> Option<f64> {
+    let mut position = [0.0f64; 3];
+    let mut prev_extrusion: Option<[f64; 3]> = None;
+    let mut max_deg = 0.0f64;
+    let mut any = false;
+    for raw in gcode.lines() {
+        let line = raw.trim();
+        if line.starts_with("G0") && (line.contains('X') || line.contains('Y')) {
+            prev_extrusion = None;
+        }
+        if let Some(x) = parse_word(line, 'X') {
+            position[0] = x;
+        }
+        if let Some(y) = parse_word(line, 'Y') {
+            position[1] = y;
+        }
+        if let Some(z) = parse_word(line, 'Z') {
+            position[2] = z;
+        }
+        let extruding = line.starts_with("G1")
+            && line.contains('E')
+            && parse_word(line, 'E').unwrap_or(0.0) > 1e-9;
+        if !extruding {
+            continue;
+        }
+        let point = position;
+        if point[2] < z_min - 1e-6 {
+            prev_extrusion = Some(point);
+            continue;
+        }
+        if let Some(prev) = prev_extrusion {
+            if prev[2] >= z_min - 1e-6 {
+                let dx = point[0] - prev[0];
+                let dy = point[1] - prev[1];
+                let dz = point[2] - prev[2];
+                let horiz = (dx * dx + dy * dy).sqrt();
+                if horiz > VERTICAL_STEP_HORIZ_MM && horiz > 1e-9 {
+                    any = true;
+                    max_deg = max_deg.max(dz.atan2(horiz).abs().to_degrees());
+                }
+            }
+        }
+        prev_extrusion = Some(point);
+    }
+    any.then_some(max_deg)
 }
 
 /// Maximum slope from the vertical on the top layer's extrusion moves (degrees).
@@ -207,8 +258,8 @@ pub fn max_top_shell_slope_deg(gcode: &str, layer_count: usize) -> Option<f64> {
 
 /// Same as [`max_top_shell_slope_deg`] but keeps slope across layer boundaries (ramps).
 pub fn max_top_shell_slope_across_layers_deg(gcode: &str, layer_count: usize) -> Option<f64> {
-    let moves = top_shell_extrusion_moves(gcode, layer_count)?;
-    Some(max_slope_on_moves(&moves, true))
+    let (z_lo, _) = top_shell_z_variation(gcode, layer_count)?;
+    max_extrusion_slope_above_z(gcode, z_lo - 1e-6)
 }
 
 fn top_shell_extrusion_moves(gcode: &str, layer_count: usize) -> Option<Vec<ShellExtrusionChain>> {

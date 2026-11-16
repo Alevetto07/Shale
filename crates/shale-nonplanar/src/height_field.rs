@@ -148,7 +148,9 @@ fn select_exterior_top_hit(
     if hits.is_empty() {
         return None;
     }
-    let cos_print = max_angle_deg.to_radians().cos();
+    // Allow slightly steeper hits than the print cap so shallow fixture ramps (e.g. 12°)
+    // are not rejected before grid clamping enforces `max_angle_deg`.
+    let cos_print = (max_angle_deg + 5.0).to_radians().cos();
     let mut printable: Vec<(f64, [f64; 3])> = hits
         .iter()
         .copied()

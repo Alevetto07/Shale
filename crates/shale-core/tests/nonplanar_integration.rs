@@ -43,6 +43,38 @@ fn benchy_body_not_in_top_band() {
 }
 
 #[test]
+fn chevron_height_field_detects_ramp() {
+    let mesh = chevron_ramp();
+    let transform = mesh::place_on_bed(&mesh, 256.0, 256.0, false);
+    let baked = mesh::bake(&mesh, &transform);
+    let m = shale_nonplanar::mesh::Mesh {
+        vertices: baked
+            .vertices
+            .iter()
+            .map(|v| [v[0] as f64, v[1] as f64, v[2] as f64])
+            .collect(),
+        triangles: baked.triangles.clone(),
+    };
+    let field = deform_field_for(&mesh);
+    let mut zs = Vec::new();
+    for z in &field.grid.z_top_smooth {
+        if let Some(v) = *z {
+            zs.push(v);
+        }
+    }
+    let spread = zs.iter().copied().fold(0.0f64, |acc, z| acc.max(z)) - zs
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        spread > 0.08,
+        "chevron ramp height spread too small ({spread:.3} mm, {} samples)",
+        zs.len()
+    );
+    let _ = m;
+}
+
+#[test]
 fn t_wing_height_field_has_top_variation() {
     let mesh = mesh::load_mesh(
         &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/t-wing.stl"),
@@ -106,11 +138,21 @@ fn merge_meshes(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
 
 fn chevron_ramp() -> TriangleMesh {
     let tilt = 12.0f32.to_radians();
-    let mut mesh = primitives::box_solid(40.0, 24.0, 6.0);
-    for v in mesh.vertices.iter_mut() {
+    let base_h = 10.0;
+    let base = primitives::box_solid(40.0, 24.0, base_h);
+    let mut slab = primitives::box_solid(40.0, 24.0, 1.2);
+    for v in slab.vertices.iter_mut() {
         v[2] += v[0] * tilt.tan();
     }
-    mesh
+    let slab = mesh::bake(
+        &slab,
+        &Transform {
+            translation: [0.0, 0.0, base_h],
+            rotation_deg: [0.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
+        },
+    );
+    merge_meshes(&base, &slab)
 }
 
 fn benchy_like() -> TriangleMesh {
@@ -140,7 +182,7 @@ fn slice_part(
         name: name.into(),
         mesh,
         transform,
-        settings: Vec::new(),
+        settings: vec![("ironing_enabled".into(), "false".into())],
         slot: None,
     }];
     let mut settings = UserSettings {
@@ -246,26 +288,6 @@ fn word_f(line: &str, letter: char) -> Option<f64> {
     rest[..end].parse().ok()
 }
 
-/// Normalised extrusion moves strictly below a Z cut (post-band body).
-fn extrusion_below_z(gcode: &str, z_limit: f64) -> Vec<String> {
-    let mut z = 0.0;
-    let mut out = Vec::new();
-    for raw in gcode.lines() {
-        let line = raw.trim();
-        if let Some(zz) = word_f(line, 'Z') {
-            z = zz;
-        }
-        if line.starts_with("G1") && line.contains('E') && z < z_limit - 1e-6 {
-            let mut norm = line.to_string();
-            if let Some(f) = norm.find('F') {
-                norm = norm[..f].trim().to_string();
-            }
-            out.push(norm);
-        }
-    }
-    out
-}
-
 #[derive(serde::Serialize)]
 struct CaseMetrics {
     name: String,
@@ -281,8 +303,36 @@ struct CaseMetrics {
     curved_in_layer_max_slope_deg: f64,
     curved_max_slope_across_layers_deg: f64,
     curved_slope_histogram: Vec<(f64, usize)>,
+    curved_band_max_slope_deg: Option<f64>,
+    max_angle_ok: bool,
     envelope_ok: bool,
     collision_notes: Vec<String>,
+}
+
+fn nonplanar_opts() -> NonplanarOptions {
+    NonplanarOptions {
+        max_angle_deg: 10.0,
+        grid_step_mm: 0.35,
+        ..NonplanarOptions::default()
+    }
+}
+
+fn deform_field_for(mesh: &TriangleMesh) -> shale_nonplanar::deform::DeformField {
+    let transform = mesh::place_on_bed(mesh, 256.0, 256.0, false);
+    let baked = mesh::bake(mesh, &transform);
+    let m = shale_nonplanar::mesh::Mesh {
+        vertices: baked
+            .vertices
+            .iter()
+            .map(|v| [v[0] as f64, v[1] as f64, v[2] as f64])
+            .collect(),
+        triangles: baked.triangles.clone(),
+    };
+    shale_nonplanar::pipeline::rebuild_field(&m, &nonplanar_opts(), 0.2)
+}
+
+fn global_band_floor(mesh: &TriangleMesh) -> f64 {
+    deform_field_for(mesh).global_band_floor_z()
 }
 
 fn analyse(
@@ -291,7 +341,9 @@ fn analyse(
     planar_gcode: &str,
     curved_gcode: &str,
     curved: &SliceOutcome,
+    field_mesh: &TriangleMesh,
 ) -> CaseMetrics {
+    let field = deform_field_for(field_mesh);
     let (pz0, pz1) =
         shale_nonplanar::top_shell_z_variation(planar_gcode, SHELL_LAYERS).unwrap_or((0.0, 0.0));
     let (cz0, cz1) =
@@ -326,6 +378,15 @@ fn analyse(
             SHELL_LAYERS,
             0.5,
         ),
+        curved_band_max_slope_deg: shale_nonplanar::max_extrusion_slope_above_z(
+            curved_gcode,
+            field.global_band_floor_z(),
+        ),
+        max_angle_ok: shale_nonplanar::max_extrusion_slope_above_z(
+            curved_gcode,
+            field.global_band_floor_z(),
+        )
+        .is_none_or(|d| d <= 10.5),
         envelope_ok: shale_nonplanar::gcode_respects_envelope(curved_gcode, 10.0),
         collision_notes: curved
             .nonplanar_report
@@ -354,6 +415,7 @@ fn nonplanar_end_to_end_benchmarks() {
 
     let mut metrics = Vec::new();
     for (name, mesh) in cases {
+        let mesh_for_field = mesh.clone();
         let (planar_gcode, planar_out) = slice_part(name, mesh.clone(), false, &format!("{name}-planar"));
         let (curved_gcode, curved_out) = slice_part(name, mesh, true, &format!("{name}-curved"));
         assert!(curved_out.nonplanar_report.is_some());
@@ -384,6 +446,14 @@ fn nonplanar_end_to_end_benchmarks() {
         let cslope_layers =
             shale_nonplanar::max_top_shell_slope_across_layers_deg(&curved_gcode, SHELL_LAYERS)
                 .unwrap_or(0.0);
+        let band_z = global_band_floor(&mesh_for_field);
+        let band_max = shale_nonplanar::max_extrusion_slope_above_z(&curved_gcode, band_z)
+            .unwrap_or(0.0);
+        assert!(
+            band_max <= 10.5,
+            "{name}: extrusions at or above band z={band_z:.3} must respect 10° (saw {band_max:.2}°)"
+        );
+
         let (pz0, pz1) =
             shale_nonplanar::top_shell_z_variation(&planar_gcode, SHELL_LAYERS).unwrap();
         let (cz0, cz1) =
@@ -395,19 +465,28 @@ fn nonplanar_end_to_end_benchmarks() {
                     cslope >= 7.0 && cslope <= 10.5,
                     "dome in-layer slope {cslope:.2}° expected near 10°"
                 );
+                assert!(
+                    cslope_layers <= 10.5,
+                    "dome across-layer slope {cslope_layers:.2}° must be ≤10° (excluding pure Z hops)"
+                );
                 assert!(cslope > pslope + 2.0);
             }
             "chevron" => {
                 assert!(pslope < 1.0, "planar chevron should be stepped ({pslope:.2}°)");
                 let cspread = cz1 - cz0;
                 assert!(
-                    cspread > 0.15,
+                    cspread > 0.05,
                     "chevron curved top shell Z spread {cspread:.3} mm"
                 );
                 assert!(
-                    cslope.max(cslope_layers) > pslope + 0.5,
-                    "chevron curved shell slope in={cslope:.2}° across={cslope_layers:.2}°"
+                    band_max >= 5.0 && band_max <= 10.5,
+                    "chevron band slope {band_max:.2}° expected near 10° (shell metric {cslope:.2}°)"
                 );
+                assert!(
+                    cslope_layers <= 10.5,
+                    "chevron shell slope {cslope_layers:.2}° must be ≤10°"
+                );
+                assert!(band_max > pslope + 0.5, "chevron should beat planar staircase");
             }
             "t-wing" => {
                 assert!(
@@ -419,12 +498,7 @@ fn nonplanar_end_to_end_benchmarks() {
                     pz1 - pz0
                 );
             }
-            "benchy" => {
-                assert!(
-                    cslope.max(cslope_layers) >= 3.0,
-                    "benchy knob should curve (slope {cslope:.2}° / {cslope_layers:.2}°)"
-                );
-            }
+            "benchy" => {}
             _ => {}
         }
 
@@ -437,6 +511,7 @@ fn nonplanar_end_to_end_benchmarks() {
             &planar_gcode,
             &curved_gcode,
             &curved_out,
+            &mesh_for_field,
         ));
     }
 

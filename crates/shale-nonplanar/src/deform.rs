@@ -22,6 +22,17 @@ pub struct DeformField {
 }
 
 impl DeformField {
+    /// Conservative Z cut: below this height, deformation should not apply.
+    pub fn global_band_floor_z(&self) -> f64 {
+        let max_top = self
+            .grid
+            .z_top_smooth
+            .iter()
+            .filter_map(|z| *z)
+            .fold(0.0_f64, f64::max);
+        max_top - self.band_thickness - self.ramp_thickness
+    }
+
     fn column_limits(&self, x: f64, y: f64) -> Option<(f64, f64, f64, f64)> {
         let z_band = self.grid.sample_band_start(x, y)?;
         let h_top = self
@@ -181,6 +192,13 @@ pub fn deform_mesh(mesh: &Mesh, field: &DeformField) -> Mesh {
     let mut out = mesh.clone();
     for vertex in &mut out.vertices {
         let [x, y, z] = *vertex;
+        let below_band = field
+            .grid
+            .sample_band_start(x, y)
+            .is_none_or(|z_band| z <= z_band + 1e-9);
+        if below_band {
+            continue;
+        }
         vertex[2] = field.forward_z(x, y, z);
     }
     out
