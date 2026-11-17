@@ -16,6 +16,20 @@ fn merge_meshes(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
     mesh
 }
 
+/// Pedestal plus a forward shelf: horizontal underside at z=15 (cantilever).
+fn overhang_shelf() -> TriangleMesh {
+    let base = primitives::box_solid(30.0, 20.0, 15.0);
+    let shelf = bake(
+        &primitives::box_solid(30.0, 10.0, 10.0),
+        &Transform {
+            translation: [0.0, 15.0, 15.0],
+            rotation_deg: [0.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
+        },
+    );
+    merge_meshes(&base, &shelf)
+}
+
 fn chevron_slab() -> TriangleMesh {
     let tilt = 12.0f32.to_radians();
     let base_h = 10.0;
@@ -43,4 +57,5 @@ fn export_bench_stls() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples");
     write_binary_stl(&root.join("dome.stl"), &primitives::sphere(12.0)).expect("dome");
     write_binary_stl(&root.join("chevron-slab.stl"), &chevron_slab()).expect("chevron");
+    write_binary_stl(&root.join("overhang-shelf.stl"), &overhang_shelf()).expect("overhang shelf");
 }

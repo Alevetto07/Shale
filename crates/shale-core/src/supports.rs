@@ -627,6 +627,7 @@ fn classify(
     let angle = group.iter().map(|cell| cell.angle).sum::<f64>() / group.len() as f64;
     if matches!(kind, FeatureKind::Cantilever | FeatureKind::Overhang)
         && angle <= params.overhang_angle_deg + params.cosmetic_band_deg
+        && angle < 70.0
         && area >= params.cosmetic_min_area_mm2
     {
         kind = FeatureKind::Cosmetic;

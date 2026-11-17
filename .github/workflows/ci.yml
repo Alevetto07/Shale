@@ -44,6 +44,9 @@ jobs:
       - name: CuraEngine 5.13 (AppImage extract)
         run: ./scripts/fetch-curaengine.sh
 
+      - name: Export bench STLs
+        run: SHALE_EXPORT_BENCH_STLS=1 cargo test -p shale-core export_bench_stls -- --exact --nocapture
+
       - name: Rust tests
         env:
           SHALE_CURA_DIR: ${{ github.workspace }}/vendor/Cura

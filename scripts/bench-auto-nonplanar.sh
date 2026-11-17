@@ -13,9 +13,8 @@ ROOT="$PWD"
 ARTIFACTS="$ROOT/artifacts/nonplanar"
 mkdir -p "$ARTIFACTS"
 
-if [[ ! -f "$ROOT/examples/dome.stl" ]] || [[ ! -f "$ROOT/examples/chevron-slab.stl" ]]; then
-  SHALE_EXPORT_BENCH_STLS=1 cargo test -p shale-core export_bench_stls -- --exact --nocapture
-fi
+# Wound primitives (fixes legacy inside-out ASCII shelf exports).
+SHALE_EXPORT_BENCH_STLS=1 cargo test -p shale-core export_bench_stls -- --exact --nocapture
 
 CLI=(cargo run -q -p shale-cli --)
 
@@ -56,7 +55,8 @@ metrics_from_auto_json() {
         {
           kind: (.kind | gsub("_tilt_band"; "") | gsub("_"; " ")),
           before: .overhang_angle_before_deg,
-          after: .overhang_angle_after_deg
+          after_planned: .overhang_angle_after_deg,
+          after_measured: .overhang_angle_measured_after_deg
         }
       ];
     {
@@ -67,8 +67,13 @@ metrics_from_auto_json() {
       underside_bands: oh,
       underside_summary: (
         oh | map(
-          if .before != null and .after != null then
-            "\(.kind) \(.before | . * 10 | round / 10)°→\(.after | . * 10 | round / 10)°"
+          if .before != null then
+            (if .after_planned != null then
+              "\(.kind) \(.before | . * 10 | round / 10)°→plan \(.after_planned | . * 10 | round / 10)°"
+            else empty end)
+            + (if .after_measured != null then
+              " / gcode \(.after_measured | . * 10 | round / 10)°"
+            else "" end)
           else empty end
         ) | join("; ")
       ),
@@ -85,10 +90,18 @@ emit_row() {
   local planar_g="/tmp/shale-bench-${tag}-planar.gcode"
   local auto_g="/tmp/shale-bench-${tag}-auto.gcode"
 
+  local tw0 tw1 aw0 aw1
   echo "== $name (planar) ==" >&2
+  tw0=$(date +%s.%N)
   planar_out=$(slice_model off "$path" "$planar_g")
+  tw1=$(date +%s.%N)
   echo "== $name (auto) ==" >&2
+  aw0=$(date +%s.%N)
   auto_out=$(slice_model auto "$path" "$auto_g")
+  aw1=$(date +%s.%N)
+  local planar_wall auto_wall
+  planar_wall=$(python3 -c "print(round($tw1 - $tw0, 2))")
+  auto_wall=$(python3 -c "print(round($aw1 - $aw0, 2))")
 
   local ps as
   ps=$(parse_seconds "$planar_out")
@@ -106,6 +119,8 @@ emit_row() {
     --arg path "$path" \
     --argjson planar_s "$ps" \
     --argjson auto_s "$as" \
+    --argjson wall_planar "$planar_wall" \
+    --argjson wall_auto "$auto_wall" \
     --argjson auto_plan "$auto_json" \
     --arg underside "$underside" \
     --argjson meta "$meta" \
@@ -121,7 +136,10 @@ emit_row() {
       notes: $meta.notes,
       slice_time_planar_s: $planar_s,
       slice_time_auto_s: $auto_s,
-      slice_time_delta_s: ($auto_s - $planar_s)
+      slice_time_delta_s: ($auto_s - $planar_s),
+      wall_slice_planar_s: $wall_planar,
+      wall_slice_auto_s: $wall_auto,
+      wall_slice_delta_s: ($wall_auto - $wall_planar)
     }'
 }
 
@@ -143,15 +161,14 @@ REPORT="$ARTIFACTS/bench-e2e-report.json"
 printf '%s\n' "${ROWS[@]}" | jq -s '.' >"$REPORT"
 
 jq -r '
-  ["| model | features | surfaces | max tilt ° | underside overhang (before→after) | slice planar | slice auto | Δ | helps? |",
-   "|-------|----------|----------|------------|-----------------------------------|--------------|------------|---|--------|"],
+  ["| model | features | surfaces | max tilt ° | underside (before→plan / gcode) | Cura est. planar | auto | wall planar | wall auto | helps? |",
+   "|-------|----------|----------|------------|-----------------------------------|------------------|------|-------------|-----------|--------|"],
   (.[] |
     . as $r |
     ($r.slice_time_planar_s | if . > 0 then "\(. | . * 10 | round / 10)s" else "—" end) as $pt |
     ($r.slice_time_auto_s | if . > 0 then "\(. | . * 10 | round / 10)s" else "—" end) as $at |
-    ($r.slice_time_delta_s | if ($r.slice_time_planar_s > 0 and $r.slice_time_auto_s > 0) then
-      (if . >= 0 then "+" else "" end) + "\(. | . * 10 | round / 10)s"
-    else "—" end) as $dt |
+    ($r.wall_slice_planar_s | tostring + "s") as $wp |
+    ($r.wall_slice_auto_s | tostring + "s") as $wa |
     (if $r.fallback_planar or $r.surfaces_enabled == 0 then
       if ($r.notes | length) > 0 then "no — " + ($r.notes[0] // "planar only") else "no — no bands enabled" end
     elif ($r.underside_overhang != null) then
@@ -159,7 +176,7 @@ jq -r '
     else
       "yes — top/slope bands (tilt " + ($r.max_tilt_deg | tostring) + "°)"
     end) as $help |
-    "| \($r.model) | \($r.features) | \($r.surfaces_enabled) | \($r.max_tilt_deg) | \($r.underside_overhang // "—") | \($pt) | \($at) | \($dt) | \($help) |"
+    "| \($r.model) | \($r.features) | \($r.surfaces_enabled) | \($r.max_tilt_deg) | \($r.underside_overhang // "—") | \($pt) | \($at) | \($wp) | \($wa) | \($help) |"
   )
 ' "$REPORT" | tee "$ARTIFACTS/bench-e2e-table.md"
 

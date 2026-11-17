@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 use crate::mesh::{merge_meshes as merge_meshes_internal, Mesh};
 
-use crate::auto::{apply_plan_to_field, plan_auto_placement, SupportSpanInput};
+use crate::auto::{
+    apply_plan_to_field, plan_auto_placement, PlannedSurfaceKind, SupportSpanInput,
+};
 use crate::collision::{flatten_on_collision, PrintedHeightMap};
 use crate::config::{NonplanarMode, NonplanarOptions, NonplanarReport};
 use crate::deform::{build_deform_field, deform_mesh, subdivide_long_edges, DeformField};
@@ -110,8 +112,31 @@ pub fn apply_post_pass(
     report.top_islands = field.grid.width * field.grid.height; // refined below
     report.top_islands = count_top_islands(&field.grid);
     let mapped = enforce_slope_safety(&mut field, gcode, nominal_layer_height, &mut report);
+    if let Some(plan) = &mut report.auto_placement {
+        fill_measured_overhang_angles(&mapped, plan);
+    }
     let header = format_nonplanar_header(&report);
     ok_attach_header(mapped, &header, report)
+}
+
+fn fill_measured_overhang_angles(gcode: &str, plan: &mut crate::auto::AutoPlacementReport) {
+    for surface in &mut plan.surfaces {
+        if !surface.enabled {
+            continue;
+        }
+        let underside = matches!(
+            surface.kind,
+            PlannedSurfaceKind::BridgeTiltBand
+                | PlannedSurfaceKind::CantileverTiltBand
+                | PlannedSurfaceKind::OverhangTiltBand
+        );
+        if !underside {
+            continue;
+        }
+        surface.overhang_angle_measured_after_deg =
+            max_extrusion_slope_in_box(gcode, surface.min, surface.max)
+                .map(|slope| (90.0 - slope).clamp(0.0, 90.0));
+    }
 }
 
 fn format_nonplanar_header(report: &NonplanarReport) -> String {
@@ -223,6 +248,58 @@ fn max_slope_on_moves(moves: &[ShellExtrusionChain], across_layers: bool) -> f64
 }
 
 /// Maximum in-layer extrusion slope for moves with Z at or above `z_min` (degrees).
+/// Maximum in-layer extrusion slope (deg from horizontal) inside an axis-aligned box.
+pub fn max_extrusion_slope_in_box(gcode: &str, min: [f64; 3], max: [f64; 3]) -> Option<f64> {
+    let mut position = [0.0f64; 3];
+    let mut prev_extrusion: Option<[f64; 3]> = None;
+    let mut max_deg = 0.0f64;
+    let mut any = false;
+    for raw in gcode.lines() {
+        let line = raw.trim();
+        if line.starts_with("G0") && (line.contains('X') || line.contains('Y')) {
+            prev_extrusion = None;
+        }
+        if let Some(x) = parse_word(line, 'X') {
+            position[0] = x;
+        }
+        if let Some(y) = parse_word(line, 'Y') {
+            position[1] = y;
+        }
+        if let Some(z) = parse_word(line, 'Z') {
+            position[2] = z;
+        }
+        let extruding = line.starts_with("G1")
+            && line.contains('E')
+            && parse_word(line, 'E').unwrap_or(0.0) > 1e-9;
+        if !extruding {
+            continue;
+        }
+        let point = position;
+        let in_box = point[0] >= min[0] - 0.05
+            && point[0] <= max[0] + 0.05
+            && point[1] >= min[1] - 0.05
+            && point[1] <= max[1] + 0.05
+            && point[2] >= min[2] - 0.05
+            && point[2] <= max[2] + 0.05;
+        if !in_box {
+            prev_extrusion = if in_box { Some(point) } else { None };
+            continue;
+        }
+        if let Some(prev) = prev_extrusion {
+            let dx = point[0] - prev[0];
+            let dy = point[1] - prev[1];
+            let dz = point[2] - prev[2];
+            let horiz = (dx * dx + dy * dy).sqrt();
+            if horiz > VERTICAL_STEP_HORIZ_MM && horiz > 1e-9 {
+                any = true;
+                max_deg = max_deg.max(dz.atan2(horiz).abs().to_degrees());
+            }
+        }
+        prev_extrusion = Some(point);
+    }
+    any.then_some(max_deg)
+}
+
 pub fn max_extrusion_slope_above_z(gcode: &str, z_min: f64) -> Option<f64> {
     let mut position = [0.0f64; 3];
     let mut prev_extrusion: Option<[f64; 3]> = None;

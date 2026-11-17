@@ -34,7 +34,11 @@ pub struct PlannedSurface {
     pub bearing_deg: f64,
     pub extent_mm: [f64; 2],
     pub overhang_angle_before_deg: Option<f64>,
+    /// Planner estimate (before minus applied tilt); not remeasured from G-code.
     pub overhang_angle_after_deg: Option<f64>,
+    /// Filled after slice when post-pass can read mapped toolpaths in the band.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overhang_angle_measured_after_deg: Option<f64>,
     pub reason: String,
 }
 
@@ -125,10 +129,20 @@ fn plan_surfaces(detection: &DetectionReport, max_angle_deg: f64) -> (Vec<Planne
                 );
             }
             DetectedFeatureKind::Cosmetic => {
-                notes.push(format!(
-                    "feature {} cosmetic underside — planar sufficient",
-                    feature.id
-                ));
+                if feature.angle_from_vertical_deg >= 52.0 {
+                    plan_underside(
+                        &mut surfaces,
+                        &mut next_surface,
+                        feature,
+                        PlannedSurfaceKind::OverhangTiltBand,
+                        max_angle_deg,
+                    );
+                } else {
+                    notes.push(format!(
+                        "feature {} cosmetic underside — planar sufficient",
+                        feature.id
+                    ));
+                }
             }
         }
     }
@@ -184,6 +198,7 @@ fn push_top_band(
         ],
         overhang_angle_before_deg: feature.overhang_angle_before_deg,
         overhang_angle_after_deg: feature.overhang_angle_after_deg,
+        overhang_angle_measured_after_deg: None,
         reason,
     });
     *next_surface += 1;
@@ -216,6 +231,7 @@ fn plan_underside(
             ],
             overhang_angle_before_deg: Some(before),
             overhang_angle_after_deg: Some(before),
+            overhang_angle_measured_after_deg: None,
             reason: format!(
                 "shallow underside {before:.1}° — planar fallback"
             ),
@@ -262,6 +278,7 @@ fn plan_underside(
         ],
         overhang_angle_before_deg: Some(before),
         overhang_angle_after_deg: Some(after),
+        overhang_angle_measured_after_deg: None,
         reason,
     });
     *next_surface += 1;
