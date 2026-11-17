@@ -62,6 +62,16 @@ jobs:
           LIBRARY_PATH: /usr/lib/gcc/x86_64-linux-gnu/13
         run: ./scripts/bench-auto-nonplanar.sh
 
+      - name: Planar supports G-code parity vs base
+        env:
+          SHALE_CURA_DIR: ${{ github.workspace }}/vendor/Cura
+          SHALE_MATERIALS_DIR: ${{ github.workspace }}/vendor/fdm_materials
+          SHALE_ORCA_DIR: ${{ github.workspace }}/vendor/BambuStudio/resources/profiles
+          SHALE_CURAENGINE: ${{ github.workspace }}/vendor/curaengine/CuraEngine
+          LIBRARY_PATH: /usr/lib/gcc/x86_64-linux-gnu/13
+          PLANAR_PARITY_BASE_REF: origin/cursor/v02-nonplanar-88ff
+        run: ./scripts/planar-supports-gcode-parity.sh
+
       - name: Upload auto-placement bench
         uses: actions/upload-artifact@v4
         with:
@@ -69,6 +79,7 @@ jobs:
           path: |
             artifacts/nonplanar/bench-e2e-report.json
             artifacts/nonplanar/bench-e2e-table.md
+            artifacts/nonplanar/planar-supports-parity.json
           if-no-files-found: error
 
   windows:
