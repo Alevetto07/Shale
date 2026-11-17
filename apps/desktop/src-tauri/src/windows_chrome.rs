@@ -115,12 +115,14 @@ unsafe fn track_system_menu(hwnd: HWND) -> LRESULT {
         point = POINT { x: 0, y: 0 };
     }
     let mut rect = RECT::default();
-    if GetWindowRect(hwnd, &mut rect).is_ok() {
-        if point.x < rect.left || point.x > rect.right || point.y < rect.top || point.y > rect.bottom
-        {
-            point.x = rect.left + 5;
-            point.y = rect.top + 5;
-        }
+    if GetWindowRect(hwnd, &mut rect).is_ok()
+        && (point.x < rect.left
+            || point.x > rect.right
+            || point.y < rect.top
+            || point.y > rect.bottom)
+    {
+        point.x = rect.left + 5;
+        point.y = rect.top + 5;
     }
     let flags = TPM_RETURNCMD.0 | TPM_RIGHTBUTTON.0;
     let picked = TrackPopupMenuEx(menu, flags, point.x, point.y, hwnd, None);
