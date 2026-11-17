@@ -84,11 +84,12 @@ unsafe extern "system" fn shim_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    let Ok(chrome) = state().lock() else {
-        return LRESULT(0);
+    let main = {
+        let Ok(chrome) = state().lock() else {
+            return LRESULT(0);
+        };
+        chrome.main_hwnd
     };
-    let main = chrome.main_hwnd;
-  drop(chrome);
 
     match msg {
         WM_SYSCOMMAND if hwnd.0 == main => {

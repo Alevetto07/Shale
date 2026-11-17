@@ -4972,11 +4972,11 @@ pub fn run() {
                     let _ = windows_chrome::subclass_thread_windows();
                 }
             }
-            RunEvent::WindowEvent { label, event, .. } if label == "main" => {
-                if let WindowEvent::CloseRequested { .. } = event {
-                    app.exit(0);
-                }
-            }
+            RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::CloseRequested { .. },
+                ..
+            } if label == "main" => app.exit(0),
             _ => {}
         }
     });

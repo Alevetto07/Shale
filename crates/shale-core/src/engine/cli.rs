@@ -100,10 +100,10 @@ fn engine_start_failure_message(program: &Path, lib_dir: Option<&Path>, err: &st
     );
     #[cfg(windows)]
     {
-        return format!(
+        format!(
             "{base}. Shale looks for CuraEngine.exe inside an UltiMaker Cura folder under Program Files. Set SHALE_CURAENGINE to the full path if it lives somewhere else. DLLs are loaded from {}.",
             lib_dir_display(lib_dir)
-        );
+        )
     }
     #[cfg(not(windows))]
     {
