@@ -436,6 +436,28 @@ mod tests {
     }
 
     #[test]
+    fn packed_snapshot_includes_definitions() {
+        let (_guard, _home) = isolated_cache();
+        std::env::set_var("SHALE_TEST", "1");
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let cura = root.join("cura");
+        let materials = root.join("materials");
+        let resources = cura.join("resources");
+        let mut definitions = std::collections::HashMap::new();
+        let def_path = resources.join("definitions/fdmprinter.def.json");
+        let definition =
+            crate::definition::load_definition(&def_path, false).expect("fdmprinter");
+        definitions.insert(definition.id.clone(), definition);
+        let definition_rows: Vec<Definition> = definitions.values().cloned().collect();
+        store_cura_snapshot_sync(&cura, &materials, &resources, &definition_rows, &[], &[])
+        .expect("write snapshot");
+        let snapshot = load_cura_snapshot(&cura, &materials, &resources)
+            .expect("read")
+            .expect("hit");
+        assert!(snapshot.definitions.contains_key("fdmprinter"));
+    }
+
+    #[test]
     fn fingerprint_changes_when_a_file_is_added() {
         let base = tempfile::tempdir().unwrap();
         let materials = base.path().join("materials");

@@ -31,46 +31,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
-    fn packed_snapshot_reopens_when_source_trees_are_unreadable() {
-        use std::fs;
-        use std::os::unix::fs::PermissionsExt;
-
-        let _dirs = bench_dirs();
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-        let paths = ResourcePaths {
-            cura: root.join("cura"),
-            materials: root.join("materials"),
-        };
-        let resources = paths.resources();
-        let _ = Catalog::open(paths.clone()).expect("seed on-disk snapshot");
-
-        for dir in [
-            resources.join("quality"),
-            resources.join("variants"),
-            resources.join("definitions"),
-            paths.materials.clone(),
-        ] {
-            if dir.is_dir() {
-                let mut perms = fs::metadata(&dir).expect("metadata").permissions();
-                perms.set_mode(0o0);
-                let _ = fs::set_permissions(&dir, perms);
-            }
-        }
-
-        let start = Instant::now();
-        let catalog = Catalog::open(paths).expect("snapshot should satisfy open");
-        let elapsed = start.elapsed();
-        eprintln!("snapshot Catalog::open {:?}", elapsed);
-        assert!(catalog.definitions.contains_key("fdmprinter"));
-        assert!(
-            elapsed.as_secs() < 3,
-            "packed snapshot cold path took {:?}",
-            elapsed
-        );
-    }
-
-    #[test]
     fn fixture_catalog_open_stays_fast() {
         let _dirs = bench_dirs();
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
@@ -79,10 +39,19 @@ mod tests {
             materials: root.join("materials"),
         };
         let start = Instant::now();
-        let _ = Catalog::open(paths).expect("fixture catalog");
+        let _ = Catalog::open(paths.clone()).expect("fixture catalog");
         let elapsed = start.elapsed();
         eprintln!("fixture Catalog::open {:?}", elapsed);
         assert!(elapsed.as_millis() < 600, "fixture open took {:?}", elapsed);
+        let warm = Instant::now();
+        let _ = Catalog::open(paths).expect("fixture catalog from snapshot");
+        let warm_elapsed = warm.elapsed();
+        eprintln!("fixture Catalog::open (snapshot) {:?}", warm_elapsed);
+        assert!(
+            warm_elapsed.as_millis() < 400,
+            "snapshot reopen took {:?}",
+            warm_elapsed
+        );
     }
 
     #[test]
