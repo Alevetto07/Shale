@@ -303,6 +303,16 @@ fn slice_command(args: &[String]) -> Result<(), String> {
     }
     println!("filament {:.2} m", outcome.filament_metres);
     println!("layers   {}", outcome.toolpath.layers.len());
+    if std::env::var_os("SHALE_BENCH_SUMMARY").is_some() {
+        println!(
+            "bench_summary {}",
+            serde_json::json!({
+                "print_time_seconds": outcome.print_time_seconds,
+                "filament_m": outcome.filament_metres,
+                "layers": outcome.toolpath.layers.len(),
+            })
+        );
+    }
     if let Some(report) = &outcome.nonplanar_report {
         println!(
             "nonplanar {} islands={} flattened={}",
