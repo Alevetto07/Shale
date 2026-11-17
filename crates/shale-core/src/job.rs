@@ -109,6 +109,26 @@ pub fn render_sequence(
     for (key, value) in &resolved.global {
         values.set_setting(key, value);
     }
+    for (key, value) in crate::bambu::template_scalars_for_slice(
+        &resolved.printer_id,
+        &resolved.variant_name,
+        &resolved.quality_type,
+        &resolved.material_id,
+    ) {
+        if values.get(&key).is_none() {
+            values.set_setting(&key, &value);
+        }
+    }
+    for (key, list) in crate::bambu::template_lists_for_slice(
+        &resolved.printer_id,
+        &resolved.variant_name,
+        &resolved.quality_type,
+        &resolved.material_id,
+    ) {
+        if values.get(&key).is_none() {
+            values.set_list(&key, list);
+        }
+    }
     let mut lists: std::collections::BTreeMap<String, Vec<Value>> =
         std::collections::BTreeMap::new();
     for extruder in &resolved.extruders {
@@ -283,14 +303,6 @@ pub fn render_sequence(
             .map(String::as_str)
             .unwrap_or("0");
         values.set_setting("scan_first_layer", scan);
-    }
-    for (name, default) in [
-        ("overall_chamber_temperature", "0"),
-        ("chamber_temperature", "0"),
-    ] {
-        if values.get(name).is_none() {
-            values.set_setting(name, default);
-        }
     }
     for &(bambu, cura) in bambu_cura_template_aliases() {
         if values.get(bambu).is_none() {

@@ -893,6 +893,266 @@ fn material_color(kind: &str) -> &'static str {
     }
 }
 
+const TEMPLATE_SCALAR_SKIP: &[&str] = &[
+    "type",
+    "name",
+    "inherits",
+    "from",
+    "setting_id",
+    "instantiation",
+    "description",
+    "compatible_printers",
+    "compatible_prints",
+    "setting_overrides",
+    "sub_path",
+    "machine_start_gcode",
+    "machine_end_gcode",
+    "change_filament_gcode",
+    "layer_change_gcode",
+    "filament_start_gcode",
+    "filament_end_gcode",
+    "printing_by_object_gcode",
+];
+
+/// Scalar Orca/Bambu settings for `{placeholder}` names in machine G-code
+/// templates (chamber fans, retractions, and the rest), merged from machine,
+/// process, and filament JSON like Bambu Studio at slice time.
+pub fn template_scalars_for_slice(
+    printer_id: &str,
+    variant_name: &str,
+    quality_type: &str,
+    material_id: &str,
+) -> HashMap<String, String> {
+    let Some(root) = root() else {
+        return HashMap::new();
+    };
+    let Some(dir) = vendor_dir_for_printer(&root, printer_id) else {
+        return HashMap::new();
+    };
+    let vendor = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(display_vendor)
+        .unwrap_or("Bambu Lab");
+    let machines = read_machines(&dir);
+    let nozzle = variant_name.split_whitespace().next().unwrap_or("0.4");
+    let group: Vec<&Profile> = machines
+        .iter()
+        .filter(|profile| slug(&profile.model) == printer_id)
+        .collect();
+    if group.is_empty() {
+        return HashMap::new();
+    }
+    let machine_names: Vec<String> = group.iter().map(|profile| profile.file.clone()).collect();
+    let mut out = HashMap::new();
+    let machine = group
+        .iter()
+        .find(|profile| (number(&profile.nozzle) - number(nozzle)).abs() < 0.02)
+        .or_else(|| group.first());
+    if let Some(profile) = machine {
+        collect_template_scalars(&profile.machine_settings, &mut out);
+    }
+    let processes = profiles_in(&dir.join("process"));
+    for (stem, values) in processes {
+        if slug(&stem) != quality_type {
+            continue;
+        }
+        if !applies_to(&values, &machine_names) || !process_is_selectable(&values) {
+            continue;
+        }
+        collect_template_scalars(&values, &mut out);
+        break;
+    }
+    let filaments = profiles_in(&dir.join("filament"));
+    let mut matched = false;
+    for (stem, values) in &filaments {
+        if stem.starts_with("fdm_") {
+            continue;
+        }
+        if !material_profile_matches_id(stem, values, vendor, material_id) {
+            continue;
+        }
+        if !applies_to(values, &machine_names) {
+            continue;
+        }
+        collect_template_scalars(values, &mut out);
+        matched = true;
+        break;
+    }
+    if !matched {
+        for (stem, values) in &filaments {
+            if stem.starts_with("fdm_") {
+                continue;
+            }
+            if material_profile_matches_id(stem, values, vendor, material_id) {
+                collect_template_scalars(values, &mut out);
+                break;
+            }
+        }
+    }
+    derive_template_computed(&mut out);
+    out
+}
+
+/// Per-extruder list placeholders (`fan_speed[current_filament_id]`, and the
+/// like) from the same merged Orca profiles as [`template_scalars_for_slice`].
+pub fn template_lists_for_slice(
+    printer_id: &str,
+    variant_name: &str,
+    quality_type: &str,
+    material_id: &str,
+) -> HashMap<String, Vec<crate::template::Value>> {
+    let Some(root) = root() else {
+        return HashMap::new();
+    };
+    let Some(dir) = vendor_dir_for_printer(&root, printer_id) else {
+        return HashMap::new();
+    };
+    let vendor = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(display_vendor)
+        .unwrap_or("Bambu Lab");
+    let machines = read_machines(&dir);
+    let nozzle = variant_name.split_whitespace().next().unwrap_or("0.4");
+    let group: Vec<&Profile> = machines
+        .iter()
+        .filter(|profile| slug(&profile.model) == printer_id)
+        .collect();
+    if group.is_empty() {
+        return HashMap::new();
+    }
+    let machine_names: Vec<String> = group.iter().map(|profile| profile.file.clone()).collect();
+    let mut out: HashMap<String, Vec<crate::template::Value>> = HashMap::new();
+    let machine = group
+        .iter()
+        .find(|profile| (number(&profile.nozzle) - number(nozzle)).abs() < 0.02)
+        .or_else(|| group.first());
+    if let Some(profile) = machine {
+        collect_template_lists(&profile.machine_settings, &mut out);
+    }
+    let processes = profiles_in(&dir.join("process"));
+    for (stem, values) in processes {
+        if slug(&stem) != quality_type {
+            continue;
+        }
+        if !applies_to(&values, &machine_names) || !process_is_selectable(&values) {
+            continue;
+        }
+        collect_template_lists(&values, &mut out);
+        break;
+    }
+    let filaments = profiles_in(&dir.join("filament"));
+    for (stem, values) in &filaments {
+        if stem.starts_with("fdm_") {
+            continue;
+        }
+        if material_profile_matches_id(stem, values, vendor, material_id)
+            && applies_to(values, &machine_names)
+        {
+            collect_template_lists(values, &mut out);
+            break;
+        }
+    }
+    out
+}
+
+fn collect_template_lists(values: &Json, out: &mut HashMap<String, Vec<crate::template::Value>>) {
+    let Json::Object(map) = values else {
+        return;
+    };
+    for (key, value) in map {
+        if TEMPLATE_SCALAR_SKIP.contains(&key.as_str()) || key.ends_with("_gcode") {
+            continue;
+        }
+        let Json::Array(arr) = value else {
+            continue;
+        };
+        let list: Vec<crate::template::Value> = arr
+            .iter()
+            .filter_map(|item| {
+                scalar_setting_string(item).map(|text| crate::template::value_of(&text))
+            })
+            .collect();
+        if !list.is_empty() {
+            out.insert(key.clone(), list);
+        }
+    }
+}
+
+fn vendor_dir_for_printer(root: &Path, printer_id: &str) -> Option<PathBuf> {
+    for code in vendor_list() {
+        let dir = root.join(&code);
+        if !dir.is_dir() {
+            continue;
+        }
+        let machines = read_machines(&dir);
+        if machines
+            .iter()
+            .any(|profile| slug(&profile.model) == printer_id)
+        {
+            return Some(dir);
+        }
+    }
+    None
+}
+
+fn material_profile_matches_id(
+    stem: &str,
+    values: &Json,
+    vendor: &str,
+    material_id: &str,
+) -> bool {
+    let name = text(values.get("name")).unwrap_or_else(|| stem.to_string());
+    let short = name.split(" @").next().unwrap_or(&name).to_string();
+    let bare = short
+        .strip_prefix(vendor.split_whitespace().next().unwrap_or(vendor))
+        .map(str::trim)
+        .filter(|rest| !rest.is_empty())
+        .unwrap_or(&short);
+    format!("{}_{}", slug(vendor), slug(bare)) == material_id
+}
+
+fn collect_template_scalars(values: &Json, out: &mut HashMap<String, String>) {
+    let Json::Object(map) = values else {
+        return;
+    };
+    for (key, value) in map {
+        if TEMPLATE_SCALAR_SKIP.contains(&key.as_str()) || key.ends_with("_gcode") {
+            continue;
+        }
+        match value {
+            Json::Array(arr) if !arr.is_empty() => {
+                if let Some(text) = scalar_setting_string(&arr[0]) {
+                    out.insert(key.clone(), text);
+                }
+            }
+            _ => {
+                if let Some(text) = scalar_setting_string(value) {
+                    out.insert(key.clone(), text);
+                }
+            }
+        }
+    }
+}
+
+fn derive_template_computed(out: &mut HashMap<String, String>) {
+    if !out.contains_key("overall_chamber_temperature") {
+        let chamber = out
+            .get("chamber_temperatures")
+            .cloned()
+            .unwrap_or_else(|| "0".into());
+        out.insert("overall_chamber_temperature".into(), chamber);
+    }
+    if !out.contains_key("min_vitrification_temperature") {
+        if let Some(temp) = out.get("temperature_vitrification").cloned() {
+            out.insert("min_vitrification_temperature".into(), temp);
+        } else {
+            out.insert("min_vitrification_temperature".into(), "45".into());
+        }
+    }
+}
+
 /// A profile applies to a printer when its `compatible_printers` names one of
 /// the machine files in the group. Libraries that omit the key are treated as
 /// universal so a dropdown is never empty.
@@ -1088,6 +1348,28 @@ mod tests {
                 .unwrap()
                 .as_f64(),
             Some(256.0)
+        );
+    }
+
+    #[test]
+    fn slice_template_scalars_include_chamber_and_retraction() {
+        let Some(_library) = installed() else {
+            return;
+        };
+        let scalars = template_scalars_for_slice(
+            "bambu_lab_x1_carbon",
+            "0.4 mm",
+            "0_20mm_standard_bbl_x1_carbon",
+            "bambu_lab_pla_basic",
+        );
+        assert!(
+            scalars.contains_key("overall_chamber_temperature"),
+            "missing chamber scalar: {scalars:?}"
+        );
+        assert!(
+            scalars.get("retraction_length").is_some()
+                || scalars.get("default_acceleration").is_some(),
+            "expected process scalars: {scalars:?}"
         );
     }
 
