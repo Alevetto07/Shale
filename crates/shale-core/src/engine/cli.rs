@@ -356,6 +356,9 @@ fn program_uses_external_lib_dir(program: &Path) -> bool {
     let Ok(n) = file.read(&mut header) else {
         return true;
     };
+    if n >= 2 && header[0] == b'#' && header[1] == b'!' {
+        return false;
+    }
     n >= 4 && header == *b"\x7fELF"
 }
 
@@ -483,12 +486,20 @@ mod tests {
 
     #[test]
     fn shell_engine_wrappers_skip_external_lib_dir() {
-        assert!(!program_uses_external_lib_dir(Path::new("/bin/bash")));
+        let path = std::env::temp_dir().join("shale_engine_wrapper_test.sh");
+        std::fs::write(&path, "#!/bin/bash\nexit 0\n").expect("temp wrapper");
+        assert!(!program_uses_external_lib_dir(&path));
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn elf_engine_bins_use_external_lib_dir() {
-        assert!(program_uses_external_lib_dir(Path::new("/bin/ls")));
+        let candidate = if cfg!(windows) {
+            Path::new(r"C:\Windows\System32\cmd.exe")
+        } else {
+            Path::new("/bin/ls")
+        };
+        assert!(program_uses_external_lib_dir(candidate));
     }
 
     #[test]
