@@ -27,8 +27,10 @@ use shale_core::{
 mod cloud;
 mod instance;
 mod secrets;
+#[cfg(windows)]
+mod windows_chrome;
 
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 
 struct Inner {
     catalog: Option<Catalog>,
@@ -84,6 +86,9 @@ struct Inner {
     slicing: bool,
     cancel_import: Arc<AtomicBool>,
     engine_message: String,
+    /// Set after the background CuraEngine probe finishes (avoids probing on every `status`).
+    engine_checked: bool,
+    engine_ok: bool,
 }
 
 #[derive(Default)]
@@ -130,6 +135,8 @@ struct Status {
     catalog_loading: bool,
     /// The full Cura quality tree has finished loading (not just the fast pass).
     catalog_full: bool,
+    /// CuraEngine probe finished (see `engine_ok`).
+    engine_checked: bool,
     /// The version this binary was built as, so the window never has to
     /// hold a copy that can drift from Cargo.toml.
     version: String,
@@ -243,6 +250,77 @@ fn catalog_log(app: &AppHandle, line: &str) {
     }
 }
 
+fn fit_window_to_monitor(window: &tauri::WebviewWindow) {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return;
+    };
+    let scale = monitor.scale_factor();
+    let work = monitor.work_area();
+    let work_w = work.size.width as f64 / scale;
+    let work_h = work.size.height as f64 / scale;
+    let work_x = work.position.x as f64 / scale;
+    let work_y = work.position.y as f64 / scale;
+    let Ok(requested) = window.outer_size() else {
+        return;
+    };
+    let margin = if std::env::var("SHALE_DEMO").is_ok() {
+        40.0
+    } else {
+        20.0
+    };
+    let width = (requested.width as f64 / scale)
+        .min(work_w - margin)
+        .clamp(640.0, 1440.0);
+    let height = (requested.height as f64 / scale)
+        .min(work_h - margin)
+        .clamp(480.0, 900.0);
+    let _ = window.set_size(tauri::LogicalSize::new(width, height));
+    let Ok(outer) = window.outer_size() else {
+        return;
+    };
+    let outer_w = outer.width as f64 / scale;
+    let outer_h = outer.height as f64 / scale;
+    let pos_x = work_x + (work_w - outer_w) / 2.0;
+    #[cfg(windows)]
+    let pos_y = {
+        let mut y = work_y + (work_h - outer_h) / 2.0;
+        if let (Ok(hwnd), Ok(outer_pos)) = (window.hwnd(), window.outer_position()) {
+            use std::mem::MaybeUninit;
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::Foundation::RECT;
+            use windows::Win32::Graphics::Dwm::{
+                DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS,
+            };
+
+            let hwnd = HWND(hwnd.0);
+            let mut rect = MaybeUninit::<RECT>::uninit();
+            let ok = unsafe {
+                DwmGetWindowAttribute(
+                    hwnd,
+                    DWMWA_EXTENDED_FRAME_BOUNDS,
+                    rect.as_mut_ptr().cast(),
+                    std::mem::size_of::<RECT>() as u32,
+                )
+                .is_ok()
+            };
+            if ok {
+                let rect = unsafe { rect.assume_init() };
+                let frame_h = (rect.bottom - rect.top) as f64 / scale;
+                let frame_top = rect.top as f64 / scale;
+                let outer_y = outer_pos.y as f64 / scale;
+                let lead_in = frame_top - outer_y;
+                let target_top = work_y + (work_h - frame_h) / 2.0;
+                y = target_top - lead_in;
+            }
+        }
+        y
+    };
+    #[cfg(not(windows))]
+    let pos_y = work_y + (work_h - outer_h) / 2.0;
+
+    let _ = window.set_position(tauri::LogicalPosition::new(pos_x, pos_y));
+}
+
 fn spawn_catalog_loader(app: AppHandle) {
     std::thread::spawn(move || {
         catalog_log(&app, "discover begin");
@@ -251,11 +329,7 @@ fn spawn_catalog_loader(app: AppHandle) {
             &app,
             &format!(
                 "discover {}",
-                if discovered.is_ok() {
-                    "ok"
-                } else {
-                    "failed"
-                }
+                if discovered.is_ok() { "ok" } else { "failed" }
             ),
         );
         let Ok(paths) = discovered else {
@@ -276,9 +350,7 @@ fn spawn_catalog_loader(app: AppHandle) {
                         "ui-fast {:?} printers={} qualities-a1={}",
                         fast_started.elapsed(),
                         fast.selectable_printers().len(),
-                        fast
-                            .qualities_for("bambu_lab_a1", Some("0.4 mm"))
-                            .len()
+                        fast.qualities_for("bambu_lab_a1", Some("0.4 mm")).len()
                     ),
                 );
                 let state = app.state::<AppState>();
@@ -361,7 +433,7 @@ fn app_status(state: State<AppState>) -> Result<Status, String> {
         .as_ref()
         .map(|c| c.selectable_printers().len())
         .unwrap_or(0);
-    let engine_ok = inner.engine.available();
+    let engine_ok = inner.engine_checked && inner.engine_ok;
     Ok(Status {
         resources_ok: loaded,
         resources_message,
@@ -379,8 +451,10 @@ fn app_status(state: State<AppState>) -> Result<Status, String> {
         printer_count,
         demo_model: std::env::var("SHALE_DEMO_MODEL").ok(),
         demo: std::env::var("SHALE_DEMO").ok(),
-        catalog_loading: inner.catalog_loading || (inner.catalog.is_none() && inner.catalog_error.is_none()),
+        catalog_loading: inner.catalog_loading
+            || (inner.catalog.is_none() && inner.catalog_error.is_none()),
         catalog_full: inner.catalog_full,
+        engine_checked: inner.engine_checked,
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }
@@ -404,10 +478,14 @@ fn set_engine(
                 "CuraEngine answered at {}",
                 inner.engine.cli.program.display()
             );
+            inner.engine_checked = true;
+            inner.engine_ok = true;
             Ok(true)
         }
         Err(err) => {
             inner.engine_message = err;
+            inner.engine_checked = true;
+            inner.engine_ok = false;
             Ok(false)
         }
     }
@@ -441,10 +519,7 @@ fn list_qualities(
 ) -> Result<Vec<QualityInfo>, String> {
     let mut inner = lock(&state)?;
     let catalog = catalog(&mut inner)?;
-    Ok(catalog.qualities_for(
-        &printer_id,
-        variant_name.as_deref(),
-    ))
+    Ok(catalog.qualities_for(&printer_id, variant_name.as_deref()))
 }
 
 #[tauri::command]
@@ -467,17 +542,17 @@ fn list_materials(state: State<AppState>, printer_id: String) -> Result<Vec<Mate
         })
         .map(|resolved| resolved.summary.material_diameter)
         .unwrap_or(1.75);
-  // Bambu printers get their own tuned filaments, already narrowed to the
-  // machine; Cura printers keep the short generic-first list they had.
-  let external_printer = catalog
-    .printers()
-    .iter()
-    .find(|info| info.id == printer_id)
-    .map(|info| info.source == "bambu")
-    .unwrap_or(false);
-  if external_printer {
-    return Ok(catalog.materials_for_printer(&printer_id, diameter));
-  }
+    // Bambu printers get their own tuned filaments, already narrowed to the
+    // machine; Cura printers keep the short generic-first list they had.
+    let external_printer = catalog
+        .printers()
+        .iter()
+        .find(|info| info.id == printer_id)
+        .map(|info| info.source == "bambu")
+        .unwrap_or(false);
+    if external_printer {
+        return Ok(catalog.materials_for_printer(&printer_id, diameter));
+    }
     let mut materials: Vec<MaterialInfo> = catalog
         .materials_for(diameter)
         .into_iter()
@@ -2424,17 +2499,16 @@ fn profile_settings(
     material_id: Option<String>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
     let mut inner = lock(&state)?;
-    if !inner.catalog_full {
-        if inner
+    if !inner.catalog_full
+        && inner
             .catalog
             .as_ref()
             .is_some_and(|cat| !cat.is_external_printer(&printer_id))
-        {
-            return Err(
-                "The full printer library is still loading — wait a moment before opening settings."
-                    .into(),
-            );
-        }
+    {
+        return Err(
+            "The full printer library is still loading — wait a moment before opening settings."
+                .into(),
+        );
     }
     let catalogue = catalog(&mut inner).map_err(|error| error.to_string())?;
     let resolved = catalogue
@@ -2501,17 +2575,16 @@ async fn slice_model(
         if !inner.models.iter().any(|model| model.visible) {
             return Err("Import a model first".into());
         }
-        if !inner.catalog_full {
-            if inner
+        if !inner.catalog_full
+            && inner
                 .catalog
                 .as_ref()
                 .is_some_and(|cat| !cat.is_external_printer(&printer_id))
-            {
-                return Err(
-                    "The full printer library is still loading — wait before slicing on this printer."
-                        .into(),
-                );
-            }
+        {
+            return Err(
+                "The full printer library is still loading — wait before slicing on this printer."
+                    .into(),
+            );
         }
         // Wait for the catalogue, then drop the lock: the engine runs outside.
         let _ = catalog(&mut inner)?;
@@ -4569,6 +4642,10 @@ fn apply_demo_flag() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    unsafe {
+        std::env::set_var("SHALE_HIDE_ENGINE_CONSOLE", "1");
+    }
     apply_demo_flag();
     // Before anything opens: WebView2 will not let two processes share the
     // window's profile, and its refusal is a bare HRESULT that unwinds setup.
@@ -4614,11 +4691,7 @@ pub fn run() {
         (None, None, false, true, false)
     };
     trace("catalog", &started);
-    let engine_message = match engine.cli.probe() {
-        Ok(()) => format!("CuraEngine answered at {}", engine.cli.program.display()),
-        Err(err) => err,
-    };
-    trace("engine", &started);
+    let engine_message = "Looking for CuraEngine…".to_string();
     let import_cancel = Arc::new(AtomicBool::new(false));
     let (models, instructions, toolpath, gcode_path) = if demo_catalog {
         match &catalog {
@@ -4695,6 +4768,8 @@ pub fn run() {
             slicing: false,
             cancel_import: import_cancel,
             engine_message,
+            engine_checked: false,
+            engine_ok: false,
             host_config: None,
         })))
         .manage(PrinterHost::default())
@@ -4703,18 +4778,13 @@ pub fn run() {
         // command, so no command ever blocks on the disk. When it lands, the
         // window is told and asks for the printer list again.
         .setup(move |app| {
-            // A demo recording should fit the screen it is filmed on: the normal
-            // window is 1440x900, which is larger than this laptop's desktop at
-            // 200% scaling, and a window that hangs off the edge films badly.
-            if std::env::var("SHALE_DEMO").is_ok() {
-                if let Some(window) = app.get_webview_window("main") {
-                    if let Ok(Some(monitor)) = window.current_monitor() {
-                        let scale = monitor.scale_factor();
-                        let width =
-                            (monitor.size().width as f64 / scale - 80.0).clamp(900.0, 1440.0);
-                        let height =
-                            (monitor.size().height as f64 / scale - 120.0).clamp(640.0, 900.0);
-                        let _ = window.set_size(tauri::LogicalSize::new(width, height));
+            shale_core::remove_legacy_catalog_cache();
+            if let Some(window) = app.get_webview_window("main") {
+                fit_window_to_monitor(&window);
+                #[cfg(windows)]
+                {
+                    if let Err(err) = windows_chrome::attach_main_window(&window) {
+                        eprintln!("[shale] window chrome hook: {err}");
                     }
                 }
             }
@@ -4722,6 +4792,32 @@ pub fn run() {
                 return Ok(());
             }
             spawn_catalog_loader(app.handle().clone());
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let (ok, message) = {
+                    let state = handle.state::<AppState>();
+                    let Ok(inner) = state.0.lock() else {
+                        return;
+                    };
+                    match inner.engine.cli.probe() {
+                        Ok(()) => (
+                            true,
+                            format!(
+                                "CuraEngine answered at {}",
+                                inner.engine.cli.program.display()
+                            ),
+                        ),
+                        Err(err) => (false, err),
+                    }
+                };
+                let state = handle.state::<AppState>();
+                if let Ok(mut inner) = state.0.lock() {
+                    inner.engine_checked = true;
+                    inner.engine_ok = ok;
+                    inner.engine_message = message;
+                }
+                let _ = handle.emit("engine-ready", ());
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -4868,7 +4964,22 @@ pub fn run() {
             return;
         }
     };
-    app.run(|_app, _event| {});
+    app.run(|app, event| {
+        match event {
+            RunEvent::Ready => {
+                #[cfg(windows)]
+                {
+                    let _ = windows_chrome::subclass_thread_windows();
+                }
+            }
+            RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::CloseRequested { .. },
+                ..
+            } if label == "main" => app.exit(0),
+            _ => {}
+        }
+    });
 }
 
 /// A window that could not be made: one retry as a fresh process, then the box.

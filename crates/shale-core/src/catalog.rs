@@ -1,9 +1,10 @@
 //! Loads the Cura resource tree and the fdm_materials library into memory.
+
 //!
 //! Definitions are small enough to keep resident. Instance containers and
 //! materials are indexed once so picking a printer does not re-read disk.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -70,6 +71,7 @@ impl ResourcePaths {
                 .ok()
                 .and_then(|path| path.parent().map(Path::to_path_buf)),
         );
+        dedupe_vendor_roots(&mut roots);
         for vendor in roots {
             let cura = vendor.join("Cura");
             let materials = vendor.join("fdm_materials");
@@ -186,14 +188,42 @@ fn push_cura_tree(cura_root: &Path, found: &mut Vec<ResourcePaths>) {
     found.push(ResourcePaths { cura, materials });
 }
 
+/// Keep the first occurrence of each `vendor` path (cwd before executable).
+fn dedupe_vendor_roots(roots: &mut Vec<PathBuf>) {
+    let mut seen = HashSet::new();
+    roots.retain(|vendor| {
+        let key = fs::canonicalize(vendor).unwrap_or_else(|_| vendor.clone());
+        seen.insert(key)
+    });
+}
+
 #[cfg(test)]
 mod discover_tests {
     use super::*;
 
     #[test]
+    fn vendor_roots_deduplicate_by_canonical_path_first_wins() {
+        let root = tempfile::tempdir().unwrap();
+        let vendor = root.path().join("vendor");
+        fs::create_dir_all(&vendor).unwrap();
+        let again = vendor
+            .join("..")
+            .join("vendor")
+            .canonicalize()
+            .expect("canonical vendor");
+        let mut roots = vec![vendor.clone(), again];
+        dedupe_vendor_roots(&mut roots);
+        assert_eq!(roots.len(), 1, "duplicate vendor entries: {:?}", roots);
+        assert_eq!(
+            roots[0].canonicalize().unwrap(),
+            vendor.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
     fn an_installed_tree_is_recognised_and_a_miss_names_the_path() {
-        let root = std::env::temp_dir().join(format!("shale-cura-tree-{}", std::process::id()));
-        let cura = root.join("share").join("cura");
+        let root = tempfile::tempdir().unwrap();
+        let cura = root.path().join("share").join("cura");
         let definitions = cura.join("resources").join("definitions");
         fs::create_dir_all(&definitions).unwrap();
         fs::write(definitions.join("fdmprinter.def.json"), b"{}").unwrap();
@@ -201,7 +231,6 @@ mod discover_tests {
         push_cura_tree(&cura, &mut found);
         assert_eq!(found.len(), 1, "looked at {}", cura.display());
         assert!(found[0].has_definitions());
-        let _ = fs::remove_dir_all(&root);
 
         let missing = ResourcePaths::discover();
         if let Err(err) = missing {
@@ -287,30 +316,49 @@ impl Catalog {
         let resources = paths.resources();
         let mut warnings = Vec::new();
         let mut definitions = HashMap::new();
-        load_definitions(
-            &resources.join("definitions"),
-            false,
-            &mut definitions,
-            &mut warnings,
-        );
-        load_definitions(
-            &resources.join("extruders"),
-            true,
-            &mut definitions,
-            &mut warnings,
-        );
+        let (mut instances, mut materials) =
+            if let Ok(Some(snapshot)) = crate::catalog_cache::load_cura_snapshot(
+                &paths.cura,
+                &paths.materials,
+                &resources,
+            ) {
+                definitions = snapshot.definitions;
+                (snapshot.instances, snapshot.materials)
+            } else {
+                load_definitions(
+                    &resources.join("definitions"),
+                    false,
+                    &mut definitions,
+                    &mut warnings,
+                );
+                load_definitions(
+                    &resources.join("extruders"),
+                    true,
+                    &mut definitions,
+                    &mut warnings,
+                );
+                let mut instances = Vec::new();
+                for folder in ["quality", "variants", "intent"] {
+                    load_instances(&resources.join(folder), &mut instances, &mut warnings);
+                }
+                let mut materials = Vec::new();
+                load_materials(&paths.materials, &mut materials, &mut warnings);
+                crate::catalog_cache::store_cura_snapshot(
+                    paths.cura.clone(),
+                    paths.materials.clone(),
+                    resources.clone(),
+                    &definitions,
+                    &instances,
+                    &materials,
+                );
+                (instances, materials)
+            };
         if !definitions.contains_key("fdmprinter") {
             return Err(Error::message(format!(
                 "fdmprinter.def.json is missing under {}",
                 resources.display()
             )));
         }
-        let mut instances = Vec::new();
-        for folder in ["quality", "variants", "intent"] {
-            load_instances(&resources.join(folder), &mut instances, &mut warnings);
-        }
-        let mut materials = Vec::new();
-        load_materials(&paths.materials, &mut materials, &mut warnings);
         // Bambu Studio's own tree is a second, independent profile library. Its
         // entries are converted into the same shapes Cura's resources produce,
         // so variants, qualities, materials and the resolver need no special
@@ -548,6 +596,87 @@ impl Catalog {
         qualities
     }
 
+    /// Turn a human process name (`standard`, `0.20 mm Standard`, a Bambu id, …)
+    /// into the catalogue's `quality_type` slug for this printer and nozzle.
+    pub fn resolve_quality_query(
+        &self,
+        printer_id: &str,
+        variant_name: Option<&str>,
+        query: &str,
+    ) -> Result<String, Error> {
+        let qualities = self.qualities_for(printer_id, variant_name);
+        if qualities.is_empty() {
+            let variant = variant_name
+                .map(|name| format!(" and variant '{name}'"))
+                .unwrap_or_default();
+            return Err(Error::message(format!(
+                "no quality profiles for printer '{printer_id}'{variant}"
+            )));
+        }
+
+        if let Some(hit) = qualities
+            .iter()
+            .find(|q| q.quality_type.eq_ignore_ascii_case(query))
+        {
+            return Ok(hit.quality_type.clone());
+        }
+        if let Some(hit) = qualities
+            .iter()
+            .find(|q| q.name.eq_ignore_ascii_case(query))
+        {
+            return Ok(hit.quality_type.clone());
+        }
+
+        let token = normalize_quality_label(query);
+        if let Some(hit) = qualities
+            .iter()
+            .find(|q| normalize_quality_label(&q.name) == token)
+        {
+            return Ok(hit.quality_type.clone());
+        }
+        if let Some(hit) = qualities
+            .iter()
+            .find(|q| normalize_quality_label(&q.quality_type) == token)
+        {
+            return Ok(hit.quality_type.clone());
+        }
+
+        if let Some(mm) = parse_layer_only_query(query) {
+            let mut hits: Vec<&QualityInfo> = qualities
+                .iter()
+                .filter(|q| (layer_hint_mm(&q.name) - mm).abs() < 0.011)
+                .collect();
+            hits = disambiguate_with_label(query, &qualities, hits);
+            if hits.len() == 1 {
+                return Ok(hits[0].quality_type.clone());
+            }
+            if hits.len() > 1 {
+                return Err(ambiguous_quality(query, &hits, &qualities));
+            }
+        }
+
+        let mut partial: Vec<&QualityInfo> = qualities
+            .iter()
+            .filter(|q| {
+                let name = normalize_quality_label(&q.name);
+                name.contains(&token) || token.contains(&name)
+            })
+            .collect();
+        partial = disambiguate_with_label(query, &qualities, partial);
+        if partial.len() == 1 {
+            return Ok(partial[0].quality_type.clone());
+        }
+        if partial.len() > 1 {
+            return Err(ambiguous_quality(query, &partial, &qualities));
+        }
+
+        if let Some(hit) = keyword_quality_match(&token, &qualities) {
+            return Ok(hit.quality_type.clone());
+        }
+
+        Err(unknown_quality(query, variant_name, &qualities))
+    }
+
     /// Enough for the window to list Bambu printers, processes and filaments.
     /// Skips reading Cura's quality/variant trees (thousands of small files).
     pub fn open_ui_fast(paths: ResourcePaths) -> Result<Self, Error> {
@@ -718,6 +847,130 @@ fn is_layer_preset_name(name: &str) -> bool {
     layer_hint_mm(name) < 1.0
 }
 
+fn normalize_quality_label(text: &str) -> String {
+    let lower = text.to_ascii_lowercase().replace('_', " ");
+    let mut words = Vec::new();
+    for word in lower.split_whitespace() {
+        if let Some(num) = word.strip_suffix("mm") {
+            if !num.is_empty() && num.chars().all(|ch| ch.is_ascii_digit() || ch == '.') {
+                words.push(format!("{num} mm"));
+                continue;
+            }
+        }
+        words.push(word.to_string());
+    }
+    words.join(" ")
+}
+
+fn parse_layer_only_query(query: &str) -> Option<f64> {
+    let trimmed = query.trim();
+    let head = trimmed
+        .strip_suffix("mm")
+        .or_else(|| trimmed.strip_suffix("MM"))
+        .unwrap_or(trimmed);
+    let value = head.trim().parse::<f64>().ok()?;
+    if !(0.04..=1.0).contains(&value) {
+        return None;
+    }
+    Some(value)
+}
+
+fn disambiguate_with_label<'a>(
+    query: &str,
+    all: &'a [QualityInfo],
+    mut hits: Vec<&'a QualityInfo>,
+) -> Vec<&'a QualityInfo> {
+    let extra: Vec<&QualityInfo> = all
+        .iter()
+        .filter(|q| q.name.to_ascii_lowercase().contains("extra"))
+        .collect();
+    let label = normalize_quality_label(query);
+    if label.contains("extra") {
+        hits.retain(|q| extra.iter().any(|e| e.quality_type == q.quality_type));
+    } else if label.contains("standard") || label.contains("normal") {
+        hits.retain(|q| {
+            let n = q.name.to_ascii_lowercase();
+            n.contains("standard") && !n.contains("extra")
+        });
+    } else if label.contains("draft") && !label.contains("extra") {
+        hits.retain(|q| {
+            let n = q.name.to_ascii_lowercase();
+            n.contains("draft") && !n.contains("extra")
+        });
+        if hits.is_empty() {
+            hits = all
+                .iter()
+                .filter(|q| q.name.to_ascii_lowercase().contains("draft"))
+                .collect();
+        }
+    }
+    hits
+}
+
+fn keyword_quality_match<'a>(token: &str, qualities: &'a [QualityInfo]) -> Option<&'a QualityInfo> {
+    let mut hits: Vec<&QualityInfo> = match token {
+        "standard" | "normal" => qualities
+            .iter()
+            .filter(|q| {
+                let n = q.name.to_ascii_lowercase();
+                n.contains("standard") && !n.contains("extra")
+            })
+            .collect(),
+        "draft" => qualities
+            .iter()
+            .filter(|q| q.name.to_ascii_lowercase().contains("draft"))
+            .collect(),
+        "fine" => qualities
+            .iter()
+            .filter(|q| {
+                let n = q.name.to_ascii_lowercase();
+                n.contains("fine") || n.contains("quality") || layer_hint_mm(&q.name) <= 0.14
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    if hits.len() > 1 {
+        hits.sort_by(|a, b| layer_hint_mm(&a.name).total_cmp(&layer_hint_mm(&b.name)));
+        if token == "draft" {
+            hits.reverse();
+        }
+        if token == "fine" {
+            hits.truncate(1);
+        }
+    }
+    hits.into_iter().next()
+}
+
+fn unknown_quality(query: &str, variant: Option<&str>, qualities: &[QualityInfo]) -> Error {
+    let variant = variant
+        .map(|name| format!(" (nozzle {name})"))
+        .unwrap_or_default();
+    let choices: Vec<String> = qualities
+        .iter()
+        .map(|q| format!("{} [{}]", q.name, q.quality_type))
+        .collect();
+    Error::message(format!(
+        "unknown quality '{query}'{variant}. Valid processes:\n{}",
+        choices.join("\n")
+    ))
+}
+
+fn ambiguous_quality(query: &str, hits: &[&QualityInfo], all: &[QualityInfo]) -> Error {
+    let matches: Vec<String> = hits
+        .iter()
+        .map(|q| format!("{} [{}]", q.name, q.quality_type))
+        .collect();
+    let choices: Vec<String> = all
+        .iter()
+        .map(|q| format!("{} [{}]", q.name, q.quality_type))
+        .collect();
+    Error::message(format!(
+        "quality '{query}' matches more than one process:\n{}\nValid processes:\n{}",
+        matches.join("\n"),
+        choices.join("\n")
+    ))
+}
+
 pub(crate) fn specificity(definition_id: &str, ancestry: &[String]) -> usize {
     ancestry
         .iter()
@@ -796,71 +1049,94 @@ fn load_definitions(
     into: &mut HashMap<String, Definition>,
     warnings: &mut Vec<String>,
 ) {
+    use rayon::prelude::*;
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(_) => return,
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if !name.ends_with(".def.json") {
-            continue;
-        }
-        match definition::load_definition(&path, extruder) {
-            Ok(definition) => {
-                into.insert(definition.id.clone(), definition);
-            }
-            Err(err) => warnings.push(err.to_string()),
-        }
+    let paths: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".def.json"))
+        })
+        .collect();
+    let loaded: Vec<(String, Definition)> = paths
+        .par_iter()
+        .filter_map(|path| {
+            definition::load_definition(path, extruder)
+                .ok()
+                .map(|definition| (definition.id.clone(), definition))
+        })
+        .collect();
+    let loaded_count = loaded.len();
+    for (id, definition) in loaded {
+        into.insert(id, definition);
+    }
+    if loaded_count < paths.len() && warnings.len() < 40 {
+        warnings.push(format!(
+            "some definition files under {} could not be read",
+            dir.display()
+        ));
     }
 }
 
 fn load_instances(dir: &Path, into: &mut Vec<InstanceFile>, warnings: &mut Vec<String>) {
+    use rayon::prelude::*;
     let mut files = Vec::new();
     collect_files(dir, &mut files);
-    for path in files {
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if !name.ends_with(".cfg") {
-            continue;
-        }
-        match instance::load_instance(&path) {
-            Ok(instance) => into.push(instance),
-            Err(err) => {
-                if warnings.len() < 40 {
-                    warnings.push(err.to_string());
-                }
+    let mut loaded: Vec<InstanceFile> = files
+        .par_iter()
+        .filter_map(|path| {
+            if !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".cfg"))
+            {
+                return None;
             }
-        }
+            instance::load_instance(path).ok()
+        })
+        .collect();
+    if loaded.len() < files.len() && warnings.len() < 40 {
+        warnings.push(format!(
+            "some instance files under {} could not be read",
+            dir.display()
+        ));
     }
+    into.append(&mut loaded);
 }
 
 fn load_materials(dir: &Path, into: &mut Vec<Material>, warnings: &mut Vec<String>) {
+    use rayon::prelude::*;
     let mut files = Vec::new();
     collect_files(dir, &mut files);
     if files.is_empty() {
         warnings.push(format!("materials: nothing under {}", dir.display()));
         return;
     }
-    for path in files {
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if !name.ends_with(".fdm_material") {
-            continue;
-        }
-        match material::load_material(&path) {
-            Ok(material) => into.push(material),
-            Err(err) => {
-                if warnings.len() < 40 {
-                    warnings.push(err.to_string());
-                }
+    let mut loaded: Vec<Material> = files
+        .par_iter()
+        .filter_map(|path| {
+            if !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".fdm_material"))
+            {
+                return None;
             }
-        }
+            material::load_material(path).ok()
+        })
+        .collect();
+    if loaded.len() < files.len() && warnings.len() < 40 {
+        warnings.push(format!(
+            "some material files under {} could not be read",
+            dir.display()
+        ));
     }
+    into.append(&mut loaded);
 }
 
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {

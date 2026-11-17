@@ -40,6 +40,9 @@ jobs:
       - name: Printer resources
         run: ./scripts/fetch-resources.sh
 
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
       - name: Rust tests
         env:
           SHALE_CURA_DIR: ${{ github.workspace }}/vendor/Cura
@@ -71,6 +74,9 @@ jobs:
         shell: bash
         run: ./scripts/fetch-resources.sh
 
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
       - name: Rust tests
         env:
           SHALE_CURA_DIR: ${{ github.workspace }}/vendor/Cura
@@ -81,6 +87,10 @@ jobs:
       - name: NSIS installer
         working-directory: apps/desktop
         run: npx tauri build --bundles nsis
+
+      - name: Verify Shale.exe is a GUI subsystem binary
+        shell: bash
+        run: python3 scripts/verify-gui-subsystem.py target/release/Shale.exe
 
       - uses: actions/upload-artifact@v4
         with:

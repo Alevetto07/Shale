@@ -67,6 +67,7 @@ impl SlicingEngine for ArcusEngine {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         super::cli::apply_lib_dir(&mut command, self.lib_dir.as_deref());
+        super::cli::hide_engine_console(&mut command);
         let mut child = command.spawn().map_err(|err| {
             Error::Engine(format!(
                 "could not start CuraEngine for Arcus at '{}': {err}",

@@ -11,7 +11,12 @@ cd "$root"
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/shale-cli/Cargo.toml | head -n 1)
 target=${TARGET:-$(rustc -vV | sed -n 's/^host: //p')}
-stage="dist/shale-$version-$target"
+case "$target" in
+    x86_64-unknown-linux-gnu) bundle=linux-x64 ;;
+    aarch64-unknown-linux-gnu) bundle=linux-arm64 ;;
+    *) bundle="$target" ;;
+esac
+stage="dist/shale-$version-$bundle"
 
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
     cargo build --release --locked -p shale-cli -p shale-mcp --target "$target"
@@ -19,9 +24,9 @@ fi
 
 rm -rf "$stage"
 mkdir -p "$stage"
-cp "target/$target/release/shale-cli" "$stage/"
+cp "target/$target/release/shale-cli" "$stage/shale"
 cp "target/$target/release/shale-mcp" "$stage/"
 cp docs/INSTALL-CLI.md THIRD-PARTY-NOTICES.md LICENSING.md "$stage/"
 
-tar -C dist -czf "dist/shale-$version-$target.tar.gz" "shale-$version-$target"
-echo "packaged dist/shale-$version-$target.tar.gz"
+tar -C dist -czf "dist/shale-$version-$bundle.tar.gz" "shale-$version-$bundle"
+echo "packaged dist/shale-$version-$bundle.tar.gz"

@@ -13,12 +13,26 @@ mod proto;
 pub use arcus::ArcusEngine;
 pub use cli::CliEngine;
 
-use std::env;
-
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::env;
+use std::path::{Path, PathBuf};
 
 use crate::error::Error;
+
+/// Resolve a relative path against the process working directory so engine
+/// arguments stay valid when CuraEngine's cwd is its own install folder.
+pub fn absolutize_path(path: &Path) -> Result<PathBuf, Error> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    let cwd = env::current_dir().map_err(|err| {
+        Error::message(format!(
+            "cannot resolve relative path '{}': {err}",
+            path.display()
+        ))
+    })?;
+    Ok(cwd.join(path))
+}
 
 /// A mesh that is not the part. `settings` are applied to this object only,
 /// which is how the 5.13 CLI marks a support enforcer or a blocker.

@@ -6,8 +6,15 @@
 //! that has no desktop at all, so every path can be given by environment
 //! variable and every failure names the path it tried.
 
+mod info_env;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
+
+use info_env::{
+    cura_engine_lib_path, cura_engine_path, cura_resources_path_from, env_path_line,
+    materials_path_from, orca_profiles_path,
+};
 
 use shale_core::catalog::{Catalog, ResourcePaths};
 use shale_core::engine::{CliEngine, EngineProgress};
@@ -36,7 +43,9 @@ slice options
 
 environment
   SHALE_CURA_DIR, SHALE_MATERIALS_DIR   the Cura resource tree
+  SHALE_ORCA_DIR                        Bambu/Orca profiles (optional; auto-detected)
   SHALE_CURAENGINE                      the CuraEngine binary
+  SHALE_CURAENGINE_LIB_DIR              folder beside the engine with its libraries (optional)
 ";
 
 fn main() -> ExitCode {
@@ -107,26 +116,31 @@ fn catalog() -> Result<Catalog, String> {
 }
 
 fn info() -> Result<(), String> {
-    let engine = CliEngine::from_env();
     println!("shale {}", env!("CARGO_PKG_VERSION"));
-    println!("engine   {}", engine.program.display());
-    match engine.probe() {
-        Ok(()) => println!("engine   ok"),
-        Err(message) => println!("engine   not usable: {message}"),
-    }
-    match ResourcePaths::discover() {
-        Ok(paths) => {
-            println!("cura     {}", paths.cura.display());
-            println!("materials {}", paths.materials.display());
-            match Catalog::open(paths) {
-                Ok(catalog) => {
-                    let printers = catalog.selectable_printers();
-                    println!("printers {}", printers.len());
-                }
-                Err(err) => println!("catalog  unreadable: {err}"),
+    println!("{}", env_path_line("SHALE_CURAENGINE", cura_engine_path()));
+    println!(
+        "{}",
+        env_path_line("SHALE_CURAENGINE_LIB_DIR", cura_engine_lib_path())
+    );
+    let discovered = ResourcePaths::discover();
+    println!(
+        "{}",
+        env_path_line("SHALE_CURA_DIR", cura_resources_path_from(&discovered))
+    );
+    println!(
+        "{}",
+        env_path_line("SHALE_MATERIALS_DIR", materials_path_from(&discovered))
+    );
+    println!("{}", env_path_line("SHALE_ORCA_DIR", orca_profiles_path()));
+    match discovered {
+        Ok(paths) => match Catalog::open(paths) {
+            Ok(catalog) => {
+                let printers = catalog.selectable_printers();
+                println!("printers {}", printers.len());
             }
-        }
-        Err(err) => println!("cura     not found: {err}"),
+            Err(err) => println!("catalog  unreadable: {err}"),
+        },
+        Err(err) => println!("catalog  not found — {err}"),
     }
     Ok(())
 }
@@ -241,6 +255,7 @@ fn slice_command(args: &[String]) -> Result<(), String> {
         .or_else(|| flag(args, "-o"))
         .map(PathBuf::from)
         .unwrap_or_else(|| model_path.with_extension("gcode"));
+    let output = shale_core::engine::absolutize_path(&output).map_err(|err| err.to_string())?;
 
     let engine = CliEngine::from_env();
     engine.probe().map_err(|message| {

@@ -16,9 +16,26 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
+static SESSION_LIBRARY: RwLock<Option<(PathBuf, Library)>> = RwLock::new(None);
+
+#[cfg(test)]
+static TEST_PROFILES_ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+#[cfg(test)]
+pub(crate) fn set_test_profiles_root(dir: Option<PathBuf>) {
+    if let Ok(mut guard) = TEST_PROFILES_ROOT.write() {
+        *guard = dir;
+    }
+}
+
+use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
+use rayon::prelude::*;
+
+use crate::catalog_cache::{load_bambu_library, store_bambu_library_async};
 use crate::definition::{Definition, RawSetting};
 use crate::instance::InstanceFile;
 use crate::material::{MachineMaterial, Material};
@@ -39,7 +56,7 @@ const MAX_DEPTH: usize = 12;
 /// Bambu Studio keeps them in files beside the machine profile rather than in
 /// the profile itself, and they are templates, not G-code: see
 /// `crate::template` for the filling.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MachineGcode {
     pub start: String,
     pub end: String,
@@ -72,6 +89,7 @@ fn machine_gcode(dir: &Path, profile_file: &str) -> Option<MachineGcode> {
     })
 }
 
+#[derive(Clone)]
 pub struct Library {
     pub definitions: Vec<Definition>,
     pub instances: Vec<InstanceFile>,
@@ -89,7 +107,28 @@ impl Library {
     /// Load from the configured profile root, or an empty library when no
     /// slicer is installed. Never fails: a missing library is normal.
     pub fn load() -> Self {
-        Self::from_root(root())
+        let Some(root) = profiles_root() else {
+            return Self::empty();
+        };
+        if let Ok(guard) = SESSION_LIBRARY.read() {
+            if let Some((cached_root, library)) = guard.as_ref() {
+                if cached_root == &root {
+                    return library.clone();
+                }
+            }
+        }
+        if let Some(library) = load_bambu_library(&root) {
+            if let Ok(mut guard) = SESSION_LIBRARY.write() {
+                *guard = Some((root.clone(), library.clone()));
+            }
+            return library;
+        }
+        let library = Self::from_root(Some(root.clone()));
+        if let Ok(mut guard) = SESSION_LIBRARY.write() {
+            *guard = Some((root.clone(), library.clone()));
+        }
+        store_bambu_library_async(root, library.clone());
+        library
     }
 
     pub fn from_root(root: Option<PathBuf>) -> Self {
@@ -215,7 +254,14 @@ impl Library {
     }
 }
 
-fn root() -> Option<PathBuf> {
+/// Directory that holds Orca/Bambu `resources/profiles`, from env or common installs.
+pub fn profiles_root() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Ok(guard) = TEST_PROFILES_ROOT.read() {
+        if let Some(dir) = guard.as_ref() {
+            return Some(dir.clone());
+        }
+    }
     if let Some(dir) = std::env::var_os("SHALE_ORCA_DIR") {
         return Some(PathBuf::from(dir));
     }
@@ -335,6 +381,17 @@ fn profiles_in(dir: &Path) -> Vec<(String, Json)> {
         }
         index.insert(stem.to_ascii_lowercase(), path);
     }
+    let raw: HashMap<String, Json> = index
+        .par_iter()
+        .filter_map(|(lower, path)| {
+            use std::fs::File;
+            use std::io::BufReader;
+            let file = File::open(path).ok()?;
+            let reader = BufReader::new(file);
+            let value: Json = serde_json::from_reader(reader).ok()?;
+            Some((lower.clone(), value))
+        })
+        .collect();
     let mut stems: Vec<(String, String)> = index
         .iter()
         .filter_map(|(lower, path)| {
@@ -347,7 +404,7 @@ fn profiles_in(dir: &Path) -> Vec<(String, Json)> {
     let mut memo: HashMap<String, Json> = HashMap::new();
     let mut out = Vec::with_capacity(stems.len());
     for (stem, lower) in stems {
-        if let Some(values) = resolve_chain(&index, &mut memo, &lower, 0) {
+        if let Some(values) = resolve_chain(&raw, &mut memo, &lower, 0) {
             out.push((stem, values));
         }
     }
@@ -356,7 +413,7 @@ fn profiles_in(dir: &Path) -> Vec<(String, Json)> {
 
 /// Read `stem.json` and merge everything it inherits, parent first.
 fn resolve_chain(
-    index: &HashMap<String, PathBuf>,
+    raw: &HashMap<String, Json>,
     memo: &mut HashMap<String, Json>,
     stem: &str,
     depth: usize,
@@ -367,15 +424,13 @@ fn resolve_chain(
     if let Some(cached) = memo.get(stem) {
         return Some(cached.clone());
     }
-    let path = index.get(stem)?;
-    let text = fs::read_to_string(path).ok()?;
-    let value: Json = serde_json::from_str(&text).ok()?;
+    let value = raw.get(stem)?;
     let parent = value
         .get("inherits")
         .and_then(|name| name.as_str())
-        .and_then(|name| resolve_chain(index, memo, &name.to_ascii_lowercase(), depth + 1));
+        .and_then(|name| resolve_chain(raw, memo, &name.to_ascii_lowercase(), depth + 1));
     let mut merged = parent.unwrap_or_else(|| Json::Object(Default::default()));
-    merge_json(&mut merged, &value);
+    merge_json(&mut merged, value);
     memo.insert(stem.to_string(), merged.clone());
     Some(merged)
 }
@@ -581,7 +636,10 @@ fn insert_cura_scalar(out: &mut HashMap<String, String>, cura_key: &str, value: 
 /// Bambu machine keys that CuraEngine understands for time estimation.
 fn machine_values_for_cura(values: &Json) -> HashMap<String, String> {
     const MAP: &[(&str, &str)] = &[
-        ("machine_max_acceleration_extruding", "machine_max_acceleration_e"),
+        (
+            "machine_max_acceleration_extruding",
+            "machine_max_acceleration_e",
+        ),
         ("machine_max_acceleration_x", "machine_max_acceleration_x"),
         ("machine_max_acceleration_y", "machine_max_acceleration_y"),
         ("machine_max_acceleration_z", "machine_max_acceleration_z"),
@@ -1043,7 +1101,7 @@ mod tests {
     use super::*;
 
     fn installed() -> Option<Library> {
-        let root = root()?;
+        let root = profiles_root()?;
         let library = Library::from_root(Some(root));
         (!library.is_empty()).then_some(library)
     }
@@ -1124,13 +1182,19 @@ mod tests {
         assert!((height - 0.2).abs() < 1e-9);
         assert!(quality.values.contains_key("infill_sparse_density"));
         assert!(quality.values.contains_key("wall_line_count"));
-        assert_eq!(quality.values.get("speed_wall_0").map(String::as_str), Some("200"));
-        assert_eq!(quality.values.get("speed_travel").map(String::as_str), Some("700"));
+        assert_eq!(
+            quality.values.get("speed_wall_0").map(String::as_str),
+            Some("200")
+        );
+        assert_eq!(
+            quality.values.get("speed_travel").map(String::as_str),
+            Some("700")
+        );
     }
 
     #[test]
     fn the_whole_library_reads_quickly() {
-        let Some(root) = root() else { return };
+        let Some(root) = profiles_root() else { return };
         // The first read is the disk's time, not the code's: on a cold page
         // cache Windows Defender opens every one of the ~780 profile files and
         // that alone took 38 s on this machine. What this test guards is that

@@ -15,6 +15,8 @@ export interface Status {
   catalog_loading?: boolean;
   /** The full Cura resource tree has finished loading (not just the fast pass). */
   catalog_full?: boolean;
+  /** Background CuraEngine probe finished; until then `engine_ok` stays false. */
+  engine_checked?: boolean;
   version: string;
 }
 

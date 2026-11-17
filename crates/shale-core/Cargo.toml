@@ -1,6 +1,6 @@
 [package]
 name = "shale-core"
-version = "0.1.0"
+version = "0.1.3"
 edition = "2021"
 description = "Job model, Cura profile resolution, and CuraEngine orchestration for Shale"
 publish = false
@@ -19,3 +19,7 @@ truck-modeling = "0.6"
 truck-stepio = "0.3"
 truck-topology = "0.6"
 zip = "2.2"
+rayon = "1.10"
+
+[dev-dependencies]
+tempfile = "3"

@@ -21,6 +21,9 @@ pub mod bambu;
 pub mod cad;
 pub mod calibrate;
 pub mod catalog;
+pub(crate) mod catalog_cache;
+#[cfg(test)]
+mod catalog_cache_bench;
 pub mod cost;
 pub mod csg;
 pub mod cut;
@@ -74,5 +77,26 @@ pub use supports::{
     SupportOverlay, SupportParams, SupportPlan, SupportRegion,
 };
 pub use value::Value;
+
+/// Removes the pre-v0.1.2 per-install cache under `%LOCALAPPDATA%\\Shale\\cache`.
+pub fn remove_legacy_catalog_cache() {
+    catalog_cache::remove_legacy_cache_dir();
+}
+
+/// Redirects on-disk catalogue cache writes for this process (tests and tooling).
+pub fn set_catalog_cache_dir(dir: std::path::PathBuf) {
+    catalog_cache::set_cache_dir_override(dir);
+}
+
+/// Stable `%TEMP%/shale-test-runs/<component>/catalog-cache` reused by integration tests
+/// instead of `tempfile::tempdir()` (which leaves `.tmp*` folders behind when kept in statics).
+pub fn integration_test_cache_dir(component: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir()
+        .join("shale-test-runs")
+        .join(component)
+        .join("catalog-cache");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
 
 mod error;

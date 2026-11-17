@@ -1,7 +1,7 @@
 import { listen } from "./platform/event";
 import { getCurrentWindow } from "./platform/window";
 import { open, save } from "./platform/dialog";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   type Bed,
@@ -46,7 +46,11 @@ import type { QuickFallbacks } from "./ProcessSheet";
 import { pickQualityType } from "./profile-pick";
 import { TitleBar } from "./TitleBar";
 import { useRecents } from "./recents";
-import { Viewport, type TransformMode, type ViewStyle , type ColourMode } from "./Viewport";
+import type { TransformMode, ViewStyle, ColourMode } from "./Viewport";
+
+const Viewport = lazy(() =>
+  import("./Viewport").then((module) => ({ default: module.Viewport })),
+);
 import { AsciiCheck, AsciiField, AsciiSelect, AsciiStepper } from "./widgets";
 
 interface Progress {
@@ -455,7 +459,12 @@ export function App() {
         if (!next.resources_ok) {
           setError(next.resources_message);
         }
-        if (next.resources_ok && !next.engine_ok && next.engine_message) {
+        if (
+          next.resources_ok &&
+          next.engine_checked &&
+          !next.engine_ok &&
+          next.engine_message
+        ) {
           setError(next.engine_message);
         }
         if (next.resources_ok) {
@@ -568,6 +577,9 @@ export function App() {
       offCatalogue = off;
       if (!stopped) void boot();
     });
+    void listen("engine-ready", () => {
+      if (!stopped) void boot();
+    }).catch(() => {});
     catalogPoll = window.setInterval(() => {
       if (stopped) return;
       if (catalogLoadingRef.current) void boot();
@@ -1170,6 +1182,7 @@ export function App() {
         fraction: 1,
         message: added.length > 1 ? `${added.length} parts, ${triangles} triangles` : `${triangles} triangles`,
       });
+      setFrameToken((token) => token + 1);
     } catch (err) {
       const message = messageOf(err);
       // Only a deliberate cancel stays quiet; any other failure is shown.
@@ -2748,7 +2761,7 @@ export function App() {
             enginePath={enginePath}
             libDir={libDir}
             backend={backend}
-            version={status?.version ?? "0.1.0"}
+            version={status?.version ?? "0.1.3"}
             onReturn={() => {
               setScreen("slicer");
               setPane("prepare");
@@ -3833,6 +3846,7 @@ export function App() {
               formatClock={clockTime}
             />
           )}
+          <Suspense fallback={<div className="viewport viewport-loading" aria-hidden />}>
           <Viewport
             width={bed.width}
             depth={bed.depth}
@@ -3871,6 +3885,7 @@ export function App() {
             }}
             onTransform={(id, transform) => void commitTransform(id, transform)}
           />
+          </Suspense>
           {models.length === 0 && !preview && (
             <p className="caption">no model on the plate. import an stl, 3mf, or step</p>
           )}

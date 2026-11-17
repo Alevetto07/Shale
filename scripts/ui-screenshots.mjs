@@ -30,6 +30,7 @@ const TEMPLATE_SHOTS = [
     click: [{ text: "Settings", role: "button", within: ".start-menu" }],
   },
   { name: "prepare", url: "/?mock=workspace-preview&pane=prepare" },
+  { name: "prepare-import-framed", url: "/?mock=workspace-prepare&pane=prepare" },
   { name: "preview", url: "/?mock=workspace-preview&pane=preview" },
   { name: "device", url: "/?mock=device-lan&pane=device" },
 ];

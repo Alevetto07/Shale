@@ -22,7 +22,7 @@ $stage = Join-Path $Out "shale-$version-windows-x64"
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
-Copy-Item "target/release/shale-cli.exe" $stage
+Copy-Item "target/release/shale-cli.exe" (Join-Path $stage "shale.exe")
 Copy-Item "target/release/shale-mcp.exe" $stage
 Copy-Item "docs/INSTALL-CLI.md" $stage
 Copy-Item "THIRD-PARTY-NOTICES.md" $stage
