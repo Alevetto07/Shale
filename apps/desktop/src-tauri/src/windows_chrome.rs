@@ -9,13 +9,21 @@ use tauri::WebviewWindow;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallWindowProcW, EnumThreadWindows, GetCursorPos, GetSystemMenu, GetWindowRect,
-    PostMessageW, SetWindowLongPtrW, TrackPopupMenuEx, GWLP_WNDPROC, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, WM_CLOSE, WM_SYSCOMMAND,
+    CallWindowProcW, EnableMenuItem, EnumThreadWindows, GetSystemMenu, GetWindowRect, HMENU,
+    IsIconic, IsZoomed, PostMessageW, SetWindowLongPtrW, TrackPopupMenuEx, GWLP_WNDPROC,
+    MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CLOSE,
+    WM_SYSCOMMAND,
 };
 
 const SC_KEYMENU: u32 = 0xF100;
+const SC_SIZE: u32 = 0xF000;
+const SC_MOVE: u32 = 0xF010;
+const SC_MINIMIZE: u32 = 0xF020;
+const SC_MAXIMIZE: u32 = 0xF030;
+const SC_RESTORE: u32 = 0xF120;
 const VK_SPACE: u32 = 0x20;
+/// Matches `.titlebar { height: 34px; }` in the desktop shell.
+const CUSTOM_TITLEBAR_HEIGHT_PX: i32 = 34;
 
 type WndProc = unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT;
 
@@ -24,6 +32,87 @@ enum KeymenuDisposition {
     Swallow,
     PopupSystemMenu,
     Default,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SystemMenuItemState {
+    command: u32,
+    enabled: bool,
+}
+
+/// Same enable/disable pattern `DefWindowProc` applies before showing the system menu.
+fn system_menu_item_states(maximized: bool, minimized: bool) -> [SystemMenuItemState; 5] {
+    let restore = maximized || minimized;
+    if minimized {
+        return [
+            SystemMenuItemState {
+                command: SC_RESTORE,
+                enabled: restore,
+            },
+            SystemMenuItemState {
+                command: SC_MOVE,
+                enabled: true,
+            },
+            SystemMenuItemState {
+                command: SC_SIZE,
+                enabled: false,
+            },
+            SystemMenuItemState {
+                command: SC_MINIMIZE,
+                enabled: false,
+            },
+            SystemMenuItemState {
+                command: SC_MAXIMIZE,
+                enabled: true,
+            },
+        ];
+    }
+    if maximized {
+        return [
+            SystemMenuItemState {
+                command: SC_RESTORE,
+                enabled: restore,
+            },
+            SystemMenuItemState {
+                command: SC_MOVE,
+                enabled: false,
+            },
+            SystemMenuItemState {
+                command: SC_SIZE,
+                enabled: false,
+            },
+            SystemMenuItemState {
+                command: SC_MINIMIZE,
+                enabled: true,
+            },
+            SystemMenuItemState {
+                command: SC_MAXIMIZE,
+                enabled: false,
+            },
+        ];
+    }
+    [
+        SystemMenuItemState {
+            command: SC_RESTORE,
+            enabled: restore,
+        },
+        SystemMenuItemState {
+            command: SC_MOVE,
+            enabled: true,
+        },
+        SystemMenuItemState {
+            command: SC_SIZE,
+            enabled: true,
+        },
+        SystemMenuItemState {
+            command: SC_MINIMIZE,
+            enabled: true,
+        },
+        SystemMenuItemState {
+            command: SC_MAXIMIZE,
+            enabled: true,
+        },
+    ]
 }
 
 fn keymenu_disposition(lparam: LPARAM) -> KeymenuDisposition {
@@ -105,24 +194,33 @@ fn subclass_hwnd(hwnd: HWND) -> Result<(), String> {
     Ok(())
 }
 
+unsafe fn apply_system_menu_item_states(menu: HMENU, hwnd: HWND) {
+    let maximized = IsZoomed(hwnd).as_bool();
+    let minimized = IsIconic(hwnd).as_bool();
+    for item in system_menu_item_states(maximized, minimized) {
+        let flags = if item.enabled {
+            MF_ENABLED
+        } else {
+            MF_GRAYED
+        };
+        let _ = EnableMenuItem(menu, item.command, MF_BYCOMMAND | flags);
+    }
+}
+
 unsafe fn track_system_menu(hwnd: HWND) -> LRESULT {
-    let menu = GetSystemMenu(hwnd, false);
+    let menu = GetSystemMenu(hwnd, true);
     if menu.0.is_null() {
         return LRESULT(0);
     }
-    let mut point = POINT::default();
-    if GetCursorPos(&mut point).is_err() {
-        point = POINT { x: 0, y: 0 };
-    }
+    apply_system_menu_item_states(menu, hwnd);
+    let mut point = POINT {
+        x: 0,
+        y: CUSTOM_TITLEBAR_HEIGHT_PX,
+    };
     let mut rect = RECT::default();
-    if GetWindowRect(hwnd, &mut rect).is_ok()
-        && (point.x < rect.left
-            || point.x > rect.right
-            || point.y < rect.top
-            || point.y > rect.bottom)
-    {
-        point.x = rect.left + 5;
-        point.y = rect.top + 5;
+    if GetWindowRect(hwnd, &mut rect).is_ok() {
+        point.x = rect.left;
+        point.y = rect.top + CUSTOM_TITLEBAR_HEIGHT_PX;
     }
     let flags = TPM_RETURNCMD.0 | TPM_RIGHTBUTTON.0;
     let picked = TrackPopupMenuEx(menu, flags, point.x, point.y, hwnd, None);
@@ -199,5 +297,43 @@ mod tests {
             keymenu_disposition(LPARAM(b'F' as isize)),
             KeymenuDisposition::Default
         );
+    }
+
+    fn enabled(commands: &[SystemMenuItemState], cmd: u32) -> bool {
+        commands
+            .iter()
+            .find(|item| item.command == cmd)
+            .expect("command")
+            .enabled
+    }
+
+    #[test]
+    fn system_menu_normal_state_matches_defwindowproc() {
+        let states = system_menu_item_states(false, false);
+        assert!(!enabled(&states, SC_RESTORE));
+        assert!(enabled(&states, SC_MOVE));
+        assert!(enabled(&states, SC_SIZE));
+        assert!(enabled(&states, SC_MINIMIZE));
+        assert!(enabled(&states, SC_MAXIMIZE));
+    }
+
+    #[test]
+    fn system_menu_maximized_state_matches_defwindowproc() {
+        let states = system_menu_item_states(true, false);
+        assert!(enabled(&states, SC_RESTORE));
+        assert!(!enabled(&states, SC_MOVE));
+        assert!(!enabled(&states, SC_SIZE));
+        assert!(enabled(&states, SC_MINIMIZE));
+        assert!(!enabled(&states, SC_MAXIMIZE));
+    }
+
+    #[test]
+    fn system_menu_minimized_state_matches_defwindowproc() {
+        let states = system_menu_item_states(false, true);
+        assert!(enabled(&states, SC_RESTORE));
+        assert!(enabled(&states, SC_MOVE));
+        assert!(!enabled(&states, SC_SIZE));
+        assert!(!enabled(&states, SC_MINIMIZE));
+        assert!(enabled(&states, SC_MAXIMIZE));
     }
 }
