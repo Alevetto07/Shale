@@ -6,16 +6,35 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use tauri::WebviewWindow;
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallWindowProcW, EnumThreadWindows, PostMessageW, SetWindowLongPtrW, GWLP_WNDPROC, WM_CANCELMODE,
-    WM_CLOSE, WM_EXITMENULOOP, WM_SYSCOMMAND,
+    CallWindowProcW, EnumThreadWindows, GetCursorPos, GetSystemMenu, GetWindowRect,
+    PostMessageW, SetWindowLongPtrW, TrackPopupMenuEx, GWLP_WNDPROC, TPM_RETURNCMD,
+    TPM_RIGHTBUTTON, WM_CLOSE, WM_SYSCOMMAND,
 };
 
 const SC_KEYMENU: u32 = 0xF100;
+const VK_SPACE: u32 = 0x20;
 
 type WndProc = unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeymenuDisposition {
+    Swallow,
+    PopupSystemMenu,
+    Default,
+}
+
+fn keymenu_disposition(lparam: LPARAM) -> KeymenuDisposition {
+    if lparam.0 == 0 {
+        KeymenuDisposition::Swallow
+    } else if lparam.0 as u32 == VK_SPACE {
+        KeymenuDisposition::PopupSystemMenu
+    } else {
+        KeymenuDisposition::Default
+    }
+}
 
 fn hwnd_key(hwnd: HWND) -> usize {
     hwnd.0 as usize
@@ -86,6 +105,31 @@ fn subclass_hwnd(hwnd: HWND) -> Result<(), String> {
     Ok(())
 }
 
+unsafe fn track_system_menu(hwnd: HWND) -> LRESULT {
+    let menu = GetSystemMenu(hwnd, false);
+    if menu.0.is_null() {
+        return LRESULT(0);
+    }
+    let mut point = POINT::default();
+    if GetCursorPos(&mut point).is_err() {
+        point = POINT { x: 0, y: 0 };
+    }
+    let mut rect = RECT::default();
+    if GetWindowRect(hwnd, &mut rect).is_ok() {
+        if point.x < rect.left || point.x > rect.right || point.y < rect.top || point.y > rect.bottom
+        {
+            point.x = rect.left + 5;
+            point.y = rect.top + 5;
+        }
+    }
+    let flags = TPM_RETURNCMD | TPM_RIGHTBUTTON;
+    let command = TrackPopupMenuEx(menu, flags, point.x, point.y, hwnd, None);
+    if command != 0 {
+        let _ = PostMessageW(hwnd, WM_SYSCOMMAND, WPARAM(command as usize), LPARAM(0));
+    }
+    LRESULT(0)
+}
+
 unsafe extern "system" fn shim_wndproc(
     hwnd: HWND,
     msg: u32,
@@ -103,16 +147,18 @@ unsafe extern "system" fn shim_wndproc(
     match msg {
         WM_SYSCOMMAND if key == main => {
             let cmd = wparam.0 as u32 & 0xFFF0;
-            if cmd == SC_KEYMENU && lparam.0 == 0 {
-                return LRESULT(0);
+            if cmd == SC_KEYMENU {
+                match keymenu_disposition(lparam) {
+                    KeymenuDisposition::Swallow => return LRESULT(0),
+                    KeymenuDisposition::PopupSystemMenu => {
+                        return unsafe { track_system_menu(hwnd) };
+                    }
+                    KeymenuDisposition::Default => {}
+                }
             }
         }
         WM_CLOSE if key != main => {
             return LRESULT(0);
-        }
-        WM_EXITMENULOOP if key == main => {
-            // One Esc after Alt+Space must leave the frame, not a half-latched menu mode.
-            let _ = unsafe { PostMessageW(hwnd, WM_CANCELMODE, WPARAM(0), LPARAM(0)) };
         }
         _ => {}
     }
@@ -125,4 +171,30 @@ unsafe extern "system" fn shim_wndproc(
     };
     drop(chrome);
     unsafe { CallWindowProcW(Some(prev), hwnd, msg, wparam, lparam) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bare_alt_is_swallowed() {
+        assert_eq!(keymenu_disposition(LPARAM(0)), KeymenuDisposition::Swallow);
+    }
+
+    #[test]
+    fn alt_space_uses_popup_not_modal_loop() {
+        assert_eq!(
+            keymenu_disposition(LPARAM(VK_SPACE as isize)),
+            KeymenuDisposition::PopupSystemMenu
+        );
+    }
+
+    #[test]
+    fn alt_letter_shortcuts_still_pass_through() {
+        assert_eq!(
+            keymenu_disposition(LPARAM(b'F' as isize)),
+            KeymenuDisposition::Default
+        );
+    }
 }
