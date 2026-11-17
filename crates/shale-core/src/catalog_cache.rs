@@ -402,7 +402,7 @@ fn store_bambu_library_sync(
         gcode: library.gcode.clone(),
     };
     let json = serde_json::to_vec(&body).map_err(|err| Error::message(err.to_string()))?;
-    let file = dir.join(format!("bambu-library-{key:x}.json"));
+    let file = cache_root.join(format!("bambu-library-{key:x}.json"));
     fs::write(&file, json).map_err(|err| Error::message(err.to_string()))?;
     Ok(())
 }
