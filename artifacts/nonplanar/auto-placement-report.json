@@ -1,0 +1,196 @@
+{
+  "dome": {
+    "detection": {
+      "features": [
+        {
+          "anchor_ends": 0,
+          "angle_from_vertical_deg": 72.05403584688136,
+          "area_mm2": 426.5449999999999,
+          "height_spread_mm": 3.8047014339873755,
+          "id": 1,
+          "kind": "sloped_top",
+          "max": [
+            11.449999999999998,
+            11.449999999999998,
+            21.81962327121557
+          ],
+          "max_slope_deg": 17.945964153118645,
+          "min": [
+            -11.299999999999999,
+            -11.299999999999999,
+            18.014921837228194
+          ],
+          "note": "sloped top up to 17.9° (spread 3.80 mm)",
+          "overhang_angle_after_deg": null,
+          "overhang_angle_before_deg": null,
+          "z_center_mm": 19.91727255422188
+        }
+      ]
+    },
+    "enabled_surface_count": 1,
+    "fallback_to_planar": false,
+    "max_angle_deg": 10.0,
+    "mode": "auto",
+    "notes": [],
+    "preview": {
+      "positions": [
+        -11.300000190734863,
+        -11.300000190734863,
+        21.819623947143555,
+        11.449999809265137,
+        -11.300000190734863,
+        21.819623947143555,
+        11.449999809265137,
+        11.449999809265137,
+        21.819623947143555,
+        -11.300000190734863,
+        11.449999809265137,
+        21.819623947143555
+      ]
+    },
+    "surfaces": [
+      {
+        "bearing_deg": 45.0,
+        "enabled": true,
+        "extent_mm": [
+          22.749999999999996,
+          22.749999999999996
+        ],
+        "feature_id": 1,
+        "id": 1,
+        "kind": "sloped_top_band",
+        "max": [
+          11.449999999999998,
+          11.449999999999998,
+          21.81962327121557
+        ],
+        "min": [
+          -11.299999999999999,
+          -11.299999999999999,
+          18.014921837228194
+        ],
+        "overhang_angle_after_deg": null,
+        "overhang_angle_before_deg": null,
+        "reason": "sloped_top: curved-top band tilt 10.0° (spread 3.80 mm)",
+        "tilt_deg": 10.0
+      }
+    ]
+  },
+  "flat_plate": {
+    "detection": {
+      "features": [
+        {
+          "anchor_ends": 0,
+          "angle_from_vertical_deg": 90.0,
+          "area_mm2": 1764.0,
+          "height_spread_mm": 0.0,
+          "id": 1,
+          "kind": "flat_top",
+          "max": [
+            21.3,
+            21.3,
+            4.0
+          ],
+          "max_slope_deg": 0.0,
+          "min": [
+            -20.7,
+            -20.7,
+            4.0
+          ],
+          "note": "top height spread 0.00 mm, slope 0.0°",
+          "overhang_angle_after_deg": null,
+          "overhang_angle_before_deg": null,
+          "z_center_mm": 4.0
+        }
+      ]
+    },
+    "enabled_surface_count": 0,
+    "fallback_to_planar": true,
+    "max_angle_deg": 10.0,
+    "mode": "auto",
+    "notes": [
+      "feature 1 flat top — skipped"
+    ],
+    "preview": {
+      "positions": []
+    },
+    "surfaces": []
+  },
+  "ramp_9deg": {
+    "detection": {
+      "features": [
+        {
+          "anchor_ends": 0,
+          "angle_from_vertical_deg": 80.99999999999969,
+          "area_mm2": 609.6824999999999,
+          "height_spread_mm": 3.9912878961783154,
+          "id": 1,
+          "kind": "curved_top",
+          "max": [
+            19.099999999999998,
+            11.35,
+            4.0034045937442935
+          ],
+          "max_slope_deg": 9.000000000000313,
+          "min": [
+            -8.55,
+            -10.7,
+            0.012116697565978185
+          ],
+          "note": "curved top spread 3.99 mm, local slope up to 9.0°",
+          "overhang_angle_after_deg": null,
+          "overhang_angle_before_deg": null,
+          "z_center_mm": 2.007760645655136
+        }
+      ]
+    },
+    "enabled_surface_count": 1,
+    "fallback_to_planar": false,
+    "max_angle_deg": 10.0,
+    "mode": "auto",
+    "notes": [],
+    "preview": {
+      "positions": [
+        -8.550000190734863,
+        -10.699999809265137,
+        4.00340461730957,
+        19.100000381469727,
+        -10.699999809265137,
+        4.00340461730957,
+        19.100000381469727,
+        11.350000381469727,
+        4.00340461730957,
+        -8.550000190734863,
+        11.350000381469727,
+        4.00340461730957
+      ]
+    },
+    "surfaces": [
+      {
+        "bearing_deg": 38.571252251170144,
+        "enabled": true,
+        "extent_mm": [
+          27.65,
+          22.049999999999997
+        ],
+        "feature_id": 1,
+        "id": 1,
+        "kind": "curved_top_band",
+        "max": [
+          19.099999999999998,
+          11.35,
+          4.0034045937442935
+        ],
+        "min": [
+          -8.55,
+          -10.7,
+          0.012116697565978185
+        ],
+        "overhang_angle_after_deg": null,
+        "overhang_angle_before_deg": null,
+        "reason": "curved_top: curved-top band tilt 9.0° (spread 3.99 mm)",
+        "tilt_deg": 9.000000000000313
+      }
+    ]
+  }
+}

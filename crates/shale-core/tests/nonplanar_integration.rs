@@ -58,7 +58,7 @@ fn auto_plan_flat_cube_no_surfaces() {
     let mut opts = NonplanarOptions::default();
     opts.mode = NonplanarMode::Auto;
     opts.max_angle_deg = 10.0;
-    let plan = shale_nonplanar::plan_auto_placement(&m, &opts, 0.2);
+    let plan = shale_nonplanar::plan_auto_placement(&m, &[], &opts, 0.2);
     assert_eq!(plan.enabled_surface_count, 0, "flat cube should stay planar");
     assert!(plan.fallback_to_planar);
 }
@@ -78,10 +78,17 @@ fn auto_plan_sphere_enables_curved_band() {
     };
     let mut opts = NonplanarOptions::default();
     opts.mode = NonplanarMode::Auto;
-    let plan = shale_nonplanar::plan_auto_placement(&m, &opts, 0.2);
+    let analysis = shale_core::auto_spans::analyse_for_nonplanar(&baked);
+    let spans = shale_core::auto_spans::spans_for_auto(&analysis.spans);
+    let plan = shale_nonplanar::plan_auto_placement(&m, &spans, &opts, 0.2);
     assert!(
         plan.enabled_surface_count >= 1,
         "sphere dome should get a curved band"
+    );
+    assert!(
+        plan.surfaces.len() <= 4,
+        "dome should not fragment into many surfaces ({})",
+        plan.surfaces.len()
     );
 }
 
@@ -214,7 +221,7 @@ fn benchy_like() -> TriangleMesh {
 fn slice_part(
     name: &str,
     mesh: TriangleMesh,
-    nonplanar: bool,
+    mode: NonplanarMode,
     tag: &str,
 ) -> (String, SliceOutcome) {
     let catalog = Catalog::open(ResourcePaths::discover().expect("resources")).expect("catalog");
@@ -233,11 +240,7 @@ fn slice_part(
         ..UserSettings::default()
     };
     settings.nonplanar = NonplanarOptions {
-        mode: if nonplanar {
-            NonplanarMode::CurvedTops
-        } else {
-            NonplanarMode::Off
-        },
+        mode,
         max_angle_deg: 10.0,
         ..NonplanarOptions::default()
     };
@@ -440,6 +443,30 @@ fn analyse(
 }
 
 #[test]
+fn auto_mode_slices_with_placement_report() {
+    if !configured() {
+        return;
+    }
+    let mesh = primitives::sphere(12.0);
+    let (_gcode, outcome) = slice_part("dome-auto", mesh, NonplanarMode::Auto, "dome-auto");
+    let report = outcome
+        .nonplanar_report
+        .as_ref()
+        .expect("auto slice report");
+    let auto = report
+        .auto_placement
+        .as_ref()
+        .expect("auto placement block");
+    assert!(auto.enabled_surface_count >= 1);
+    assert!(
+        auto.surfaces.len() <= 6,
+        "merged surfaces expected, got {}",
+        auto.surfaces.len()
+    );
+    assert_eq!(report.mode, "auto");
+}
+
+#[test]
 fn nonplanar_end_to_end_benchmarks() {
     if !configured() {
         return;
@@ -459,8 +486,10 @@ fn nonplanar_end_to_end_benchmarks() {
     let mut metrics = Vec::new();
     for (name, mesh) in cases {
         let mesh_for_field = mesh.clone();
-        let (planar_gcode, planar_out) = slice_part(name, mesh.clone(), false, &format!("{name}-planar"));
-        let (curved_gcode, curved_out) = slice_part(name, mesh, true, &format!("{name}-curved"));
+        let (planar_gcode, planar_out) =
+            slice_part(name, mesh.clone(), NonplanarMode::Off, &format!("{name}-planar"));
+        let (curved_gcode, curved_out) =
+            slice_part(name, mesh, NonplanarMode::CurvedTops, &format!("{name}-curved"));
         assert!(curved_out.nonplanar_report.is_some());
         assert!(!curved_gcode.contains(";TYPE:IRONING"));
 

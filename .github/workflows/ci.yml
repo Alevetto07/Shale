@@ -28,7 +28,9 @@ jobs:
             librsvg2-dev \
             patchelf \
             libsoup-3.0-dev \
-            build-essential
+            build-essential \
+            libstdc++-13-dev \
+            cmake
 
       - name: Frontend
         working-directory: apps/desktop
@@ -49,6 +51,7 @@ jobs:
           SHALE_ORCA_DIR: ${{ github.workspace }}/vendor/BambuStudio/resources/profiles
           SHALE_CURAENGINE: ${{ github.workspace }}/vendor/curaengine/CuraEngine
           SHALE_CURAENGINE_LIB_DIR: ${{ github.workspace }}/vendor/cura-appimage-root/squashfs-root
+          LIBRARY_PATH: /usr/lib/gcc/x86_64-linux-gnu/13
         run: cargo test --workspace --locked
 
   windows:

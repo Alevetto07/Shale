@@ -385,7 +385,11 @@ impl Session {
         let np = crate::nonplanar_bridge::to_nonplanar(&baked);
         let layer_height = self.settings.layer_height.unwrap_or(0.2);
         let options = self.settings.nonplanar.clone();
-        Ok(shale_nonplanar::plan_auto_placement(&np, &options, layer_height))
+        let analysis = crate::auto_spans::analyse_for_nonplanar(&baked);
+        let spans = crate::auto_spans::spans_for_auto(&analysis.spans);
+        Ok(shale_nonplanar::plan_auto_placement(
+            &np, &spans, &options, layer_height,
+        ))
     }
 
     pub fn propose_supports(

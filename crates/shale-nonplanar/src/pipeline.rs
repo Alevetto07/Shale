@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use crate::mesh::{merge_meshes as merge_meshes_internal, Mesh};
 
-use crate::auto::{apply_plan_to_field, plan_auto_placement};
+use crate::auto::{apply_plan_to_field, plan_auto_placement, SupportSpanInput};
 use crate::collision::{flatten_on_collision, PrintedHeightMap};
 use crate::config::{NonplanarMode, NonplanarOptions, NonplanarReport};
 use crate::deform::{build_deform_field, deform_mesh, subdivide_long_edges, DeformField};
@@ -35,6 +35,7 @@ pub fn prepare_pre_pass(
     mesh: &Mesh,
     options: &NonplanarOptions,
     nominal_layer_height: f64,
+    support_spans: &[SupportSpanInput],
 ) -> (Mesh, NonplanarContext) {
     let band = options.effective_band_thickness(nominal_layer_height);
     let ramp = options.effective_ramp_thickness(nominal_layer_height);
@@ -42,8 +43,8 @@ pub fn prepare_pre_pass(
     let mut field = build_deform_field(grid, band, ramp, nominal_layer_height, options.max_angle_deg);
     let mut auto_placement = None;
     if options.mode == NonplanarMode::Auto {
-        let plan = plan_auto_placement(mesh, options, nominal_layer_height);
-        apply_plan_to_field(&mut field, &plan);
+        let plan = plan_auto_placement(mesh, support_spans, options, nominal_layer_height);
+        apply_plan_to_field(&mut field, &plan, nominal_layer_height);
         auto_placement = Some(plan);
     }
     let islands = count_top_islands(&field.grid);
@@ -82,6 +83,7 @@ pub fn apply_post_pass(
     mesh: &Mesh,
     options: &NonplanarOptions,
     nominal_layer_height: f64,
+    support_spans: &[SupportSpanInput],
 ) -> (String, NonplanarReport) {
     let band = options.effective_band_thickness(nominal_layer_height);
     let ramp = options.effective_ramp_thickness(nominal_layer_height);
@@ -89,8 +91,8 @@ pub fn apply_post_pass(
     let mut field = build_deform_field(grid, band, ramp, nominal_layer_height, options.max_angle_deg);
   let mut auto_placement = None;
     if options.mode == NonplanarMode::Auto {
-        let plan = plan_auto_placement(mesh, options, nominal_layer_height);
-        apply_plan_to_field(&mut field, &plan);
+        let plan = plan_auto_placement(mesh, support_spans, options, nominal_layer_height);
+        apply_plan_to_field(&mut field, &plan, nominal_layer_height);
         auto_placement = Some(plan);
     }
     let mut report = flatten_on_collision(

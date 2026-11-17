@@ -80,4 +80,5 @@ pub use shale_nonplanar::{
 };
 
 mod error;
+pub mod auto_spans;
 mod nonplanar_bridge;

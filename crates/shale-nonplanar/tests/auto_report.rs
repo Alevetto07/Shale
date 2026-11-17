@@ -100,7 +100,7 @@ fn emit_auto_placement_report_for_models() {
     ];
     let mut out = serde_json::Map::new();
     for (name, mesh) in models {
-        let plan = plan_auto_placement(&mesh, &opts, 0.2);
+        let plan = plan_auto_placement(&mesh, &[], &opts, 0.2);
         out.insert(
             name.into(),
             serde_json::to_value(&plan).expect("serialize plan"),
@@ -119,7 +119,7 @@ fn auto_report_flat_cube_has_no_bands() {
         max_angle_deg: 10.0,
         ..NonplanarOptions::default()
     };
-    let plan = plan_auto_placement(&box_mesh(20.0, 20.0, 10.0), &opts, 0.2);
+    let plan = plan_auto_placement(&box_mesh(20.0, 20.0, 10.0), &[], &opts, 0.2);
     assert_eq!(plan.enabled_surface_count, 0);
     assert!(plan.detection.features.iter().any(|f| f.kind == DetectedFeatureKind::FlatTop));
 }

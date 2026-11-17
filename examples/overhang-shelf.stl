@@ -1,0 +1,142 @@
+solid overhang-shelf
+  facet normal 0 0 0
+    outer loop
+      vertex -15 -10 0
+      vertex 15 -10 0
+      vertex 15 10 0
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 -10 0
+      vertex 15 10 0
+      vertex -15 10 0
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 -10 0
+      vertex -15 10 0
+      vertex -15 10 15
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 -10 0
+      vertex -15 10 15
+      vertex -15 -10 15
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 15 -10 0
+      vertex 15 -10 15
+      vertex 15 10 15
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 15 -10 0
+      vertex 15 10 15
+      vertex 15 10 0
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 -10 0
+      vertex -15 -10 15
+      vertex 15 -10 15
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 -10 0
+      vertex 15 -10 15
+      vertex 15 -10 0
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 10 0
+      vertex 15 10 0
+      vertex 15 10 15
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 10 0
+      vertex 15 10 15
+      vertex -15 10 15
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 10 15
+      vertex 15 10 15
+      vertex 15 20 15
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 10 15
+      vertex 15 20 15
+      vertex -15 20 15
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 10 15
+      vertex -15 20 15
+      vertex -15 20 10
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 10 15
+      vertex -15 20 10
+      vertex -15 10 10
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 15 10 15
+      vertex 15 10 10
+      vertex 15 20 10
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 15 10 15
+      vertex 15 20 10
+      vertex 15 20 15
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 20 15
+      vertex 15 20 15
+      vertex 15 20 10
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 20 15
+      vertex 15 20 10
+      vertex -15 20 10
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 10 10
+      vertex -15 20 10
+      vertex 15 20 10
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -15 10 10
+      vertex 15 20 10
+      vertex 15 10 10
+    endloop
+  endfacet
+endsolid overhang-shelf

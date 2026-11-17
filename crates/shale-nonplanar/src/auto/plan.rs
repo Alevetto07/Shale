@@ -8,12 +8,18 @@ use crate::mesh::Mesh;
 
 use super::detect::{DetectedFeature, DetectedFeatureKind, DetectionReport};
 use super::detect;
+use super::field;
+
+const DEFAULT_OVERHANG_TARGET: f64 = 45.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlannedSurfaceKind {
     CurvedTopBand,
     SlopedTopBand,
+    BridgeTiltBand,
+    CantileverTiltBand,
+    OverhangTiltBand,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -27,10 +33,11 @@ pub struct PlannedSurface {
     pub tilt_deg: f64,
     pub bearing_deg: f64,
     pub extent_mm: [f64; 2],
+    pub overhang_angle_before_deg: Option<f64>,
+    pub overhang_angle_after_deg: Option<f64>,
     pub reason: String,
 }
 
-/// Axis-aligned preview quads (`x,y,z` triplets, four corners per surface).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SurfacePreview {
     pub positions: Vec<f32>,
@@ -48,14 +55,14 @@ pub struct AutoPlacementReport {
     pub notes: Vec<String>,
 }
 
-/// Full automatic placement pipeline: detect → plan surfaces → strength mask.
 pub fn plan_auto_placement(
     mesh: &Mesh,
+    spans: &[super::types::SupportSpanInput],
     options: &NonplanarOptions,
     nominal_layer_height: f64,
 ) -> AutoPlacementReport {
     let band = options.effective_band_thickness(nominal_layer_height);
-    let detection = detect::detect(mesh, options.grid_step_mm, options.max_angle_deg, band);
+    let detection = detect::detect(mesh, spans, options.grid_step_mm, options.max_angle_deg, band);
     let (surfaces, notes) = plan_surfaces(&detection, options.max_angle_deg);
     let enabled_surface_count = surfaces.iter().filter(|s| s.enabled).count();
     let fallback_to_planar = enabled_surface_count == 0;
@@ -80,103 +87,184 @@ fn plan_surfaces(detection: &DetectionReport, max_angle_deg: f64) -> (Vec<Planne
     for feature in &detection.features {
         match feature.kind {
             DetectedFeatureKind::CurvedTop | DetectedFeatureKind::SlopedTop => {
-                let clamp_margin = 6.0;
-                let unsafe_slope = feature.max_slope_deg > max_angle_deg + clamp_margin;
-                let (enabled, reason) = if unsafe_slope {
-                    (
-                        false,
-                        format!(
-                            "max slope {:.1}° exceeds cap {:.1}° — falling back to planar",
-                            feature.max_slope_deg, max_angle_deg
-                        ),
-                    )
-                } else {
-                    let kind = if feature.kind == DetectedFeatureKind::CurvedTop {
-                        PlannedSurfaceKind::CurvedTopBand
-                    } else {
-                        PlannedSurfaceKind::SlopedTopBand
-                    };
-                    (
-                        true,
-                        if feature.max_slope_deg > max_angle_deg + 1e-3 {
-                            format!(
-                                "{}: enable {} with slope clamped {:.1}°→{:.1}°",
-                                feature.kind.name(),
-                                if kind == PlannedSurfaceKind::CurvedTopBand {
-                                    "curved_top_band"
-                                } else {
-                                    "sloped_top_band"
-                                },
-                                feature.max_slope_deg,
-                                max_angle_deg
-                            )
-                        } else {
-                            format!(
-                                "{}: enable {} (spread {:.2} mm, slope {:.1}°)",
-                                feature.kind.name(),
-                                if kind == PlannedSurfaceKind::CurvedTopBand {
-                                    "curved_top_band"
-                                } else {
-                                    "sloped_top_band"
-                                },
-                                feature.height_spread_mm,
-                                feature.max_slope_deg
-                            )
-                        },
-                    )
-                };
-                let kind = if feature.kind == DetectedFeatureKind::CurvedTop {
-                    PlannedSurfaceKind::CurvedTopBand
-                } else {
-                    PlannedSurfaceKind::SlopedTopBand
-                };
-                surfaces.push(PlannedSurface {
-                    id: next_surface,
-                    feature_id: feature.id,
-                    kind,
-                    enabled,
-                    min: feature.min,
-                    max: feature.max,
-                    tilt_deg: feature.max_slope_deg.min(max_angle_deg),
-                    bearing_deg: bearing_xy(feature),
-                    extent_mm: [
-                        feature.max[0] - feature.min[0],
-                        feature.max[1] - feature.min[1],
-                    ],
-                    reason,
-                });
-                next_surface += 1;
+                push_top_band(
+                    &mut surfaces,
+                    &mut next_surface,
+                    feature,
+                    max_angle_deg,
+                );
             }
             DetectedFeatureKind::FlatTop => {
-                notes.push(format!(
-                    "feature {} flat top — skipped ({})",
-                    feature.id, feature.note
-                ));
+                notes.push(format!("feature {} flat top — skipped", feature.id));
             }
             DetectedFeatureKind::Bridge => {
-                notes.push(format!(
-                    "feature {} bridge detected — planar layers keep short spans ({})",
-                    feature.id, feature.note
-                ));
+                plan_underside(
+                    &mut surfaces,
+                    &mut next_surface,
+                    feature,
+                    PlannedSurfaceKind::BridgeTiltBand,
+                    max_angle_deg,
+                );
             }
             DetectedFeatureKind::Cantilever => {
-                // Underside cantilever: curved-top pass does not replace support; skip band unless a sloped top sits above.
-                notes.push(format!(
-                    "feature {} cantilever — underside only; no curved-top band ({})",
-                    feature.id, feature.note
-                ));
+                plan_underside(
+                    &mut surfaces,
+                    &mut next_surface,
+                    feature,
+                    PlannedSurfaceKind::CantileverTiltBand,
+                    max_angle_deg,
+                );
             }
-            DetectedFeatureKind::Island | DetectedFeatureKind::Overhang => {
+            DetectedFeatureKind::Overhang | DetectedFeatureKind::Island => {
+                plan_underside(
+                    &mut surfaces,
+                    &mut next_surface,
+                    feature,
+                    PlannedSurfaceKind::OverhangTiltBand,
+                    max_angle_deg,
+                );
+            }
+            DetectedFeatureKind::Cosmetic => {
                 notes.push(format!(
-                    "feature {} {} — needs support, not curved-top deformation ({})",
-                    feature.id,
-                    feature.kind.name(),
-                    feature.note
+                    "feature {} cosmetic underside — planar sufficient",
+                    feature.id
                 ));
             }
         }
     }
     (surfaces, notes)
+}
+
+fn push_top_band(
+    surfaces: &mut Vec<PlannedSurface>,
+    next_surface: &mut u32,
+    feature: &DetectedFeature,
+    max_angle_deg: f64,
+) {
+    let clamp_margin = 6.0;
+    let kind = if feature.kind == DetectedFeatureKind::CurvedTop {
+        PlannedSurfaceKind::CurvedTopBand
+    } else {
+        PlannedSurfaceKind::SlopedTopBand
+    };
+    let unsafe_slope = feature.max_slope_deg > max_angle_deg + clamp_margin
+        && feature.height_spread_mm < 2.0;
+    let tilt = feature.max_slope_deg.min(max_angle_deg);
+    let (enabled, reason) = if unsafe_slope {
+        (
+            false,
+            format!(
+                "max slope {:.1}° exceeds cap {:.1}° — planar fallback",
+                feature.max_slope_deg, max_angle_deg
+            ),
+        )
+    } else {
+        (
+            true,
+            format!(
+                "{}: curved-top band tilt {:.1}° (spread {:.2} mm)",
+                feature.kind.name(),
+                tilt,
+                feature.height_spread_mm
+            ),
+        )
+    };
+    surfaces.push(PlannedSurface {
+        id: *next_surface,
+        feature_id: feature.id,
+        kind,
+        enabled,
+        min: feature.min,
+        max: feature.max,
+        tilt_deg: tilt,
+        bearing_deg: bearing_xy(feature),
+        extent_mm: [
+            feature.max[0] - feature.min[0],
+            feature.max[1] - feature.min[1],
+        ],
+        overhang_angle_before_deg: feature.overhang_angle_before_deg,
+        overhang_angle_after_deg: feature.overhang_angle_after_deg,
+        reason,
+    });
+    *next_surface += 1;
+}
+
+fn plan_underside(
+    surfaces: &mut Vec<PlannedSurface>,
+    next_surface: &mut u32,
+    feature: &DetectedFeature,
+    kind: PlannedSurfaceKind,
+    max_angle_deg: f64,
+) {
+    let before = feature
+        .overhang_angle_before_deg
+        .or(Some(feature.angle_from_vertical_deg))
+        .unwrap_or(60.0);
+    if before < 52.0 {
+        surfaces.push(PlannedSurface {
+            id: *next_surface,
+            feature_id: feature.id,
+            kind,
+            enabled: false,
+            min: feature.min,
+            max: feature.max,
+            tilt_deg: 0.0,
+            bearing_deg: span_bearing(feature),
+            extent_mm: [
+                feature.max[0] - feature.min[0],
+                feature.max[1] - feature.min[1],
+            ],
+            overhang_angle_before_deg: Some(before),
+            overhang_angle_after_deg: Some(before),
+            reason: format!(
+                "shallow underside {before:.1}° — planar fallback"
+            ),
+        });
+        *next_surface += 1;
+        return;
+    }
+    let headroom = (before - DEFAULT_OVERHANG_TARGET).max(0.0);
+    let tilt = headroom.min(max_angle_deg);
+    let enabled = tilt >= 1.0 && max_angle_deg >= 1.0;
+    let after = if enabled {
+        (before - tilt).max(DEFAULT_OVERHANG_TARGET - 2.0)
+    } else {
+        before
+    };
+    let reason = if enabled {
+        format!(
+            "{}: tilt {:.1}° along span, overhang {before:.1}°→{after:.1}°",
+            feature.kind.name(),
+            tilt,
+        )
+    } else {
+        format!(
+            "{}: cannot reduce overhang under cap ({before:.1}°)",
+            feature.kind.name()
+        )
+    };
+    let mut min = feature.min;
+    let mut max = feature.max;
+    min[2] = feature.z_center_mm - 0.5;
+    max[2] = feature.z_center_mm + 2.5;
+    surfaces.push(PlannedSurface {
+        id: *next_surface,
+        feature_id: feature.id,
+        kind,
+        enabled,
+        min,
+        max,
+        tilt_deg: tilt,
+        bearing_deg: span_bearing(feature),
+        extent_mm: [
+            feature.max[0] - feature.min[0],
+            feature.max[1] - feature.min[1],
+        ],
+        overhang_angle_before_deg: Some(before),
+        overhang_angle_after_deg: Some(after),
+        reason,
+    });
+    *next_surface += 1;
 }
 
 fn bearing_xy(feature: &DetectedFeature) -> f64 {
@@ -186,6 +274,16 @@ fn bearing_xy(feature: &DetectedFeature) -> f64 {
         90.0
     } else {
         dy.atan2(dx).to_degrees().rem_euclid(360.0)
+    }
+}
+
+fn span_bearing(feature: &DetectedFeature) -> f64 {
+    let dx = feature.max[0] - feature.min[0];
+    let dy = feature.max[1] - feature.min[1];
+    if dx >= dy {
+        0.0
+    } else {
+        90.0
     }
 }
 
@@ -206,8 +304,11 @@ fn preview_mesh(surfaces: &[PlannedSurface]) -> SurfacePreview {
     SurfacePreview { positions }
 }
 
-/// Paint planned surfaces onto `field.island_strength` (0 = planar, 1 = full curved-top band).
-pub fn apply_plan_to_field(field: &mut DeformField, plan: &AutoPlacementReport) {
+pub fn apply_plan_to_field(
+    field: &mut DeformField,
+    plan: &AutoPlacementReport,
+    layer_h: f64,
+) {
     if plan.enabled_surface_count == 0 {
         for s in &mut field.island_strength {
             *s = 0.0;
@@ -225,6 +326,18 @@ pub fn apply_plan_to_field(field: &mut DeformField, plan: &AutoPlacementReport) 
     let has_top = field.grid.z_top_smooth.clone();
     for surface in plan.surfaces.iter().filter(|s| s.enabled) {
         stamp_surface(origin, step, width, height, &has_top, field, surface, len);
+        field::apply_surface_to_grid(&mut field.grid, surface, layer_h);
+    }
+    let band = field.band_thickness;
+    for (top, start) in field
+        .grid
+        .z_top_smooth
+        .iter()
+        .zip(field.grid.z_band_start.iter_mut())
+    {
+        if let Some(z) = top {
+            *start = Some(start.unwrap_or(z - band));
+        }
     }
 }
 
@@ -250,9 +363,10 @@ fn stamp_surface(
                 continue;
             }
             let i = iy * width + ix;
-            if i < len && has_top[i].is_some() {
+            if i < len {
                 field.island_strength[i] = 1.0;
             }
+            let _ = has_top.get(i);
         }
     }
 }

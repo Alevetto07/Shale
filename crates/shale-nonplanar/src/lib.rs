@@ -22,7 +22,7 @@ pub mod safety;
 
 pub use auto::{
     plan_auto_placement, AutoPlacementReport, DetectedFeature, DetectedFeatureKind, DetectionReport,
-    PlannedSurface, SurfacePreview,
+    PlannedSurface, SurfacePreview, SupportSpanInput,
 };
 pub use config::{NonplanarMode, NonplanarOptions, NonplanarReport};
 pub use mesh::merge_meshes;
