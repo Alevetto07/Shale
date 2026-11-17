@@ -1071,10 +1071,11 @@ fn load_definitions(
                 .map(|definition| (definition.id.clone(), definition))
         })
         .collect();
+    let loaded_count = loaded.len();
     for (id, definition) in loaded {
         into.insert(id, definition);
     }
-    if loaded.len() < paths.len() && warnings.len() < 40 {
+    if loaded_count < paths.len() && warnings.len() < 40 {
         warnings.push(format!(
             "some definition files under {} could not be read",
             dir.display()
