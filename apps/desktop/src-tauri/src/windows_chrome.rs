@@ -16,6 +16,10 @@ const SC_KEYMENU: u32 = 0xF100;
 
 type WndProc = unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT;
 
+fn hwnd_key(hwnd: HWND) -> usize {
+    hwnd.0 as usize
+}
+
 fn state() -> &'static Mutex<ChromeState> {
     static STATE: OnceLock<Mutex<ChromeState>> = OnceLock::new();
     STATE.get_or_init(|| {
@@ -27,8 +31,8 @@ fn state() -> &'static Mutex<ChromeState> {
 }
 
 struct ChromeState {
-    main_hwnd: isize,
-    prev: HashMap<isize, WndProc>,
+    main_hwnd: usize,
+    prev: HashMap<usize, WndProc>,
 }
 
 pub fn attach_main_window(window: &WebviewWindow) -> Result<(), String> {
@@ -37,20 +41,16 @@ pub fn attach_main_window(window: &WebviewWindow) -> Result<(), String> {
     state()
         .lock()
         .map_err(|_| "window chrome state poisoned".to_string())?
-        .main_hwnd = hwnd.0;
+        .main_hwnd = hwnd_key(hwnd);
     subclass_hwnd(hwnd)?;
     subclass_thread_windows()?;
     Ok(())
 }
 
 pub fn subclass_thread_windows() -> Result<(), String> {
-    unsafe {
-        EnumThreadWindows(
-            GetCurrentThreadId(),
-            Some(enum_subclass),
-            LPARAM(0),
-        )
-        .map_err(|err| err.to_string())?;
+    let ok = unsafe { EnumThreadWindows(GetCurrentThreadId(), Some(enum_subclass), LPARAM(0)) };
+    if !ok.as_bool() {
+        return Err("EnumThreadWindows failed".into());
     }
     Ok(())
 }
@@ -61,19 +61,19 @@ unsafe extern "system" fn enum_subclass(hwnd: HWND, _: LPARAM) -> BOOL {
 }
 
 fn subclass_hwnd(hwnd: HWND) -> Result<(), String> {
+    let key = hwnd_key(hwnd);
     let Ok(mut chrome) = state().lock() else {
         return Err("window chrome state poisoned".into());
     };
-    if chrome.prev.contains_key(&hwnd.0) {
+    if chrome.prev.contains_key(&key) {
         return Ok(());
     }
     unsafe {
         let prev = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, shim_wndproc as isize);
         if prev == 0 {
-            // Some HWNDs on the UI thread cannot be subclassed; skip them quietly.
             return Ok(());
         }
-        chrome.prev.insert(hwnd.0, std::mem::transmute(prev));
+        chrome.prev.insert(key, std::mem::transmute(prev));
     }
     Ok(())
 }
@@ -84,6 +84,7 @@ unsafe extern "system" fn shim_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    let key = hwnd_key(hwnd);
     let main = {
         let Ok(chrome) = state().lock() else {
             return LRESULT(0);
@@ -92,17 +93,13 @@ unsafe extern "system" fn shim_wndproc(
     };
 
     match msg {
-        WM_SYSCOMMAND if hwnd.0 == main => {
+        WM_SYSCOMMAND if key == main => {
             let cmd = wparam.0 as u32 & 0xFFF0;
-            // Bare Alt on a decorations:false window posts SC_KEYMENU with
-            // lParam 0 and traps the UI in the menu loop until Esc or a click.
             if cmd == SC_KEYMENU && lparam.0 == 0 {
                 return LRESULT(0);
             }
         }
-        WM_CLOSE if hwnd.0 != main => {
-            // A close delivered to a helper or message-only HWND must not mark
-            // the app as shutting down while the main window is still open.
+        WM_CLOSE if key != main => {
             return LRESULT(0);
         }
         _ => {}
@@ -111,7 +108,7 @@ unsafe extern "system" fn shim_wndproc(
     let Ok(chrome) = state().lock() else {
         return LRESULT(0);
     };
-    let Some(prev) = chrome.prev.get(&hwnd.0).copied() else {
+    let Some(prev) = chrome.prev.get(&key).copied() else {
         return LRESULT(0);
     };
     drop(chrome);
