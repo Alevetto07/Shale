@@ -17,7 +17,7 @@ fn merge_meshes(a: &TriangleMesh, b: &TriangleMesh) -> TriangleMesh {
 }
 
 fn chevron_slab() -> TriangleMesh {
-    let tilt = 12.0f64.to_radians();
+    let tilt = 12.0f32.to_radians();
     let base_h = 10.0;
     let base = primitives::box_solid(40.0, 24.0, base_h);
     let mut slab = primitives::box_solid(40.0, 24.0, 1.2);
