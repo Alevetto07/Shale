@@ -6,7 +6,9 @@ use crate::mesh::{merge_meshes as merge_meshes_internal, Mesh};
 use crate::collision::{flatten_on_collision, PrintedHeightMap};
 use crate::config::{NonplanarOptions, NonplanarReport};
 use crate::deform::{build_deform_field, deform_mesh, subdivide_long_edges, DeformField};
-use crate::envelope::bambu_a1_envelope;
+use crate::envelope::{head_envelope_for_printer, bambu_a1_envelope};
+use crate::equivalence::check_planar_equivalence;
+use crate::validate::{embed_safety_json, validate_gcode, MachineLimits};
 use crate::height_field::{build_height_field, count_top_islands};
 use crate::safety::enforce_slope_safety;
 
@@ -68,34 +70,77 @@ pub fn rebuild_field(mesh: &Mesh, options: &NonplanarOptions, nominal_layer_heig
 
 /// Post-pass on planar G-code from CuraEngine.
 pub fn apply_post_pass(
-    gcode: &str,
+    planar_gcode: &str,
     mesh: &Mesh,
     options: &NonplanarOptions,
     nominal_layer_height: f64,
+    printer_id: &str,
+    limits: MachineLimits,
 ) -> (String, NonplanarReport) {
+    let envelope = head_envelope_for_printer(printer_id).unwrap_or(bambu_a1_envelope());
     let mut field = rebuild_field(mesh, options, nominal_layer_height);
     let mut report = flatten_on_collision(
         &mut field,
-        gcode,
-        bambu_a1_envelope(),
+        planar_gcode,
+        envelope,
         options.max_angle_deg,
     );
     report.notes.push("ironing disabled for curved-top pass".into());
-    report.top_islands = field.grid.width * field.grid.height; // refined below
     report.top_islands = count_top_islands(&field.grid);
-    let mapped = enforce_slope_safety(&mut field, gcode, nominal_layer_height, &mut report);
+    let mapped = enforce_slope_safety(
+        &mut field,
+        planar_gcode,
+        nominal_layer_height,
+        &mut report,
+    );
+    let equiv = check_planar_equivalence(
+        planar_gcode,
+        &mapped,
+        field.global_band_floor_z(),
+    );
+    report.planar_equivalence_ok = equiv.ok;
+    if !equiv.ok {
+        report.notes.push(format!(
+            "planar equivalence: {} mismatches below z={:.3}",
+            equiv.mismatched_moves, equiv.band_floor_z
+        ));
+    } else {
+        report
+            .notes
+            .push("planar equivalence: below-band G-code matches planar slice".into());
+    }
+    let safety = validate_gcode(
+        &mapped,
+        &field,
+        envelope,
+        &limits,
+        equiv,
+        &report.collision_adjustments,
+    );
+    if !safety.ok {
+        report
+            .notes
+            .push(format!("safety report: {} violation(s)", safety.violations.len()));
+    }
+    report.safety = Some(safety);
     let header = format_nonplanar_header(&report);
-    ok_attach_header(mapped, &header, report)
+    let (mut out, report) = ok_attach_header(mapped, &header, report);
+    if let Some(safety) = report.safety.as_ref() {
+        out = embed_safety_json(out, safety);
+    }
+    (out, report)
 }
 
 fn format_nonplanar_header(report: &NonplanarReport) -> String {
     format!(
-        ";SHALE_NONPLANAR mode={} max_angle={:.1} islands={} flattened={} fallback={}\n",
+        ";SHALE_NONPLANAR mode={} max_angle={:.1} islands={} flattened={} fallback={} equiv={} safe={}\n",
         report.mode,
         report.max_angle_deg,
         report.top_islands,
         report.islands_flattened,
-        report.fallback_to_planar
+        report.fallback_to_planar,
+        report.planar_equivalence_ok,
+        report.safety.as_ref().is_some_and(|s| s.ok)
     )
 }
 
@@ -107,8 +152,8 @@ fn ok_attach_header(mapped: String, header: &str, mut report: NonplanarReport) -
 }
 
 /// Build a printed height map envelope self-test on finished G-code (no extrusion moves should violate).
-pub fn gcode_respects_envelope(gcode: &str, max_angle_deg: f64) -> bool {
-    let envelope = bambu_a1_envelope();
+pub fn gcode_respects_envelope(gcode: &str, printer_id: &str, max_angle_deg: f64) -> bool {
+    let envelope = head_envelope_for_printer(printer_id).unwrap_or(bambu_a1_envelope());
     let step = 2.0;
     // Machine-coordinate G-code from Cura (front-left origin on a 256 mm bed).
     let mut printed = PrintedHeightMap::new([0.0, 0.0], step, 130, 130);
@@ -129,8 +174,9 @@ pub fn gcode_respects_envelope(gcode: &str, max_angle_deg: f64) -> bool {
         }
         let e_pos = parse_word(line, 'E').unwrap_or(0.0);
         let extruding = line.starts_with("G1") && line.contains('E') && e_pos > 0.0;
-        if line.starts_with('G') && (extruding || line.starts_with("G0")) {
-            if crate::collision::move_collides(
+        if line.starts_with('G')
+            && (extruding || line.starts_with("G0"))
+            && crate::collision::move_collides(
                 envelope,
                 &printed,
                 position[0],
@@ -138,9 +184,9 @@ pub fn gcode_respects_envelope(gcode: &str, max_angle_deg: f64) -> bool {
                 position[2],
                 max_angle_deg,
                 extruding,
-            ) {
-                return false;
-            }
+            )
+        {
+            return false;
         }
         if extruding {
             printed.raise(position[0], position[1], position[2]);
@@ -185,7 +231,7 @@ fn max_slope_on_moves(moves: &[ShellExtrusionChain], across_layers: bool) -> f64
                     prev = Some(point);
                     continue;
                 }
-                if horiz > VERTICAL_STEP_HORIZ_MM && horiz > 1e-6 {
+                if horiz > VERTICAL_STEP_HORIZ_MM {
                     let deg = dz.atan2(horiz).abs().to_degrees();
                     max_deg = max_deg.max(deg);
                 }
@@ -233,7 +279,7 @@ pub fn max_extrusion_slope_above_z(gcode: &str, z_min: f64) -> Option<f64> {
                 let dy = point[1] - prev[1];
                 let dz = point[2] - prev[2];
                 let horiz = (dx * dx + dy * dy).sqrt();
-                if horiz > VERTICAL_STEP_HORIZ_MM && horiz > 1e-9 {
+                if horiz > VERTICAL_STEP_HORIZ_MM {
                     any = true;
                     max_deg = max_deg.max(dz.atan2(horiz).abs().to_degrees());
                 }
@@ -428,4 +474,37 @@ pub fn in_layer_slope_histogram(
     bins.into_iter()
         .map(|(b, n)| ((b as f64 + 0.5) * width, n))
         .collect()
+}
+
+#[cfg(test)]
+mod post_pass_tests {
+    use super::*;
+    use crate::config::NonplanarMode;
+    use crate::test_meshes::box_mesh;
+
+    #[test]
+    fn post_pass_equivalence_and_safety_on_box() {
+        let mesh = box_mesh(20.0, 20.0, 10.0);
+        let opts = NonplanarOptions {
+            mode: NonplanarMode::CurvedTops,
+            max_angle_deg: 10.0,
+            grid_step_mm: 1.0,
+            ..NonplanarOptions::default()
+        };
+        let planar = "G1 X5 Y5 Z2 E0\nG1 X15 Y5 Z2 E1\nG0 X15 Y15 Z9\nG1 X15 Y15 Z9 E2\nG1 X5 Y15 Z9.2 E3\n";
+        let (out, report) = apply_post_pass(
+            planar,
+            &mesh,
+            &opts,
+            0.2,
+            "bambu_lab_a1",
+            MachineLimits {
+                z_max_mm: 256.0,
+                max_feed_mm_per_min: 6000.0,
+            },
+        );
+        assert!(report.planar_equivalence_ok, "{:?}", report.notes);
+        assert!(report.safety.as_ref().is_some_and(|s| s.ok), "{out}");
+        assert!(out.contains(";SHALE_NONPLANAR_SAFETY"));
+    }
 }

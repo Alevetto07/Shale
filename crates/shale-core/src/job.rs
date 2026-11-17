@@ -546,11 +546,21 @@ pub fn slice(
                 .map(crate::nonplanar_bridge::to_nonplanar)
                 .collect::<Vec<_>>(),
         );
+        let machine_height = resolved
+            .summary
+            .machine_height
+            .max(1.0);
+        let max_feed = (resolved.summary.speed_print * 60.0).max(600.0);
         let (mapped, report) = shale_nonplanar::apply_post_pass(
             &gcode,
             &reference,
             &settings.nonplanar,
             layer_height,
+            printer_id,
+            shale_nonplanar::MachineLimits {
+                z_max_mm: machine_height,
+                max_feed_mm_per_min: max_feed,
+            },
         );
         gcode = mapped;
         let mut report = report;

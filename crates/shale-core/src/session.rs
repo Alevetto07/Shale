@@ -49,6 +49,14 @@ pub struct JobSliceSummary {
     pub warnings: Vec<String>,
     pub gcode_path: String,
     pub flavour: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonplanar_safety_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonplanar_planar_equivalence_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonplanar_collision_fixes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonplanar_report: Option<shale_nonplanar::NonplanarReport>,
 }
 
 pub struct Session {
@@ -577,6 +585,7 @@ fn summary_of(outcome: &SliceOutcome) -> JobSliceSummary {
             &std::fs::read_to_string(&outcome.gcode_path).unwrap_or_default(),
         )
     };
+    let nonplanar = outcome.nonplanar_report.as_ref();
     JobSliceSummary {
         layer_count: outcome.toolpath.layers.len(),
         print_time_seconds: outcome.print_time_seconds,
@@ -585,5 +594,9 @@ fn summary_of(outcome: &SliceOutcome) -> JobSliceSummary {
         warnings: outcome.resolved.warnings.clone(),
         gcode_path: outcome.gcode_path.display().to_string(),
         flavour: outcome.flavour.name().to_string(),
+        nonplanar_safety_ok: nonplanar.and_then(|r| r.safety.as_ref().map(|s| s.ok)),
+        nonplanar_planar_equivalence_ok: nonplanar.map(|r| r.planar_equivalence_ok),
+        nonplanar_collision_fixes: nonplanar.map(|r| r.collision_adjustments.len()),
+        nonplanar_report: outcome.nonplanar_report.clone(),
     }
 }

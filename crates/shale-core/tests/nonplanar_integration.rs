@@ -307,6 +307,9 @@ struct CaseMetrics {
     max_angle_ok: bool,
     envelope_ok: bool,
     collision_notes: Vec<String>,
+    planar_equivalence_ok: bool,
+    safety_ok: Option<bool>,
+    collision_fixes: usize,
 }
 
 fn nonplanar_opts() -> NonplanarOptions {
@@ -387,12 +390,25 @@ fn analyse(
             field.global_band_floor_z(),
         )
         .is_none_or(|d| d <= 10.5),
-        envelope_ok: shale_nonplanar::gcode_respects_envelope(curved_gcode, 10.0),
+        envelope_ok: shale_nonplanar::gcode_respects_envelope(curved_gcode, PRINTER, 10.0),
         collision_notes: curved
             .nonplanar_report
             .as_ref()
             .map(|r| r.notes.clone())
             .unwrap_or_default(),
+        planar_equivalence_ok: curved
+            .nonplanar_report
+            .as_ref()
+            .is_some_and(|r| r.planar_equivalence_ok),
+        safety_ok: curved
+            .nonplanar_report
+            .as_ref()
+            .and_then(|r| r.safety.as_ref().map(|s| s.ok)),
+        collision_fixes: curved
+            .nonplanar_report
+            .as_ref()
+            .map(|r| r.collision_adjustments.len())
+            .unwrap_or(0),
     }
 }
 
@@ -423,20 +439,20 @@ fn nonplanar_end_to_end_benchmarks() {
 
         let report = curved_out.nonplanar_report.as_ref().unwrap();
         assert!(
-            report
-                .notes
-                .iter()
-                .any(|n| n.contains("skipped") || n.contains("ironing")),
-            "unexpected collision flattening {:?}",
-            report.notes
+            report.safety.is_some(),
+            "{name}: expected machine-readable safety report"
         );
         assert!(
-            !report
-                .notes
-                .iter()
-                .any(|n| n.contains("24376") || n.contains("triggered envelope flattening")),
-            "calibration regressions: {:?}",
-            report.notes
+            report.planar_equivalence_ok,
+            "{name}: below-band G-code must match planar slice"
+        );
+        assert!(
+            report
+                .safety
+                .as_ref()
+                .is_some_and(|s| s.ok),
+            "{name}: safety violations: {:?}",
+            report.safety.as_ref().map(|s| &s.violations)
         );
 
         let pslope =

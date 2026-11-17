@@ -74,7 +74,9 @@ pub use supports::{
     SupportOverlay, SupportParams, SupportPlan, SupportRegion,
 };
 pub use value::Value;
-pub use shale_nonplanar::{NonplanarMode, NonplanarOptions, NonplanarReport};
+pub use shale_nonplanar::{
+    safety_report_from_gcode, NonplanarMode, NonplanarOptions, NonplanarReport, SafetyReport,
+};
 
 mod error;
 mod nonplanar_bridge;
