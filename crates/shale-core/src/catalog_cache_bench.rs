@@ -22,7 +22,6 @@ mod tests {
             let orca = tempfile::tempdir().expect("bench orca tempdir");
             bambu::set_test_profiles_root(Some(orca.path().to_path_buf()));
             let cache = tempfile::tempdir().expect("bench cache tempdir");
-            catalog_cache::set_cache_dir_override(cache.path().to_path_buf());
             BenchDirs {
                 _orca: orca,
                 _cache: cache,
@@ -30,9 +29,14 @@ mod tests {
         })
     }
 
+    fn pin_bench_cache_dir() {
+        let dirs = bench_dirs();
+        catalog_cache::set_cache_dir_thread_local(dirs._cache.path().to_path_buf());
+    }
+
     #[test]
     fn fixture_catalog_open_stays_fast() {
-        let _dirs = bench_dirs();
+        pin_bench_cache_dir();
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
         let paths = ResourcePaths {
             cura: root.join("cura"),
@@ -56,6 +60,7 @@ mod tests {
 
     #[test]
     fn cheap_fingerprint_is_millisecond_scale() {
+        pin_bench_cache_dir();
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
         let resources = root.join("cura");
         let materials = root.join("materials");

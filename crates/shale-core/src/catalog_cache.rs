@@ -4,12 +4,17 @@
 //! **Write path:** JSON serialization on a background thread; prune never deletes
 //! other sources' cache files.
 
+use std::cell::RefCell;
 use std::collections::{hash_map::DefaultHasher, HashMap};
-use std::io::{BufReader, BufWriter};
 use std::hash::{Hash, Hasher};
+use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use std::{env, fs};
+
+thread_local! {
+    static CACHE_DIR_THREAD: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
 
 use serde::{Deserialize, Serialize};
 
@@ -62,12 +67,23 @@ struct CuraExtrasCache {
     materials: Vec<Material>,
 }
 
-/// Sets the on-disk catalogue cache directory for this process (used by tests).
+/// Sets the on-disk catalogue cache directory for this process (integration tests).
 pub fn set_cache_dir_override(dir: PathBuf) {
     let _ = fs::create_dir_all(&dir);
     if let Ok(mut guard) = CACHE_DIR_OVERRIDE.write() {
         *guard = Some(dir);
     }
+}
+
+#[cfg(test)]
+pub(crate) fn set_cache_dir_thread_local(dir: PathBuf) {
+    let _ = fs::create_dir_all(&dir);
+    CACHE_DIR_THREAD.with(|slot| *slot.borrow_mut() = Some(dir));
+}
+
+#[cfg(test)]
+pub(crate) fn clear_cache_dir_thread_local() {
+    CACHE_DIR_THREAD.with(|slot| *slot.borrow_mut() = None);
 }
 
 fn test_mode_active() -> bool {
@@ -82,6 +98,9 @@ fn isolated_test_cache_dir() -> PathBuf {
 
 /// User app-data, never next to the install / uninstall layout.
 pub(crate) fn cache_dir() -> PathBuf {
+    if let Some(dir) = CACHE_DIR_THREAD.with(|slot| slot.borrow().clone()) {
+        return dir;
+    }
     if let Ok(guard) = CACHE_DIR_OVERRIDE.read() {
         if let Some(dir) = guard.as_ref() {
             return dir.clone();
@@ -226,8 +245,17 @@ pub(crate) fn load_cura_snapshot(
     materials: &Path,
     resources: &Path,
 ) -> Result<Option<CuraSnapshot>, Error> {
+    load_cura_snapshot_in(cura, materials, resources, &cache_dir())
+}
+
+fn load_cura_snapshot_in(
+    cura: &Path,
+    materials: &Path,
+    resources: &Path,
+    cache_root: &Path,
+) -> Result<Option<CuraSnapshot>, Error> {
     let key = path_key(&[cura, materials]);
-    let file = cache_dir().join(format!("cura-extras-{key:x}.json"));
+    let file = cache_root.join(format!("cura-extras-{key:x}.json"));
     if !file.is_file() {
         return Ok(None);
     }
@@ -271,6 +299,7 @@ pub(crate) fn store_cura_snapshot(
     let instances = instances.to_vec();
     let material_rows = material_rows.to_vec();
     if test_mode_active() {
+        let cache_root = cache_dir();
         let _ = store_cura_snapshot_sync(
             &cura,
             &materials,
@@ -278,8 +307,10 @@ pub(crate) fn store_cura_snapshot(
             &definition_rows,
             &instances,
             &material_rows,
+            &cache_root,
         );
     } else {
+        let cache_root = cache_dir();
         std::thread::spawn(move || {
             let _ = store_cura_snapshot_sync(
                 &cura,
@@ -288,6 +319,7 @@ pub(crate) fn store_cura_snapshot(
                 &definition_rows,
                 &instances,
                 &material_rows,
+                &cache_root,
             );
         });
     }
@@ -300,9 +332,10 @@ fn store_cura_snapshot_sync(
     definition_rows: &[Definition],
     instances: &[InstanceFile],
     material_rows: &[Material],
+    cache_root: &Path,
 ) -> Result<(), Error> {
     let key = path_key(&[cura, materials]);
-    let dir = cache_dir();
+    let dir = cache_root;
     fs::create_dir_all(&dir).map_err(|err| Error::message(err.to_string()))?;
     let body = CuraExtrasCache {
         version: CACHE_VERSION,
@@ -343,14 +376,24 @@ pub(crate) fn load_bambu_library(root: &Path) -> Option<Library> {
 }
 
 pub(crate) fn store_bambu_library_async(root: PathBuf, library: Library) {
-    std::thread::spawn(move || {
-        let _ = store_bambu_library_sync(&root, &library);
-    });
+    if test_mode_active() {
+        let cache_root = cache_dir();
+        let _ = store_bambu_library_sync(&root, &library, &cache_root);
+    } else {
+        let cache_root = cache_dir();
+        std::thread::spawn(move || {
+            let _ = store_bambu_library_sync(&root, &library, &cache_root);
+        });
+    }
 }
 
-fn store_bambu_library_sync(root: &Path, library: &Library) -> Result<(), Error> {
+fn store_bambu_library_sync(
+    root: &Path,
+    library: &Library,
+    cache_root: &Path,
+) -> Result<(), Error> {
     let key = path_key(&[root]);
-    let dir = cache_dir();
+    let dir = cache_root;
     fs::create_dir_all(&dir).map_err(|err| Error::message(err.to_string()))?;
     let body = BambuLibraryCache {
         version: BAMBU_CACHE_VERSION,
@@ -421,23 +464,40 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn isolated_cache() -> (TempDir, PathBuf) {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let path = temp.path().to_path_buf();
-        set_cache_dir_override(path.clone());
-        (temp, path)
+    struct ThreadCacheGuard {
+        _temp: TempDir,
+        path: PathBuf,
+    }
+
+    impl ThreadCacheGuard {
+        fn new() -> Self {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let path = temp.path().to_path_buf();
+            set_cache_dir_thread_local(path.clone());
+            Self {
+                _temp: temp,
+                path,
+            }
+        }
+    }
+
+    impl Drop for ThreadCacheGuard {
+        fn drop(&mut self) {
+            clear_cache_dir_thread_local();
+        }
     }
 
     #[test]
-    fn cache_writes_under_override_not_user_profile() {
-        let (_guard, home) = isolated_cache();
+    fn cache_writes_under_thread_local_not_user_profile() {
+        let guard = ThreadCacheGuard::new();
         let dir = cache_dir();
-        assert_eq!(dir, home);
+        assert_eq!(dir, guard.path);
     }
 
     #[test]
     fn packed_snapshot_includes_definitions() {
-        let (_guard, _home) = isolated_cache();
+        let cache = tempfile::tempdir().expect("tempdir");
+        let cache_root = cache.path();
         std::env::set_var("SHALE_TEST", "1");
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
         let cura = root.join("cura");
@@ -449,9 +509,17 @@ mod tests {
             crate::definition::load_definition(&def_path, false).expect("fdmprinter");
         definitions.insert(definition.id.clone(), definition);
         let definition_rows: Vec<Definition> = definitions.values().cloned().collect();
-        store_cura_snapshot_sync(&cura, &materials, &resources, &definition_rows, &[], &[])
+        store_cura_snapshot_sync(
+            &cura,
+            &materials,
+            &resources,
+            &definition_rows,
+            &[],
+            &[],
+            cache_root,
+        )
         .expect("write snapshot");
-        let snapshot = load_cura_snapshot(&cura, &materials, &resources)
+        let snapshot = load_cura_snapshot_in(&cura, &materials, &resources, cache_root)
             .expect("read")
             .expect("hit");
         assert!(snapshot.definitions.contains_key("fdmprinter"));
