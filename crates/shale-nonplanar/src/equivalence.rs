@@ -58,9 +58,24 @@ fn normalize_motion(line: &str) -> String {
 
 /// Collect normalized motion lines whose Z is strictly below `band_floor_z`.
 pub fn motion_lines_below_band(gcode: &str, band_floor_z: f64) -> Vec<String> {
+    motion_lines_shell_region(gcode, band_floor_z, None)
+}
+
+/// Motion lines from the planar shell prefix only (before the first at-or-above-band XY move).
+fn motion_lines_shell_region(
+    gcode: &str,
+    band_floor_z: f64,
+    line_limit: Option<usize>,
+) -> Vec<String> {
+    let split = line_limit.unwrap_or_else(|| {
+        first_band_motion_line(gcode, band_floor_z).unwrap_or_else(|| gcode.lines().count())
+    });
     let mut position = [0.0f64; 3];
     let mut out = Vec::new();
-    for raw in gcode.lines() {
+    for (idx, raw) in gcode.lines().enumerate() {
+        if idx >= split {
+            break;
+        }
         let line = raw.trim();
         if let Some(x) = word_f(line, 'X') {
             position[0] = x;
@@ -155,54 +170,43 @@ pub fn graft_planar_shell_below_band(
     out
 }
 
-fn line_equiv(a: &str, b: &str) -> bool {
-    if a.trim() == b.trim() {
-        return true;
-    }
-    if is_motion_line(a) && is_motion_line(b) {
-        return normalize_motion(a) == normalize_motion(b);
-    }
-    false
-}
-
 /// Compare planar Cura output to grafted non-planar output below the curved band.
 pub fn check_planar_equivalence(
     planar_gcode: &str,
     curved_gcode: &str,
     band_floor_z: f64,
 ) -> PlanarEquivalenceResult {
-    let split_base =
+    let planar_split =
         first_band_motion_line(planar_gcode, band_floor_z).unwrap_or_else(|| planar_gcode.lines().count());
-    let split_curved =
+    let curved_split =
         first_band_motion_line(curved_gcode, band_floor_z).unwrap_or_else(|| curved_gcode.lines().count());
-    let base_lines: Vec<&str> = planar_gcode.lines().collect();
-    let curved_lines: Vec<&str> = curved_gcode.lines().collect();
+    let planar_moves = motion_lines_shell_region(planar_gcode, band_floor_z, Some(planar_split));
+    let curved_moves = motion_lines_shell_region(curved_gcode, band_floor_z, Some(curved_split));
     let mut mismatched = 0usize;
     let mut first: Option<String> = None;
-    let shell_lines = split_base.min(split_curved);
-    for i in 0..shell_lines {
-        if !line_equiv(base_lines[i], curved_lines[i]) {
+    for (index, (base, curved)) in planar_moves.iter().zip(curved_moves.iter()).enumerate() {
+        if base != curved {
             mismatched += 1;
             if first.is_none() {
                 first = Some(format!(
-                    "line {i}: `{curved}` vs expected `{base}`",
-                    curved = curved_lines[i].trim(),
-                    base = base_lines[i].trim()
+                    "motion below band #{index}: `{curved}` vs expected `{base}`"
                 ));
             }
         }
     }
-    if split_base != split_curved {
-        mismatched += split_base.abs_diff(split_curved);
-        first.get_or_insert_with(|| {
-            format!("split mismatch: planar line {split_base}, curved line {split_curved}")
-        });
+    mismatched += planar_moves.len().abs_diff(curved_moves.len());
+    if planar_moves.len() != curved_moves.len() && first.is_none() {
+        first = Some(format!(
+            "motion count below band: {} planar vs {} curved",
+            planar_moves.len(),
+            curved_moves.len()
+        ));
     }
     PlanarEquivalenceResult {
         ok: mismatched == 0,
         band_floor_z,
-        planar_moves_below_band: motion_lines_below_band(planar_gcode, band_floor_z).len(),
-        curved_moves_below_band: motion_lines_below_band(curved_gcode, band_floor_z).len(),
+        planar_moves_below_band: planar_moves.len(),
+        curved_moves_below_band: curved_moves.len(),
         mismatched_moves: mismatched,
         first_mismatch: first,
     }
