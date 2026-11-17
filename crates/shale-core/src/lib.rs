@@ -74,7 +74,10 @@ pub use supports::{
     SupportOverlay, SupportParams, SupportPlan, SupportRegion,
 };
 pub use value::Value;
-pub use shale_nonplanar::{NonplanarMode, NonplanarOptions, NonplanarReport};
+pub use shale_nonplanar::{
+    plan_auto_placement, AutoPlacementReport, DetectionReport, NonplanarMode, NonplanarOptions,
+    NonplanarReport, PlannedSurface, SurfacePreview,
+};
 
 mod error;
 mod nonplanar_bridge;

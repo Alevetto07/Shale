@@ -106,7 +106,7 @@ struct SettingsArgs {
     support_enable: Option<bool>,
     material_print_temperature: Option<f64>,
     material_bed_temperature: Option<f64>,
-    /// `off` or `curved-tops` (Bambu A1 only, experimental).
+    /// `off`, `curved-tops`, or `auto` (Bambu A1 only, experimental).
     nonplanar_mode: Option<String>,
     /// Maximum surface angle in degrees (default 10).
     nonplanar_max_angle_deg: Option<f64>,
@@ -359,6 +359,18 @@ impl ShaleMcp {
             "cosmetic": analysis.count(shale_core::FeatureKind::Cosmetic),
             "spans": spans,
         }))
+    }
+
+    #[tool(
+        description = "Plan automatic non-planar curved-top bands for one model (no slice). Returns detected features, chosen surfaces with reasons, and preview overlay positions. Use nonplanar_mode=auto before slicing to apply the plan."
+    )]
+    fn plan_nonplanar(
+        &self,
+        Parameters(query): Parameters<SupportQuery>,
+    ) -> Result<CallToolResult, McpError> {
+        let session = self.lock()?;
+        let plan = session.plan_nonplanar_auto(query.id).map_err(fail)?;
+        ok_json(plan)
     }
 
     #[tool(

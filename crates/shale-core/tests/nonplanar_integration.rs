@@ -43,6 +43,49 @@ fn benchy_body_not_in_top_band() {
 }
 
 #[test]
+fn auto_plan_flat_cube_no_surfaces() {
+    let mesh = primitives::box_solid(30.0, 30.0, 5.0);
+    let transform = mesh::place_on_bed(&mesh, 256.0, 256.0, false);
+    let baked = mesh::bake(&mesh, &transform);
+    let m = shale_nonplanar::mesh::Mesh {
+        vertices: baked
+            .vertices
+            .iter()
+            .map(|v| [v[0] as f64, v[1] as f64, v[2] as f64])
+            .collect(),
+        triangles: baked.triangles.clone(),
+    };
+    let mut opts = NonplanarOptions::default();
+    opts.mode = NonplanarMode::Auto;
+    opts.max_angle_deg = 10.0;
+    let plan = shale_nonplanar::plan_auto_placement(&m, &opts, 0.2);
+    assert_eq!(plan.enabled_surface_count, 0, "flat cube should stay planar");
+    assert!(plan.fallback_to_planar);
+}
+
+#[test]
+fn auto_plan_sphere_enables_curved_band() {
+    let mesh = primitives::sphere(12.0);
+    let transform = mesh::place_on_bed(&mesh, 256.0, 256.0, false);
+    let baked = mesh::bake(&mesh, &transform);
+    let m = shale_nonplanar::mesh::Mesh {
+        vertices: baked
+            .vertices
+            .iter()
+            .map(|v| [v[0] as f64, v[1] as f64, v[2] as f64])
+            .collect(),
+        triangles: baked.triangles.clone(),
+    };
+    let mut opts = NonplanarOptions::default();
+    opts.mode = NonplanarMode::Auto;
+    let plan = shale_nonplanar::plan_auto_placement(&m, &opts, 0.2);
+    assert!(
+        plan.enabled_surface_count >= 1,
+        "sphere dome should get a curved band"
+    );
+}
+
+#[test]
 fn chevron_height_field_detects_ramp() {
     let mesh = chevron_ramp();
     let transform = mesh::place_on_bed(&mesh, 256.0, 256.0, false);

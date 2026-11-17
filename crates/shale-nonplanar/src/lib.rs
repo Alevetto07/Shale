@@ -6,6 +6,7 @@
 //! CurviSlicer (ACM TOG 2019) and related work; this crate contains only
 //! Shale-original implementations.
 
+pub mod auto;
 pub mod mesh;
 #[cfg(test)]
 mod test_meshes;
@@ -19,6 +20,10 @@ pub mod inverse;
 pub mod pipeline;
 pub mod safety;
 
+pub use auto::{
+    plan_auto_placement, AutoPlacementReport, DetectedFeature, DetectedFeatureKind, DetectionReport,
+    PlannedSurface, SurfacePreview,
+};
 pub use config::{NonplanarMode, NonplanarOptions, NonplanarReport};
 pub use mesh::merge_meshes;
 pub use deform::DeformField;

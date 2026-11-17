@@ -33,7 +33,7 @@ slice options
   --infill PERCENT    sparse infill density
   --supports          enable support
   --set KEY=VALUE     any Cura setting, repeatable
-  --nonplanar MODE    experimental: off or curved-tops (Bambu A1 only)
+  --nonplanar MODE    experimental: off, curved-tops, or auto (Bambu A1 only)
   --max-angle DEG     clearance limit for curved tops (default 10)
   -o, --output PATH   where to write the G-code
 
@@ -308,6 +308,18 @@ fn slice_command(args: &[String]) -> Result<(), String> {
             "nonplanar {} islands={} flattened={}",
             report.mode, report.top_islands, report.islands_flattened
         );
+        if let Some(auto) = &report.auto_placement {
+            println!(
+                "auto surfaces={} fallback_planar={}",
+                auto.enabled_surface_count, auto.fallback_to_planar
+            );
+            if std::env::var_os("SHALE_AUTO_PLAN_JSON").is_some() {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(auto).unwrap_or_else(|_| "{}".into())
+                );
+            }
+        }
     }
     Ok(())
 }

@@ -3,8 +3,9 @@
 use serde::{Deserialize, Serialize};
 use crate::mesh::{merge_meshes as merge_meshes_internal, Mesh};
 
+use crate::auto::{apply_plan_to_field, plan_auto_placement};
 use crate::collision::{flatten_on_collision, PrintedHeightMap};
-use crate::config::{NonplanarOptions, NonplanarReport};
+use crate::config::{NonplanarMode, NonplanarOptions, NonplanarReport};
 use crate::deform::{build_deform_field, deform_mesh, subdivide_long_edges, DeformField};
 use crate::envelope::bambu_a1_envelope;
 use crate::height_field::{build_height_field, count_top_islands};
@@ -15,6 +16,8 @@ pub struct NonplanarContext {
     pub field: DeformFieldSnapshot,
     pub nominal_layer_height: f64,
     pub max_angle_deg: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_placement: Option<crate::auto::AutoPlacementReport>,
 }
 
 /// Serializable subset for attaching to slice outcomes.
@@ -36,7 +39,13 @@ pub fn prepare_pre_pass(
     let band = options.effective_band_thickness(nominal_layer_height);
     let ramp = options.effective_ramp_thickness(nominal_layer_height);
     let grid = build_height_field(mesh, options.grid_step_mm, options.max_angle_deg, band);
-    let field = build_deform_field(grid, band, ramp, nominal_layer_height, options.max_angle_deg);
+    let mut field = build_deform_field(grid, band, ramp, nominal_layer_height, options.max_angle_deg);
+    let mut auto_placement = None;
+    if options.mode == NonplanarMode::Auto {
+        let plan = plan_auto_placement(mesh, options, nominal_layer_height);
+        apply_plan_to_field(&mut field, &plan);
+        auto_placement = Some(plan);
+    }
     let islands = count_top_islands(&field.grid);
     let subdivided = subdivide_long_edges(mesh, 1.0);
     let deformed = deform_mesh(&subdivided, &field);
@@ -50,6 +59,7 @@ pub fn prepare_pre_pass(
         },
         nominal_layer_height,
         max_angle_deg: options.max_angle_deg,
+        auto_placement,
     };
     (deformed, ctx)
 }
@@ -73,13 +83,27 @@ pub fn apply_post_pass(
     options: &NonplanarOptions,
     nominal_layer_height: f64,
 ) -> (String, NonplanarReport) {
-    let mut field = rebuild_field(mesh, options, nominal_layer_height);
+    let band = options.effective_band_thickness(nominal_layer_height);
+    let ramp = options.effective_ramp_thickness(nominal_layer_height);
+    let grid = build_height_field(mesh, options.grid_step_mm, options.max_angle_deg, band);
+    let mut field = build_deform_field(grid, band, ramp, nominal_layer_height, options.max_angle_deg);
+  let mut auto_placement = None;
+    if options.mode == NonplanarMode::Auto {
+        let plan = plan_auto_placement(mesh, options, nominal_layer_height);
+        apply_plan_to_field(&mut field, &plan);
+        auto_placement = Some(plan);
+    }
     let mut report = flatten_on_collision(
         &mut field,
         gcode,
         bambu_a1_envelope(),
         options.max_angle_deg,
     );
+    report.mode = options.mode.name().into();
+    if let Some(plan) = auto_placement {
+        report.fallback_to_planar |= plan.fallback_to_planar;
+        report.auto_placement = Some(plan);
+    }
     report.notes.push("ironing disabled for curved-top pass".into());
     report.top_islands = field.grid.width * field.grid.height; // refined below
     report.top_islands = count_top_islands(&field.grid);

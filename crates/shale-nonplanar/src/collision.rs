@@ -115,7 +115,6 @@ pub fn flatten_on_collision(
     max_angle_deg: f64,
 ) -> NonplanarReport {
     let mut report = NonplanarReport {
-        mode: "curved-tops".into(),
         max_angle_deg,
         ..Default::default()
     };
