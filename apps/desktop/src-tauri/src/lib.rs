@@ -27,8 +27,10 @@ use shale_core::{
 mod cloud;
 mod instance;
 mod secrets;
+#[cfg(windows)]
+mod windows_chrome;
 
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 
 struct Inner {
     catalog: Option<Catalog>,
@@ -4779,6 +4781,12 @@ pub fn run() {
             shale_core::remove_legacy_catalog_cache();
             if let Some(window) = app.get_webview_window("main") {
                 fit_window_to_monitor(&window);
+                #[cfg(windows)]
+                {
+                    if let Err(err) = windows_chrome::attach_main_window(&window) {
+                        eprintln!("[shale] window chrome hook: {err}");
+                    }
+                }
             }
             if demo_wanted {
                 return Ok(());
@@ -4956,7 +4964,22 @@ pub fn run() {
             return;
         }
     };
-    app.run(|_app, _event| {});
+    app.run(|app, event| {
+        match event {
+            RunEvent::Ready => {
+                #[cfg(windows)]
+                {
+                    let _ = windows_chrome::subclass_thread_windows();
+                }
+            }
+            RunEvent::WindowEvent { label, event, .. } if label == "main" => {
+                if let WindowEvent::CloseRequested { .. } = event {
+                    app.exit(0);
+                }
+            }
+            _ => {}
+        }
+    });
 }
 
 /// A window that could not be made: one retry as a fresh process, then the box.

@@ -82,15 +82,35 @@ impl CliEngine {
                     output.status
                 ))
             }
-            Err(err) => Err(format!(
-                "could not start CuraEngine at '{}': {err}. On Windows, Shale looks for CuraEngine.exe inside an UltiMaker Cura folder under Program Files. Set SHALE_CURAENGINE to the full path if it lives somewhere else. DLLs are loaded from {}.",
-                self.program.display(),
-                self.lib_dir
-                    .as_ref()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "the system search path".into())
-            )),
+            Err(err) => Err(engine_start_failure_message(&self.program, self.lib_dir.as_deref(), &err)),
         }
+    }
+}
+
+fn lib_dir_display(lib_dir: Option<&Path>) -> String {
+    lib_dir
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "the system search path".into())
+}
+
+fn engine_start_failure_message(program: &Path, lib_dir: Option<&Path>, err: &std::io::Error) -> String {
+    let base = format!(
+        "could not start CuraEngine at '{}': {err}",
+        program.display()
+    );
+    #[cfg(windows)]
+    {
+        return format!(
+            "{base}. Shale looks for CuraEngine.exe inside an UltiMaker Cura folder under Program Files. Set SHALE_CURAENGINE to the full path if it lives somewhere else. DLLs are loaded from {}.",
+            lib_dir_display(lib_dir)
+        );
+    }
+    #[cfg(not(windows))]
+    {
+        format!(
+            "{base}. Set SHALE_CURAENGINE to the CuraEngine binary (for example from an UltiMaker Cura install or your package manager). Native libraries are loaded from {}.",
+            lib_dir_display(lib_dir)
+        )
     }
 }
 

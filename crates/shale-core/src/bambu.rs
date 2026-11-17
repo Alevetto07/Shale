@@ -384,8 +384,11 @@ fn profiles_in(dir: &Path) -> Vec<(String, Json)> {
     let raw: HashMap<String, Json> = index
         .par_iter()
         .filter_map(|(lower, path)| {
-            let text = fs::read_to_string(path).ok()?;
-            let value: Json = serde_json::from_str(&text).ok()?;
+            use std::fs::File;
+            use std::io::BufReader;
+            let file = File::open(path).ok()?;
+            let reader = BufReader::new(file);
+            let value: Json = serde_json::from_reader(reader).ok()?;
             Some((lower.clone(), value))
         })
         .collect();

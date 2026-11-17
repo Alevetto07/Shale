@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use info_env::{
-    cura_engine_lib_path, cura_engine_path, cura_resources_path, env_path_line, materials_path,
-    orca_profiles_path,
+    cura_engine_lib_path, cura_engine_path, cura_resources_path_from, env_path_line,
+    materials_path_from, orca_profiles_path,
 };
 
 use shale_core::catalog::{Catalog, ResourcePaths};
@@ -116,22 +116,23 @@ fn catalog() -> Result<Catalog, String> {
 }
 
 fn info() -> Result<(), String> {
-    let engine = CliEngine::from_env();
     println!("shale {}", env!("CARGO_PKG_VERSION"));
-    println!("engine   {}", engine.program.display());
-    match engine.probe() {
-        Ok(()) => println!("engine   ok"),
-        Err(message) => println!("engine   not usable: {message}"),
-    }
     println!("{}", env_path_line("SHALE_CURAENGINE", cura_engine_path()));
     println!(
         "{}",
         env_path_line("SHALE_CURAENGINE_LIB_DIR", cura_engine_lib_path())
     );
-    println!("{}", env_path_line("SHALE_CURA_DIR", cura_resources_path()));
-    println!("{}", env_path_line("SHALE_MATERIALS_DIR", materials_path()));
+    let discovered = ResourcePaths::discover();
+    println!(
+        "{}",
+        env_path_line("SHALE_CURA_DIR", cura_resources_path_from(&discovered))
+    );
+    println!(
+        "{}",
+        env_path_line("SHALE_MATERIALS_DIR", materials_path_from(&discovered))
+    );
     println!("{}", env_path_line("SHALE_ORCA_DIR", orca_profiles_path()));
-    match ResourcePaths::discover() {
+    match discovered {
         Ok(paths) => match Catalog::open(paths) {
             Ok(catalog) => {
                 let printers = catalog.selectable_printers();

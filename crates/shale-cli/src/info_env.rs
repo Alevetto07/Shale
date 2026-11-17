@@ -1,5 +1,8 @@
 //! Lines printed by `shale info` for environment variables.
 
+use shale_core::catalog::ResourcePaths;
+use shale_core::Error;
+
 /// How a resource path should be reported.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EnvPath {
@@ -44,34 +47,50 @@ pub fn cura_engine_path() -> EnvPath {
     if engine.probe().is_ok() {
         EnvPath::AutoDetected(engine.program.display().to_string())
     } else {
-        EnvPath::NotFound(
-            "set SHALE_CURAENGINE to the CuraEngine binary, or install UltiMaker Cura 5.x",
-        )
+        EnvPath::NotFound(cura_engine_not_found_hint())
     }
 }
 
+#[cfg(windows)]
+fn cura_engine_not_found_hint() -> &'static str {
+    "set SHALE_CURAENGINE to CuraEngine.exe, or install UltiMaker Cura 5.x under Program Files"
+}
+
+#[cfg(not(windows))]
+fn cura_engine_not_found_hint() -> &'static str {
+    "set SHALE_CURAENGINE to the CuraEngine binary, or install UltiMaker Cura 5.x"
+}
+
 pub fn cura_resources_path() -> EnvPath {
+    cura_resources_path_from(&ResourcePaths::discover())
+}
+
+pub fn cura_resources_path_from(discovered: &Result<ResourcePaths, Error>) -> EnvPath {
     if let Ok(path) = std::env::var("SHALE_CURA_DIR") {
         return EnvPath::Set(path);
     }
-    match shale_core::catalog::ResourcePaths::discover() {
+    match discovered {
         Ok(paths) => EnvPath::AutoDetected(paths.cura.display().to_string()),
-        Err(_) => EnvPath::NotFound(
-            "set SHALE_CURA_DIR and SHALE_MATERIALS_DIR, or run scripts/fetch-resources.sh",
-        ),
+        Err(_) => EnvPath::NotFound(cura_catalog_not_found_hint()),
     }
 }
 
 pub fn materials_path() -> EnvPath {
+    materials_path_from(&ResourcePaths::discover())
+}
+
+pub fn materials_path_from(discovered: &Result<ResourcePaths, Error>) -> EnvPath {
     if let Ok(path) = std::env::var("SHALE_MATERIALS_DIR") {
         return EnvPath::Set(path);
     }
-    match shale_core::catalog::ResourcePaths::discover() {
+    match discovered {
         Ok(paths) => EnvPath::AutoDetected(paths.materials.display().to_string()),
-        Err(_) => EnvPath::NotFound(
-            "set SHALE_MATERIALS_DIR with SHALE_CURA_DIR, or run scripts/fetch-resources.sh",
-        ),
+        Err(_) => EnvPath::NotFound(cura_catalog_not_found_hint()),
     }
+}
+
+fn cura_catalog_not_found_hint() -> &'static str {
+    "set SHALE_CURA_DIR and SHALE_MATERIALS_DIR, or run scripts/fetch-resources.sh"
 }
 
 pub fn orca_profiles_path() -> EnvPath {
