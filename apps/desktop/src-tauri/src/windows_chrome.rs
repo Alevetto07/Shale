@@ -122,8 +122,9 @@ unsafe fn track_system_menu(hwnd: HWND) -> LRESULT {
             point.y = rect.top + 5;
         }
     }
-    let flags = TPM_RETURNCMD | TPM_RIGHTBUTTON;
-    let command = TrackPopupMenuEx(menu, flags, point.x, point.y, hwnd, None);
+    let flags = TPM_RETURNCMD.0 | TPM_RIGHTBUTTON.0;
+    let picked = TrackPopupMenuEx(menu, flags, point.x, point.y, hwnd, None);
+    let command = picked.0 as u32;
     if command != 0 {
         let _ = PostMessageW(hwnd, WM_SYSCOMMAND, WPARAM(command as usize), LPARAM(0));
     }
