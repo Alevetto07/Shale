@@ -12,12 +12,22 @@ export SHALE_CURAENGINE="${SHALE_CURAENGINE:-$PWD/vendor/curaengine/CuraEngine}"
 
 git fetch origin "${BASE_REF#origin/}" 2>/dev/null || true
 
-if ! diff -q <(git show "${BASE_REF}:crates/shale-core/src/supports.rs") crates/shale-core/src/supports.rs >/dev/null; then
-  echo "supports.rs differs from ${BASE_REF} — cannot claim parity" >&2
-  diff -u <(git show "${BASE_REF}:crates/shale-core/src/supports.rs") crates/shale-core/src/supports.rs | head -40 >&2 || true
+strip_tests() {
+  awk '/^mod tests/{exit} {print}'
+}
+
+base_supports="$(git show "${BASE_REF}:crates/shale-core/src/supports.rs")"
+head_supports="$(cat crates/shale-core/src/supports.rs)"
+if echo "$base_supports" | grep -q 'angle < 70.0' || echo "$head_supports" | grep -q 'angle < 70.0'; then
+  echo "steep cosmetic gate (angle < 70) must stay removed in head and ${BASE_REF}" >&2
   exit 1
 fi
-echo "supports.rs matches ${BASE_REF}"
+if ! diff -q <(printf '%s\n' "$base_supports" | strip_tests) <(printf '%s\n' "$head_supports" | strip_tests) >/dev/null; then
+  echo "supports production code differs from ${BASE_REF}" >&2
+  diff -u <(printf '%s\n' "$base_supports" | strip_tests) <(printf '%s\n' "$head_supports" | strip_tests) | head -40 >&2 || true
+  exit 1
+fi
+echo "supports classify production code matches ${BASE_REF} (no angle < 70 gate)"
 
 normalize_gcode() {
   sed -E '/^;SHALE_/d;/^;TIME:/d;/^;Filament used:/d;/^;Layer height:/d;/^;Generated with/d' "$1"
