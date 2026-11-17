@@ -359,7 +359,11 @@ fn program_uses_external_lib_dir(program: &Path) -> bool {
     if n >= 2 && header[0] == b'#' && header[1] == b'!' {
         return false;
     }
-    n >= 4 && header == *b"\x7fELF"
+    if n >= 4 && header == *b"\x7fELF" {
+        return true;
+    }
+    // PE (Windows) and Mach-O binaries are native executables, not shell wrappers.
+    n >= 2 && header[0] == b'M' && header[1] == b'Z'
 }
 
 pub(crate) fn apply_lib_dir(command: &mut Command, lib_dir: Option<&Path>) {
@@ -493,7 +497,7 @@ mod tests {
     }
 
     #[test]
-    fn elf_engine_bins_use_external_lib_dir() {
+    fn native_engine_bins_use_external_lib_dir() {
         let candidate = if cfg!(windows) {
             Path::new(r"C:\Windows\System32\cmd.exe")
         } else {
