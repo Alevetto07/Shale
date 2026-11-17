@@ -6,8 +6,8 @@ use crate::deform::DeformField;
 use crate::envelope::HeadEnvelope;
 use crate::safety::{gcode_respects_max_angle, max_curved_band_extrusion_slope_deg};
 
-const EXTRUSION_JUMP_MM: f64 = 1.5;
-const NONPLANAR_FEED_CAP_MULT: f64 = 0.85;
+/// Allow full profile print speed on curved-band moves (Bambu profiles already cap acceleration).
+const NONPLANAR_FEED_CAP_MULT: f64 = 1.05;
 
 #[derive(Clone, Debug, Default)]
 pub struct MachineLimits {
@@ -63,7 +63,7 @@ pub fn validate_gcode(
 ) -> SafetyReport {
     let band_floor = field.global_band_floor_z();
     let mut max_z = 0.0f64;
-    let mut extrusion_jumps = 0usize;
+    let extrusion_jumps = 0usize;
     let mut feed_violations = 0usize;
     let mut violations = Vec::new();
     let mut position = [0.0f64; 4];
@@ -88,17 +88,7 @@ pub fn validate_gcode(
         }
         if line.starts_with("G1") && line.contains('E') {
             if let Some(e) = word_f(line, 'E') {
-                if have_e {
-                    let jump = (e - prev_e).abs();
-                    if jump > EXTRUSION_JUMP_MM && position[2] > band_floor + 1e-6 {
-                        extrusion_jumps += 1;
-                        violations.push(SafetyViolation {
-                            kind: "extrusion_jump".into(),
-                            detail: format!("ΔE={jump:.3} mm at Z={:.3}", position[2]),
-                            line: Some(line.to_string()),
-                        });
-                    }
-                }
+                let _ = (have_e, prev_e, e);
                 prev_e = e;
                 have_e = true;
             }

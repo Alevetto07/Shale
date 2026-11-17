@@ -33,6 +33,8 @@ pub use pipeline::{
     prepare_pre_pass,
     top_layer_z_variation, top_shell_z_variation, NonplanarContext,
 };
-pub use equivalence::{check_planar_equivalence, motion_lines_below_band};
+pub use equivalence::{
+    check_planar_equivalence, graft_planar_shell_below_band, motion_lines_below_band,
+};
 pub use safety::{gcode_respects_max_angle, max_curved_band_extrusion_slope_deg};
 pub use validate::{embed_safety_json, safety_report_from_gcode, validate_gcode, MachineLimits};

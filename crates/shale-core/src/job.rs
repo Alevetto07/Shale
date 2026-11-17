@@ -62,6 +62,38 @@ fn machine_sequence(
     render_sequence(gcode, &filament_type, resolved, models).map(Some)
 }
 
+/// Bambu template names that the resolver spells in Cura's vocabulary (see
+/// `docs/SETTINGS-MAP.md`).
+fn bambu_cura_template_aliases() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("default_acceleration", "acceleration_print"),
+        ("outer_wall_acceleration", "acceleration_wall_0"),
+        ("inner_wall_acceleration", "acceleration_wall_x"),
+        ("initial_layer_acceleration", "acceleration_layer_0"),
+        ("sparse_infill_acceleration", "acceleration_infill"),
+        ("top_surface_acceleration", "acceleration_topbottom"),
+        ("travel_acceleration", "acceleration_travel"),
+        ("outer_wall_speed", "speed_wall_0"),
+        ("inner_wall_speed", "speed_wall_x"),
+        ("sparse_infill_speed", "speed_infill"),
+        ("internal_solid_infill_speed", "speed_topbottom"),
+        ("top_surface_speed", "speed_topbottom"),
+        ("initial_layer_speed", "speed_layer_0"),
+        ("travel_speed", "speed_travel"),
+        ("travel_speed_z", "speed_z_hop"),
+        ("support_speed", "speed_support"),
+        ("bridge_speed", "speed_bridge"),
+        ("retraction_length", "retraction_amount"),
+        ("z_hop", "retraction_hop"),
+        ("wall_loops", "wall_line_count"),
+        ("sparse_infill_density", "infill_sparse_density"),
+        ("top_shell_layers", "top_layers"),
+        ("bottom_shell_layers", "bottom_layers"),
+        ("layer_height", "layer_height"),
+        ("initial_layer_print_height", "layer_height_0"),
+    ]
+}
+
 /// Fill a machine's own start and end templates. Separated from the catalogue
 /// so a test can render the real A1 sequence from the fixtures without reading
 /// two thousand profiles first.
@@ -125,6 +157,42 @@ pub fn render_sequence(
         }
         // Left unset when nothing resolved: the render then names the missing
         // name and the slice stops, rather than starting a machine at 0 degrees.
+        if !list.is_empty() {
+            values.set_list(bambu, list);
+        }
+    }
+    // Orca/Bambu machine and filament templates also quote `bed_temperature*`
+    // rather than Cura's `material_bed_temperature*`.
+    for (bambu, cura) in [
+        ("bed_temperature", "material_bed_temperature"),
+        (
+            "bed_temperature_initial_layer",
+            "material_bed_temperature_layer_0",
+        ),
+    ] {
+        let global = resolved
+            .global
+            .get(cura)
+            .or_else(|| resolved.global.get("material_bed_temperature"));
+        let mut list: Vec<Value> = Vec::new();
+        for extruder in &resolved.extruders {
+            let text = extruder
+                .get(cura)
+                .or_else(|| extruder.get("material_bed_temperature"))
+                .or(global);
+            match text {
+                Some(text) => list.push(template::value_of(text)),
+                None => {
+                    list.clear();
+                    break;
+                }
+            }
+        }
+        if list.is_empty() {
+            list = global
+                .map(|text| vec![template::value_of(text)])
+                .unwrap_or_default();
+        }
         if !list.is_empty() {
             values.set_list(bambu, list);
         }
@@ -208,6 +276,30 @@ pub fn render_sequence(
         // scan routine by this name.
         values.set("curr_bed_type", Value::Text("Textured PEI Plate".into()));
     }
+    if values.get("scan_first_layer").is_none() {
+        let scan = resolved
+            .global
+            .get("scan_first_layer")
+            .map(String::as_str)
+            .unwrap_or("0");
+        values.set_setting("scan_first_layer", scan);
+    }
+    for &(bambu, cura) in bambu_cura_template_aliases() {
+        if values.get(bambu).is_none() {
+            let text = resolved
+                .global
+                .get(cura)
+                .or_else(|| {
+                    resolved
+                        .extruders
+                        .first()
+                        .and_then(|extruder| extruder.get(cura))
+                });
+            if let Some(text) = text {
+                values.set_setting(bambu, text);
+            }
+        }
+    }
 
     // Where the first layer sits, which the wipe and the bed scan both use.
     let mut min = [f64::INFINITY; 3];
@@ -271,6 +363,18 @@ pub struct SliceOutcome {
     pub machine_gcode: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nonplanar_report: Option<shale_nonplanar::NonplanarReport>,
+}
+
+/// Cura stores `machine_max_feedrate_*` in mm/s; F words use mm/min.
+fn machine_max_feedrate_mm_per_min(resolved: &ResolvedSettings) -> f64 {
+    for key in ["machine_max_feedrate_x", "machine_max_speed_x"] {
+        if let Some(raw) = resolved.global.get(key) {
+            if let Ok(v) = raw.parse::<f64>() {
+                return (v * 60.0).max(600.0);
+            }
+        }
+    }
+    (resolved.summary.speed_print * 60.0).max(600.0)
 }
 
 pub fn slice(
@@ -390,6 +494,7 @@ pub fn slice(
         force_setting(&mut resolved, "ironing_enabled", "false");
     }
     let mut pre_deform_meshes: Vec<TriangleMesh> = Vec::new();
+    let mut undeformed_paths = Vec::new();
     let mut estimated_layers = 1u32;
     let mut baked_paths = Vec::new();
     // The header's bounding box, measured on the same meshes the engine is
@@ -418,6 +523,13 @@ pub fn slice(
             resolved.summary.machine_center_is_zero,
         );
         if nonplanar_active {
+            let und_path = model_dir.join(format!("model-{index}-undeformed.stl"));
+            mesh::write_binary_stl(&und_path, &baked)?;
+            undeformed_paths.push(EngineMesh {
+                path: und_path,
+                settings: model.settings.clone(),
+                extruder: model.slot,
+            });
             let np_in = crate::nonplanar_bridge::to_nonplanar(&baked);
             let (deformed, _ctx) = shale_nonplanar::prepare_pre_pass(
                 &np_in,
@@ -526,6 +638,24 @@ pub fn slice(
             .insert("machine_end_gcode".into(), end.clone());
     }
 
+    let mut planar_baseline_gcode = String::new();
+    if nonplanar_active && !undeformed_paths.is_empty() {
+        let baseline_path = output_path.with_extension("planar-baseline.gcode");
+        let baseline = engine.slice(
+            &EngineRequest {
+                global: resolved.global.clone(),
+                extruders: resolved.extruders.clone(),
+                models: undeformed_paths,
+                modifiers: modifiers.clone(),
+                output_gcode: baseline_path.clone(),
+                estimated_layers,
+            },
+            on_progress,
+        )?;
+        planar_baseline_gcode = fs::read_to_string(&baseline.gcode_path)?;
+        let _ = fs::remove_file(&baseline.gcode_path);
+    }
+
     let output = engine.slice(
         &EngineRequest {
             global: resolved.global.clone(),
@@ -550,9 +680,10 @@ pub fn slice(
             .summary
             .machine_height
             .max(1.0);
-        let max_feed = (resolved.summary.speed_print * 60.0).max(600.0);
+        let max_feed = machine_max_feedrate_mm_per_min(&resolved);
         let (mapped, report) = shale_nonplanar::apply_post_pass(
             &gcode,
+            &planar_baseline_gcode,
             &reference,
             &settings.nonplanar,
             layer_height,

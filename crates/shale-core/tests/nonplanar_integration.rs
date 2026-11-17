@@ -279,15 +279,6 @@ fn plot_artifacts(tag: &str, title: &str) {
     );
 }
 
-fn word_f(line: &str, letter: char) -> Option<f64> {
-    let idx = line.find(letter)?;
-    let rest = &line[idx + 1..];
-    let end = rest
-        .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-' && c != '+')
-        .unwrap_or(rest.len());
-    rest[..end].parse().ok()
-}
-
 #[derive(serde::Serialize)]
 struct CaseMetrics {
     name: String,
@@ -478,7 +469,7 @@ fn nonplanar_end_to_end_benchmarks() {
         match name {
             "dome" => {
                 assert!(
-                    cslope >= 7.0 && cslope <= 10.5,
+                    (7.0..=10.5).contains(&cslope),
                     "dome in-layer slope {cslope:.2}° expected near 10°"
                 );
                 assert!(
@@ -495,7 +486,7 @@ fn nonplanar_end_to_end_benchmarks() {
                     "chevron curved top shell Z spread {cspread:.3} mm"
                 );
                 assert!(
-                    band_max >= 5.0 && band_max <= 10.5,
+                    (5.0..=10.5).contains(&band_max),
                     "chevron band slope {band_max:.2}° expected near 10° (shell metric {cslope:.2}°)"
                 );
                 assert!(

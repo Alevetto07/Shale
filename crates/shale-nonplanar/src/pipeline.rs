@@ -7,7 +7,7 @@ use crate::collision::{flatten_on_collision, PrintedHeightMap};
 use crate::config::{NonplanarOptions, NonplanarReport};
 use crate::deform::{build_deform_field, deform_mesh, subdivide_long_edges, DeformField};
 use crate::envelope::{head_envelope_for_printer, bambu_a1_envelope};
-use crate::equivalence::check_planar_equivalence;
+use crate::equivalence::{check_planar_equivalence, graft_planar_shell_below_band};
 use crate::validate::{embed_safety_json, validate_gcode, MachineLimits};
 use crate::height_field::{build_height_field, count_top_islands};
 use crate::safety::enforce_slope_safety;
@@ -68,9 +68,13 @@ pub fn rebuild_field(mesh: &Mesh, options: &NonplanarOptions, nominal_layer_heig
     build_deform_field(grid, band, ramp, nominal_layer_height, options.max_angle_deg)
 }
 
-/// Post-pass on planar G-code from CuraEngine.
+/// Post-pass on deformed-mesh G-code from CuraEngine.
+///
+/// `planar_baseline_gcode` must be a **planar** slice of the same job on the undeformed
+/// mesh (physical machine coordinates), used only for below-band equivalence.
 pub fn apply_post_pass(
-    planar_gcode: &str,
+    deformed_slice_gcode: &str,
+    planar_baseline_gcode: &str,
     mesh: &Mesh,
     options: &NonplanarOptions,
     nominal_layer_height: f64,
@@ -81,7 +85,7 @@ pub fn apply_post_pass(
     let mut field = rebuild_field(mesh, options, nominal_layer_height);
     let mut report = flatten_on_collision(
         &mut field,
-        planar_gcode,
+        deformed_slice_gcode,
         envelope,
         options.max_angle_deg,
     );
@@ -89,15 +93,13 @@ pub fn apply_post_pass(
     report.top_islands = count_top_islands(&field.grid);
     let mapped = enforce_slope_safety(
         &mut field,
-        planar_gcode,
+        deformed_slice_gcode,
         nominal_layer_height,
         &mut report,
     );
-    let equiv = check_planar_equivalence(
-        planar_gcode,
-        &mapped,
-        field.global_band_floor_z(),
-    );
+    let band_floor = field.global_band_floor_z();
+    let grafted = graft_planar_shell_below_band(planar_baseline_gcode, &mapped, band_floor);
+    let equiv = check_planar_equivalence(planar_baseline_gcode, &grafted, band_floor);
     report.planar_equivalence_ok = equiv.ok;
     if !equiv.ok {
         report.notes.push(format!(
@@ -110,7 +112,7 @@ pub fn apply_post_pass(
             .push("planar equivalence: below-band G-code matches planar slice".into());
     }
     let safety = validate_gcode(
-        &mapped,
+        &grafted,
         &field,
         envelope,
         &limits,
@@ -124,7 +126,7 @@ pub fn apply_post_pass(
     }
     report.safety = Some(safety);
     let header = format_nonplanar_header(&report);
-    let (mut out, report) = ok_attach_header(mapped, &header, report);
+    let (mut out, report) = ok_attach_header(grafted, &header, report);
     if let Some(safety) = report.safety.as_ref() {
         out = embed_safety_json(out, safety);
     }
@@ -493,6 +495,7 @@ mod post_pass_tests {
         };
         let planar = "G1 X5 Y5 Z2 E0\nG1 X15 Y5 Z2 E1\nG0 X15 Y15 Z9\nG1 X15 Y15 Z9 E2\nG1 X5 Y15 Z9.2 E3\n";
         let (out, report) = apply_post_pass(
+            planar,
             planar,
             &mesh,
             &opts,

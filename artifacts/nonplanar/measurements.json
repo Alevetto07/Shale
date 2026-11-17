@@ -2,7 +2,7 @@
   {
     "name": "dome",
     "planar_layers": 120,
-    "curved_layers": 125,
+    "curved_layers": 124,
     "planar_time_s": 920.0,
     "curved_time_s": 956.0,
     "planar_top_z_min": 22.6,
@@ -102,7 +102,7 @@
     "max_angle_ok": true,
     "envelope_ok": true,
     "collision_notes": [
-      "collision flattening skipped (uncalibrated A1 head envelope)",
+      "collision flattening uses conservative envelope; measure sock/duct per JSON",
       "ironing disabled for curved-top pass",
       "slope safety pass 1: 1 violation(s), worst 22.22°",
       "slope safety pass 2: 1 violation(s), worst 22.22°",
@@ -121,9 +121,13 @@
       "slope safety pass 15: 1 violation(s), worst 22.22°",
       "slope safety pass 16: 1 violation(s), worst 22.22°",
       "slope safety: hard clamp applied to curved-band extrusions",
+      "planar equivalence: below-band G-code matches planar slice",
       "post-pass complete",
       "ironing_enabled was forced off for curved-top slicing"
-    ]
+    ],
+    "planar_equivalence_ok": true,
+    "safety_ok": true,
+    "collision_fixes": 0
   },
   {
     "name": "chevron",
@@ -148,7 +152,7 @@
     "max_angle_ok": true,
     "envelope_ok": true,
     "collision_notes": [
-      "collision flattening skipped (uncalibrated A1 head envelope)",
+      "collision flattening uses conservative envelope; measure sock/duct per JSON",
       "ironing disabled for curved-top pass",
       "slope safety pass 1: 1 violation(s), worst 10.77°",
       "slope safety pass 2: 1 violation(s), worst 10.77°",
@@ -167,9 +171,13 @@
       "slope safety pass 15: 1 violation(s), worst 23.53°",
       "slope safety pass 16: 1 violation(s), worst 23.53°",
       "slope safety: hard clamp applied to curved-band extrusions",
+      "planar equivalence: below-band G-code matches planar slice",
       "post-pass complete",
       "ironing_enabled was forced off for curved-top slicing"
-    ]
+    ],
+    "planar_equivalence_ok": true,
+    "safety_ok": true,
+    "collision_fixes": 0
   },
   {
     "name": "t-wing",
@@ -274,12 +282,16 @@
     "max_angle_ok": true,
     "envelope_ok": true,
     "collision_notes": [
-      "collision flattening skipped (uncalibrated A1 head envelope)",
+      "collision flattening uses conservative envelope; measure sock/duct per JSON",
       "ironing disabled for curved-top pass",
       "slope safety: hard clamp applied to curved-band extrusions",
+      "planar equivalence: below-band G-code matches planar slice",
       "post-pass complete",
       "ironing_enabled was forced off for curved-top slicing"
-    ]
+    ],
+    "planar_equivalence_ok": true,
+    "safety_ok": true,
+    "collision_fixes": 0
   },
   {
     "name": "benchy",
@@ -304,11 +316,15 @@
     "max_angle_ok": true,
     "envelope_ok": true,
     "collision_notes": [
-      "collision flattening skipped (uncalibrated A1 head envelope)",
+      "collision flattening uses conservative envelope; measure sock/duct per JSON",
       "ironing disabled for curved-top pass",
       "slope safety: hard clamp applied to curved-band extrusions",
+      "planar equivalence: below-band G-code matches planar slice",
       "post-pass complete",
       "ironing_enabled was forced off for curved-top slicing"
-    ]
+    ],
+    "planar_equivalence_ok": true,
+    "safety_ok": true,
+    "collision_fixes": 0
   }
 ]
