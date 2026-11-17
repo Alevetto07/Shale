@@ -35,9 +35,7 @@ impl CliEngine {
     pub fn from_env() -> Self {
         if let Some(program) = env::var_os("SHALE_CURAENGINE") {
             let program = PathBuf::from(program);
-            let lib_dir = env::var_os("SHALE_CURAENGINE_LIB_DIR")
-                .map(PathBuf::from)
-                .or_else(|| program.parent().map(Path::to_path_buf));
+            let lib_dir = lib_dir_for_program(&program);
             return Self { program, lib_dir };
         }
         if let Some(found) = find_installed_engine() {
@@ -337,6 +335,30 @@ fn map_to_json(values: &std::collections::BTreeMap<String, String>) -> Json {
     Json::Object(object)
 }
 
+/// Cura on Linux is often launched via a small shell wrapper that sets
+/// `LD_LIBRARY_PATH` before exec-ing the real ELF. Pushing the AppImage tree
+/// onto the loader path for that wrapper breaks `/usr/bin/env` in the shebang.
+fn lib_dir_for_program(program: &Path) -> Option<PathBuf> {
+    if !program_uses_external_lib_dir(program) {
+        return None;
+    }
+    env::var_os("SHALE_CURAENGINE_LIB_DIR")
+        .map(PathBuf::from)
+        .or_else(|| program.parent().map(Path::to_path_buf))
+}
+
+fn program_uses_external_lib_dir(program: &Path) -> bool {
+    let Ok(mut file) = fs::File::open(program) else {
+        return true;
+    };
+    use std::io::Read;
+    let mut header = [0_u8; 4];
+    let Ok(n) = file.read(&mut header) else {
+        return true;
+    };
+    n >= 4 && header == *b"\x7fELF"
+}
+
 pub(crate) fn apply_lib_dir(command: &mut Command, lib_dir: Option<&Path>) {
     let Some(lib_dir) = lib_dir else {
         return;
@@ -455,7 +477,19 @@ fn extruder_flag(index: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::extruder_flag;
+    use std::path::Path;
+
+    use super::{extruder_flag, program_uses_external_lib_dir};
+
+    #[test]
+    fn shell_engine_wrappers_skip_external_lib_dir() {
+        assert!(!program_uses_external_lib_dir(Path::new("/bin/bash")));
+    }
+
+    #[test]
+    fn elf_engine_bins_use_external_lib_dir() {
+        assert!(program_uses_external_lib_dir(Path::new("/bin/ls")));
+    }
 
     #[test]
     fn the_extruder_flag_is_one_attached_argument() {

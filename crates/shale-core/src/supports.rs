@@ -1074,9 +1074,9 @@ mod tests {
 
     #[test]
     fn engine_uses_support_meshes_for_a_bridge() {
-        let Ok(program) = std::env::var("SHALE_CURAENGINE") else {
+        if std::env::var("SHALE_CURAENGINE").is_err() {
             return;
-        };
+        }
         let Ok(cura) = std::env::var("SHALE_CURA_DIR") else {
             return;
         };
@@ -1088,12 +1088,7 @@ mod tests {
             materials: materials.into(),
         })
         .expect("catalog");
-        let engine = crate::CliEngine {
-            program: program.into(),
-            lib_dir: std::env::var("SHALE_CURAENGINE_LIB_DIR")
-                .ok()
-                .map(Into::into),
-        };
+        let engine = crate::CliEngine::from_env();
         let mesh = bridge();
         let plan = propose(&mesh, &SupportParams::default());
         assert!(plan
