@@ -335,8 +335,7 @@ fn store_cura_snapshot_sync(
     cache_root: &Path,
 ) -> Result<(), Error> {
     let key = path_key(&[cura, materials]);
-    let dir = cache_root;
-    fs::create_dir_all(&dir).map_err(|err| Error::message(err.to_string()))?;
+    fs::create_dir_all(cache_root).map_err(|err| Error::message(err.to_string()))?;
     let body = CuraExtrasCache {
         version: CACHE_VERSION,
         markers: cura_markers(resources, materials),
@@ -344,7 +343,7 @@ fn store_cura_snapshot_sync(
         instances: instances.to_vec(),
         materials: material_rows.to_vec(),
     };
-    let file = dir.join(format!("cura-extras-{key:x}.json"));
+    let file = cache_root.join(format!("cura-extras-{key:x}.json"));
     let writer = BufWriter::new(
         fs::File::create(&file).map_err(|err| Error::message(err.to_string()))?,
     );
@@ -393,8 +392,7 @@ fn store_bambu_library_sync(
     cache_root: &Path,
 ) -> Result<(), Error> {
     let key = path_key(&[root]);
-    let dir = cache_root;
-    fs::create_dir_all(&dir).map_err(|err| Error::message(err.to_string()))?;
+    fs::create_dir_all(cache_root).map_err(|err| Error::message(err.to_string()))?;
     let body = BambuLibraryCache {
         version: BAMBU_CACHE_VERSION,
         markers: bambu_markers(root),
