@@ -341,7 +341,11 @@ pub(crate) fn apply_lib_dir(command: &mut Command, lib_dir: Option<&Path>) {
     let Some(lib_dir) = lib_dir else {
         return;
     };
-    for key in ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PATH"] {
+    #[cfg(windows)]
+    let keys = ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PATH"];
+    #[cfg(not(windows))]
+    let keys = ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"];
+    for key in keys {
         let mut paths = vec![lib_dir.to_path_buf()];
         if let Some(existing) = env::var_os(key) {
             paths.extend(env::split_paths(&existing));
