@@ -129,6 +129,30 @@ pub fn render_sequence(
             values.set_list(&key, list);
         }
     }
+    if values.get("nozzle_diameter_at_nozzle_id").is_none() {
+        if let Some(list) = values.get("nozzle_diameter").cloned() {
+            values.set("nozzle_diameter_at_nozzle_id", list);
+        } else if let Some(text) = resolved.global.get("machine_nozzle_size") {
+            let diam = text.parse::<f64>().unwrap_or(0.4);
+            let slots = resolved.extruders.len().max(2);
+            values.set_list(
+                "nozzle_diameter_at_nozzle_id",
+                vec![Value::Num(diam); slots],
+            );
+        }
+    }
+    for (name, default) in [
+        ("current_nozzle_id", 0.0),
+        ("current_extruder", 0.0),
+        ("current_filament_id", 0.0),
+        ("initial_no_support_extruder", 0.0),
+        ("toolchange_count", 0.0),
+        ("wipe_tower_center_pos_valid", 0.0),
+    ] {
+        if values.get(name).is_none() {
+            values.set(name, default);
+        }
+    }
     let mut lists: std::collections::BTreeMap<String, Vec<Value>> =
         std::collections::BTreeMap::new();
     for extruder in &resolved.extruders {
