@@ -112,7 +112,7 @@ unsafe extern "system" fn shim_wndproc(
         }
         WM_EXITMENULOOP if key == main => {
             // One Esc after Alt+Space must leave the frame, not a half-latched menu mode.
-            let _ = unsafe { PostMessageW(Some(hwnd), WM_CANCELMODE, WPARAM(0), LPARAM(0)) };
+            let _ = unsafe { PostMessageW(hwnd, WM_CANCELMODE, WPARAM(0), LPARAM(0)) };
         }
         _ => {}
     }
