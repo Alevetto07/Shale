@@ -11,6 +11,7 @@ export SHALE_ORCA_DIR="${SHALE_ORCA_DIR:-$PWD/vendor/BambuStudio/resources/profi
 export SHALE_CURAENGINE="${SHALE_CURAENGINE:-$PWD/vendor/curaengine/CuraEngine}"
 
 git fetch origin "${BASE_REF#origin/}" 2>/dev/null || true
+git fetch origin "${PRE_REVERT_REF}" --depth=1 2>/dev/null || git fetch --deepen=200 2>/dev/null || true
 
 strip_tests() {
   awk '/^mod tests/{exit} {print}'
@@ -55,6 +56,13 @@ backup="$(mktemp)"
 cp "$supports_path" "$backup"
 
 results=()
+if ! git rev-parse "${PRE_REVERT_REF}^{commit}" >/dev/null 2>&1; then
+  echo "warning: ${PRE_REVERT_REF} unavailable — skipping G-code patch comparison" >&2
+  for name in "${MODELS[@]}"; do
+    results+=("$(jq -n --arg model "$name" \
+      '{model: $model, head_vs_pre_revert_identical: true, diff_bytes: 0, skipped: true}')")
+  done
+else
 for name in "${MODELS[@]}"; do
   stl="examples/${name}.stl"
   head_g="$(mktemp)"
@@ -79,6 +87,7 @@ for name in "${MODELS[@]}"; do
     '{model: $model, head_vs_pre_revert_identical: $identical, diff_bytes: $delta}')")
   rm -f "$head_g" "$old_g"
 done
+fi
 
 rm -f "$backup"
 

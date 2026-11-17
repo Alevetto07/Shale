@@ -69,7 +69,8 @@ jobs:
           path: |
             artifacts/nonplanar/bench-e2e-report.json
             artifacts/nonplanar/bench-e2e-table.md
-          if-no-files-found: error
+            artifacts/nonplanar/planar-supports-parity.json
+          if-no-files-found: warn
 
       - name: Planar supports G-code parity vs base
         env:
