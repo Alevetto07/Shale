@@ -94,6 +94,117 @@ mod auto_placement {
     }
 
     #[test]
+    fn underside_band_tilts_bridge_bottom_in_mesh() {
+        use crate::pipeline::prepare_pre_pass;
+
+        let mesh = bridge_mesh();
+        let (deformed, ctx) =
+            prepare_pre_pass(&mesh, &opts(), 0.2, &[mock_bridge_span()]);
+        let auto = ctx.auto_placement.as_ref().expect("auto plan");
+        assert!(auto.enabled_surface_count >= 1);
+        let zs: Vec<f64> = deformed
+            .vertices
+            .iter()
+            .filter(|v| {
+                v[0] >= 9.0
+                    && v[0] <= 31.0
+                    && v[1].abs() <= 4.5
+                    && (v[2] - 21.0).abs() < 1.5
+            })
+            .map(|v| v[2] as f64)
+            .collect();
+        assert!(zs.len() >= 8, "expected bridge slab verts, got {}", zs.len());
+        let spread = zs.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+            - zs.iter().copied().fold(f64::INFINITY, f64::min);
+        assert!(
+            spread > 0.08,
+            "underside tilt should spread Z by >0.08 mm (saw {spread:.3} mm, n={})",
+            zs.len()
+        );
+    }
+
+    #[test]
+    fn enabled_underside_band_produces_measurable_gcode_tilt() {
+        use crate::auto::apply_plan_to_field;
+        use crate::auto::PlannedSurfaceKind;
+        use crate::deform::build_deform_field;
+        use crate::height_field::build_height_field;
+        use crate::pipeline::apply_post_pass;
+        use crate::pipeline::max_underside_band_slope_deg;
+
+        let mesh = bridge_mesh();
+        let spans = [mock_bridge_span()];
+        let opts = opts();
+        let plan = plan_auto_placement(&mesh, &spans, &opts, 0.2);
+        let surface = plan
+            .surfaces
+            .iter()
+            .find(|s| s.kind == PlannedSurfaceKind::BridgeTiltBand && s.enabled)
+            .expect("enabled bridge band");
+        let layer_h = 0.2;
+        let band_t = opts.effective_band_thickness(layer_h);
+        let ramp_t = opts.effective_ramp_thickness(layer_h);
+        let grid = build_height_field(&mesh, opts.grid_step_mm, opts.max_angle_deg, band_t);
+        let mut field = build_deform_field(grid, band_t, ramp_t, layer_h, opts.max_angle_deg);
+        apply_plan_to_field(&mut field, &plan, layer_h);
+        let mut planar = String::from(";TYPE:SKIN\nG1 F3000 X10 Y0 Z21.0 E0\n");
+        for (i, x) in [10.0, 14.0, 18.0, 22.0, 26.0, 30.0].iter().enumerate() {
+            let z_def = field.grid.sample_top_smooth(*x, 0.0).unwrap_or(21.0);
+            planar.push_str(&format!(
+                "G1 X{x:.1} Y0 Z{z_def:.3} E{}.{i}\n",
+                i + 1
+            ));
+        }
+        let (mapped, report) = apply_post_pass(&planar, &mesh, &opts, layer_h, &spans);
+        let extrusion_zs: Vec<f64> = mapped
+            .lines()
+            .filter(|l| l.starts_with("G1") && l.contains('E') && l.contains('Z'))
+            .filter_map(|l| {
+                let i = l.find('Z')? + 1;
+                l[i..].split_whitespace().next()?.parse().ok()
+            })
+            .collect();
+        let z_spread = extrusion_zs
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max)
+            - extrusion_zs
+                .iter()
+                .copied()
+                .fold(f64::INFINITY, f64::min);
+        assert!(
+            z_spread > 0.12,
+            "mapped underside extrusions should vary in Z (spread {z_spread:.3} mm)\n{mapped}"
+        );
+        let auto = report.auto_placement.expect("report");
+        let band = auto
+            .surfaces
+            .into_iter()
+            .find(|s| s.id == surface.id)
+            .expect("surface in report");
+        let measured = band
+            .overhang_angle_measured_after_deg
+            .expect("measured after angle");
+        let slope = max_underside_band_slope_deg(
+            &mapped,
+            surface.min,
+            surface.max,
+            surface.bearing_deg,
+            8,
+        )
+        .unwrap_or(0.0);
+        assert!(
+            slope >= 2.0,
+            "mapped gcode should show ≥2° along-bearing slope (saw {slope:.2}°)"
+        );
+        assert!(
+            measured < band.overhang_angle_before_deg.unwrap() - 3.0,
+            "measured overhang {measured:.1}° should be below before {:.1}°",
+            band.overhang_angle_before_deg.unwrap()
+        );
+    }
+
+    #[test]
     fn cantilever_from_supports_analysis() {
         let mesh = cantilever_mesh();
         let span = SupportSpanInput {

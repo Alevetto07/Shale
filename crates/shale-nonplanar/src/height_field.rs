@@ -15,6 +15,10 @@ pub struct HeightGrid {
     pub z_top_smooth: Vec<Option<f64>>,
     /// Bottom of the deformation band at each column (`z_top - band`).
     pub z_band_start: Vec<Option<f64>>,
+    /// When set, deformation does not affect vertices above this Z (underside bands).
+    pub z_deform_cap: Vec<Option<f64>>,
+    /// Local flat target in deformed space; defaults to global `deformed_top_z` when unset.
+    pub z_deform_flat: Vec<Option<f64>>,
 }
 
 impl HeightGrid {
@@ -24,6 +28,14 @@ impl HeightGrid {
 
     pub fn sample_band_start(&self, x: f64, y: f64) -> Option<f64> {
         self.bilinear(&self.z_band_start, x, y)
+    }
+
+    pub fn sample_deform_cap(&self, x: f64, y: f64) -> Option<f64> {
+        self.bilinear(&self.z_deform_cap, x, y)
+    }
+
+    pub fn sample_deform_flat(&self, x: f64, y: f64) -> Option<f64> {
+        self.bilinear(&self.z_deform_flat, x, y)
     }
 
     fn bilinear(&self, field: &[Option<f64>], x: f64, y: f64) -> Option<f64> {
@@ -127,6 +139,7 @@ pub fn build_height_field(
     for (top, start) in z_top_smooth.iter().zip(z_band_start.iter_mut()) {
         *start = top.map(|z| z - band_thickness);
     }
+    let len = width * height;
 
     HeightGrid {
         origin,
@@ -136,6 +149,8 @@ pub fn build_height_field(
         z_top,
         z_top_smooth,
         z_band_start,
+        z_deform_cap: vec![None; len],
+        z_deform_flat: vec![None; len],
     }
 }
 

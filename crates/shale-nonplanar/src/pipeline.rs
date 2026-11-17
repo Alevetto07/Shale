@@ -133,14 +133,18 @@ fn fill_measured_overhang_angles(gcode: &str, plan: &mut crate::auto::AutoPlacem
         if !underside {
             continue;
         }
+        let band = max_underside_band_slope_deg(
+            gcode,
+            surface.min,
+            surface.max,
+            surface.bearing_deg,
+            8,
+        );
         let in_box = max_extrusion_slope_in_box(gcode, surface.min, surface.max);
-        let above = max_extrusion_slope_above_z(gcode, surface.min[2] - 1e-3);
-        let slope = match (in_box, above) {
-            (Some(a), Some(b)) => a.max(b),
-            (Some(a), None) => a,
-            (None, Some(b)) => b,
-            (None, None) => 0.0,
-        };
+        let slope = band
+            .into_iter()
+            .chain(in_box)
+            .fold(0.0_f64, f64::max);
         surface.overhang_angle_measured_after_deg = (slope > 0.25)
             .then(|| (90.0 - slope).clamp(0.0, 90.0));
     }
@@ -254,7 +258,83 @@ fn max_slope_on_moves(moves: &[ShellExtrusionChain], across_layers: bool) -> f64
     max_deg
 }
 
-/// Maximum in-layer extrusion slope for moves with Z at or above `z_min` (degrees).
+/// Max in-layer extrusion slope (deg from horizontal) in a bottom band, biased along `bearing_deg`.
+pub fn max_underside_band_slope_deg(
+    gcode: &str,
+    min: [f64; 3],
+    max: [f64; 3],
+    bearing_deg: f64,
+    layer_shells: usize,
+) -> Option<f64> {
+    let (ux, uy) = {
+        let r = bearing_deg.to_radians();
+        (r.cos(), r.sin())
+    };
+    let layer_h = ((max[2] - min[2]) / layer_shells as f64).max(0.08);
+    let mut points: Vec<[f64; 3]> = Vec::new();
+    let mut position = [0.0f64; 3];
+    for raw in gcode.lines() {
+        let line = raw.trim();
+        if line.starts_with("G0") && (line.contains('X') || line.contains('Y')) {
+            continue;
+        }
+        if let Some(x) = parse_word(line, 'X') {
+            position[0] = x;
+        }
+        if let Some(y) = parse_word(line, 'Y') {
+            position[1] = y;
+        }
+        if let Some(z) = parse_word(line, 'Z') {
+            position[2] = z;
+        }
+        let extruding = line.starts_with("G1")
+            && line.contains('E')
+            && parse_word(line, 'E').unwrap_or(0.0) > 1e-9;
+        if !extruding {
+            continue;
+        }
+        let p = position;
+        if p[0] < min[0] - 0.05
+            || p[0] > max[0] + 0.05
+            || p[1] < min[1] - 0.05
+            || p[1] > max[1] + 0.05
+            || p[2] < min[2] - 0.05
+            || p[2] > max[2] + 0.2
+        {
+            continue;
+        }
+        points.push(p);
+    }
+    if points.len() < 2 {
+        return None;
+    }
+    points.sort_by(|a, b| {
+        let along_a = a[0] * ux + a[1] * uy;
+        let along_b = b[0] * ux + b[1] * uy;
+        along_a
+            .partial_cmp(&along_b)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut max_deg = 0.0_f64;
+    let mut any = false;
+    for w in points.windows(2) {
+        let dx = w[1][0] - w[0][0];
+        let dy = w[1][1] - w[0][1];
+        let dz = w[1][2] - w[0][2];
+        let along = (dx * ux + dy * uy).abs();
+        let cross = (dx * -uy + dy * ux).abs();
+        if along < 0.15 || cross > along {
+            continue;
+        }
+        if (w[1][2] - w[0][2]).abs() > layer_h * (layer_shells as f64 + 1.0) {
+            continue;
+        }
+        any = true;
+        max_deg = max_deg.max(dz.atan2(along).abs().to_degrees());
+    }
+    any.then_some(max_deg)
+}
+
 /// Maximum in-layer extrusion slope (deg from horizontal) inside an axis-aligned box.
 pub fn max_extrusion_slope_in_box(gcode: &str, min: [f64; 3], max: [f64; 3]) -> Option<f64> {
     let mut position = [0.0f64; 3];

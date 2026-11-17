@@ -10,6 +10,7 @@ pub fn apply_surface_to_grid(grid: &mut HeightGrid, surface: &PlannedSurface, la
     let (ux, uy) = bearing_unit(surface.bearing_deg);
     let tan_tilt = surface.tilt_deg.to_radians().tan().clamp(-0.18, 0.18);
     let footprint_z = surface.min[2].max(layer_h);
+    let max_along = surface_max_along_bearing(surface, ux, uy);
     for iy in 0..grid.height {
         for ix in 0..grid.width {
             let x = grid.origin[0] + ix as f64 * grid.step;
@@ -29,11 +30,12 @@ pub fn apply_surface_to_grid(grid: &mut HeightGrid, surface: &PlannedSurface, la
                 PlannedSurfaceKind::BridgeTiltBand
                 | PlannedSurfaceKind::CantileverTiltBand
                 | PlannedSurfaceKind::OverhangTiltBand => {
-                    let base = grid.z_top_smooth[i].unwrap_or(footprint_z);
-                    grid.z_top_smooth[i] = Some(base + dz);
-                    if grid.z_band_start[i].is_none() {
-                        grid.z_band_start[i] = Some(base - layer_h * 6.0);
-                    }
+                    let underside_z = surface.min[2] + 0.5;
+                    let tilted = underside_z + along * tan_tilt;
+                    grid.z_top_smooth[i] = Some(tilted);
+                    grid.z_band_start[i] = Some((underside_z - layer_h * 6.0).max(0.0));
+                    grid.z_deform_cap[i] = Some(surface.max[2]);
+                    grid.z_deform_flat[i] = Some(underside_z + max_along * tan_tilt);
                 }
             }
         }
@@ -59,4 +61,17 @@ fn point_in_box(x: f64, y: f64, min: [f64; 3], max: [f64; 3]) -> bool {
 fn bearing_unit(deg: f64) -> (f64, f64) {
     let r = deg.to_radians();
     (r.cos(), r.sin())
+}
+
+fn surface_max_along_bearing(surface: &PlannedSurface, ux: f64, uy: f64) -> f64 {
+  let corners = [
+        [surface.min[0], surface.min[1]],
+        [surface.max[0], surface.min[1]],
+        [surface.max[0], surface.max[1]],
+        [surface.min[0], surface.max[1]],
+    ];
+    corners
+        .iter()
+        .map(|[x, y]| (x - surface.min[0]) * ux + (y - surface.min[1]) * uy)
+        .fold(0.0_f64, f64::max)
 }
