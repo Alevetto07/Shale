@@ -183,20 +183,30 @@ impl From<bool> for Value {
 /// normally injects at slice time (after lists are filled from Orca profiles).
 pub fn ensure_runtime_scalar_defaults(template: &str, values: &mut Values) -> Result<(), Error> {
     for piece in split(template)? {
-        let expression = match piece {
-            Piece::If(condition) => condition,
-            Piece::Expression(body) => body,
-            _ => continue,
-        };
-        if expression == "else" || expression == "endif" {
-            continue;
+        match piece {
+            Piece::If(condition) => fill_runtime_names(values, &condition, true)?,
+            Piece::Expression(body) if body != "else" && body != "endif" => {
+                fill_runtime_names(values, &body, false)?;
+            }
+            _ => {}
         }
-        let tokens = tokenize(&expression)?;
-        for token in tokens {
-            if let Token::Name(name) = token {
-                if values.get(&name).is_none() {
-                    values.set(&name, 0.0);
-                }
+    }
+    Ok(())
+}
+
+fn fill_runtime_names(
+    values: &mut Values,
+    expression: &str,
+    bare_flag: bool,
+) -> Result<(), Error> {
+    let tokens = tokenize(expression)?;
+    if !bare_flag && tokens.len() <= 1 {
+        return Ok(());
+    }
+    for token in tokens {
+        if let Token::Name(name) = token {
+            if values.get(&name).is_none() {
+                values.set(&name, 0.0);
             }
         }
     }

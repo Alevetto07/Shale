@@ -150,6 +150,8 @@ pub fn render_sequence(
         ("initial_no_support_filament_id", 0.0),
         ("initial_no_support_hotend", 0.0),
         ("cooling_filter_enabled", 0.0),
+        ("long_retraction_when_ec", 0.0),
+        ("long_retraction_when_cut", 0.0),
         ("next_hotend", 0.0),
         ("next_filament_id", 0.0),
         ("toolchange_count", 0.0),

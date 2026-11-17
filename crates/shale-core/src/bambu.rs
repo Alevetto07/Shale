@@ -1151,6 +1151,21 @@ fn derive_template_computed(out: &mut HashMap<String, String>) {
             out.insert("min_vitrification_temperature".into(), "45".into());
         }
     }
+    if !out.contains_key("long_retraction_when_cut") {
+        if let Some(enabled) = out.get("enable_long_retraction_when_cut").cloned() {
+            out.insert("long_retraction_when_cut".into(), enabled);
+        }
+    }
+    if !out.contains_key("long_retraction_when_ec") {
+        if let Some(enabled) = out.get("long_retractions_when_ec").cloned() {
+            out.insert("long_retraction_when_ec".into(), enabled);
+        }
+    }
+    if !out.contains_key("retraction_distance_when_cut") {
+        if let Some(amount) = out.get("retraction_length").cloned() {
+            out.insert("retraction_distance_when_cut".into(), amount);
+        }
+    }
 }
 
 /// A profile applies to a printer when its `compatible_printers` names one of
