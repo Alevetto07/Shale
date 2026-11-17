@@ -69,11 +69,18 @@ fn subclass_hwnd(hwnd: HWND) -> Result<(), String> {
         return Ok(());
     }
     unsafe {
-        let prev = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, shim_wndproc as isize);
+        let prev = SetWindowLongPtrW(
+            hwnd,
+            GWLP_WNDPROC,
+            shim_wndproc as *const () as isize,
+        );
         if prev == 0 {
             return Ok(());
         }
-        chrome.prev.insert(key, std::mem::transmute(prev));
+        chrome.prev.insert(
+            key,
+            std::mem::transmute::<isize, WndProc>(prev),
+        );
     }
     Ok(())
 }
