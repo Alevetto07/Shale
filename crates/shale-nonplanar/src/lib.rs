@@ -22,8 +22,8 @@ pub mod safety;
 pub mod validate;
 
 pub use config::{
-    CollisionAdjustment, NonplanarMode, NonplanarOptions, NonplanarReport, PlanarEquivalenceResult,
-    SafetyReport, SafetyViolation,
+    CollisionAdjustment, CurvedSuffixBelowFloorMoves, NonplanarMode, NonplanarOptions,
+    NonplanarReport, PlanarEquivalenceResult, SafetyReport, SafetyViolation,
 };
 pub use mesh::merge_meshes;
 pub use deform::DeformField;
@@ -34,7 +34,9 @@ pub use pipeline::{
     top_layer_z_variation, top_shell_z_variation, NonplanarContext,
 };
 pub use equivalence::{
+    audit_curved_suffix_below_global_floor, check_grafted_planar_equivalence,
     check_planar_equivalence, graft_planar_shell_below_band, motion_lines_below_band,
+    SUFFIX_SHELL_EXTRUSION_TOLERANCE_MM,
 };
 pub use safety::{gcode_respects_max_angle, max_curved_band_extrusion_slope_deg};
 pub use validate::{embed_safety_json, safety_report_from_gcode, validate_gcode, MachineLimits};

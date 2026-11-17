@@ -7,7 +7,7 @@ use crate::collision::{flatten_on_collision, PrintedHeightMap};
 use crate::config::{NonplanarOptions, NonplanarReport};
 use crate::deform::{build_deform_field, deform_mesh, subdivide_long_edges, DeformField};
 use crate::envelope::{head_envelope_for_printer, bambu_a1_envelope};
-use crate::equivalence::{check_planar_equivalence, graft_planar_shell_below_band};
+use crate::equivalence::{check_grafted_planar_equivalence, graft_planar_shell_below_band};
 use crate::validate::{embed_safety_json, validate_gcode, MachineLimits};
 use crate::height_field::{build_height_field, count_top_islands};
 use crate::safety::enforce_slope_safety;
@@ -99,7 +99,7 @@ pub fn apply_post_pass(
     );
     let band_floor = field.global_band_floor_z();
     let grafted = graft_planar_shell_below_band(planar_baseline_gcode, &mapped, band_floor);
-    let equiv = check_planar_equivalence(planar_baseline_gcode, &grafted, band_floor);
+    let equiv = check_grafted_planar_equivalence(planar_baseline_gcode, &grafted, &field);
     report.planar_equivalence_ok = equiv.ok;
     if !equiv.ok {
         report.notes.push(format!(
@@ -110,6 +110,19 @@ pub fn apply_post_pass(
         report
             .notes
             .push("planar equivalence: below-band G-code matches planar slice".into());
+    }
+    if let Some(suffix) = equiv.curved_suffix_below_floor.as_ref() {
+        if suffix.ok {
+            report.notes.push(format!(
+                "curved suffix below z={:.3}: {} travel, {} band-edge extrusion, 0 shell extrusion",
+                suffix.band_floor_z, suffix.travel, suffix.band_edge_extrusion
+            ));
+        } else {
+            report.notes.push(format!(
+                "curved suffix: {} planar-shell extrusion(s) below tolerance",
+                suffix.shell_extrusion_violations
+            ));
+        }
     }
     let safety = validate_gcode(
         &grafted,

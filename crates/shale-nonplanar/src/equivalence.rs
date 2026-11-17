@@ -1,6 +1,10 @@
 //! Assert G-code below the non-planar band matches a planar slice.
 
-use crate::config::PlanarEquivalenceResult;
+use crate::config::{CurvedSuffixBelowFloorMoves, PlanarEquivalenceResult};
+use crate::deform::DeformField;
+
+/// Matches inverse band round-trip tests (`box_top_band_round_trip_under_0_02mm`).
+pub const SUFFIX_SHELL_EXTRUSION_TOLERANCE_MM: f64 = 0.02;
 
 /// Ignore comments, headers, and post-pass annotations when comparing moves.
 fn is_ignorable_line(line: &str) -> bool {
@@ -31,6 +35,13 @@ fn word_f(line: &str, letter: char) -> Option<f64> {
 
 fn is_motion_line(line: &str) -> bool {
     line.starts_with('G') && (line.contains('X') || line.contains('Y'))
+}
+
+fn is_extrusion_motion(line: &str) -> bool {
+    line.starts_with("G1")
+        && line.contains('E')
+        && is_motion_line(line)
+        && word_f(line, 'E').is_some_and(|e| e > 1e-9)
 }
 
 fn normalize_motion(line: &str) -> String {
@@ -124,6 +135,41 @@ pub fn motion_raw_below_band(gcode: &str, band_floor_z: f64) -> Vec<String> {
     out
 }
 
+/// Last line index (exclusive end) still part of the curved-top print body.
+fn curved_suffix_end_line(gcode: &str, band_floor_z: f64, start_line: usize) -> usize {
+    let mut position = [0.0f64; 3];
+    let mut last_at_band = start_line;
+    for (idx, raw) in gcode.lines().enumerate() {
+        if idx < start_line {
+            let line = raw.trim();
+            if let Some(x) = word_f(line, 'X') {
+                position[0] = x;
+            }
+            if let Some(y) = word_f(line, 'Y') {
+                position[1] = y;
+            }
+            if let Some(z) = word_f(line, 'Z') {
+                position[2] = z;
+            }
+            continue;
+        }
+        let line = raw.trim();
+        if let Some(x) = word_f(line, 'X') {
+            position[0] = x;
+        }
+        if let Some(y) = word_f(line, 'Y') {
+            position[1] = y;
+        }
+        if let Some(z) = word_f(line, 'Z') {
+            position[2] = z;
+        }
+        if is_extrusion_motion(line) && position[2] + 1e-6 >= band_floor_z {
+            last_at_band = idx + 1;
+        }
+    }
+    last_at_band + 1
+}
+
 fn first_band_motion_line(gcode: &str, band_floor_z: f64) -> Option<usize> {
     let mut position = [0.0f64; 3];
     for (idx, raw) in gcode.lines().enumerate() {
@@ -137,7 +183,7 @@ fn first_band_motion_line(gcode: &str, band_floor_z: f64) -> Option<usize> {
         if let Some(z) = word_f(line, 'Z') {
             position[2] = z;
         }
-        if is_motion_line(line) && position[2] + 1e-6 >= band_floor_z {
+        if is_extrusion_motion(line) && position[2] + 1e-6 >= band_floor_z {
             return Some(idx);
         }
     }
@@ -168,6 +214,134 @@ pub fn graft_planar_shell_below_band(
         out.push('\n');
     }
     out
+}
+
+/// Classify XY moves in the curved suffix that still sit below `global_band_floor_z()`.
+pub fn audit_curved_suffix_below_global_floor(
+    grafted_gcode: &str,
+    planar_baseline_gcode: &str,
+    field: &DeformField,
+) -> CurvedSuffixBelowFloorMoves {
+    let band_floor = field.global_band_floor_z();
+    let split = first_band_motion_line(planar_baseline_gcode, band_floor)
+        .unwrap_or_else(|| grafted_gcode.lines().count());
+    let end_line = curved_suffix_end_line(grafted_gcode, band_floor, split);
+    let mut position = [0.0f64; 3];
+    let mut e = None::<f64>;
+    let mut audit = CurvedSuffixBelowFloorMoves {
+        band_floor_z: band_floor,
+        shell_extrusion_tolerance_mm: SUFFIX_SHELL_EXTRUSION_TOLERANCE_MM,
+        ok: true,
+        ..Default::default()
+    };
+
+    for (idx, raw) in grafted_gcode.lines().enumerate() {
+        if idx >= end_line {
+            break;
+        }
+        if idx < split {
+            let line = raw.trim();
+            if let Some(x) = word_f(line, 'X') {
+                position[0] = x;
+            }
+            if let Some(y) = word_f(line, 'Y') {
+                position[1] = y;
+            }
+            if let Some(z) = word_f(line, 'Z') {
+                position[2] = z;
+            }
+            if let Some(ev) = word_f(line, 'E') {
+                e = Some(ev);
+            }
+            continue;
+        }
+
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with(';') {
+            continue;
+        }
+        if let Some(x) = word_f(line, 'X') {
+            position[0] = x;
+        }
+        if let Some(y) = word_f(line, 'Y') {
+            position[1] = y;
+        }
+        if let Some(z) = word_f(line, 'Z') {
+            position[2] = z;
+        }
+        let prev_e = e;
+        let ev = word_f(line, 'E');
+        if let Some(v) = ev {
+            e = Some(v);
+        }
+
+        if position[2] + 1e-6 >= band_floor {
+            continue;
+        }
+
+        if !line.starts_with('G') {
+            audit.mcode_or_other += 1;
+            continue;
+        }
+        if line.starts_with("G28") || line.starts_with("G90") || line.starts_with("G91") || line.starts_with("G92")
+        {
+            audit.mcode_or_other += 1;
+            continue;
+        }
+
+        let has_xy = line.contains('X') || line.contains('Y');
+        let has_z = line.contains('Z');
+        if has_z && !has_xy {
+            audit.z_hop += 1;
+            continue;
+        }
+        if !has_xy {
+            audit.mcode_or_other += 1;
+            continue;
+        }
+
+        let de = match (ev, prev_e) {
+            (Some(cur), Some(prev)) => cur - prev,
+            (Some(cur), None) => cur,
+            _ => 0.0,
+        };
+
+        if de < -1e-6 {
+            audit.wipe_retract += 1;
+            continue;
+        }
+        if !(line.starts_with("G1") && de > 1e-6) {
+            audit.travel += 1;
+            continue;
+        }
+
+        if position[2] + SUFFIX_SHELL_EXTRUSION_TOLERANCE_MM + 1e-6 >= band_floor {
+            audit.band_edge_extrusion += 1;
+            continue;
+        }
+        let z_band = field.grid.sample_band_start(position[0], position[1]);
+        let shell_ceiling = z_band
+            .map(|z| z + SUFFIX_SHELL_EXTRUSION_TOLERANCE_MM)
+            .unwrap_or(band_floor - SUFFIX_SHELL_EXTRUSION_TOLERANCE_MM);
+        if position[2] <= shell_ceiling + 1e-6 {
+            audit.shell_extrusion_violations += 1;
+            audit.ok = false;
+            audit.first_shell_violation.get_or_insert_with(|| {
+                format!(
+                    "line {}: G1 extrusion at Z={:.3} ≤ z_band({:.3},{:.3})+{:.3} mm",
+                    idx + 1,
+                    position[2],
+                    position[0],
+                    position[1],
+                    SUFFIX_SHELL_EXTRUSION_TOLERANCE_MM
+                )
+            });
+        } else {
+            audit.band_edge_extrusion += 1;
+        }
+    }
+
+    audit
 }
 
 /// Compare planar Cura output to grafted non-planar output below the curved band.
@@ -209,7 +383,22 @@ pub fn check_planar_equivalence(
         curved_moves_below_band: curved_moves.len(),
         mismatched_moves: mismatched,
         first_mismatch: first,
+        curved_suffix_below_floor: None,
     }
+}
+
+/// Grafted-path checks: shell prefix vs planar, and no planar-shell extrusion in curved suffix.
+pub fn check_grafted_planar_equivalence(
+    planar_gcode: &str,
+    grafted_gcode: &str,
+    field: &DeformField,
+) -> PlanarEquivalenceResult {
+    let band_floor = field.global_band_floor_z();
+    let mut result = check_planar_equivalence(planar_gcode, grafted_gcode, band_floor);
+    let suffix = audit_curved_suffix_below_global_floor(grafted_gcode, planar_gcode, field);
+    result.ok = result.ok && suffix.ok;
+    result.curved_suffix_below_floor = Some(suffix);
+    result
 }
 
 #[cfg(test)]
@@ -250,6 +439,60 @@ mod tests {
         let r = check_planar_equivalence(planar, curved, 20.0);
         assert!(!r.ok);
         assert_eq!(r.mismatched_moves, 1);
+    }
+
+    #[test]
+    fn suffix_flags_planar_shell_extrusion_after_band_starts() {
+        use crate::deform::build_deform_field;
+        use crate::height_field::build_height_field;
+        use crate::test_meshes::box_mesh;
+
+        let mesh = box_mesh(20.0, 20.0, 10.0);
+        let grid = build_height_field(&mesh, 1.0, 10.0, 1.6);
+        let field = build_deform_field(grid, 1.6, 0.4, 0.2, 10.0);
+        let band = field.global_band_floor_z();
+        let gcode = format!(
+            "G1 X5 Y5 Z{} E0\nG1 X5 Y5 Z{} E1\nG1 X5 Y5 Z{:.3} E2\n",
+            band - 2.0,
+            band + 0.5,
+            band - 1.0
+        );
+        let audit = audit_curved_suffix_below_global_floor(&gcode, &gcode, &field);
+        assert!(!audit.ok, "{audit:?}");
+        assert_eq!(audit.shell_extrusion_violations, 1);
+    }
+
+    #[test]
+    fn suffix_allows_band_edge_extrusion_below_global_floor() {
+        use crate::deform::build_deform_field;
+        use crate::height_field::build_height_field;
+        use crate::test_meshes::sphere_mesh;
+
+        let mut mesh = sphere_mesh(12.0);
+        for v in &mut mesh.vertices {
+            v[0] += 128.0;
+            v[1] += 128.0;
+        }
+        let grid = build_height_field(&mesh, 0.35, 10.0, 1.6);
+        let field = build_deform_field(grid, 1.6, 0.4, 0.2, 10.0);
+        let band = field.global_band_floor_z();
+        let (x, y) = (126.2, 124.3);
+        let z_band = field.grid.sample_band_start(x, y).expect("sphere column");
+        let z_mid = (z_band + band) * 0.5;
+        assert!(
+            z_mid > z_band + SUFFIX_SHELL_EXTRUSION_TOLERANCE_MM && z_mid < band - 1e-3,
+            "fixture needs z between column band ({z_band:.3}) and global floor ({band:.3})"
+        );
+        let gcode = format!(
+            "G1 X{x} Y{y} Z{} E0\nG1 X{x} Y{y} Z{} E1\nG1 X{x} Y{y} Z{:.3} E2\n",
+            band - 2.0,
+            band + 0.5,
+            z_mid
+        );
+        let audit = audit_curved_suffix_below_global_floor(&gcode, &gcode, &field);
+        assert!(audit.ok, "{audit:?}");
+        assert_eq!(audit.band_edge_extrusion, 1);
+        assert_eq!(audit.shell_extrusion_violations, 0);
     }
 
     #[test]

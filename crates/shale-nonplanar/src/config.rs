@@ -86,6 +86,25 @@ mod tests {
     }
 }
 
+/// Moves in the grafted **curved suffix** whose live Z is still below `global_band_floor_z()`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct CurvedSuffixBelowFloorMoves {
+    pub band_floor_z: f64,
+    /// Z slack vs per-column `z_band_start` when classifying extrusion as curved band edge vs planar shell.
+    pub shell_extrusion_tolerance_mm: f64,
+    pub travel: usize,
+    pub z_hop: usize,
+    pub wipe_retract: usize,
+    /// G1+E with Z below global floor but still above `z_band_start(x,y)` (inverse-mapped curved wall).
+    pub band_edge_extrusion: usize,
+    /// G1+E at or below `z_band_start(x,y) + tolerance` after curved shell has begun — must be 0.
+    pub shell_extrusion_violations: usize,
+    pub mcode_or_other: usize,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_shell_violation: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct PlanarEquivalenceResult {
     pub ok: bool,
@@ -94,6 +113,8 @@ pub struct PlanarEquivalenceResult {
     pub curved_moves_below_band: usize,
     pub mismatched_moves: usize,
     pub first_mismatch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curved_suffix_below_floor: Option<CurvedSuffixBelowFloorMoves>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

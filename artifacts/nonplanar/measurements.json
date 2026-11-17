@@ -2,7 +2,7 @@
   {
     "name": "dome",
     "planar_layers": 120,
-    "curved_layers": 124,
+    "curved_layers": 125,
     "planar_time_s": 920.0,
     "curved_time_s": 956.0,
     "planar_top_z_min": 22.6,
@@ -122,6 +122,7 @@
       "slope safety pass 16: 1 violation(s), worst 22.22°",
       "slope safety: hard clamp applied to curved-band extrusions",
       "planar equivalence: below-band G-code matches planar slice",
+      "curved suffix below z=20.362: 725 travel, 3148 band-edge extrusion, 0 shell extrusion",
       "post-pass complete",
       "ironing_enabled was forced off for curved-top slicing"
     ],
@@ -172,6 +173,7 @@
       "slope safety pass 16: 1 violation(s), worst 23.53°",
       "slope safety: hard clamp applied to curved-band extrusions",
       "planar equivalence: below-band G-code matches planar slice",
+      "curved suffix below z=8.450: 1108 travel, 2830 band-edge extrusion, 0 shell extrusion",
       "post-pass complete",
       "ironing_enabled was forced off for curved-top slicing"
     ],
@@ -286,6 +288,7 @@
       "ironing disabled for curved-top pass",
       "slope safety: hard clamp applied to curved-band extrusions",
       "planar equivalence: below-band G-code matches planar slice",
+      "curved suffix below z=22.000: 538 travel, 2270 band-edge extrusion, 0 shell extrusion",
       "post-pass complete",
       "ironing_enabled was forced off for curved-top slicing"
     ],
@@ -320,6 +323,7 @@
       "ironing disabled for curved-top pass",
       "slope safety: hard clamp applied to curved-band extrusions",
       "planar equivalence: below-band G-code matches planar slice",
+      "curved suffix below z=13.000: 0 travel, 0 band-edge extrusion, 0 shell extrusion",
       "post-pass complete",
       "ironing_enabled was forced off for curved-top slicing"
     ],

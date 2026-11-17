@@ -175,12 +175,25 @@ pub fn validate_gcode(
         });
     }
     if !planar_equiv.ok {
+        let mut detail = planar_equiv
+            .first_mismatch
+            .clone()
+            .unwrap_or_else(|| "below-band mismatch".into());
+        if let Some(suffix) = planar_equiv.curved_suffix_below_floor.as_ref() {
+            if !suffix.ok {
+                if let Some(v) = &suffix.first_shell_violation {
+                    detail = format!("{detail}; {v}");
+                } else {
+                    detail = format!(
+                        "{detail}; {} shell extrusion(s) in curved suffix",
+                        suffix.shell_extrusion_violations
+                    );
+                }
+            }
+        }
         violations.push(SafetyViolation {
             kind: "planar_equivalence".into(),
-            detail: planar_equiv
-                .first_mismatch
-                .clone()
-                .unwrap_or_else(|| "below-band mismatch".into()),
+            detail,
             line: None,
         });
     }
