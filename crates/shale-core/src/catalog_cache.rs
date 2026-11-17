@@ -4,7 +4,8 @@
 //! **Write path:** JSON serialization on a background thread; prune never deletes
 //! other sources' cache files.
 
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{hash_map::DefaultHasher, HashMap};
+use std::io::{BufReader, BufWriter};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -18,7 +19,7 @@ use crate::error::Error;
 use crate::instance::InstanceFile;
 use crate::material::Material;
 
-const CACHE_VERSION: u32 = 5;
+const CACHE_VERSION: u32 = 6;
 const BAMBU_CACHE_VERSION: u32 = 4;
 
 static CACHE_DIR_OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
@@ -44,10 +45,19 @@ struct BambuLibraryCache {
     gcode: Vec<(String, String, MachineGcode)>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct CuraSnapshot {
+    pub definitions: HashMap<String, Definition>,
+    pub instances: Vec<InstanceFile>,
+    pub materials: Vec<Material>,
+}
+
 #[derive(Serialize, Deserialize)]
 struct CuraExtrasCache {
     version: u32,
     markers: CacheMarkers,
+    #[serde(default)]
+    definitions: Vec<Definition>,
     instances: Vec<InstanceFile>,
     materials: Vec<Material>,
 }
@@ -211,19 +221,21 @@ fn bambu_markers(root: &Path) -> CacheMarkers {
     out
 }
 
-pub(crate) fn load_cura_extras(
+pub(crate) fn load_cura_snapshot(
     cura: &Path,
     materials: &Path,
     resources: &Path,
-) -> Result<Option<(Vec<InstanceFile>, Vec<Material>)>, Error> {
+) -> Result<Option<CuraSnapshot>, Error> {
     let key = path_key(&[cura, materials]);
     let file = cache_dir().join(format!("cura-extras-{key:x}.json"));
     if !file.is_file() {
         return Ok(None);
     }
-    let text = fs::read_to_string(&file).map_err(|err| Error::message(err.to_string()))?;
+    let reader = BufReader::new(
+        fs::File::open(&file).map_err(|err| Error::message(err.to_string()))?,
+    );
     let cached: CuraExtrasCache =
-        serde_json::from_str(&text).map_err(|err| Error::message(err.to_string()))?;
+        serde_json::from_reader(reader).map_err(|err| Error::message(err.to_string()))?;
     if cached.version != CACHE_VERSION {
         return Ok(None);
     }
@@ -231,25 +243,61 @@ pub(crate) fn load_cura_extras(
     if cached.markers != live {
         return Ok(None);
     }
-    Ok(Some((cached.instances, cached.materials)))
+    if cached.definitions.is_empty() {
+        return Ok(None);
+    }
+    let definitions = cached
+        .definitions
+        .into_iter()
+        .map(|definition| (definition.id.clone(), definition))
+        .collect();
+    Ok(Some(CuraSnapshot {
+        definitions,
+        instances: cached.instances,
+        materials: cached.materials,
+    }))
 }
 
-pub(crate) fn store_cura_extras_async(
+/// Writes the packed snapshot (definitions, instances, materials) to disk.
+pub(crate) fn store_cura_snapshot(
     cura: PathBuf,
     materials: PathBuf,
     resources: PathBuf,
-    instances: Vec<InstanceFile>,
-    material_rows: Vec<Material>,
+    definitions: &HashMap<String, Definition>,
+    instances: &[InstanceFile],
+    material_rows: &[Material],
 ) {
-    std::thread::spawn(move || {
-        let _ = store_cura_extras_sync(&cura, &materials, &resources, &instances, &material_rows);
-    });
+    let definition_rows: Vec<Definition> = definitions.values().cloned().collect();
+    let instances = instances.to_vec();
+    let material_rows = material_rows.to_vec();
+    if test_mode_active() {
+        let _ = store_cura_snapshot_sync(
+            &cura,
+            &materials,
+            &resources,
+            &definition_rows,
+            &instances,
+            &material_rows,
+        );
+    } else {
+        std::thread::spawn(move || {
+            let _ = store_cura_snapshot_sync(
+                &cura,
+                &materials,
+                &resources,
+                &definition_rows,
+                &instances,
+                &material_rows,
+            );
+        });
+    }
 }
 
-fn store_cura_extras_sync(
+fn store_cura_snapshot_sync(
     cura: &Path,
     materials: &Path,
     resources: &Path,
+    definition_rows: &[Definition],
     instances: &[InstanceFile],
     material_rows: &[Material],
 ) -> Result<(), Error> {
@@ -259,12 +307,15 @@ fn store_cura_extras_sync(
     let body = CuraExtrasCache {
         version: CACHE_VERSION,
         markers: cura_markers(resources, materials),
+        definitions: definition_rows.to_vec(),
         instances: instances.to_vec(),
         materials: material_rows.to_vec(),
     };
-    let json = serde_json::to_vec(&body).map_err(|err| Error::message(err.to_string()))?;
     let file = dir.join(format!("cura-extras-{key:x}.json"));
-    fs::write(&file, json).map_err(|err| Error::message(err.to_string()))?;
+    let writer = BufWriter::new(
+        fs::File::create(&file).map_err(|err| Error::message(err.to_string()))?,
+    );
+    serde_json::to_writer(writer, &body).map_err(|err| Error::message(err.to_string()))?;
     Ok(())
 }
 
@@ -274,8 +325,8 @@ pub(crate) fn load_bambu_library(root: &Path) -> Option<Library> {
     if !file.is_file() {
         return None;
     }
-    let text = fs::read_to_string(&file).ok()?;
-    let cached: BambuLibraryCache = serde_json::from_str(&text).ok()?;
+    let reader = BufReader::new(fs::File::open(&file).ok()?);
+    let cached: BambuLibraryCache = serde_json::from_reader(reader).ok()?;
     if cached.version != BAMBU_CACHE_VERSION {
         return None;
     }

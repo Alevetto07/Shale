@@ -9,7 +9,8 @@ use tauri::WebviewWindow;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallWindowProcW, EnumThreadWindows, SetWindowLongPtrW, GWLP_WNDPROC, WM_CLOSE, WM_SYSCOMMAND,
+    CallWindowProcW, EnumThreadWindows, PostMessageW, SetWindowLongPtrW, GWLP_WNDPROC, WM_CANCELMODE,
+    WM_CLOSE, WM_EXITMENULOOP, WM_SYSCOMMAND,
 };
 
 const SC_KEYMENU: u32 = 0xF100;
@@ -108,6 +109,10 @@ unsafe extern "system" fn shim_wndproc(
         }
         WM_CLOSE if key != main => {
             return LRESULT(0);
+        }
+        WM_EXITMENULOOP if key == main => {
+            // One Esc after Alt+Space must leave the frame, not a half-latched menu mode.
+            let _ = unsafe { PostMessageW(Some(hwnd), WM_CANCELMODE, WPARAM(0), LPARAM(0)) };
         }
         _ => {}
     }

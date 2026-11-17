@@ -18,6 +18,7 @@ mod tests {
     fn bench_dirs() -> &'static BenchDirs {
         static DIRS: OnceLock<BenchDirs> = OnceLock::new();
         DIRS.get_or_init(|| {
+            std::env::set_var("SHALE_TEST", "1");
             let orca = tempfile::tempdir().expect("bench orca tempdir");
             bambu::set_test_profiles_root(Some(orca.path().to_path_buf()));
             let cache = tempfile::tempdir().expect("bench cache tempdir");
@@ -27,6 +28,46 @@ mod tests {
                 _cache: cache,
             }
         })
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn packed_snapshot_reopens_when_source_trees_are_unreadable() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let _dirs = bench_dirs();
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let paths = ResourcePaths {
+            cura: root.join("cura"),
+            materials: root.join("materials"),
+        };
+        let resources = paths.resources();
+        let _ = Catalog::open(paths.clone()).expect("seed on-disk snapshot");
+
+        for dir in [
+            resources.join("quality"),
+            resources.join("variants"),
+            resources.join("definitions"),
+            paths.materials.clone(),
+        ] {
+            if dir.is_dir() {
+                let mut perms = fs::metadata(&dir).expect("metadata").permissions();
+                perms.set_mode(0);
+                let _ = fs::set_permissions(&dir, perms);
+            }
+        }
+
+        let start = Instant::now();
+        let catalog = Catalog::open(paths).expect("snapshot should satisfy open");
+        let elapsed = start.elapsed();
+        eprintln!("snapshot Catalog::open {:?}", elapsed);
+        assert!(catalog.definitions.contains_key("fdmprinter"));
+        assert!(
+            elapsed.as_secs() < 3,
+            "packed snapshot cold path took {:?}",
+            elapsed
+        );
     }
 
     #[test]

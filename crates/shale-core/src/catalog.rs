@@ -4,7 +4,7 @@
 //! Definitions are small enough to keep resident. Instance containers and
 //! materials are indexed once so picking a printer does not re-read disk.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,6 +71,7 @@ impl ResourcePaths {
                 .ok()
                 .and_then(|path| path.parent().map(Path::to_path_buf)),
         );
+        dedupe_vendor_roots(&mut roots);
         for vendor in roots {
             let cura = vendor.join("Cura");
             let materials = vendor.join("fdm_materials");
@@ -187,9 +188,37 @@ fn push_cura_tree(cura_root: &Path, found: &mut Vec<ResourcePaths>) {
     found.push(ResourcePaths { cura, materials });
 }
 
+/// Keep the first occurrence of each `vendor` path (cwd before executable).
+fn dedupe_vendor_roots(roots: &mut Vec<PathBuf>) {
+    let mut seen = HashSet::new();
+    roots.retain(|vendor| {
+        let key = fs::canonicalize(vendor).unwrap_or_else(|_| vendor.clone());
+        seen.insert(key)
+    });
+}
+
 #[cfg(test)]
 mod discover_tests {
     use super::*;
+
+    #[test]
+    fn vendor_roots_deduplicate_by_canonical_path_first_wins() {
+        let root = tempfile::tempdir().unwrap();
+        let vendor = root.path().join("vendor");
+        fs::create_dir_all(&vendor).unwrap();
+        let again = vendor
+            .join("..")
+            .join("vendor")
+            .canonicalize()
+            .expect("canonical vendor");
+        let mut roots = vec![vendor.clone(), again];
+        dedupe_vendor_roots(&mut roots);
+        assert_eq!(roots.len(), 1, "duplicate vendor entries: {:?}", roots);
+        assert_eq!(
+            roots[0].canonicalize().unwrap(),
+            vendor.canonicalize().unwrap()
+        );
+    }
 
     #[test]
     fn an_installed_tree_is_recognised_and_a_miss_names_the_path() {
@@ -287,44 +316,49 @@ impl Catalog {
         let resources = paths.resources();
         let mut warnings = Vec::new();
         let mut definitions = HashMap::new();
-        load_definitions(
-            &resources.join("definitions"),
-            false,
-            &mut definitions,
-            &mut warnings,
-        );
-        load_definitions(
-            &resources.join("extruders"),
-            true,
-            &mut definitions,
-            &mut warnings,
-        );
+        let (mut instances, mut materials) =
+            if let Ok(Some(snapshot)) = crate::catalog_cache::load_cura_snapshot(
+                &paths.cura,
+                &paths.materials,
+                &resources,
+            ) {
+                definitions = snapshot.definitions;
+                (snapshot.instances, snapshot.materials)
+            } else {
+                load_definitions(
+                    &resources.join("definitions"),
+                    false,
+                    &mut definitions,
+                    &mut warnings,
+                );
+                load_definitions(
+                    &resources.join("extruders"),
+                    true,
+                    &mut definitions,
+                    &mut warnings,
+                );
+                let mut instances = Vec::new();
+                for folder in ["quality", "variants", "intent"] {
+                    load_instances(&resources.join(folder), &mut instances, &mut warnings);
+                }
+                let mut materials = Vec::new();
+                load_materials(&paths.materials, &mut materials, &mut warnings);
+                crate::catalog_cache::store_cura_snapshot(
+                    paths.cura.clone(),
+                    paths.materials.clone(),
+                    resources.clone(),
+                    &definitions,
+                    &instances,
+                    &materials,
+                );
+                (instances, materials)
+            };
         if !definitions.contains_key("fdmprinter") {
             return Err(Error::message(format!(
                 "fdmprinter.def.json is missing under {}",
                 resources.display()
             )));
         }
-        let (mut instances, mut materials) = if let Ok(Some((cached_instances, cached_materials))) =
-            crate::catalog_cache::load_cura_extras(&paths.cura, &paths.materials, &resources)
-        {
-            (cached_instances, cached_materials)
-        } else {
-            let mut instances = Vec::new();
-            for folder in ["quality", "variants", "intent"] {
-                load_instances(&resources.join(folder), &mut instances, &mut warnings);
-            }
-            let mut materials = Vec::new();
-            load_materials(&paths.materials, &mut materials, &mut warnings);
-            crate::catalog_cache::store_cura_extras_async(
-                paths.cura.clone(),
-                paths.materials.clone(),
-                resources.clone(),
-                instances.clone(),
-                materials.clone(),
-            );
-            (instances, materials)
-        };
         // Bambu Studio's own tree is a second, independent profile library. Its
         // entries are converted into the same shapes Cura's resources produce,
         // so variants, qualities, materials and the resolver need no special
@@ -1015,71 +1049,93 @@ fn load_definitions(
     into: &mut HashMap<String, Definition>,
     warnings: &mut Vec<String>,
 ) {
+    use rayon::prelude::*;
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(_) => return,
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if !name.ends_with(".def.json") {
-            continue;
-        }
-        match definition::load_definition(&path, extruder) {
-            Ok(definition) => {
-                into.insert(definition.id.clone(), definition);
-            }
-            Err(err) => warnings.push(err.to_string()),
-        }
+    let paths: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".def.json"))
+        })
+        .collect();
+    let loaded: Vec<(String, Definition)> = paths
+        .par_iter()
+        .filter_map(|path| {
+            definition::load_definition(path, extruder)
+                .ok()
+                .map(|definition| (definition.id.clone(), definition))
+        })
+        .collect();
+    for (id, definition) in loaded {
+        into.insert(id, definition);
+    }
+    if loaded.len() < paths.len() && warnings.len() < 40 {
+        warnings.push(format!(
+            "some definition files under {} could not be read",
+            dir.display()
+        ));
     }
 }
 
 fn load_instances(dir: &Path, into: &mut Vec<InstanceFile>, warnings: &mut Vec<String>) {
+    use rayon::prelude::*;
     let mut files = Vec::new();
     collect_files(dir, &mut files);
-    for path in files {
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if !name.ends_with(".cfg") {
-            continue;
-        }
-        match instance::load_instance(&path) {
-            Ok(instance) => into.push(instance),
-            Err(err) => {
-                if warnings.len() < 40 {
-                    warnings.push(err.to_string());
-                }
+    let mut loaded: Vec<InstanceFile> = files
+        .par_iter()
+        .filter_map(|path| {
+            if !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".cfg"))
+            {
+                return None;
             }
-        }
+            instance::load_instance(path).ok()
+        })
+        .collect();
+    if loaded.len() < files.len() && warnings.len() < 40 {
+        warnings.push(format!(
+            "some instance files under {} could not be read",
+            dir.display()
+        ));
     }
+    into.append(&mut loaded);
 }
 
 fn load_materials(dir: &Path, into: &mut Vec<Material>, warnings: &mut Vec<String>) {
+    use rayon::prelude::*;
     let mut files = Vec::new();
     collect_files(dir, &mut files);
     if files.is_empty() {
         warnings.push(format!("materials: nothing under {}", dir.display()));
         return;
     }
-    for path in files {
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if !name.ends_with(".fdm_material") {
-            continue;
-        }
-        match material::load_material(&path) {
-            Ok(material) => into.push(material),
-            Err(err) => {
-                if warnings.len() < 40 {
-                    warnings.push(err.to_string());
-                }
+    let mut loaded: Vec<Material> = files
+        .par_iter()
+        .filter_map(|path| {
+            if !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".fdm_material"))
+            {
+                return None;
             }
-        }
+            material::load_material(path).ok()
+        })
+        .collect();
+    if loaded.len() < files.len() && warnings.len() < 40 {
+        warnings.push(format!(
+            "some material files under {} could not be read",
+            dir.display()
+        ));
     }
+    into.append(&mut loaded);
 }
 
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
