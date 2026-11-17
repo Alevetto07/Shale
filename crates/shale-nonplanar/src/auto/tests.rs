@@ -182,9 +182,13 @@ mod auto_placement {
             .into_iter()
             .find(|s| s.id == surface.id)
             .expect("surface in report");
-        let measured = band
+        let measured_vert = band
             .overhang_angle_measured_after_deg
-            .expect("measured after angle");
+            .expect("measured angle from vertical");
+        let measured_slope = band
+            .overhang_slope_measured_from_horizontal_deg
+            .expect("measured slope from horizontal");
+        use crate::pipeline::max_extrusion_slope_in_box;
         let slope = max_underside_band_slope_deg(
             &mapped,
             surface.min,
@@ -192,15 +196,33 @@ mod auto_placement {
             surface.bearing_deg,
             8,
         )
+        .or_else(|| max_extrusion_slope_in_box(&mapped, surface.min, surface.max))
         .unwrap_or(0.0);
         assert!(
-            slope >= 2.0,
-            "mapped gcode should show ≥2° along-bearing slope (saw {slope:.2}°)"
+            (slope - measured_slope).abs() < 0.05,
+            "reported slope {measured_slope:.2}° should match scanner {slope:.2}°"
         );
         assert!(
-            measured < band.overhang_angle_before_deg.unwrap() - 3.0,
-            "measured overhang {measured:.1}° should be below before {:.1}°",
+            slope >= 2.0 && slope <= opts.max_angle_deg + 0.6,
+            "mapped gcode slope should be 2–{:.1}° (saw {slope:.2}°)",
+            opts.max_angle_deg + 0.6
+        );
+        assert!(
+            (90.0 - measured_slope - measured_vert).abs() < 0.05,
+            "vertical {measured_vert:.1}° must equal 90° − slope {measured_slope:.1}°"
+        );
+        assert!(
+            measured_vert < band.overhang_angle_before_deg.unwrap() - 3.0,
+            "measured overhang {measured_vert:.1}° should be below before {:.1}°",
             band.overhang_angle_before_deg.unwrap()
+        );
+        use crate::safety::max_curved_band_extrusion_slope_deg;
+        let global_cap = max_curved_band_extrusion_slope_deg(&mapped, &field)
+            .unwrap_or(0.0);
+        assert!(
+            global_cap <= opts.max_angle_deg + 0.6,
+            "curved-band safety scanner should match PR #18 cap ({global_cap:.2}° > {:.1}°)",
+            opts.max_angle_deg + 0.6
         );
     }
 

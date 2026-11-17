@@ -36,9 +36,12 @@ pub struct PlannedSurface {
     pub overhang_angle_before_deg: Option<f64>,
     /// Planner estimate (before minus applied tilt); not remeasured from G-code.
     pub overhang_angle_after_deg: Option<f64>,
-    /// Filled after slice when post-pass can read mapped toolpaths in the band.
+    /// Filled after slice: angle from vertical (same unit as before/after_planned).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overhang_angle_measured_after_deg: Option<f64>,
+    /// Max consecutive extrusion slope in the band (degrees from horizontal).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overhang_slope_measured_from_horizontal_deg: Option<f64>,
     pub reason: String,
 }
 
@@ -199,6 +202,7 @@ fn push_top_band(
         overhang_angle_before_deg: feature.overhang_angle_before_deg,
         overhang_angle_after_deg: feature.overhang_angle_after_deg,
         overhang_angle_measured_after_deg: None,
+        overhang_slope_measured_from_horizontal_deg: None,
         reason,
     });
     *next_surface += 1;
@@ -232,6 +236,7 @@ fn plan_underside(
             overhang_angle_before_deg: Some(before),
             overhang_angle_after_deg: Some(before),
             overhang_angle_measured_after_deg: None,
+            overhang_slope_measured_from_horizontal_deg: None,
             reason: format!(
                 "shallow underside {before:.1}° — planar fallback"
             ),
@@ -247,15 +252,20 @@ fn plan_underside(
     } else {
         before
     };
+    let span_hint = if feature.overhang_angle_before_deg.is_some() {
+        " — support-span target; tilt is measurable only when underside skin extrusions fall inside this band"
+    } else {
+        ""
+    };
     let reason = if enabled {
         format!(
-            "{}: tilt {:.1}° along span, overhang {before:.1}°→{after:.1}°",
+            "{}: tilt {:.1}° along span, overhang {before:.1}°→{after:.1}°{span_hint}",
             feature.kind.name(),
             tilt,
         )
     } else {
         format!(
-            "{}: cannot reduce overhang under cap ({before:.1}°)",
+            "{}: cannot reduce overhang under cap ({before:.1}°){span_hint}",
             feature.kind.name()
         )
     };
@@ -279,6 +289,7 @@ fn plan_underside(
         overhang_angle_before_deg: Some(before),
         overhang_angle_after_deg: Some(after),
         overhang_angle_measured_after_deg: None,
+        overhang_slope_measured_from_horizontal_deg: None,
         reason,
     });
     *next_surface += 1;

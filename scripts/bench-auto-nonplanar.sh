@@ -56,7 +56,8 @@ metrics_from_auto_json() {
           kind: (.kind | gsub("_tilt_band"; "") | gsub("_"; " ")),
           before: .overhang_angle_before_deg,
           after_planned: .overhang_angle_after_deg,
-          after_measured: .overhang_angle_measured_after_deg
+          after_measured_from_vertical: .overhang_angle_measured_after_deg,
+          measured_slope_from_horizontal_deg: .overhang_slope_measured_from_horizontal_deg
         }
       ];
     {
@@ -71,8 +72,11 @@ metrics_from_auto_json() {
             (if .after_planned != null then
               "\(.kind) \(.before | . * 10 | round / 10)°→plan \(.after_planned | . * 10 | round / 10)°"
             else empty end)
-            + (if .after_measured != null then
-              " / gcode \(.after_measured | . * 10 | round / 10)°"
+            + (if .after_measured_from_vertical != null then
+              " / gcode vert \(.after_measured_from_vertical | . * 10 | round / 10)°"
+            else "" end)
+            + (if .measured_slope_from_horizontal_deg != null then
+              " (slope \(.measured_slope_from_horizontal_deg | . * 10 | round / 10)°)"
             else "" end)
           else empty end
         ) | join("; ")
