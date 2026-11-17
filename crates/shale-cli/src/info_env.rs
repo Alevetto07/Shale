@@ -61,10 +61,6 @@ fn cura_engine_not_found_hint() -> &'static str {
     "set SHALE_CURAENGINE to the CuraEngine binary, or install UltiMaker Cura 5.x"
 }
 
-pub fn cura_resources_path() -> EnvPath {
-    cura_resources_path_from(&ResourcePaths::discover())
-}
-
 pub fn cura_resources_path_from(discovered: &Result<ResourcePaths, Error>) -> EnvPath {
     if let Ok(path) = std::env::var("SHALE_CURA_DIR") {
         return EnvPath::Set(path);
@@ -73,10 +69,6 @@ pub fn cura_resources_path_from(discovered: &Result<ResourcePaths, Error>) -> En
         Ok(paths) => EnvPath::AutoDetected(paths.cura.display().to_string()),
         Err(_) => EnvPath::NotFound(cura_catalog_not_found_hint()),
     }
-}
-
-pub fn materials_path() -> EnvPath {
-    materials_path_from(&ResourcePaths::discover())
 }
 
 pub fn materials_path_from(discovered: &Result<ResourcePaths, Error>) -> EnvPath {
