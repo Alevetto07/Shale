@@ -133,9 +133,16 @@ fn fill_measured_overhang_angles(gcode: &str, plan: &mut crate::auto::AutoPlacem
         if !underside {
             continue;
         }
-        surface.overhang_angle_measured_after_deg =
-            max_extrusion_slope_in_box(gcode, surface.min, surface.max)
-                .map(|slope| (90.0 - slope).clamp(0.0, 90.0));
+        let in_box = max_extrusion_slope_in_box(gcode, surface.min, surface.max);
+        let above = max_extrusion_slope_above_z(gcode, surface.min[2] - 1e-3);
+        let slope = match (in_box, above) {
+            (Some(a), Some(b)) => a.max(b),
+            (Some(a), None) => a,
+            (None, Some(b)) => b,
+            (None, None) => 0.0,
+        };
+        surface.overhang_angle_measured_after_deg = (slope > 0.25)
+            .then(|| (90.0 - slope).clamp(0.0, 90.0));
     }
 }
 
