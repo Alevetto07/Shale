@@ -145,13 +145,65 @@ pub fn render_sequence(
         ("current_nozzle_id", 0.0),
         ("current_extruder", 0.0),
         ("current_filament_id", 0.0),
+        ("initial_nozzle_id", 0.0),
         ("initial_no_support_extruder", 0.0),
+        ("initial_no_support_filament_id", 0.0),
+        ("initial_no_support_hotend", 0.0),
+        ("cooling_filter_enabled", 0.0),
+        ("next_hotend", 0.0),
+        ("next_filament_id", 0.0),
         ("toolchange_count", 0.0),
         ("wipe_tower_center_pos_valid", 0.0),
+        ("hold_chamber_temp_for_flat_print", 0.0),
+        ("support_chamber_temp_control", 0.0),
+        ("support_air_filtration", 0.0),
+        ("layer_num", 0.0),
     ] {
         if values.get(name).is_none() {
             values.set(name, default);
         }
+    }
+    if values.get("activate_air_filtration").is_none() {
+        let slots = resolved.extruders.len().max(1);
+        values.set_list(
+            "activate_air_filtration",
+            vec![Value::Num(0.0); slots],
+        );
+    }
+    let tool_slots = resolved.extruders.len().max(2);
+    if values.get("filament_map").is_none() {
+        values.set_list("filament_map", vec![Value::Num(0.0); tool_slots]);
+    }
+    if values.get("first_filaments").is_none() {
+        values.set_list("first_filaments", vec![Value::Num(0.0); tool_slots]);
+    }
+    if values.get("first_non_support_filaments").is_none() {
+        values.set_list(
+            "first_non_support_filaments",
+            vec![Value::Num(-1.0); tool_slots],
+        );
+    }
+    if values.get("filament_diameter").is_none() {
+        let diam = resolved
+            .global
+            .get("material_diameter")
+            .and_then(|text| text.parse::<f64>().ok())
+            .unwrap_or(1.75);
+        values.set_list(
+            "filament_diameter",
+            vec![Value::Num(diam); tool_slots],
+        );
+    }
+    if values.get("filament_max_volumetric_speed").is_none() {
+        let default_speed = resolved
+            .global
+            .get("material_max_volumetric_speed")
+            .and_then(|text| text.parse::<f64>().ok())
+            .unwrap_or(15.0);
+        values.set_list(
+            "filament_max_volumetric_speed",
+            vec![Value::Num(default_speed); tool_slots],
+        );
     }
     let mut lists: std::collections::BTreeMap<String, Vec<Value>> =
         std::collections::BTreeMap::new();
@@ -374,7 +426,29 @@ pub fn render_sequence(
             ],
         );
     }
+    if values.get("max_print_z").is_none() {
+        let height = if max[2].is_finite() && min[0].is_finite() {
+            max[2]
+        } else {
+            resolved
+                .global
+                .get("machine_height")
+                .and_then(|text| text.parse::<f64>().ok())
+                .unwrap_or(resolved.summary.machine_height)
+        };
+        values.set("max_print_z", height);
+    }
+    if values.get("max_layer_z").is_none() {
+        let z = if max[2].is_finite() && min[0].is_finite() {
+            max[2]
+        } else {
+            0.0
+        };
+        values.set("max_layer_z", z);
+    }
 
+    template::ensure_runtime_scalar_defaults(&gcode.start, &mut values)?;
+    template::ensure_runtime_scalar_defaults(&gcode.end, &mut values)?;
     let start = template::render(&gcode.start, &values)?;
     let end = template::render(&gcode.end, &values)?;
     Ok((start, end))

@@ -1367,8 +1367,8 @@ mod tests {
             "missing chamber scalar: {scalars:?}"
         );
         assert!(
-            scalars.get("retraction_length").is_some()
-                || scalars.get("default_acceleration").is_some(),
+            scalars.contains_key("retraction_length")
+                || scalars.contains_key("default_acceleration"),
             "expected process scalars: {scalars:?}"
         );
     }
