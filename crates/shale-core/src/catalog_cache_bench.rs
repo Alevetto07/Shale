@@ -53,7 +53,7 @@ mod tests {
         ] {
             if dir.is_dir() {
                 let mut perms = fs::metadata(&dir).expect("metadata").permissions();
-                perms.set_mode(0);
+                perms.set_mode(0o0);
                 let _ = fs::set_permissions(&dir, perms);
             }
         }
