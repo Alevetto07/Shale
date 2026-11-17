@@ -284,6 +284,14 @@ pub fn render_sequence(
             .unwrap_or("0");
         values.set_setting("scan_first_layer", scan);
     }
+    for (name, default) in [
+        ("overall_chamber_temperature", "0"),
+        ("chamber_temperature", "0"),
+    ] {
+        if values.get(name).is_none() {
+            values.set_setting(name, default);
+        }
+    }
     for &(bambu, cura) in bambu_cura_template_aliases() {
         if values.get(bambu).is_none() {
             let text = resolved
