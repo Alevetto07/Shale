@@ -3628,6 +3628,7 @@ dependencies = [
 name = "shale-cli"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "shale-core",
 ]
 

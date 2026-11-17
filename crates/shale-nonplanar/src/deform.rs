@@ -40,7 +40,11 @@ impl DeformField {
             .sample_top_smooth(x, y)
             .unwrap_or(self.deformed_top_z);
         let strength = self.island_strength_at(x, y);
-        Some((z_band, h_top, strength, self.deformed_top_z))
+        let flat_top = self
+            .grid
+            .sample_deform_flat(x, y)
+            .unwrap_or(self.deformed_top_z);
+        Some((z_band, h_top, strength, flat_top))
     }
 
     /// True when this G-code point lies in the curved-top shell (deformed coordinates).
@@ -60,6 +64,13 @@ impl DeformField {
         let Some((z_band, h_top, strength, flat_top)) = self.column_limits(x, y) else {
             return z;
         };
+        if self
+            .grid
+            .sample_deform_cap(x, y)
+            .is_some_and(|cap| z > cap + 1e-9)
+        {
+            return z;
+        }
         if strength <= 0.0 || z <= z_band {
             return z;
         }
@@ -102,6 +113,16 @@ impl DeformField {
         };
         if strength <= 0.0 || z_deformed <= z_band + 1e-12 {
             return z_deformed;
+        }
+        if let Some(cap) = self.grid.sample_deform_cap(x, y) {
+            let phys_est = if z_deformed <= h_top + 1e-9 {
+                z_deformed
+            } else {
+                z_deformed - (flat_top - h_top) * strength
+            };
+            if phys_est > cap + 1e-9 {
+                return z_deformed;
+            }
         }
         let wall_shift = (flat_top - h_top) * strength;
         let f_top = h_top + wall_shift;

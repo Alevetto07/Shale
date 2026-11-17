@@ -374,6 +374,24 @@ impl Session {
         Ok(supports::analyse(&baked, &params))
     }
 
+    /// Detect features and plan non-planar surface bands without slicing. Returns
+    /// preview geometry for UI overlays plus an explainable placement report.
+    pub fn plan_nonplanar_auto(
+        &self,
+        model_id: u32,
+    ) -> Result<shale_nonplanar::AutoPlacementReport, Error> {
+        let model = self.model(model_id)?;
+        let baked = mesh::bake(&model.mesh, &model.transform);
+        let np = crate::nonplanar_bridge::to_nonplanar(&baked);
+        let layer_height = self.settings.layer_height.unwrap_or(0.2);
+        let options = self.settings.nonplanar.clone();
+        let analysis = crate::auto_spans::analyse_for_nonplanar(&baked);
+        let spans = crate::auto_spans::spans_for_auto(&analysis.spans);
+        Ok(shale_nonplanar::plan_auto_placement(
+            &np, &spans, &options, layer_height,
+        ))
+    }
+
     pub fn propose_supports(
         &mut self,
         model_id: u32,

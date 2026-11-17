@@ -33,7 +33,7 @@ install -m 755 "$ENGINE" "$DEST/CuraEngine.bin"
 
 # The AppImage ships a relative ELF interpreter (lib64/ld-linux-x86-64.so.2); run via the system loader.
 cat > "$DEST/CuraEngine" <<WRAP
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 export LD_LIBRARY_PATH="${LIBDIR}:\${LD_LIBRARY_PATH:-}"
 exec /lib64/ld-linux-x86-64.so.2 "${DEST}/CuraEngine.bin" "\$@"
