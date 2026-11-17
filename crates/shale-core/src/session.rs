@@ -5,6 +5,7 @@
 //! slicer beside it.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +18,8 @@ use crate::job::{self, PlacedModel, SliceOutcome};
 use crate::mesh::{self, Transform, TriangleMesh};
 use crate::resolver::{ResolveRequest, ResolvedSettings, UserSettings};
 use crate::supports::{self, SupportParams, SupportPlan};
+
+static SLICE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ModelRecord {
@@ -435,9 +438,10 @@ impl Session {
             .iter()
             .map(|(_, instruction)| instruction.clone())
             .collect();
+        let stamp = SLICE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let output = std::env::temp_dir()
             .join("shale")
-            .join(format!("mcp-{}.gcode", std::process::id()));
+            .join(format!("mcp-{}-{}.gcode", std::process::id(), stamp));
         let outcome = job::slice(
             &self.catalog,
             self.engine.as_ref(),
