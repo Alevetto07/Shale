@@ -20,6 +20,13 @@ use std::sync::RwLock;
 
 static SESSION_LIBRARY: RwLock<Option<(PathBuf, Library)>> = RwLock::new(None);
 
+/// Drop the in-memory Bambu library after imported profiles change.
+pub fn invalidate_session_library() {
+    if let Ok(mut guard) = SESSION_LIBRARY.write() {
+        *guard = None;
+    }
+}
+
 #[cfg(test)]
 static TEST_PROFILES_ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
 
@@ -118,16 +125,28 @@ impl Library {
             }
         }
         if let Some(library) = load_bambu_library(&root) {
+            let library = Self::apply_imported_overlay(library);
             if let Ok(mut guard) = SESSION_LIBRARY.write() {
                 *guard = Some((root.clone(), library.clone()));
             }
             return library;
         }
-        let library = Self::from_root(Some(root.clone()));
+        let library = Self::apply_imported_overlay(Self::from_root(Some(root.clone())));
         if let Ok(mut guard) = SESSION_LIBRARY.write() {
             *guard = Some((root.clone(), library.clone()));
         }
         store_bambu_library_async(root, library.clone());
+        library
+    }
+
+    fn apply_imported_overlay(mut library: Self) -> Self {
+        let Some(overlay_root) = imported_profiles_root() else {
+            return library;
+        };
+        if !overlay_root.is_dir() {
+            return library;
+        }
+        library.merge(Self::from_root(Some(overlay_root)));
         library
     }
 
@@ -433,6 +452,89 @@ fn resolve_chain(
     merge_json(&mut merged, value);
     memo.insert(stem.to_string(), merged.clone());
     Some(merged)
+}
+
+/// Build a lowercase stem → parsed JSON map from every `.json` file under `dirs`.
+pub fn raw_profile_index(dirs: &[Path]) -> HashMap<String, Json> {
+    let mut index: HashMap<String, PathBuf> = HashMap::new();
+    for dir in dirs {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            if stem.contains(" template ") {
+                continue;
+            }
+            index.insert(stem.to_ascii_lowercase(), path);
+        }
+    }
+    index
+        .par_iter()
+        .filter_map(|(lower, path)| {
+            use std::fs::File;
+            use std::io::BufReader;
+            let file = File::open(path).ok()?;
+            let reader = BufReader::new(file);
+            let value: Json = serde_json::from_reader(reader).ok()?;
+            Some((lower.clone(), value))
+        })
+        .collect()
+}
+
+/// Merge a preset's `inherits` chain using JSON libraries found under `lookup_dirs`.
+pub fn flatten_preset_from_dirs(
+    preset_path: &Path,
+    lookup_dirs: &[PathBuf],
+) -> Result<Json, String> {
+    let stem = preset_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| "preset file has no name".to_string())?;
+    let lower = stem.to_ascii_lowercase();
+    let mut dirs: Vec<PathBuf> = lookup_dirs.to_vec();
+    if let Some(parent) = preset_path.parent() {
+        dirs.push(parent.to_path_buf());
+    }
+    let dir_refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+    let mut raw = raw_profile_index(&dir_refs);
+    if !raw.contains_key(&lower) {
+        let text = std::fs::read_to_string(preset_path)
+            .map_err(|err| format!("read {}: {err}", preset_path.display()))?;
+        let value: Json =
+            serde_json::from_str(&text).map_err(|err| format!("json in {}: {err}", preset_path.display()))?;
+        raw.insert(lower.clone(), value);
+    }
+    let mut memo = HashMap::new();
+    resolve_chain(&raw, &mut memo, &lower, 0)
+        .ok_or_else(|| format!("could not resolve inherits for `{stem}`"))
+}
+
+/// Optional overlay tree written by slicer import (`…/imported-profiles`).
+pub fn imported_profiles_root() -> Option<PathBuf> {
+    std::env::var_os("SHALE_IMPORTED_PROFILES").map(PathBuf::from)
+}
+
+impl Library {
+    /// Append another library's entries, skipping definition ids that already exist.
+    pub fn merge(&mut self, other: Library) {
+        let existing: HashSet<String> = self.definitions.iter().map(|d| d.id.clone()).collect();
+        for definition in other.definitions {
+            if existing.contains(&definition.id) {
+                continue;
+            }
+            self.definitions.push(definition);
+        }
+        self.instances.extend(other.instances);
+        self.materials.extend(other.materials);
+        self.gcode.extend(other.gcode);
+    }
 }
 
 fn merge_json(into: &mut Json, from: &Json) {

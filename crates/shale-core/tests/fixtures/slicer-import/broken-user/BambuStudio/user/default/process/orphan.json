@@ -1,0 +1,6 @@
+{
+  "type": "process",
+  "name": "Orphan",
+  "inherits": "does_not_exist",
+  "layer_height": "0.3"
+}

@@ -1,0 +1,6 @@
+{
+  "type": "process",
+  "name": "Base",
+  "layer_height": "0.2",
+  "wall_loops": "2"
+}

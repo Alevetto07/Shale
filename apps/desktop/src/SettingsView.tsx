@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { PrinterInfo } from "./api";
 import { CloudPanel } from "./CloudPanel";
-import { detectSlicerInstalls, type SlicerInstall } from "./slicer-import";
+import { SlicerImportPanel } from "./SlicerImportPanel";
 import { filterSections, SETTINGS_SECTIONS, type SettingsSectionId } from "./settings/settings-layout";
 import { resetSetupWizard } from "./setup-wizard";
 import { UiStylePicker } from "./UiStylePicker";
@@ -44,8 +44,6 @@ export function SettingsView({
   const [section, setSection] = useState<SettingsSectionId>("general");
   const [query, setQuery] = useState("");
   const [printerQuery, setPrinterQuery] = useState("");
-  const [slicers, setSlicers] = useState<SlicerInstall[] | null>(null);
-  const [importNote, setImportNote] = useState<string | null>(null);
 
   const sections = useMemo(() => filterSections(query), [query]);
 
@@ -63,15 +61,6 @@ export function SettingsView({
       )
       .slice(0, 60);
   }, [printerQuery, printers]);
-
-  async function loadSlicers() {
-    try {
-      setSlicers(await detectSlicerInstalls());
-      setImportNote(null);
-    } catch (err) {
-      setImportNote(String(err));
-    }
-  }
 
   const active = sections.find((item) => item.id === section) ?? sections[0] ?? SETTINGS_SECTIONS[0];
 
@@ -184,32 +173,7 @@ export function SettingsView({
 
         {section === "import" && (
           <div className="settings-group">
-            <p className="hint">
-              Shale reads other slicer trees on this machine and reports how many JSON presets were
-              found. Automatic conversion is limited to Shale-compatible process JSON.
-            </p>
-            <button type="button" onClick={() => void loadSlicers()}>
-              Scan for installed slicers
-            </button>
-            {importNote ? <p className="hint">{importNote}</p> : null}
-            {slicers && (
-              <ul className="slicer-detect-list">
-                {slicers.map((row) => (
-                  <li key={row.id}>
-                    <strong>{row.label}</strong>
-                    {row.found ? (
-                      <span>
-                        {" "}
-                        — {row.printers} printers, {row.filaments} filaments, {row.processes}{" "}
-                        processes
-                      </span>
-                    ) : (
-                      <span className="dim"> — not found</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
+            <SlicerImportPanel compact onImported={() => undefined} />
           </div>
         )}
 

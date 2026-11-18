@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { PrinterInfo } from "./api";
 import { CloudPanel } from "./CloudPanel";
-import { detectSlicerInstalls, type SlicerInstall } from "./slicer-import";
+import { SlicerImportPanel } from "./SlicerImportPanel";
 import {
   completeSetupWizard,
   markStepSkipped,
@@ -37,7 +37,6 @@ export function SetupWizard({
   onClose: () => void;
 }) {
   const [index, setIndex] = useState(0);
-  const [slicers, setSlicers] = useState<SlicerInstall[] | null>(null);
   const [printerQuery, setPrinterQuery] = useState("");
 
   const step = STEPS[index] ?? STEPS[0];
@@ -45,7 +44,6 @@ export function SetupWizard({
   useEffect(() => {
     if (!open) {
       setIndex(0);
-      setSlicers(null);
     }
   }, [open]);
 
@@ -144,30 +142,7 @@ export function SetupWizard({
           </>
         );
       case "import":
-        return (
-          <>
-            <button type="button" onClick={() => void detectSlicerInstalls().then(setSlicers)}>
-              Scan this computer
-            </button>
-            {slicers && (
-              <ul className="slicer-detect-list">
-                {slicers.map((row) => (
-                  <li key={row.id}>
-                    <strong>{row.label}</strong>
-                    {row.found ? (
-                      <span>
-                        {" "}
-                        — {row.printers + row.filaments + row.processes} JSON presets found
-                      </span>
-                    ) : (
-                      <span className="dim"> — not installed</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
-        );
+        return <SlicerImportPanel compact defaultSlicerId="bambu" />;
       case "account":
         return <CloudPanel taskName="setup" />;
       case "done":

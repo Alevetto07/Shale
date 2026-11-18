@@ -3941,6 +3941,31 @@ fn slicer_detect() -> Vec<shale_core::slicer_import::SlicerInstall> {
 }
 
 #[tauri::command]
+fn slicer_list_presets(slicer_id: String) -> Result<Vec<shale_core::slicer_import::PresetOffer>, String> {
+    shale_core::slicer_import::list_preset_offers(&slicer_id)
+}
+
+#[tauri::command]
+fn slicer_import_presets(
+    app: AppHandle,
+    slicer_id: String,
+    paths: Vec<String>,
+) -> Result<shale_core::slicer_import::SlicerImportReport, String> {
+    let imported = config_dir(&app)?.join("imported-profiles");
+    std::fs::create_dir_all(&imported).map_err(|e| e.to_string())?;
+    std::env::set_var("SHALE_IMPORTED_PROFILES", &imported);
+    let report = shale_core::slicer_import::import_presets(
+        &slicer_id,
+        &paths,
+        &imported,
+        &preset_dir(&app)?,
+    )?;
+    shale_core::bambu::invalidate_session_library();
+    let _ = app.emit("catalogue", ());
+    Ok(report)
+}
+
+#[tauri::command]
 fn cost_settings(app: AppHandle) -> Result<shale_core::cost::CostSettings, String> {
     let dir = config_dir(&app)?;
     let path = dir.join("cost.json");
@@ -4783,6 +4808,11 @@ pub fn run() {
         // command, so no command ever blocks on the disk. When it lands, the
         // window is told and asks for the printer list again.
         .setup(move |app| {
+            if let Ok(dir) = config_dir(&app.handle()) {
+                let imported = dir.join("imported-profiles");
+                let _ = std::fs::create_dir_all(&imported);
+                std::env::set_var("SHALE_IMPORTED_PROFILES", &imported);
+            }
             shale_core::remove_legacy_catalog_cache();
             if let Some(window) = app.get_webview_window("main") {
                 fit_window_to_monitor(&window);
@@ -4841,6 +4871,8 @@ pub fn run() {
             preset_export,
             preset_import,
             slicer_detect,
+            slicer_list_presets,
+            slicer_import_presets,
             cost_settings,
             set_cost_settings,
             cost_estimate,
