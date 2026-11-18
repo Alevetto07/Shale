@@ -35,7 +35,16 @@ for (const vp of viewports) {
       console.warn(`Missing ${section.selector}`);
       continue;
     }
-    await el.scrollIntoViewIfNeeded();
+    const headerPad = 88;
+    await page.evaluate(
+      ({ sel, pad }) => {
+        const node = document.querySelector(sel);
+        if (!node) return;
+        const y = node.getBoundingClientRect().top + window.scrollY - pad;
+        window.scrollTo({ top: Math.max(0, y), behavior: "instant" });
+      },
+      { sel: section.selector, pad: headerPad },
+    );
     await page.waitForTimeout(section.wait);
     const path = join(outDir, `${section.id}-${vp.tag}.png`);
     await el.screenshot({ path });

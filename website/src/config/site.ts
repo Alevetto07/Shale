@@ -105,44 +105,79 @@ export function launchStatLine(): string {
   return `${launchBenchmarks.shaleUsableWarmLabel} warm · ${launchBenchmarks.shaleUsableColdLabel} cold. Other slicers: ${launchBenchmarks.competitorRangeLabel}.`;
 }
 
-export const features = [
+export type FeatureTile =
+  | {
+      id: string;
+      kind: "launch";
+      title: string;
+      body: string;
+    }
+  | {
+      id: string;
+      kind: "visual";
+      title: string;
+      body: string;
+      image: string;
+      imageAlt: string;
+    }
+  | {
+      id: string;
+      kind: "mini";
+      title: string;
+      body: string;
+      mini: "cli" | "shale-file";
+    };
+
+/** Fixed 3×2 grid — each tile carries a visual, stat, or mini UI. */
+export const featureTiles: FeatureTile[] = [
   {
-    id: "account",
-    title: "Your Bambu account, built in",
-    body: "Sign in, see the printers on your account, and manage them from Home — the same workflow you know from Bambu Studio, without switching apps.",
-    span: "wide" as const,
+    id: "fast",
+    kind: "launch",
+    title: "Usable workspace",
+    body: "Launch to the main window on this build — warm repeat vs uncached first open.",
   },
   {
-    id: "send",
-    title: "Send when you are ready",
-    body: "Push a sliced plate over the LAN or through the cloud after sign-in. Shale never starts a print until you press send.",
-    span: "normal" as const,
+    id: "account",
+    kind: "visual",
+    title: "Your Bambu account",
+    body: "Sign in and manage printers from Home — the same flow as Bambu Studio.",
+    image: "/media/device-lan-1920x1080.png",
+    imageAlt: "Device workspace with a live LAN printer",
   },
   {
     id: "presets",
-    title: "Studio presets, day one",
-    body: "Machines, processes and filaments come from Bambu Studio's profiles — not a hand-rolled shortcut list.",
-    span: "normal" as const,
+    kind: "visual",
+    title: "Studio presets",
+    body: "Machines, processes and filaments from Bambu Studio profiles — not a shortcut list.",
+    image: "/media/prepare-1920x1080.png",
+    imageAlt: "Prepare workspace with Bambu process settings",
   },
   {
-    id: "fast",
-    title: "Usable in under a second",
-    body: launchComparisonSentence(),
-    span: "wide" as const,
+    id: "send",
+    kind: "visual",
+    title: "Send when you are ready",
+    body: "LAN or cloud after sign-in. Shale never starts a print until you press send.",
+    image: "/media/preview-1920x1080.png",
+    imageAlt: "Preview workspace with layer toolpaths",
   },
   {
     id: "headless",
+    kind: "mini",
     title: "Script it or agent it",
-    body: "The same slicer core runs headless: `shale-cli` in a terminal, `shale-mcp` for AI agents — on a full desktop or a small Linux board.",
-    span: "normal" as const,
+    body: "`shale-cli` in a terminal, `shale-mcp` for agents — same core on desktop or a small board.",
+    mini: "cli",
   },
   {
     id: "projects",
+    kind: "mini",
     title: "Projects that stay yours",
-    body: "Plates, settings and layouts live in `.shale` files you can back up, share and reopen exactly as you left them.",
-    span: "normal" as const,
+    body: "Plates, settings and layouts in `.shale` files you can back up and reopen.",
+    mini: "shale-file",
   },
-] as const;
+];
+
+/** @deprecated Use featureTiles — kept for typing in older imports */
+export const features = featureTiles;
 
 export const comingNext = [
   {

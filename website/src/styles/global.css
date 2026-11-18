@@ -29,10 +29,11 @@
     "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --display: var(--sans);
 
-  --max: 1080px;
+  --max: 1180px;
   --radius: 10px;
-  --radius-lg: 14px;
+  --radius-lg: 16px;
   --header-h: 3.25rem;
+  --scroll-pad: calc(var(--header-h) + 1.5rem);
 
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-medium: 0.55s;
@@ -46,7 +47,7 @@
 
 html {
   scroll-behavior: smooth;
-  scroll-padding-top: calc(var(--header-h) + 0.75rem);
+  scroll-padding-top: var(--scroll-pad);
   text-size-adjust: 100%;
 }
 
@@ -149,17 +150,43 @@ h3 {
 }
 
 section {
-  padding-block: clamp(3.25rem, 7vw, 5.5rem);
+  padding-block: clamp(4rem, 9vw, 6.75rem);
+}
+
+section[id],
+.section-head {
+  scroll-margin-top: var(--scroll-pad);
 }
 
 .section-head {
-  margin-bottom: clamp(1.5rem, 4vw, 2.25rem);
+  margin-bottom: clamp(2rem, 4.5vw, 2.75rem);
+}
+
+.section-head--row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+@media (min-width: 768px) {
+  .section-head--row {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 2rem;
+  }
+
+  .section-head--row p {
+    max-width: 36ch;
+    text-align: right;
+  }
 }
 
 .section-head h2 {
-  margin: 0 0 0.55rem;
-  font-size: clamp(1.6rem, 2.8vw, 2.15rem);
+  margin: 0 0 0.65rem;
+  font-size: clamp(2rem, 4.2vw, 2.85rem);
   font-weight: 600;
+  letter-spacing: -0.035em;
 }
 
 .section-head p {
@@ -168,6 +195,17 @@ section {
   color: var(--ink-2);
   font-size: 1.02rem;
   line-height: 1.5;
+}
+
+.panel {
+  background: rgba(255, 255, 255, 0.035);
+  border-radius: var(--radius-lg);
+  padding: 1.35rem 1.4rem;
+  position: relative;
+}
+
+.panel--lift {
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
 }
 
 /* Solid-glass surfaces: neutral face, finish at the edge */
@@ -291,57 +329,155 @@ pre {
   overflow-x: auto;
 }
 
-/* Bento */
-.bento {
+/* Features — fixed 3×2 product grid */
+.features-grid {
   display: grid;
   gap: 0.85rem;
 }
 
 @media (min-width: 720px) {
-  .bento {
+  .features-grid {
     grid-template-columns: repeat(2, 1fr);
     gap: 1rem;
   }
 }
 
 @media (min-width: 960px) {
-  .bento {
-    grid-template-columns: repeat(6, 1fr);
-    grid-auto-rows: minmax(9.5rem, auto);
-  }
-
-  .bento-item--span-3 {
-    grid-column: span 3;
-  }
-
-  .bento-item--span-2 {
-    grid-column: span 2;
-  }
-
-  .bento-item--row-2 {
-    grid-row: span 2;
+  .features-grid {
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(2, minmax(15.5rem, auto));
+    gap: 1rem;
   }
 }
 
-.bento-item h3 {
-  margin: 0 0 0.45rem;
-  font-size: 1.05rem;
+.feature-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  height: 100%;
+  min-height: 0;
 }
 
-.bento-item p {
+.feature-tile h3 {
   margin: 0;
-  font-size: 0.95rem;
-  line-height: 1.48;
+  font-size: 1.05rem;
+  font-weight: 600;
 }
 
-.bento-kicker {
+.feature-tile p {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+.feature-tile-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.tile-visual-img {
+  margin: auto 0 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  overflow: hidden;
+  aspect-ratio: 16 / 10;
+  background: #030408;
+}
+
+.tile-visual-img img {
   display: block;
-  margin-bottom: 0.65rem;
-  width: 1.75rem;
-  height: 2px;
-  background: var(--accent);
-  border-radius: 1px;
-  opacity: 0.85;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+
+.tile-launch-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem 2rem;
+  margin-top: auto;
+  align-items: flex-end;
+}
+
+.tile-stat-num {
+  font-size: clamp(2.5rem, 5vw, 3.35rem);
+  font-weight: 600;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.tile-stat-num .unit {
+  font-size: 0.45em;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.tile-stat-cap {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--ink-3);
+}
+
+.tile-compare {
+  margin-top: 0.35rem;
+  font-size: 0.88rem;
+  color: var(--ink-3);
+}
+
+.mini-cli {
+  margin-top: auto;
+  padding: 0.75rem 0.85rem;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.45);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--ink-2);
+}
+
+.mini-shale {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.mini-shale-icon {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 8px;
+  background: rgba(126, 184, 255, 0.18);
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--accent);
+}
+
+.mini-shale-name {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--ink);
+}
+
+/* Roadmap bento */
+.bento {
+  display: grid;
+  gap: 1rem;
+}
+
+@media (min-width: 720px) {
+  .bento {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 
 /* Media bento */
@@ -382,15 +518,32 @@ pre {
 }
 
 /* Download grid */
+.section-downloads .section-head {
+  position: relative;
+  z-index: 1;
+}
+
 .download-grid {
   display: grid;
   gap: 1rem;
+  position: relative;
+  z-index: 1;
 }
 
 @media (min-width: 720px) {
   .download-grid {
     grid-template-columns: repeat(3, 1fr);
   }
+}
+
+.download-card {
+  border: none;
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.download-card::before {
+  display: none;
 }
 
 .download-card h3 {
@@ -542,14 +695,15 @@ pre {
 .site-header {
   position: sticky;
   top: 0;
-  z-index: 50;
+  z-index: 40;
   border-bottom: 1px solid transparent;
   transition: border-color 0.2s ease, background 0.2s ease;
+  isolation: isolate;
 }
 
 .site-header.is-scrolled {
   border-bottom-color: var(--line);
-  background: rgba(8, 10, 14, 0.78);
+  background: rgba(8, 10, 14, 0.82);
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
 }

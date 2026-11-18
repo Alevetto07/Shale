@@ -1,7 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import AppFrame from "../components/AppFrame.astro";
-import { AndromedaField } from "../components/AndromedaField";
+import Sha256Field from "../components/Sha256Field.astro";
 import "../components/Hero.css";
 import {
   slogan,
@@ -13,12 +13,12 @@ import {
   checksumsUrl,
   releasePageUrl,
   primaryDownload,
-  features,
+  featureTiles,
   comingNext,
   mediaSlots,
   mcpEnvExample,
   underTheHood,
-  launchStatLine,
+  launchBenchmarks,
 } from "../config/site";
 
 const windowsCli = downloads.find((d) => d.id === "windows-cli");
@@ -37,72 +37,132 @@ const mcpJson = JSON.stringify(
   2,
 );
 
-function bentoClass(span: "normal" | "wide") {
-  return span === "wide" ? "bento-item--span-3" : "bento-item--span-2";
-}
+const heroShot = mediaSlots.find((m) => m.id === "prepare");
 ---
 
-<Base>
+<Base preloadImage="/media/prepare-hero-1200.webp">
   <section class="hero" aria-labelledby="hero-title">
-    <div class="hero-field">
-      <AndromedaField client:visible />
-    </div>
-    <div class="wrap hero-inner">
-      <p class="eyebrow hero-kicker">Bambu Lab only · v{version}</p>
-      <h1 id="hero-title">Shale</h1>
-      <div class="hero-tagline-wrap">
-        <p class="slogan-display slogan-display--hero" data-reveal>{slogan}</p>
+    <div class="wrap hero-shell">
+      <div class="hero-copy">
+        <p class="eyebrow hero-kicker">Bambu Lab · v{version}</p>
+        <h1 id="hero-title">Shale</h1>
+        <p class="hero-line">{slogan}</p>
+        <p class="hero-deck">
+          Bambu-only slicer on unmodified CuraEngine — Studio presets, account sign-in, and a
+          workspace that opens in under a second.
+        </p>
+        <ul class="hero-stats" aria-label="Launch benchmarks">
+          <li class="hero-stat-item">
+            <span class="hero-stat-value"
+              >{launchBenchmarks.shaleUsableWarmSeconds}<span class="unit">s</span></span
+            >
+            <span class="hero-stat-label">Warm launch</span>
+          </li>
+          <li class="hero-stat-item">
+            <span class="hero-stat-value"
+              >{launchBenchmarks.shaleUsableColdSeconds}<span class="unit">s</span></span
+            >
+            <span class="hero-stat-label">Cold start</span>
+          </li>
+          <li class="hero-stat-item">
+            <span class="hero-stat-value">{launchBenchmarks.competitorRangeLabel}</span>
+            <span class="hero-stat-label">Typical slicers</span>
+          </li>
+        </ul>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href={downloadUrl(primaryDownload.fileName)}>
+            Download for Windows
+          </a>
+          <a class="hero-secondary" href="#downloads">CLI + MCP packages</a>
+        </div>
+        <p class="hero-meta dim">{underTheHood} · AGPL-3.0-or-later</p>
       </div>
-      <p class="hero-lede">
-        A calm slicer for Bambu Lab printers — built on unmodified CuraEngine, with
-        Bambu Studio presets, account sign-in, and a workspace that stays out of your way.
-      </p>
-      <p class="hero-stat" role="status">{launchStatLine()}</p>
-      <p class="hero-under">
-        <span class="dim">Under the hood:</span> {underTheHood}
-      </p>
-      <div class="hero-actions">
-        <a
-          class="btn btn-primary"
-          href={downloadUrl(primaryDownload.fileName)}
-        >
-          Download for Windows
-        </a>
-        <a class="btn btn-ghost" href="#downloads">CLI + MCP packages</a>
-        <a class="btn btn-ghost" href={repoUrl}>View on GitHub</a>
-      </div>
-      <p class="hero-meta">
-        Windows installer · .shale projects · no trackers on this site
-      </p>
+      {
+        heroShot && heroShot.kind === "screenshot" && (
+          <figure class="hero-product" data-reveal>
+            <AppFrame title="Shale — Prepare">
+              <picture>
+                <source srcset="/media/prepare-hero-1200.webp" type="image/webp" />
+                <img
+                  src={heroShot.src}
+                  alt={heroShot.alt}
+                  width="960"
+                  height="540"
+                  fetchpriority="high"
+                  decoding="async"
+                  loading="eager"
+                />
+              </picture>
+            </AppFrame>
+          </figure>
+        )
+      }
     </div>
   </section>
 
   <section id="features" aria-labelledby="features-title">
     <div class="wrap">
-      <div class="section-head" data-reveal>
-        <p class="eyebrow">Features</p>
-        <h2 id="features-title">Built for how you already print</h2>
-        <p>
-          Account, presets, send, and headless tools — everything in v{version} is aimed at
-          Bambu workflows, not a generic printer list.
+      <div class="section-head section-head--row">
+        <div>
+          <p class="eyebrow">Features</p>
+          <h2 id="features-title">Everything in v{version}, on the plate.</h2>
+        </div>
+        <p class="muted">
+          Account, presets, send, speed, headless tools, and portable projects — each tile shows
+          the real UI or the measured number.
         </p>
       </div>
-      <div class="bento">
+      <div class="features-grid">
         {
-          features.map((f, i) => (
+          featureTiles.map((tile, i) => (
             <article
-              class:list={[
-                "card",
-                "bento-item",
-                bentoClass(f.span),
-                f.id === "fast" && "bento-item--row-2",
-              ]}
+              class="panel feature-tile"
               data-reveal
               data-reveal-delay={(i % 3) + 1}
             >
-              <span class="bento-kicker" aria-hidden="true" />
-              <h3>{f.title}</h3>
-              <p class="muted">{f.body}</p>
+              <div class="feature-tile-body">
+                <h3>{tile.title}</h3>
+                <p>{tile.body}</p>
+                {tile.kind === "launch" && (
+                  <div class="tile-launch-stats">
+                    <div>
+                      <div class="tile-stat-num">
+                        {launchBenchmarks.shaleUsableWarmSeconds}
+                        <span class="unit">s</span>
+                      </div>
+                      <span class="tile-stat-cap">Warm</span>
+                    </div>
+                    <div>
+                      <div class="tile-stat-num">
+                        {launchBenchmarks.shaleUsableColdSeconds}
+                        <span class="unit">s</span>
+                      </div>
+                      <span class="tile-stat-cap">Cold</span>
+                    </div>
+                  </div>
+                )}
+                {tile.kind === "launch" && (
+                  <p class="tile-compare dim">
+                    {launchBenchmarks.competitors.join(", ")}: {launchBenchmarks.competitorRangeLabel}
+                  </p>
+                )}
+                {tile.kind === "visual" && (
+                  <div class="tile-visual-img">
+                    <img src={tile.image} alt={tile.imageAlt} loading="lazy" decoding="async" />
+                  </div>
+                )}
+                {tile.kind === "mini" && tile.mini === "cli" && (
+                  <div class="mini-cli" aria-hidden="true">
+                    $ shale-cli slice cube.stl -o plate.gcode
+                  </div>
+                )}
+                {tile.kind === "mini" && tile.mini === "shale-file" && (
+                  <div class="mini-shale" aria-hidden="true">
+                    <span class="mini-shale-icon">▣</span>
+                    <span class="mini-shale-name">bench-a1.shale</span>
+                  </div>
+                )}
+              </div>
             </article>
           ))
         }
@@ -112,75 +172,53 @@ function bentoClass(span: "normal" | "wide") {
 
   <section id="media" aria-labelledby="media-title">
     <div class="wrap">
-      <div class="section-head" data-reveal>
-        <p class="eyebrow">App</p>
-        <h2 id="media-title">The real workspace</h2>
-        <p>
-          Prepare, preview, and device send — framed like the window you open on your machine.
-          Drop more stills into <code class="mono">website/public/media/</code> when you have them.
-        </p>
+      <div class="section-head section-head--row">
+        <div>
+          <p class="eyebrow">App</p>
+          <h2 id="media-title">Three workspaces, one window.</h2>
+        </div>
+        <p class="muted">Prepare, preview, and send — captured from the shipping build.</p>
       </div>
       <div class="media-bento">
         {
-          mediaSlots.map((m, i) => {
-            const layoutClass =
-              m.layout === "hero"
-                ? "media-bento-item--hero"
-                : m.layout === "tall"
-                  ? "media-bento-item--tall"
-                  : "";
-            return (
-              <figure
-                class:list={["media-bento-item", layoutClass]}
-                data-reveal
-                data-reveal-delay={(i % 2) + 1}
-              >
-                {m.kind === "video" ? (
-                  <AppFrame title="Shale — promo">
-                    <div class="media-placeholder" role="img" aria-label={m.alt}>
-                      <span class="badge">Video slot</span>
-                    </div>
-                  </AppFrame>
-                ) : (
-                  <AppFrame title={`Shale — ${m.id}`}>
-                    <img
-                      src={m.src}
-                      alt={m.alt}
-                      loading="lazy"
-                      width="960"
-                      height="540"
-                      decoding="async"
-                    />
-                  </AppFrame>
-                )}
+          mediaSlots
+            .filter((m) => m.kind === "screenshot")
+            .map((m, i) => (
+              <figure class:list={["media-bento-item", i === 0 && "media-bento-item--hero"]} data-reveal>
+                <AppFrame title={`Shale — ${m.id}`}>
+                  <img
+                    src={m.src}
+                    alt={m.alt}
+                    loading="lazy"
+                    width="960"
+                    height="540"
+                    decoding="async"
+                  />
+                </AppFrame>
                 <figcaption class="media-caption">{m.caption}</figcaption>
               </figure>
-            );
-          })
+            ))
         }
       </div>
     </div>
   </section>
 
-  <section id="downloads" aria-labelledby="downloads-title">
+  <section id="downloads" class="section-downloads" aria-labelledby="downloads-title">
     <div class="wrap">
-      <div class="section-head" data-reveal>
-        <p class="eyebrow">Download</p>
-        <h2 id="downloads-title">v{version} release assets</h2>
-        <p>
-          Shale {version} on <a href={releasePageUrl}>GitHub Releases</a>: the Windows installer
-          and the headless packages. Verify downloads against{" "}
-          <a href={checksumsUrl}>SHA256SUMS.txt</a>.
+      <div class="section-head section-head--row">
+        <div>
+          <p class="eyebrow">Download</p>
+          <h2 id="downloads-title">Get Shale {version}</h2>
+        </div>
+        <p class="muted">
+          <a href={releasePageUrl}>GitHub Releases</a> hosts the installer and headless packages.
+          Verify with <a href={checksumsUrl}>SHA256SUMS.txt</a>.
         </p>
       </div>
       <div class="download-grid">
         {
           downloads.map((d, i) => (
-            <article
-              class="card download-card"
-              data-reveal
-              data-reveal-delay={(i % 3) + 1}
-            >
+            <article class="panel download-card" data-reveal data-reveal-delay={(i % 3) + 1}>
               <h3>{d.title}</h3>
               <p class="muted">{d.description}</p>
               <p class="mono dim file-name">{d.fileName}</p>
@@ -195,12 +233,8 @@ function bentoClass(span: "normal" | "wide") {
                 }
                 <div>
                   <dt>SHA-256</dt>
-                  <dd class="sha">
-                    {d.sha256 ? (
-                      d.sha256
-                    ) : (
-                      <a href={checksumsUrl}>SHA256SUMS.txt</a>
-                    )}
+                  <dd>
+                    <Sha256Field hash={d.sha256} checksumsUrl={checksumsUrl} />
                   </dd>
                 </div>
               </dl>
@@ -212,11 +246,11 @@ function bentoClass(span: "normal" | "wide") {
         }
       </div>
 
-      <div class="cli-docs card cli-scroll" style="margin-top: 1.5rem;" data-reveal>
+      <div class="panel cli-docs cli-scroll panel--lift" style="margin-top: 2rem;" data-reveal>
         <h3>Headless install</h3>
         <p class="muted">
-          From <a href={`${repoUrl}/blob/main/docs/INSTALL-CLI.md`}>docs/INSTALL-CLI.md</a>.
-          Point at CuraEngine and the resource tree at run time.
+          From <a href={`${repoUrl}/blob/main/docs/INSTALL-CLI.md`}>docs/INSTALL-CLI.md</a>. Point at
+          CuraEngine and the resource tree at run time.
         </p>
         {
           windowsCli && (
@@ -228,9 +262,7 @@ function bentoClass(span: "normal" | "wide") {
               </p>
               <pre>{`Expand-Archive .\\${windowsCli.fileName} -DestinationPath .\\shale-cli
 cd shale-cli
-.\\shale-cli.exe info
-.\\shale-cli.exe printers --search a1
-.\\shale-cli.exe slice .\\cube.stl --printer bambu_lab_a1 --layer 0.2 --infill 20 -o .\\cube.gcode`}</pre>
+.\\shale-cli.exe info`}</pre>
             </div>
           )
         }
@@ -238,25 +270,12 @@ cd shale-cli
           linuxCli && (
             <>
               <h4>Linux</h4>
-              <p class="muted">
-                Extract <code class="mono">{linuxCli.fileName}</code>, then install (Debian example):
-              </p>
               <pre>{`tar -xzf ${linuxCli.fileName}
-cd shale-${version}-linux-x64
-sudo install -m755 shale-cli shale-mcp /usr/local/bin/
-shale-cli info`}</pre>
-              <pre>{`export SHALE_CURAENGINE=/usr/bin/CuraEngine
-export SHALE_CURA_DIR=/usr/share/cura/resources
-export SHALE_MATERIALS_DIR=/usr/share/cura/resources/materials`}</pre>
+sudo install -m755 shale-${version}-linux-x64/shale-cli /usr/local/bin/`}</pre>
             </>
           )
         }
-
         <h4>MCP client</h4>
-        <p class="muted">
-          Stdio is what most clients expect — same JSON shape as Claude Desktop in the repo docs.
-          Loopback HTTP: <code class="mono">shale-mcp --http 127.0.0.1:PORT</code>.
-        </p>
         <pre class="cli-scroll"><code>{mcpJson}</code></pre>
       </div>
     </div>
@@ -264,19 +283,15 @@ export SHALE_MATERIALS_DIR=/usr/share/cura/resources/materials`}</pre>
 
   <section id="coming" aria-labelledby="coming-title">
     <div class="wrap">
-      <div class="section-head" data-reveal>
+      <div class="section-head">
         <p class="eyebrow">Roadmap</p>
         <h2 id="coming-title">Coming next</h2>
-        <p>Planned after v0.1 — not in this build.</p>
+        <p class="muted">Planned after v0.1 — not in this build.</p>
       </div>
       <div class="bento">
         {
           comingNext.map((item, i) => (
-            <article
-              class="card bento-item bento-item--span-2"
-              data-reveal
-              data-reveal-delay={(i % 3) + 1}
-            >
+            <article class="panel" data-reveal data-reveal-delay={(i % 3) + 1}>
               <span class="badge">{item.status}</span>
               <h3 style="margin-top: 0.75rem;">{item.title}</h3>
               <p class="muted">{item.body}</p>
@@ -305,17 +320,14 @@ export SHALE_MATERIALS_DIR=/usr/share/cura/resources/materials`}</pre>
           provide the binary.
         </li>
         <li>
-          <strong>Bambu Studio profiles</strong> — read as data from an installed Bambu Studio
-          tree (AGPL-3.0 applies to that upstream material).
+          <strong>Bambu Studio profiles</strong> — read as data from an installed Bambu Studio tree.
         </li>
         <li>
-          <strong>Shale itself</strong> — {shaleLicense} (see
-          <a href={`${repoUrl}/blob/main/LICENSING.md`}>LICENSING.md</a>).
+          <strong>Shale itself</strong> — {shaleLicense} (<a
+            href={`${repoUrl}/blob/main/LICENSING.md`}>LICENSING.md</a
+          >).
         </li>
       </ul>
-      <p class="dim mono" style="margin-top: 1.5rem;">
-        Hero: ASCII Andromeda (NASA GALEX M31), same reference as the app.
-      </p>
     </div>
   </footer>
 </Base>
@@ -330,9 +342,5 @@ export SHALE_MATERIALS_DIR=/usr/share/cura/resources/materials`}</pre>
 
   .cli-docs h3:first-child {
     margin-top: 0;
-  }
-
-  .bento-item h3 {
-    font-size: 1.08rem;
   }
 </style>

@@ -1,0 +1,94 @@
+---
+interface Props {
+  hash: string;
+  checksumsUrl: string;
+}
+
+const { hash, checksumsUrl } = Astro.props;
+const hasHash = hash.length > 0;
+const short =
+  hasHash && hash.length > 20
+    ? `${hash.slice(0, 10)}…${hash.slice(-8)}`
+    : hash;
+---
+
+{
+  hasHash ? (
+    <div class="sha-field">
+      <div class="sha-row">
+        <span class="sha-trunc mono" title={hash}>
+          {short}
+        </span>
+        <button type="button" class="sha-copy" data-copy={hash}>
+          Copy
+        </button>
+      </div>
+      <details class="sha-expand">
+        <summary>Show full hash</summary>
+        <p class="sha-full mono">{hash}</p>
+      </details>
+    </div>
+  ) : (
+    <a href={checksumsUrl}>SHA256SUMS.txt</a>
+  )
+}
+
+<style>
+  .sha-field {
+    display: grid;
+    gap: 0.45rem;
+  }
+
+  .sha-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+  }
+
+  .sha-trunc {
+    font-size: 0.78rem;
+    color: var(--ink-2);
+  }
+
+  .sha-copy {
+    font-family: var(--sans);
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.28rem 0.65rem;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--ink);
+    cursor: pointer;
+  }
+
+  .sha-copy:active {
+    transform: scale(0.98);
+  }
+
+  .sha-expand {
+    font-size: 0.82rem;
+    color: var(--ink-3);
+  }
+
+  .sha-expand summary {
+    cursor: pointer;
+    list-style: none;
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
+
+  .sha-expand summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .sha-full {
+    margin: 0.45rem 0 0;
+    font-size: 0.68rem;
+    line-height: 1.45;
+    word-break: break-all;
+    color: var(--ink-2);
+  }
+</style>

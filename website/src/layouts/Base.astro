@@ -6,11 +6,13 @@ import { primaryDownload, downloadUrl, launchComparisonSentence } from "../confi
 interface Props {
   title?: string;
   description?: string;
+  preloadImage?: string;
 }
 
 const {
   title = "Shale — Bambu Lab slicer",
   description = `Bambu Lab slicer built on unmodified CuraEngine. ${launchComparisonSentence()}`,
+  preloadImage,
 } = Astro.props;
 
 const dl = downloadUrl(primaryDownload.fileName);
@@ -25,6 +27,11 @@ const dl = downloadUrl(primaryDownload.fileName);
     <meta name="color-scheme" content="dark" />
     <title>{title}</title>
     <link rel="icon" type="image/svg+xml" href="/media/shale-mark.svg" />
+    {
+      preloadImage && (
+        <link rel="preload" as="image" href={preloadImage} fetchpriority="high" />
+      )
+    }
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -89,10 +96,19 @@ const dl = downloadUrl(primaryDownload.fileName);
         );
         reveal.forEach((el) => io.observe(el));
 
-        const heroSlogan = document.querySelector(".slogan-display--hero");
-        if (heroSlogan) {
-          requestAnimationFrame(() => heroSlogan.classList.add("is-visible"));
-        }
+        document.addEventListener("click", (e) => {
+          const btn = e.target.closest("[data-copy]");
+          if (!btn) return;
+          const value = btn.getAttribute("data-copy");
+          if (!value) return;
+          navigator.clipboard.writeText(value).then(() => {
+            const prior = btn.textContent;
+            btn.textContent = "Copied";
+            window.setTimeout(() => {
+              btn.textContent = prior;
+            }, 1600);
+          });
+        });
 
         const menu = document.querySelector(".nav-menu");
         if (menu) {
