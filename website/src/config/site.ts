@@ -3,23 +3,24 @@
  * Update `version` and the download entries when shipping a new release.
  */
 
-export const version = "0.1.0";
+export const version = "0.1.3";
 export const releaseTag = `v${version}`;
 
 export const repoUrl = "https://github.com/Alevetto07/Shale";
 
 export const slogan = "The last slicer you'll ever download";
 
-export const shaleLicense = "TBD";
+export const shaleLicense = "AGPL-3.0-or-later";
 
 export type DownloadAsset = {
   id: string;
   title: string;
   description: string;
   fileName: string;
-  /** Placeholder until the release is cut */
+  /** Empty until filled from the release's SHA256SUMS.txt */
   sizeLabel: string;
   sizeBytes: number;
+  /** Empty string = link to SHA256SUMS.txt instead of printing a hash */
   sha256: string;
   primary?: boolean;
 };
@@ -32,10 +33,9 @@ export const downloads: DownloadAsset[] = [
     title: "Windows desktop",
     description: "Graphical slicer with the full Prepare, Preview and Device workspaces.",
     fileName: `Shale_${version}_x64-setup.exe`,
-    sizeLabel: "TBD",
+    sizeLabel: "",
     sizeBytes: 0,
-    sha256:
-      "0000000000000000000000000000000000000000000000000000000000000000",
+    sha256: "",
     primary: true,
   },
   {
@@ -43,26 +43,27 @@ export const downloads: DownloadAsset[] = [
     title: "Windows CLI + MCP",
     description: "Headless `shale-cli` and `shale-mcp` for terminals and agents.",
     fileName: `shale-${version}-windows-x64.zip`,
-    sizeLabel: "TBD",
+    sizeLabel: "",
     sizeBytes: 0,
-    sha256:
-      "0000000000000000000000000000000000000000000000000000000000000000",
+    sha256: "",
   },
   {
     id: "linux-cli",
     title: "Linux CLI + MCP",
     description: "Same headless tools for x64 Linux — ideal for a small board.",
     fileName: `shale-${version}-linux-x64.tar.gz`,
-    sizeLabel: "TBD",
+    sizeLabel: "",
     sizeBytes: 0,
-    sha256:
-      "0000000000000000000000000000000000000000000000000000000000000000",
+    sha256: "",
   },
 ];
 
 export function downloadUrl(fileName: string): string {
   return `${releaseBase}/${fileName}`;
 }
+
+export const checksumsUrl = downloadUrl("SHA256SUMS.txt");
+export const releasePageUrl = `${repoUrl}/releases/tag/${releaseTag}`;
 
 export const primaryDownload =
   downloads.find((d) => d.primary) ?? downloads[0];

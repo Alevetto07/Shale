@@ -10,6 +10,8 @@ import {
   shaleLicense,
   downloads,
   downloadUrl,
+  checksumsUrl,
+  releasePageUrl,
   primaryDownload,
   features,
   comingNext,
@@ -143,8 +145,9 @@ const mcpJson = JSON.stringify(
       <div class="section-head" data-reveal>
         <h2 id="downloads-title">Download</h2>
         <p>
-          GitHub Releases hosts the installer and headless packages. Update checksums
-          and sizes in <code class="mono">src/config/site.ts</code> when you publish.
+          Shale {version} on <a href={releasePageUrl}>GitHub Releases</a>: the Windows
+          installer and the headless packages. Verify downloads against{" "}
+          <a href={checksumsUrl}>SHA256SUMS.txt</a>.
         </p>
       </div>
       <div class="grid-3 download-grid">
@@ -155,13 +158,23 @@ const mcpJson = JSON.stringify(
               <p class="muted">{d.description}</p>
               <p class="mono dim file-name">{d.fileName}</p>
               <dl class="checksums">
-                <div>
-                  <dt>Size</dt>
-                  <dd>{d.sizeLabel}</dd>
-                </div>
+                {
+                  d.sizeLabel && (
+                    <div>
+                      <dt>Size</dt>
+                      <dd>{d.sizeLabel}</dd>
+                    </div>
+                  )
+                }
                 <div>
                   <dt>SHA-256</dt>
-                  <dd class="sha">{d.sha256}</dd>
+                  <dd class="sha">
+                    {d.sha256 ? (
+                      d.sha256
+                    ) : (
+                      <a href={checksumsUrl}>SHA256SUMS.txt</a>
+                    )}
+                  </dd>
                 </div>
               </dl>
               <a class="btn btn-primary" href={downloadUrl(d.fileName)}>
