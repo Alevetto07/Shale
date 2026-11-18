@@ -33,9 +33,10 @@ export const downloads: DownloadAsset[] = [
     title: "Windows desktop",
     description: "Graphical slicer with the full Prepare, Preview and Device workspaces.",
     fileName: `Shale_${version}_x64-setup.exe`,
-    sizeLabel: "",
-    sizeBytes: 0,
-    sha256: "",
+    sizeLabel: "5.1 MB",
+    sizeBytes: 5324305,
+    sha256:
+      "9c6bd26a3223fd9dd08fe393af3ac30e6d9c04100152841edb018a420fd6b28d",
     primary: true,
   },
   {
@@ -43,18 +44,20 @@ export const downloads: DownloadAsset[] = [
     title: "Windows CLI + MCP",
     description: "Headless `shale-cli` and `shale-mcp` for terminals and agents.",
     fileName: `shale-${version}-windows-x64.zip`,
-    sizeLabel: "",
-    sizeBytes: 0,
-    sha256: "",
+    sizeLabel: "5.0 MB",
+    sizeBytes: 5243592,
+    sha256:
+      "cd73ac06c0d4db860d820c865ec4f4d274312ffeb2898ea249e028adc9447e8c",
   },
   {
     id: "linux-cli",
     title: "Linux CLI + MCP",
     description: "Same headless tools for x64 Linux — ideal for a small board.",
     fileName: `shale-${version}-linux-x64.tar.gz`,
-    sizeLabel: "",
-    sizeBytes: 0,
-    sha256: "",
+    sizeLabel: "4.7 MB",
+    sizeBytes: 4909746,
+    sha256:
+      "edf83fcb7fff89421da2b5aa0440d943bbe22a9ba4af3dd057ca1eb858c5c6d1",
   },
 ];
 
