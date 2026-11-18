@@ -1,22 +1,30 @@
 import { useEffect, useMemo, useState } from "react";
-import { DemoFrame } from "./DemoFrame";
+import { useDemo, type PrinterRow } from "../../lib/demo-context";
+import { PrinterSilhouette } from "./PrinterSilhouette";
 
-type Printer = {
-  id: string;
-  name: string;
-  manufacturer: string;
-  bed_mm: number;
-};
+function silhouetteFor(id: string): PrinterRow["silhouette"] {
+  if (id.includes("mini")) return "mini";
+  if (id.includes("p1") || id.includes("x1") || id.includes("h2") || id.includes("h3") || id.includes("p2"))
+    return "enclosed";
+  return "core";
+}
 
-export function PrinterCatalog() {
-  const [printers, setPrinters] = useState<Printer[]>([]);
+const enriched = (rows: PrinterRow[]): PrinterRow[] =>
+  rows.map((p) => ({
+    ...p,
+    nozzle_mm: p.nozzle_mm ?? 0.4,
+    silhouette: p.silhouette ?? silhouetteFor(p.id),
+  }));
+
+export function PrinterCatalog({ autoStart: _autoStart }: { autoStart?: boolean }) {
+  const { printerId, selectPrinter } = useDemo();
+  const [printers, setPrinters] = useState<PrinterRow[]>([]);
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState<string>("bambu_lab_a1");
 
   useEffect(() => {
     fetch("/demo/printers.json")
       .then((r) => r.json())
-      .then((json: Printer[]) => setPrinters(json))
+      .then((json: PrinterRow[]) => setPrinters(enriched(json)))
       .catch(() => setPrinters([]));
   }, []);
 
@@ -28,39 +36,52 @@ export function PrinterCatalog() {
     );
   }, [printers, query]);
 
-  const selected = printers.find((p) => p.id === active);
+  const selected = printers.find((p) => p.id === printerId);
 
   return (
-    <DemoFrame title="Printer catalog" note="Selectable list from Shale v0.1 (Bambu only)">
+    <section className="demo-panel demo-panel--printers" id="printers">
+      <header className="demo-panel__head">
+        <div>
+          <p className="demo-panel__eyebrow">Catalogue</p>
+          <h2 className="demo-panel__title">Bambu printers</h2>
+          <p className="demo-panel__note">Bed size updates the build plate in the 3D preview.</p>
+        </div>
+      </header>
       <input
         className="demo-input"
         type="search"
-        placeholder="Search catalogue"
+        placeholder="Search"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         aria-label="Search Bambu printers"
       />
-      <ul className="printer-list" role="listbox" aria-label="Bambu printers">
+      <ul className="printer-list printer-list--rich" role="listbox" aria-label="Bambu printers">
         {filtered.map((p) => (
           <li key={p.id}>
             <button
               type="button"
               role="option"
-              aria-selected={active === p.id}
-              className={active === p.id ? "printer-row is-active" : "printer-row"}
-              onClick={() => setActive(p.id)}
+              aria-selected={printerId === p.id}
+              className={printerId === p.id ? "printer-row printer-row--rich is-active" : "printer-row printer-row--rich"}
+              onClick={() => selectPrinter(p)}
             >
-              <span className="printer-name">{p.name}</span>
-              <span className="mono dim">{p.id}</span>
+              <PrinterSilhouette kind={p.silhouette} />
+              <span className="printer-row__body">
+                <span className="printer-name">{p.name}</span>
+                <span className="printer-specs">
+                  <span className="mono">{p.bed_mm} mm bed</span>
+                  <span className="mono"> · {p.nozzle_mm} mm</span>
+                </span>
+              </span>
             </button>
           </li>
         ))}
       </ul>
       {selected && (
         <p className="demo-readout">
-          {selected.name} · {selected.bed_mm}×{selected.bed_mm} mm bed
+          Plate {selected.bed_mm}×{selected.bed_mm} mm · nozzle {selected.nozzle_mm} mm
         </p>
       )}
-    </DemoFrame>
+    </section>
   );
 }

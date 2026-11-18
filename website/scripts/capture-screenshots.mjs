@@ -12,8 +12,11 @@ const viewports = [
 ];
 
 const sections = [
-  { id: "hero", selector: ".hero", fullPage: false, wait: 2000 },
-  { id: "demos", selector: "#demos", fullPage: false, wait: 1200 },
+  { id: "hero", selector: ".hero", fullPage: false, wait: 3500, settle: ".hero-print canvas" },
+  { id: "demos", selector: "#demos", fullPage: false, wait: 4500, settle: ".printer-row--rich" },
+  { id: "toolpath", selector: "#toolpath", fullPage: false, wait: 3000, settle: ".demo-panel__viewer canvas" },
+  { id: "printers", selector: "#printers", fullPage: false, wait: 2000, settle: ".printer-row--rich.is-active" },
+  { id: "cli", selector: "#cli", fullPage: false, wait: 3500, settle: ".term-out" },
   { id: "downloads", selector: "#downloads", fullPage: false, wait: 600 },
   { id: "footer", selector: ".site-footer", fullPage: false, wait: 300 },
 ];
@@ -31,6 +34,7 @@ for (const vp of viewports) {
       el.classList.add("is-visible");
     });
   });
+  await page.waitForSelector(".hero-print canvas", { timeout: 20000 }).catch(() => {});
 
   for (const section of sections) {
     const el = await page.$(section.selector);
@@ -48,6 +52,9 @@ for (const vp of viewports) {
       },
       { sel: section.selector, pad: headerPad },
     );
+    if (section.settle) {
+      await page.waitForSelector(section.settle, { timeout: 15000 }).catch(() => {});
+    }
     await page.waitForTimeout(section.wait);
     const path = join(outDir, `${section.id}-${vp.tag}.png`);
     await el.screenshot({ path });

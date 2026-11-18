@@ -1,29 +1,25 @@
-import { useMemo, useState } from "react";
-import { DemoFrame } from "./DemoFrame";
-
-/** Baseline: 10 mm cube, A1 0.4 mm — docs/verification.md (54 layers, 2.19 m @ 0.2 mm / ~15% infill). */
-const BASE = { layers: 54, filament_m: 2.1943, seconds: 48 };
-
-function estimate(layer: number, infill: number, walls: number) {
-  const layerScale = 0.2 / layer;
-  const infillScale = infill / 15;
-  const wallScale = 1 + (walls - 3) * 0.08;
-  const layers = Math.ceil(10 / layer);
-  const filament = BASE.filament_m * layerScale * infillScale * wallScale;
-  const seconds = BASE.seconds * layerScale * infillScale * wallScale;
-  return { layers, filament, seconds };
-}
+import { useMemo } from "react";
+import { useDemo } from "../../lib/demo-context";
 
 export function SliceSettingsDemo() {
-  const [layer, setLayer] = useState(0.2);
-  const [infill, setInfill] = useState(20);
-  const [walls, setWalls] = useState(3);
-
-  const stats = useMemo(() => estimate(layer, infill, walls), [layer, infill, walls]);
+  const { layerHeight, infill, walls, setLayerHeight, setInfill, setWalls, estimates } = useDemo();
   const hatchGap = Math.max(4, 24 - infill / 3);
 
+  const timeLabel = useMemo(() => {
+    const m = Math.floor(estimates.time_s / 60);
+    const s = Math.round(estimates.time_s % 60);
+    return m > 0 ? `~${m}m ${s}s` : `~${s}s`;
+  }, [estimates.time_s]);
+
   return (
-    <DemoFrame title="Slice settings" note="Estimates scale from measured A1 cube baseline">
+    <section className="demo-panel demo-panel--slice" id="slice-settings">
+      <header className="demo-panel__head">
+        <div>
+          <p className="demo-panel__eyebrow">Slicing</p>
+          <h2 className="demo-panel__title">Slice settings</h2>
+          <p className="demo-panel__note">Sliders update the hatch and the 3D toolpath density.</p>
+        </div>
+      </header>
       <div className="slice-layout">
         <div className="slice-sliders">
           <label>
@@ -33,10 +29,10 @@ export function SliceSettingsDemo() {
               min={0.12}
               max={0.32}
               step={0.02}
-              value={layer}
-              onChange={(e) => setLayer(Number(e.target.value))}
+              value={layerHeight}
+              onChange={(e) => setLayerHeight(Number(e.target.value))}
             />
-            <span className="mono">{layer.toFixed(2)} mm</span>
+            <span className="mono">{layerHeight.toFixed(2)} mm</span>
           </label>
           <label>
             Infill
@@ -71,25 +67,34 @@ export function SliceSettingsDemo() {
                 <line x1="0" y1="0" x2="0" y2="8" stroke="var(--path)" strokeWidth="0.6" opacity="0.5" />
               </pattern>
             </defs>
-            <rect x="18" y="18" width="64" height="64" fill="url(#hatch)" opacity={infill / 50} />
+            <rect
+              x="18"
+              y="18"
+              width="64"
+              height="64"
+              fill="url(#hatch)"
+              opacity={infill / 50}
+              stroke="var(--path)"
+              strokeWidth={walls * 0.35}
+            />
           </svg>
         </div>
       </div>
-      <dl className="slice-stats">
+      <dl className="slice-stats slice-stats--prominent">
         <div>
           <dt>Layers</dt>
-          <dd className="mono">{stats.layers}</dd>
+          <dd className="mono">{estimates.layers}</dd>
         </div>
         <div>
           <dt>Filament</dt>
-          <dd className="mono">{stats.filament.toFixed(2)} m</dd>
+          <dd className="mono">{estimates.filament_m.toFixed(2)} m</dd>
         </div>
         <div>
-          <dt>Slice time</dt>
-          <dd className="mono">~{stats.seconds.toFixed(0)} s</dd>
+          <dt>Est. slice</dt>
+          <dd className="mono">{timeLabel}</dd>
         </div>
       </dl>
-      <p className="demo-footnote dim">Scaled from verification.md cube slice — not a live CuraEngine run in the browser.</p>
-    </DemoFrame>
+      <p className="demo-footnote dim">Scaled from committed cube-slice.json metadata — illustrative, not live CuraEngine.</p>
+    </section>
   );
 }

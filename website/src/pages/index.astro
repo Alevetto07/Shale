@@ -3,12 +3,8 @@ import Base from "../layouts/Base.astro";
 import Sha256Field from "../components/Sha256Field.astro";
 import "../components/Hero.css";
 import { FieldThemePicker } from "../components/demos/FieldThemePicker";
-import { ToolpathDemo } from "../components/demos/ToolpathDemo";
-import { SliceSettingsDemo } from "../components/demos/SliceSettingsDemo";
-import { CliTerminal } from "../components/demos/CliTerminal";
-import { McpChat } from "../components/demos/McpChat";
-import { PrinterCatalog } from "../components/demos/PrinterCatalog";
-import { LaunchRace } from "../components/demos/LaunchRace";
+import HeroPrintSceneRoot from "../components/demos/HeroPrintSceneRoot";
+import DemoWorkbench from "../components/demos/DemoWorkbench";
 import {
   slogan,
   repoUrl,
@@ -36,16 +32,6 @@ import {
           ready.
         </p>
         <FieldThemePicker client:load />
-        <svg class="hero-path-svg" viewBox="0 0 200 120" aria-hidden="true">
-          <rect class="hero-path-draw" x="40" y="30" width="120" height="70" stroke-width="1.5"></rect>
-          <path
-            class="hero-path-draw"
-            d="M50 70 H150"
-            stroke-width="1"
-            stroke-dasharray="4 6"
-            style="animation-delay: 0.35s"
-          ></path>
-        </svg>
         <ul class="hero-stats" aria-label="Launch benchmarks">
           <li class="hero-stat-item">
             <span class="hero-stat-value"
@@ -73,7 +59,7 @@ import {
         <p class="hero-meta dim">v{version} · {shaleLicense}</p>
       </div>
       <div class="hero-demo" data-reveal>
-        <LaunchRace client:visible />
+        <HeroPrintSceneRoot client:load />
       </div>
     </div>
   </section>
@@ -87,15 +73,7 @@ import {
           tree. Nothing here starts a print.
         </p>
       </div>
-      <div class="demo-grid">
-        <div class="demo-span-2">
-          <ToolpathDemo client:visible />
-        </div>
-        <SliceSettingsDemo client:visible />
-        <PrinterCatalog client:visible />
-        <CliTerminal client:visible />
-        <McpChat client:visible />
-      </div>
+      <DemoWorkbench client:visible />
     </div>
   </section>
 
