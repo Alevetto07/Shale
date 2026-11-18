@@ -7,7 +7,13 @@ param(
 $ErrorActionPreference = "Stop"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
-Add-Type @"
+Add-Type -AssemblyName System.Windows.Forms
+$drawing = [System.Reflection.Assembly]::LoadWithPartialName("System.Drawing")
+if (-not $drawing) {
+  throw "System.Drawing is unavailable on this runner"
+}
+
+Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 using System.Drawing;
