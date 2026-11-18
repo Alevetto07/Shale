@@ -38,5 +38,7 @@ pub use equivalence::{
     check_planar_equivalence, graft_planar_shell_below_band, motion_lines_below_band,
     SUFFIX_SHELL_EXTRUSION_TOLERANCE_MM,
 };
-pub use safety::{gcode_respects_max_angle, max_curved_band_extrusion_slope_deg};
+pub use safety::{
+    gcode_respects_max_angle, max_curved_band_extrusion_slope_deg, SLOPE_CAP_TOLERANCE_DEG,
+};
 pub use validate::{embed_safety_json, safety_report_from_gcode, validate_gcode, MachineLimits};

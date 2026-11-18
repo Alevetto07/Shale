@@ -6,8 +6,8 @@ use crate::inverse::map_gcode_inverse;
 
 /// Ignore sub-millimetre horizontal hops when chaining extrusions (layer Z-steps at fixed XY).
 const VERTICAL_STEP_HORIZ_MM: f64 = 0.05;
-/// Tiny tolerance above the configured cap (degrees).
-const SLOPE_TOLERANCE_DEG: f64 = 0.5;
+/// Reporting / validation slack above `max_angle_deg` (inverse quantization, hard clamp).
+pub const SLOPE_CAP_TOLERANCE_DEG: f64 = 0.5;
 
 pub(crate) fn dampen_cell(field: &mut DeformField, x: f64, y: f64, factor: f64) {
     let fx = (x - field.grid.origin[0]) / field.grid.step;
@@ -56,7 +56,7 @@ struct Violation {
 
 /// Scan finished G-code and list extrusion segments in the curved band that exceed the cap.
 pub fn slope_violations(gcode: &str, field: &DeformField, max_deg: f64) -> Vec<(f64, f64, f64)> {
-    let limit = max_deg + SLOPE_TOLERANCE_DEG;
+    let limit = max_deg + SLOPE_CAP_TOLERANCE_DEG;
   let mut out = Vec::new();
     scan_violations(gcode, field, limit, &mut |v| out.push((v.x, v.y, v.slope_deg)));
     out

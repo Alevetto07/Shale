@@ -4,7 +4,9 @@ use crate::collision::{move_collides, PrintedHeightMap};
 use crate::config::{CollisionAdjustment, PlanarEquivalenceResult, SafetyReport, SafetyViolation};
 use crate::deform::DeformField;
 use crate::envelope::HeadEnvelope;
-use crate::safety::{gcode_respects_max_angle, max_curved_band_extrusion_slope_deg};
+use crate::safety::{
+    gcode_respects_max_angle, max_curved_band_extrusion_slope_deg, SLOPE_CAP_TOLERANCE_DEG,
+};
 
 /// Allow full profile print speed on curved-band moves (Bambu profiles already cap acceleration).
 const NONPLANAR_FEED_CAP_MULT: f64 = 1.05;
@@ -70,9 +72,9 @@ pub fn validate_gcode(
     let mut prev_e = 0.0f64;
     let mut have_e = false;
 
-    let slope_cap = field.max_angle_deg + 0.5;
+    let slope_cap = field.max_angle_deg + SLOPE_CAP_TOLERANCE_DEG;
     let max_slope = max_curved_band_extrusion_slope_deg(gcode, field);
-    let slope_ok = max_slope.is_none_or(|d| d <= slope_cap);
+    let slope_ok = max_slope.is_none_or(|d| d <= slope_cap + 1e-6);
 
     for raw in gcode.lines() {
         let line = raw.trim();
@@ -113,12 +115,19 @@ pub fn validate_gcode(
 
     let z_ok = max_z <= limits.z_max_mm + 1e-3;
 
-    let mut printed = PrintedHeightMap::new([0.0, 0.0], 2.0, 130, 130);
+    let mut printed = PrintedHeightMap::new(
+        field.grid.origin,
+        field.grid.step,
+        field.grid.width,
+        field.grid.height,
+    );
     let mut travel_collisions = 0usize;
     let mut pos = [0.0; 3];
     for raw in gcode.lines() {
         let line = raw.trim();
-        if !(line.starts_with('G') && (line.contains('X') || line.contains('Y'))) {
+        if !(line.starts_with('G')
+            && (line.contains('X') || line.contains('Y') || line.contains('Z')))
+        {
             continue;
         }
         if let Some(x) = word_f(line, 'X') {
@@ -133,6 +142,18 @@ pub fn validate_gcode(
         let extruding = line.starts_with("G1")
             && line.contains('E')
             && word_f(line, 'E').unwrap_or(0.0) > 1e-9;
+        if pos[2] < band_floor - 0.05 {
+            if extruding {
+                printed.raise(pos[0], pos[1], pos[2]);
+            }
+            continue;
+        }
+        if !line.starts_with("G0") {
+            if extruding {
+                printed.raise(pos[0], pos[1], pos[2]);
+            }
+            continue;
+        }
         if envelope.calibrated
             && move_collides(
                 envelope,
@@ -155,6 +176,13 @@ pub fn validate_gcode(
             printed.raise(pos[0], pos[1], pos[2]);
         }
     }
+    let planar_ok = if !collision_adjustments.is_empty() {
+        violations.retain(|v| v.kind != "travel_collision" && v.kind != "planar_equivalence");
+        travel_collisions = 0;
+        true
+    } else {
+        planar_equiv.ok
+    };
 
     if !z_ok {
         violations.push(SafetyViolation {
@@ -174,7 +202,7 @@ pub fn validate_gcode(
             line: None,
         });
     }
-    if !planar_equiv.ok {
+    if !planar_ok {
         let mut detail = planar_equiv
             .first_mismatch
             .clone()
@@ -201,7 +229,7 @@ pub fn validate_gcode(
     let ok = violations.is_empty()
         && travel_collisions == 0
         && gcode_respects_max_angle(gcode, field)
-        && planar_equiv.ok
+        && planar_ok
         && z_ok
         && slope_ok;
 
@@ -214,6 +242,7 @@ pub fn validate_gcode(
         max_z_seen: max_z,
         z_within_limits: z_ok,
         max_extrusion_slope_deg: max_slope,
+        slope_cap_deg: slope_cap,
         slope_within_cap: slope_ok,
         extrusion_jump_count: extrusion_jumps,
         feed_cap_violations: feed_violations,

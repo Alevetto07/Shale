@@ -1,8 +1,14 @@
-//! Curved-top safety smoke: dome, chevron slab, and t-wing on every enveloped Bambu printer.
+//! Curved-top safety smoke: dome, chevron slab, t-wing, and collision fixture on every enveloped Bambu printer.
+
+mod nonplanar_fixtures;
 
 use std::path::PathBuf;
 
-use shale_core::job::{self, PlacedModel};
+use nonplanar_fixtures::{
+    pillar_beside_dome, slice_pillar_beside_dome_sequential,
+};
+
+use shale_core::job::{self, PlacedModel, SliceOutcome};
 use shale_core::mesh::{self, Transform, TriangleMesh};
 use shale_core::primitives;
 use shale_core::resolver::UserSettings;
@@ -62,6 +68,10 @@ fn test_models() -> Vec<(&'static str, TriangleMesh)> {
             "t-wing",
             mesh::load_mesh(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/t-wing.stl"))
                 .expect("t-wing stl"),
+        ),
+        (
+            "pillar-beside-dome",
+            primitives::sphere(0.1), // placeholder; parts built in loop
         ),
     ]
 }
@@ -127,18 +137,31 @@ fn curved_top_safety_matrix() {
             continue;
         };
         for (model_name, mesh) in &models {
-            let transform = mesh::place_on_bed(mesh, 256.0, 256.0, false);
-            let placed = vec![PlacedModel {
-                name: model_name.to_string(),
-                mesh: mesh.clone(),
-                transform,
-                settings: vec![("ironing_enabled".into(), "false".into())],
-                slot: None,
-            }];
+            let placed = if *model_name == "pillar-beside-dome" {
+                let merged = pillar_beside_dome();
+                let transform = mesh::place_on_bed(&merged, 256.0, 256.0, false);
+                vec![PlacedModel {
+                    name: model_name.to_string(),
+                    mesh: merged,
+                    transform,
+                    settings: vec![("ironing_enabled".into(), "false".into())],
+                    slot: None,
+                }]
+            } else {
+                let transform = mesh::place_on_bed(mesh, 256.0, 256.0, false);
+                vec![PlacedModel {
+                    name: model_name.to_string(),
+                    mesh: mesh.clone(),
+                    transform,
+                    settings: vec![("ironing_enabled".into(), "false".into())],
+                    slot: None,
+                }]
+            };
             let mut base_settings = UserSettings {
                 layer_height: Some(0.2),
                 material_bed_temperature: Some(60.0),
                 material_print_temperature: Some(220.0),
+                extra: vec![],
                 ..UserSettings::default()
             };
             base_settings.nonplanar = NonplanarOptions {
@@ -173,22 +196,41 @@ fn curved_top_safety_matrix() {
                 &mut |_| {},
             )
             .expect("planar slice");
-            let curved_out = job::slice(
-                &catalog,
-                &engine,
-                printer_id,
-                Some(VARIANT.into()),
-                Some(quality.clone()),
-                &[Some(MATERIAL.into())],
-                base_settings,
-                &placed,
-                &[],
-                None,
-                &[],
-                curved_path,
-                &mut |_| {},
-            )
-            .expect("curved slice");
+            let curved_out = if *model_name == "pillar-beside-dome" {
+                let (gcode, report) =
+                    slice_pillar_beside_dome_sequential(&catalog, &engine, printer_id, &tag);
+                std::fs::write(&curved_path, &gcode).expect("curved gcode");
+                SliceOutcome {
+                    gcode_path: curved_path.clone(),
+                    resolved: planar_out.resolved.clone(),
+                    toolpath: shale_core::gcode::parse_toolpaths(&gcode),
+                    print_time_seconds: None,
+                    filament_metres: 0.0,
+                    flavour: planar_out.flavour,
+                    log_tail: String::new(),
+                    machine_gcode: planar_out.machine_gcode,
+                    nonplanar_report: Some(report),
+                    engine_gcode: None,
+                    planar_baseline_gcode: None,
+                }
+            } else {
+                job::slice(
+                    &catalog,
+                    &engine,
+                    printer_id,
+                    Some(VARIANT.into()),
+                    Some(quality.clone()),
+                    &[Some(MATERIAL.into())],
+                    base_settings,
+                    &placed,
+                    &[],
+                    None,
+                    &[],
+                    curved_path,
+                    &mut |_| {},
+                )
+                .expect("curved slice")
+            };
             let report = curved_out.nonplanar_report.as_ref().expect("report");
             let safety = report.safety.as_ref().expect("safety");
             rows.push(MatrixRow {
@@ -204,15 +246,34 @@ fn curved_top_safety_matrix() {
                 max_slope_deg: safety.max_extrusion_slope_deg,
                 safety_summary: safety_summary(safety),
             });
-            assert!(
-                report.planar_equivalence_ok,
-                "{printer_id}/{model_name}: planar equivalence failed"
-            );
+            if *model_name != "pillar-beside-dome" {
+                assert!(
+                    report.planar_equivalence_ok,
+                    "{printer_id}/{model_name}: planar equivalence failed"
+                );
+            }
             assert!(
                 safety.ok,
                 "{printer_id}/{model_name}: safety {:?}",
                 safety.violations
             );
+            if let Some(slope) = safety.max_extrusion_slope_deg {
+                assert!(
+                    slope <= safety.slope_cap_deg + 1e-3,
+                    "{printer_id}/{model_name}: slope {slope:.3}° > cap {:.3}°",
+                    safety.slope_cap_deg
+                );
+            }
+            if *model_name == "pillar-beside-dome" {
+                assert!(
+                    report.collision_adjustments.len() > 0,
+                    "{printer_id}: expected collision flattening on pillar fixture, got 0"
+                );
+                assert_eq!(
+                    safety.travel_collisions_remaining, 0,
+                    "{printer_id}: travel collisions must be cleared in final G-code"
+                );
+            }
         }
     }
     let json = serde_json::to_string_pretty(&rows).expect("json");

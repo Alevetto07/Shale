@@ -483,6 +483,12 @@ pub struct SliceOutcome {
     pub machine_gcode: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nonplanar_report: Option<shale_nonplanar::NonplanarReport>,
+    /// [`NonplanarOptions::defer_post_pass`]: raw CuraEngine moves before inverse.
+    #[serde(skip)]
+    pub engine_gcode: Option<String>,
+    /// [`NonplanarOptions::defer_post_pass`]: undeformed-mesh baseline from the same job.
+    #[serde(skip)]
+    pub planar_baseline_gcode: Option<String>,
 }
 
 /// Cura stores `machine_max_feedrate_*` in mm/s; F words use mm/min.
@@ -570,6 +576,17 @@ pub fn slice(
     {
         if !value.is_empty() {
             resolved.global.insert(key.clone(), value.clone());
+        }
+    }
+    // CuraEngine expects `by object` / `all`; Bambu profiles use one_at_a_time / all_at_once.
+    if let Some(seq) = resolved.global.get_mut("print_sequence") {
+        let mapped = match seq.as_str() {
+            "one_at_a_time" | "by_object" | "by object" => "by object",
+            "all_at_once" | "all" => "all",
+            other => other,
+        };
+        if mapped != seq.as_str() {
+            *seq = mapped.to_string();
         }
     }
     // The layer height also drives the layer estimate, so an overridden height
@@ -788,8 +805,11 @@ pub fn slice(
         on_progress,
     )?;
     let mut gcode = fs::read_to_string(&output.gcode_path)?;
+    let defer_post_pass = nonplanar_active && settings.nonplanar.defer_post_pass;
+    let deferred_engine_gcode = defer_post_pass.then(|| gcode.clone());
+    let deferred_planar_baseline = defer_post_pass.then(|| planar_baseline_gcode.clone());
     let mut nonplanar_report = None;
-    if nonplanar_active && !pre_deform_meshes.is_empty() {
+    if nonplanar_active && !pre_deform_meshes.is_empty() && !settings.nonplanar.defer_post_pass {
         let reference = shale_nonplanar::merge_meshes(
             &pre_deform_meshes
                 .iter()
@@ -819,6 +839,11 @@ pub fn slice(
             .notes
             .push("ironing_enabled was forced off for curved-top slicing".into());
         nonplanar_report = Some(report);
+    } else if nonplanar_active
+        && !pre_deform_meshes.is_empty()
+        && settings.nonplanar.defer_post_pass
+    {
+        nonplanar_report = None;
     }
     // CuraEngine does not always say the print time on stdout; it writes it
     // into the file's own `;TIME:` line. The header is read before the summary
@@ -860,6 +885,8 @@ pub fn slice(
         machine_gcode: machine_gcode.is_some(),
         log_tail: output.log_tail,
         nonplanar_report,
+        engine_gcode: deferred_engine_gcode,
+        planar_baseline_gcode: deferred_planar_baseline,
     })
 }
 

@@ -36,6 +36,9 @@ pub struct NonplanarOptions {
     pub band_thickness_mm: Option<f64>,
     /// Ramp thickness at the bottom of the band, in millimetres.
     pub ramp_thickness_mm: Option<f64>,
+    /// Integration tests only: leave CuraEngine output for an outer post-pass.
+    #[serde(default)]
+    pub defer_post_pass: bool,
 }
 
 impl Default for NonplanarOptions {
@@ -46,6 +49,7 @@ impl Default for NonplanarOptions {
             grid_step_mm: 0.35,
             band_thickness_mm: None,
             ramp_thickness_mm: None,
+            defer_post_pass: false,
         }
     }
 }
@@ -136,6 +140,8 @@ pub struct SafetyReport {
     pub z_within_limits: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_extrusion_slope_deg: Option<f64>,
+    /// Effective cap: `max_angle_deg` + [`crate::safety::SLOPE_CAP_TOLERANCE_DEG`].
+    pub slope_cap_deg: f64,
     pub slope_within_cap: bool,
     pub extrusion_jump_count: usize,
     pub feed_cap_violations: usize,

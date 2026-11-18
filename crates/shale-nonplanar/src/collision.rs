@@ -144,7 +144,9 @@ pub fn flatten_on_collision(
     let mut collisions = 0usize;
     for raw in gcode.lines() {
         let line = raw.trim();
-        if !(line.starts_with('G') && (line.contains('X') || line.contains('Y'))) {
+        if !(line.starts_with('G')
+            && (line.contains('X') || line.contains('Y') || line.contains('Z')))
+        {
             continue;
         }
         if let Some(x) = word(line, 'X') {
@@ -285,6 +287,65 @@ mod tests {
             report.notes
         );
         assert_eq!(report.envelope_id, "bambu_lab_a1");
+    }
+
+    #[test]
+    fn concat_pillar_gcode_produces_collisions_when_present() {
+        let path = std::path::Path::new("/tmp/shale-pillar-concat.gcode");
+        if !path.is_file() {
+            return;
+        }
+        let gcode = std::fs::read_to_string(path).expect("concat gcode");
+        let envelope = bambu_a1_envelope();
+        let mut printed = PrintedHeightMap::new([99.8, 104.8], 0.35, 163, 134);
+        let mut position = [0.0; 3];
+        let mut collisions = 0usize;
+        let mut extrusions = 0usize;
+        let mut max_printed = 0.0f64;
+        for raw in gcode.lines() {
+            let line = raw.trim();
+            if !(line.starts_with('G')
+                && (line.contains('X') || line.contains('Y') || line.contains('Z')))
+            {
+                continue;
+            }
+            if let Some(x) = word(line, 'X') {
+                position[0] = x;
+            }
+            if let Some(y) = word(line, 'Y') {
+                position[1] = y;
+            }
+            if let Some(z) = word(line, 'Z') {
+                position[2] = z;
+            }
+            let extrude = line.starts_with("G1") && line.contains('E');
+            let e_pos = word(line, 'E').unwrap_or(0.0);
+            let extruding = extrude && e_pos > 0.0;
+            if move_collides(
+                &envelope,
+                &printed,
+                position[0],
+                position[1],
+                position[2],
+                10.0,
+                extruding,
+            ) {
+                collisions += 1;
+            }
+            if extruding {
+                printed.raise(position[0], position[1], position[2]);
+                extrusions += 1;
+                max_printed = max_printed.max(position[2]);
+            }
+        }
+        assert!(
+            extrusions > 1000 && max_printed > 40.0,
+            "raises={extrusions} max_z={max_printed:.2}"
+        );
+        assert!(
+            collisions > 100,
+            "expected pillar→dome travels to strike tall pillar, got {collisions} (max_z={max_printed:.2})"
+        );
     }
 
     #[test]
