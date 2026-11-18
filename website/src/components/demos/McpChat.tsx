@@ -43,7 +43,6 @@ export function McpChat({ autoStart = false }: { autoStart?: boolean }) {
     <section ref={root} className="demo-panel demo-panel--mcp" id="mcp">
       <header className="demo-panel__head">
         <div>
-          <p className="demo-panel__eyebrow">MCP</p>
           <h2 className="demo-panel__title">Agent chat</h2>
           <p className="demo-panel__note">{label || "Recorded exchange"}</p>
         </div>

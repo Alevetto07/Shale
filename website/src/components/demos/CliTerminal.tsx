@@ -51,11 +51,9 @@ export function CliTerminal({ autoStart = false }: { autoStart?: boolean }) {
     <section ref={root} className="demo-panel demo-panel--terminal" id="cli">
       <header className="demo-panel__head">
         <div>
-          <p className="demo-panel__eyebrow">CLI</p>
           <h2 className="demo-panel__title">shale-cli</h2>
           <p className="demo-panel__note">{label || "Recorded session — synthetic replay"}</p>
         </div>
-        <motionDots />
       </header>
       <div className="rich-terminal" role="log" aria-live="polite">
         <div className="rich-terminal__titlebar">
@@ -85,13 +83,5 @@ export function CliTerminal({ autoStart = false }: { autoStart?: boolean }) {
         Replay
       </button>
     </section>
-  );
-}
-
-function motionDots() {
-  return (
-    <span className="demo-live-pill" aria-hidden>
-      LIVE REPLAY
-    </span>
   );
 }

@@ -14,7 +14,8 @@ const viewports = [
 ];
 
 const sections = [
-  { id: "hero", selector: ".hero", fullPage: false, wait: 4000, settle: ".hero-layer-canvas" },
+  { id: "hero", selector: ".hero", fullPage: false, wait: 5000, settle: ".gcode-viewer--hero canvas" },
+  { id: "coming-next", selector: "#coming-next", fullPage: false, wait: 4000, settle: "#coming-next canvas" },
   { id: "demos", selector: "#demos", fullPage: false, wait: 4500, settle: ".printer-row--rich" },
   {
     id: "toolpath",
@@ -32,9 +33,11 @@ const sections = [
 ];
 
 async function canvasInkCoverage(page, selector) {
-  const canvas = page.locator(selector).first();
-  if ((await canvas.count()) === 0) return { coverage: 0, litPixels: 0 };
-  const buf = await canvas.screenshot({ type: "png" });
+  const loc = page.locator(selector).first();
+  if ((await loc.count()) === 0) return { coverage: 0, litPixels: 0 };
+  const box = await loc.boundingBox();
+  if (!box) return { coverage: 0, litPixels: 0 };
+  const buf = await page.screenshot({ clip: box, type: "png", animations: "disabled" });
   return coverageFromPng(buf);
 }
 
@@ -53,10 +56,10 @@ for (const vp of viewports) {
       el.classList.add("is-visible");
     });
   });
-  await page.waitForSelector(".hero-layer-canvas", { timeout: 25000 });
+  await page.waitForSelector(".gcode-viewer--hero canvas", { timeout: 35000 });
 
-  await page.waitForTimeout(2500);
-  const heroCov = await canvasInkCoverage(page, ".hero-layer-canvas");
+  await page.waitForTimeout(3500);
+  const heroCov = await canvasInkCoverage(page, ".gcode-viewer--hero canvas");
   console.log(`[${vp.tag}] hero canvas coverage=${heroCov.coverage?.toFixed(3)} lit=${heroCov.litPixels}`);
   if ((heroCov.coverage ?? 0) < MIN_CANVAS_COVERAGE) {
     regressions.push(`${vp.tag} hero coverage ${heroCov.coverage} < ${MIN_CANVAS_COVERAGE}`);
@@ -81,7 +84,17 @@ for (const vp of viewports) {
     if (section.settle) {
       await page.waitForSelector(section.settle, { timeout: 15000 }).catch(() => {});
     }
-    await page.waitForTimeout(section.wait);
+    if (section.id === "toolpath") {
+      await page
+        .waitForFunction(
+          () => document.querySelector("#toolpath .demo-panel__note")?.textContent?.includes("CuraEngine"),
+          { timeout: 45000 },
+        )
+        .catch(() => {});
+      await page.waitForTimeout(2500);
+    } else {
+      await page.waitForTimeout(section.wait);
+    }
 
     if (section.id === "toolpath") {
       const toolCov = await canvasInkCoverage(page, ".demo-panel__viewer canvas");
@@ -92,7 +105,14 @@ for (const vp of viewports) {
     }
 
     const path = join(outDir, `${section.id}-${vp.tag}.png`);
-    await el.screenshot({ path });
+    try {
+      await el.screenshot({ path, animations: "disabled", timeout: 45_000 });
+    } catch {
+      const box = await el.boundingBox();
+      if (box) {
+        await page.screenshot({ path, clip: box, animations: "disabled" });
+      }
+    }
     console.log(`Wrote ${path}`);
   }
 

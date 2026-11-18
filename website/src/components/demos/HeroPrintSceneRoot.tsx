@@ -1,10 +1,10 @@
 import { DemoProvider } from "../../lib/demo-context";
-import { HeroLayerCanvas } from "./HeroLayerCanvas";
+import { HeroPrintScene } from "./HeroPrintScene";
 
 export default function HeroPrintSceneRoot() {
   return (
-    <DemoProvider>
-      <HeroLayerCanvas />
+    <DemoProvider eager>
+      <HeroPrintScene />
     </DemoProvider>
   );
 }

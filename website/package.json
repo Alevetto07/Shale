@@ -7,9 +7,10 @@
     "build": "astro build",
     "preview": "astro preview",
     "screenshots": "node scripts/capture-screenshots.mjs",
-    "demo-data": "node scripts/slice-stl-to-json.mjs examples/t-wing.stl public/demo/demo-slice.json"
+    "demo-data": "node scripts/gcode-to-json.mjs ../../uploads/t-wing_972c.gcode public/demo/demo-slice.json --step=0.4"
   },
   "dependencies": {
+    "@fontsource/space-grotesk": "^5.3.0",
     "@react-three/drei": "^10.0.6",
     "@react-three/fiber": "^9.1.2",
     "motion": "^12.4.7",

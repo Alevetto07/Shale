@@ -99,6 +99,112 @@
     0 40px 120px rgba(0, 0, 0, 0.55);
 }
 
+.gcode-viewer--hero {
+  min-height: min(52vh, 520px);
+}
+
+.gcode-viewer__caption {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.75rem;
+  font-size: 0.72rem;
+  color: var(--ink-3);
+  margin: 0;
+}
+
+.gcode-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.78rem;
+  color: var(--ink-2);
+}
+
+.gcode-legend__swatch {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 2px;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+.travel-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  color: var(--ink-2);
+}
+
+.coming-next {
+  padding: clamp(1.25rem, 3vw, 2rem);
+}
+
+.coming-next__head h2 {
+  margin: 0 0 0.5rem;
+  font-family: "Space Grotesk", var(--sans);
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  letter-spacing: -0.03em;
+}
+
+.panel-path-frame {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+  box-shadow: var(--glass-shadow);
+  position: relative;
+}
+
+.panel-path-frame::before {
+  content: "";
+  position: absolute;
+  left: 1.25rem;
+  right: 1.25rem;
+  top: 0;
+  height: 2px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--path),
+    var(--path) 8px,
+    transparent 8px,
+    transparent 14px
+  );
+  opacity: 0.55;
+}
+
+.compare-slider {
+  display: grid;
+  gap: 0.65rem;
+  margin: 1rem 0;
+}
+
+.compare-slider__control {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.75rem;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+
+.coming-next__viewer {
+  min-height: 320px;
+}
+
+.compare-caption {
+  margin: 0 0 0.5rem;
+  font-size: 0.82rem;
+  color: var(--ink-2);
+}
+
+.section-coming {
+  padding-block: clamp(3rem, 7vw, 5rem);
+}
+
 .hero-print__canvas,
 .hero-layer-canvas {
   width: 100%;

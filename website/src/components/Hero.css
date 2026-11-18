@@ -42,10 +42,13 @@
 
 .hero h1 {
   margin: 0 0 0.75rem;
-  font-size: clamp(2.85rem, 7vw, 4.6rem);
+  font-family: "Space Grotesk", var(--sans);
+  font-size: clamp(3rem, 8vw, 5rem);
   font-weight: 600;
-  line-height: 0.95;
-  letter-spacing: -0.042em;
+  line-height: 0.92;
+  letter-spacing: -0.048em;
+  color: var(--ink);
+  text-shadow: 0 0 48px color-mix(in srgb, var(--path) 35%, transparent);
 }
 
 .hero-line {

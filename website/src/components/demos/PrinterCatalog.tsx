@@ -42,7 +42,6 @@ export function PrinterCatalog({ autoStart: _autoStart }: { autoStart?: boolean 
     <section className="demo-panel demo-panel--printers" id="printers">
       <header className="demo-panel__head">
         <div>
-          <p className="demo-panel__eyebrow">Catalogue</p>
           <h2 className="demo-panel__title">Bambu printers</h2>
           <p className="demo-panel__note">Bed size updates the build plate in the 3D preview.</p>
         </div>

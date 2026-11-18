@@ -15,9 +15,8 @@ export function SliceSettingsDemo() {
     <section className="demo-panel demo-panel--slice" id="slice-settings">
       <header className="demo-panel__head">
         <div>
-          <p className="demo-panel__eyebrow">Slicing</p>
           <h2 className="demo-panel__title">Slice settings</h2>
-          <p className="demo-panel__note">Sliders update the hatch and the 3D toolpath density.</p>
+          <p className="demo-panel__note">Baseline: 0.2 mm slice · 863 s · 0.95 m (t-wing_972c.gcode).</p>
         </div>
       </header>
       <div className="slice-layout">

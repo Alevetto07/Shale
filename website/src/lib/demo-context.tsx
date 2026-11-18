@@ -29,66 +29,104 @@ export type PrinterRow = {
 
 type DemoState = {
   data: SliceData | null;
+  loading: boolean;
   plateMm: number;
   printerId: string;
   layer: number;
   playing: boolean;
+  showTravel: boolean;
   layerHeight: number;
   infill: number;
   walls: number;
   setLayer: React.Dispatch<React.SetStateAction<number>>;
   setPlaying: (v: boolean) => void;
+  setShowTravel: (v: boolean) => void;
   setLayerHeight: (v: number) => void;
   setInfill: (v: number) => void;
   setWalls: (v: number) => void;
   selectPrinter: (p: PrinterRow) => void;
   visibleLayerCount: number;
   estimates: { layers: number; filament_m: number; time_s: number };
+  loadSlice: (url?: string) => void;
 };
 
 const DemoContext = createContext<DemoState | null>(null);
 
-export function DemoProvider({ children }: { children: ReactNode }) {
+const DEFAULT_SLICE = "/demo/demo-slice.json";
+
+let sliceCache: Promise<SliceData> | null = null;
+
+function fetchSliceData(url: string): Promise<SliceData> {
+  if (!sliceCache) {
+    sliceCache = fetch(url).then((r) => {
+      if (!r.ok) throw new Error("slice fetch failed");
+      return r.json();
+    });
+  }
+  return sliceCache;
+}
+
+export function DemoProvider({
+  children,
+  eager = false,
+  sliceUrl = DEFAULT_SLICE,
+}: {
+  children: ReactNode;
+  eager?: boolean;
+  sliceUrl?: string;
+}) {
   const [data, setData] = useState<SliceData | null>(null);
+  const [loading, setLoading] = useState(false);
   const [plateMm, setPlateMm] = useState(256);
   const [printerId, setPrinterId] = useState("bambu_lab_a1");
   const [layer, setLayer] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [showTravel, setShowTravel] = useState(false);
   const [layerHeight, setLayerHeight] = useState(0.2);
   const [infill, setInfill] = useState(20);
   const [walls, setWalls] = useState(3);
+  const [armed, setArmed] = useState(eager);
+
+  const loadSlice = useCallback(
+    (url = sliceUrl) => {
+      if (!armed && !eager) return;
+      setLoading(true);
+      fetchSliceData(url)
+        .then((json: SliceData) => {
+          setData(json);
+          setLayer(json.layers.length - 1);
+        })
+        .catch(() => setData(null))
+        .finally(() => setLoading(false));
+    },
+    [armed, eager, sliceUrl],
+  );
 
   useEffect(() => {
-    fetch("/demo/demo-slice.json")
-      .then((r) => r.json())
-      .then((json: SliceData) => {
-        setData(json);
-        setLayer(json.layers.length - 1);
-      })
-      .catch(() => setData(null));
-  }, []);
+    if (eager) loadSlice(sliceUrl);
+  }, [eager, loadSlice, sliceUrl]);
+
+  const baseMeta = data?.meta ?? {};
+  const baseLayers = Number(baseMeta.layers ?? 120);
+  const baseFil = Number(baseMeta.filament_m ?? 0.9508);
+  const baseTime = Number(baseMeta.time_s ?? 863);
+  const baseLh = Number(baseMeta.layer_height_mm ?? 0.2);
 
   const visibleLayerCount = useMemo(() => {
-    if (!data) return 0;
-    const base = data.meta.layer_height_mm as number;
-    const ratio = base / layerHeight;
-    return Math.max(1, Math.min(data.layers.length, Math.round(data.layers.length * ratio)));
-  }, [data, layerHeight]);
+    const ratio = baseLh / layerHeight;
+    return Math.max(1, Math.min(baseLayers, Math.round(baseLayers * ratio)));
+  }, [baseLayers, baseLh, layerHeight]);
 
   const estimates = useMemo(() => {
-    const base = data?.meta ?? {};
-    const baseLayers = Number(base.layers ?? 100);
-    const baseFil = Number(base.filament_m ?? 1.46);
-    const baseTime = Number(base.time_s ?? 48);
-    const layerScale = 0.2 / layerHeight;
-    const infillScale = infill / 20;
-    const wallScale = 1 + (walls - 3) * 0.08;
+    const layerScale = baseLh / layerHeight;
+    const infillScale = 0.85 + (infill / 100) * 0.3;
+    const wallScale = 1 + (walls - 3) * 0.06;
     return {
       layers: Math.ceil(baseLayers * layerScale),
       filament_m: baseFil * layerScale * infillScale * wallScale,
       time_s: baseTime * layerScale * infillScale * wallScale,
     };
-  }, [data, layerHeight, infill, walls]);
+  }, [baseLayers, baseFil, baseTime, baseLh, layerHeight, infill, walls]);
 
   const selectPrinter = useCallback((p: PrinterRow) => {
     setPrinterId(p.id);
@@ -97,24 +135,62 @@ export function DemoProvider({ children }: { children: ReactNode }) {
 
   const value: DemoState = {
     data,
+    loading,
     plateMm,
     printerId,
     layer,
     playing,
+    showTravel,
     layerHeight,
     infill,
     walls,
     setLayer,
     setPlaying,
+    setShowTravel,
     setLayerHeight,
     setInfill,
     setWalls,
     selectPrinter,
     visibleLayerCount,
     estimates,
+    loadSlice,
   };
 
-  return <DemoContext.Provider value={value}>{children}</DemoContext.Provider>;
+  return (
+    <DemoContext.Provider value={value}>
+      <DemoArmOnVisible armed={armed} setArmed={setArmed} onArm={() => loadSlice(sliceUrl)} />
+      {children}
+    </DemoContext.Provider>
+  );
+}
+
+function DemoArmOnVisible({
+  armed,
+  setArmed,
+  onArm,
+}: {
+  armed: boolean;
+  setArmed: (v: boolean) => void;
+  onArm: () => void;
+}) {
+  useEffect(() => {
+    if (armed) return;
+    const el = document.querySelector("#demos, .hero-print");
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setArmed(true);
+          onArm();
+          io.disconnect();
+        }
+      },
+      { rootMargin: "120px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [armed, setArmed, onArm]);
+  return null;
 }
 
 export function useDemo() {

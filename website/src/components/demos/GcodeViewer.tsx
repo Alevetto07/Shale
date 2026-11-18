@@ -3,64 +3,32 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Line } from "@react-three/drei";
 import * as THREE from "three";
 import type { Layer, SliceData } from "../../lib/demo-context";
-
-function pathColor(type: string) {
-  if (type === "wall") return "#f0eeea";
-  if (type === "infill") {
-    return (
-      getComputedStyle(document.documentElement).getPropertyValue("--path").trim() || "#9eb8ff"
-    );
-  }
-  if (type === "support") return "#c9a227";
-  return "#5c6a7a";
-}
+import { featureColor } from "../../lib/gcode-types";
+import { FeatureLegend } from "./FeatureLegend";
 
 type Bbox = { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number };
 
 function sceneBbox(data: SliceData): Bbox {
   const b = data.meta.bounds as Bbox;
-  return (
-    b ?? {
-      minX: 0,
-      maxX: 40,
-      minY: 0,
-      maxY: 40,
-      minZ: 0,
-      maxZ: 20,
-    }
-  );
+  return b;
 }
 
 function modelCenter(b: Bbox) {
-  return {
-    x: (b.minX + b.maxX) / 2,
-    y: (b.minY + b.maxY) / 2,
-    z: (b.minZ + b.maxZ) / 2,
-  };
+  return { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2, z: (b.minZ + b.maxZ) / 2 };
 }
 
-function BedPlate({
-  size,
-  modelFootprint,
-  hero,
-}: {
-  size: number;
-  modelFootprint: number;
-  hero?: boolean;
-}) {
-  const show = hero ? modelFootprint * 1.75 : Math.min(size, modelFootprint * 2.6);
-  const gridDiv = Math.max(6, Math.min(20, Math.round(show / 8)));
+function BedPlate({ footprint, hero }: { footprint: number; hero?: boolean }) {
+  const show = hero ? footprint * 1.9 : footprint * 2.4;
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} receiveShadow>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} receiveShadow>
         <planeGeometry args={[show, show]} />
-        <meshStandardMaterial color="#10141c" metalness={0.4} roughness={0.55} />
+        <meshStandardMaterial color="#0c1018" metalness={0.55} roughness={0.42} />
       </mesh>
-      <gridHelper args={[show, gridDiv, "#3d5f8a", "#243044"]} position={[0, 0.06, 0]} />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.08, 0]}>
-        <ringGeometry args={[modelFootprint * 0.55, modelFootprint * 0.58, 64]} />
-        <meshBasicMaterial color={pathColor("infill")} transparent opacity={0.35} />
-      </mesh>
+      <gridHelper
+        args={[show, Math.round(show / 10), "#2e4a6a", "#1a2430"]}
+        position={[0, 0.03, 0]}
+      />
     </group>
   );
 }
@@ -69,90 +37,90 @@ function LayerPaths({
   layers,
   maxLayer,
   center,
-  infillScale,
+  showTravel,
+  buildProgress,
 }: {
   layers: Layer[];
   maxLayer: number;
   center: { x: number; y: number };
-  infillScale: number;
+  showTravel: boolean;
+  buildProgress: number;
 }) {
   const visible = layers.slice(0, maxLayer + 1);
-  const wallColor = pathColor("wall");
-  const infillCol = pathColor("infill");
-  const travelCol = pathColor("travel");
-
   return (
     <group>
-      {visible.map((lay, li) =>
-        lay.segments.map((seg, si) => {
-          if (seg.type === "infill" && infillScale < 0.25) return null;
-          const pts = seg.points.map(
-            ([x, y]) => new THREE.Vector3(x - center.x, lay.z, y - center.y),
-          );
+      {visible.map((lay, li) => {
+        const layerDim = li < maxLayer ? 0.55 + (li / Math.max(1, maxLayer)) * 0.35 : 1;
+        return lay.segments.map((seg, si) => {
+          if (seg.type === "travel" && !showTravel) return null;
+          if (seg.type === "skirt") return null;
+          let pts = seg.points.map(([x, y]) => new THREE.Vector3(x - center.x, lay.z, y - center.y));
           if (pts.length < 2) return null;
-          const col =
-            seg.type === "wall" ? wallColor : seg.type === "infill" ? infillCol : travelCol;
-          const width = seg.type === "wall" ? 5.5 : seg.type === "infill" ? 3.5 : 1.6;
+          if (li === maxLayer && buildProgress < 1) {
+            const keep = Math.max(2, Math.floor(pts.length * buildProgress));
+            pts = pts.slice(0, keep);
+          }
+          const col = featureColor(seg.type);
+          const width =
+            seg.type === "wall-outer" ? 5 : seg.type === "wall-inner" ? 4 : seg.type === "skin" ? 3.5 : 2.5;
           return (
             <Line
-              key={`${li}-${si}`}
+              key={`${li}-${si}-${seg.type}`}
               points={pts}
               color={col}
               lineWidth={width}
-              worldUnits={false}
               transparent
-              opacity={seg.type === "travel" ? 0.45 : 0.95}
+              opacity={seg.type === "travel" ? 0.35 : (0.55 + 0.45 * layerDim) * (seg.type === "infill" ? 0.85 : 1)}
             />
           );
-        }),
-      )}
+        });
+      })}
     </group>
   );
 }
 
-function NozzleMarker({
+function NozzleAlongLayer({
   layers,
   layerIndex,
   center,
+  buildProgress,
 }: {
   layers: Layer[];
   layerIndex: number;
   center: { x: number; y: number };
+  buildProgress: number;
 }) {
   const ref = useRef<THREE.Mesh>(null);
   const tip = useMemo(() => {
     const lay = layers[Math.min(layerIndex, layers.length - 1)];
-    if (!lay?.segments[0]?.points[0]) return new THREE.Vector3(0, lay?.z ?? 1, 0);
-    const p = lay.segments[0].points[0];
-    return new THREE.Vector3(p[0] - center.x, lay.z + 0.6, p[1] - center.y);
-  }, [layers, layerIndex, center]);
+    if (!lay) return new THREE.Vector3(0, 0.4, 0);
+    const extrude = lay.segments.filter((s) => s.type !== "travel" && s.type !== "skirt");
+    let pts: number[][] = [];
+    for (const s of extrude) pts = pts.concat(s.points);
+    if (!pts.length) return new THREE.Vector3(0, lay.z + 0.5, 0);
+    const idx = Math.min(pts.length - 1, Math.floor(pts.length * buildProgress));
+    const p = pts[idx];
+    return new THREE.Vector3(p[0] - center.x, lay.z + 0.55, p[1] - center.y);
+  }, [layers, layerIndex, center, buildProgress]);
 
   useFrame((_, dt) => {
     if (!ref.current) return;
-    ref.current.position.lerp(tip, 1 - Math.pow(0.001, dt));
+    ref.current.position.lerp(tip, 1 - Math.pow(0.0008, dt));
   });
 
+  const glow = featureColor("infill");
   return (
-    <mesh ref={ref} position={tip}>
-      <sphereGeometry args={[0.9, 16, 16]} />
-      <meshStandardMaterial
-        emissive={pathColor("infill")}
-        emissiveIntensity={2.2}
-        color="#1a1a1a"
-      />
-    </mesh>
+    <group>
+      <mesh ref={ref} position={tip}>
+        <sphereGeometry args={[0.75, 14, 14]} />
+        <meshStandardMaterial emissive={glow} emissiveIntensity={2.5} color="#121212" />
+      </mesh>
+      <pointLight position={tip} intensity={1.2} distance={28} color={glow} />
+    </group>
   );
 }
 
-function FitCamera({
-  bbox,
-  fill = 0.55,
-  hero,
-}: {
-  bbox: Bbox;
-  fill?: number;
-  hero?: boolean;
-}) {
+function FitCamera({ bbox, fill = 0.46, hero }: { bbox: Bbox; fill?: number; hero?: boolean }) {
   const { camera, size } = useThree();
   const controls = useThree((s) => s.controls) as OrbitControls | null;
 
@@ -162,25 +130,27 @@ function FitCamera({
     const sy = bbox.maxY - bbox.minY;
     const sz = bbox.maxZ - bbox.minZ;
     const half = Math.max(sx, sy, sz, 6) * 0.5;
-    const targetY = bbox.minZ + sz * 0.42;
+    const targetY = sz * 0.38;
 
     const aspect = size.width / size.height;
     const vFov = (persp.fov * Math.PI) / 180;
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
     const distV = half / Math.tan(vFov / 2) / fill;
     const distH = half / Math.tan(hFov / 2) / fill;
-    const dist = Math.max(distV, distH) * (hero ? 1.02 : 1.08);
+    const dist = Math.max(distV, distH) * (hero ? 1.0 : 1.06);
 
-    persp.position.set(dist * 0.82, targetY + dist * 0.55, dist * 0.9);
-    persp.near = Math.max(0.2, dist / 100);
-    persp.far = dist * 30;
+    persp.position.set(dist * 0.85, targetY + dist * 0.52, dist * 0.92);
+    persp.near = Math.max(0.2, dist / 120);
+    persp.far = dist * 35;
     persp.lookAt(0, targetY, 0);
     persp.updateProjectionMatrix();
 
     if (controls) {
-      (controls as unknown as { target: THREE.Vector3 }).target.set(0, targetY, 0);
-      controls.minDistance = dist * 0.4;
-      controls.maxDistance = dist * 3;
+      controls.target.set(0, targetY, 0);
+      controls.minDistance = dist * 0.38;
+      controls.maxDistance = dist * 3.2;
+      controls.autoRotate = !!hero;
+      controls.autoRotateSpeed = 0.35;
       controls.update?.();
     }
   }, [bbox, camera, size, fill, hero, controls]);
@@ -190,117 +160,129 @@ function FitCamera({
 
 function SceneInner({
   data,
-  plateMm,
   layerIndex,
-  infill,
+  showTravel,
+  buildProgress,
   hero,
 }: {
   data: SliceData;
-  plateMm: number;
   layerIndex: number;
-  infill: number;
+  showTravel: boolean;
+  buildProgress: number;
   hero?: boolean;
 }) {
   const bbox = sceneBbox(data);
   const center = modelCenter(bbox);
   const maxLayer = Math.min(layerIndex, data.layers.length - 1);
-  const infillScale = infill / 100;
   const footprint = Math.max(bbox.maxX - bbox.minX, bbox.maxY - bbox.minY);
 
   const centeredBbox: Bbox = {
-    minX: bbox.minX - center.x,
-    maxX: bbox.maxX - center.x,
-    minY: bbox.minY - center.y,
-    maxY: bbox.maxY - center.y,
+    minX: -footprint / 2,
+    maxX: footprint / 2,
+    minY: -((bbox.maxY - bbox.minY) / 2),
+    maxY: (bbox.maxY - bbox.minY) / 2,
     minZ: bbox.minZ,
     maxZ: bbox.maxZ,
   };
 
   return (
     <>
-      <color attach="background" args={["#05070a"]} />
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[60, 100, 40]} intensity={1.35} />
-      <pointLight position={[-50, 80, -35]} intensity={0.55} color={pathColor("infill")} />
-      <BedPlate size={plateMm} modelFootprint={footprint} hero={hero} />
+      <color attach="background" args={["#04060a"]} />
+      <fog attach="fog" args={["#04060a", 80, 220]} />
+      <ambientLight intensity={0.42} />
+      <directionalLight position={[50, 90, 35]} intensity={1.25} color="#f0f4ff" />
+      <directionalLight position={[-40, 60, -50]} intensity={0.35} />
+      <BedPlate footprint={footprint} hero={hero} />
       <LayerPaths
         layers={data.layers}
         maxLayer={maxLayer}
         center={center}
-        infillScale={infillScale}
+        showTravel={showTravel}
+        buildProgress={buildProgress}
       />
-      <NozzleMarker layers={data.layers} layerIndex={maxLayer} center={center} />
-      <FitCamera bbox={centeredBbox} fill={0.46} hero={hero} />
-      <OrbitControls makeDefault enablePan enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2.05} />
+      <NozzleAlongLayer
+        layers={data.layers}
+        layerIndex={maxLayer}
+        center={center}
+        buildProgress={buildProgress}
+      />
+      <FitCamera bbox={centeredBbox} fill={0.48} hero={hero} />
+      <OrbitControls
+        makeDefault
+        enablePan={!hero}
+        enableDamping
+        dampingFactor={0.07}
+        maxPolarAngle={Math.PI / 2.05}
+      />
     </>
   );
 }
 
-function ParallaxRig({ children, strength = 0.06 }: { children: ReactNode }) {
+function ParallaxRig({ children }: { children: ReactNode }) {
   const group = useRef<THREE.Group>(null);
   const { pointer } = useThree();
   useFrame(() => {
     if (!group.current) return;
-    group.current.rotation.y = pointer.x * strength;
-    group.current.rotation.x = pointer.y * strength * 0.25;
+    group.current.rotation.y = pointer.x * 0.05;
+    group.current.rotation.x = pointer.y * 0.02;
   });
   return <group ref={group}>{children}</group>;
 }
 
-/** Exposed for Playwright capture regression */
-export function modelCoverageRatioFromData(data: SliceData): number {
-  const b = sceneBbox(data);
-  const sx = b.maxX - b.minX;
-  const sy = b.maxY - b.minY;
-  const sz = b.maxZ - b.minZ;
-  const modelRadius = Math.max(sx, sy, sz, 1);
-  const fill = 0.56;
-  const dist = modelRadius * 0.72 / Math.tan((42 * Math.PI) / 180 / 2) / fill;
-  const projected = modelRadius / (dist * Math.tan((42 * Math.PI) / 180 / 2));
-  return Math.min(0.95, projected * 1.1);
-}
-
 export function GcodeViewer({
   data,
-  plateMm,
   layerIndex,
-  infill,
+  showTravel,
+  buildProgress = 1,
   className = "",
   hero = false,
+  showLegend = true,
 }: {
   data: SliceData | null;
-  plateMm: number;
   layerIndex: number;
-  infill: number;
+  showTravel: boolean;
+  buildProgress?: number;
   className?: string;
   hero?: boolean;
+  showLegend?: boolean;
 }) {
   if (!data) {
-    return <div className={`gcode-viewer gcode-viewer--loading ${className}`}>Loading slice…</div>;
+    return <div className={`gcode-viewer gcode-viewer--loading ${className}`}>Loading G-code preview…</div>;
   }
 
   return (
-    <div className={`gcode-viewer ${className}`} data-model-coverage={modelCoverageRatioFromData(data).toFixed(2)}>
+    <div className={`gcode-viewer ${hero ? "gcode-viewer--hero" : ""} ${className}`}>
+      {showLegend && !hero && <FeatureLegend showTravel={showTravel} />}
       <Canvas
-        dpr={[1, 1.5]}
-        camera={{ fov: 42, near: 0.5, far: 800, position: [80, 60, 80] }}
+        dpr={[1, 1.4]}
+        camera={{ fov: 40, near: 0.5, far: 900 }}
         gl={{ antialias: true, powerPreference: "high-performance" }}
-        style={{ background: "#05070a" }}
       >
         {hero ? (
           <ParallaxRig>
             <SceneInner
               data={data}
-              plateMm={plateMm}
               layerIndex={layerIndex}
-              infill={infill}
+              showTravel={showTravel}
+              buildProgress={buildProgress}
               hero
             />
           </ParallaxRig>
         ) : (
-          <SceneInner data={data} plateMm={plateMm} layerIndex={layerIndex} infill={infill} />
+          <SceneInner
+            data={data}
+            layerIndex={layerIndex}
+            showTravel={showTravel}
+            buildProgress={buildProgress}
+            hero={false}
+          />
         )}
       </Canvas>
+      {hero && (
+        <p className="gcode-viewer__caption mono">
+          Real CuraEngine G-code · Shale · layer {layerIndex + 1}/{data.layers.length}
+        </p>
+      )}
     </div>
   );
 }
