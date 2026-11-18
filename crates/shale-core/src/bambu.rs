@@ -510,6 +510,16 @@ pub fn flatten_preset_from_dirs(
             serde_json::from_str(&text).map_err(|err| format!("json in {}: {err}", preset_path.display()))?;
         raw.insert(lower.clone(), value);
     }
+    if let Some(parent) = raw
+        .get(&lower)
+        .and_then(|v| v.get("inherits"))
+        .and_then(|v| v.as_str())
+    {
+        let parent_key = parent.to_ascii_lowercase();
+        if !raw.contains_key(&parent_key) {
+            return Err(format!("missing inherits parent `{parent}` for `{stem}`"));
+        }
+    }
     let mut memo = HashMap::new();
     resolve_chain(&raw, &mut memo, &lower, 0)
         .ok_or_else(|| format!("could not resolve inherits for `{stem}`"))
