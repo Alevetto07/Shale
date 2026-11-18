@@ -15,8 +15,11 @@
   --line: rgba(255, 255, 255, 0.1);
   --line-bright: rgba(255, 255, 255, 0.18);
 
-  --accent: #7eb8ff;
-  --accent-soft: rgba(126, 184, 255, 0.14);
+  --path: #9eb8ff;
+  --path-dim: rgba(158, 184, 255, 0.2);
+  --bed-glow: rgba(126, 184, 255, 0.08);
+  --accent: var(--path);
+  --accent-soft: var(--path-dim);
   --accent-ink: #0a1420;
 
   --glass-face: rgba(18, 20, 26, 0.92);

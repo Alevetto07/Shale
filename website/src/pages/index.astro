@@ -1,8 +1,14 @@
 ---
 import Base from "../layouts/Base.astro";
-import AppFrame from "../components/AppFrame.astro";
 import Sha256Field from "../components/Sha256Field.astro";
 import "../components/Hero.css";
+import { FieldThemePicker } from "../components/demos/FieldThemePicker";
+import { ToolpathDemo } from "../components/demos/ToolpathDemo";
+import { SliceSettingsDemo } from "../components/demos/SliceSettingsDemo";
+import { CliTerminal } from "../components/demos/CliTerminal";
+import { McpChat } from "../components/demos/McpChat";
+import { PrinterCatalog } from "../components/demos/PrinterCatalog";
+import { LaunchRace } from "../components/demos/LaunchRace";
 import {
   slogan,
   repoUrl,
@@ -13,56 +19,45 @@ import {
   checksumsUrl,
   releasePageUrl,
   primaryDownload,
-  featureTiles,
-  comingNext,
-  mediaSlots,
-  mcpEnvExample,
-  underTheHood,
   launchBenchmarks,
 } from "../config/site";
-
-const windowsCli = downloads.find((d) => d.id === "windows-cli");
-const linuxCli = downloads.find((d) => d.id === "linux-cli");
-
-const mcpJson = JSON.stringify(
-  {
-    mcpServers: {
-      shale: {
-        command: "/usr/local/bin/shale-mcp",
-        env: { ...mcpEnvExample },
-      },
-    },
-  },
-  null,
-  2,
-);
-
-const heroShot = mediaSlots.find((m) => m.id === "prepare");
 ---
 
 <Base preloadImage="/media/prepare-hero-1200.webp">
+  <div class="page-bed" aria-hidden="true"></div>
+
   <section class="hero" aria-labelledby="hero-title">
     <div class="wrap hero-shell">
       <div class="hero-copy">
-        <p class="eyebrow hero-kicker">Bambu Lab · v{version}</p>
         <h1 id="hero-title">Shale</h1>
         <p class="hero-line">{slogan}</p>
         <p class="hero-deck">
-          Bambu-only slicer on unmodified CuraEngine — Studio presets, account sign-in, and a
-          workspace that opens in under a second.
+          Bambu-only slicer on CuraEngine — sign in, slice with Studio presets, send when you are
+          ready.
         </p>
+        <FieldThemePicker client:load />
+        <svg class="hero-path-svg" viewBox="0 0 200 120" aria-hidden="true">
+          <rect class="hero-path-draw" x="40" y="30" width="120" height="70" stroke-width="1.5"></rect>
+          <path
+            class="hero-path-draw"
+            d="M50 70 H150"
+            stroke-width="1"
+            stroke-dasharray="4 6"
+            style="animation-delay: 0.35s"
+          ></path>
+        </svg>
         <ul class="hero-stats" aria-label="Launch benchmarks">
           <li class="hero-stat-item">
             <span class="hero-stat-value"
               >{launchBenchmarks.shaleUsableWarmSeconds}<span class="unit">s</span></span
             >
-            <span class="hero-stat-label">Warm launch</span>
+            <span class="hero-stat-label">Warm</span>
           </li>
           <li class="hero-stat-item">
             <span class="hero-stat-value"
               >{launchBenchmarks.shaleUsableColdSeconds}<span class="unit">s</span></span
             >
-            <span class="hero-stat-label">Cold start</span>
+            <span class="hero-stat-label">Cold</span>
           </li>
           <li class="hero-stat-item">
             <span class="hero-stat-value">{launchBenchmarks.competitorRangeLabel}</span>
@@ -73,132 +68,33 @@ const heroShot = mediaSlots.find((m) => m.id === "prepare");
           <a class="btn btn-primary" href={downloadUrl(primaryDownload.fileName)}>
             Download for Windows
           </a>
-          <a class="hero-secondary" href="#downloads">CLI + MCP packages</a>
+          <a class="hero-secondary" href="#downloads">All packages</a>
         </div>
-        <p class="hero-meta dim">{underTheHood} · AGPL-3.0-or-later</p>
+        <p class="hero-meta dim">v{version} · {shaleLicense}</p>
       </div>
-      {
-        heroShot && heroShot.kind === "screenshot" && (
-          <figure class="hero-product" data-reveal>
-            <AppFrame title="Shale — Prepare">
-              <picture>
-                <source srcset="/media/prepare-hero-1200.webp" type="image/webp" />
-                <img
-                  src={heroShot.src}
-                  alt={heroShot.alt}
-                  width="960"
-                  height="540"
-                  fetchpriority="high"
-                  decoding="async"
-                  loading="eager"
-                />
-              </picture>
-            </AppFrame>
-          </figure>
-        )
-      }
+      <div class="hero-demo" data-reveal>
+        <LaunchRace client:visible />
+      </div>
     </div>
   </section>
 
-  <section id="features" aria-labelledby="features-title">
+  <section id="demos" aria-labelledby="demos-title">
     <div class="wrap">
-      <div class="section-head section-head--row">
-        <div class="section-head--lead">
-          <p class="eyebrow">Features</p>
-          <h2 id="features-title">Everything in v{version}, on the plate.</h2>
-        </div>
-        <p class="muted section-head-dek">
-          Account, presets, send, speed, headless tools, and portable projects — each tile shows
-          the real UI or the measured number.
+      <div class="section-head">
+        <h2 id="demos-title">Try the tools</h2>
+        <p class="muted">
+          Live widgets below — synthetic paths, recorded CLI/MCP, and catalogue data from the v0.1.3
+          tree. Nothing here starts a print.
         </p>
       </div>
-      <div class="features-grid">
-        {
-          featureTiles.map((tile, i) => (
-            <article
-              class="panel feature-tile"
-              data-reveal
-              data-reveal-delay={(i % 3) + 1}
-            >
-              <div class="feature-tile-body">
-                <h3>{tile.title}</h3>
-                <p>{tile.body}</p>
-                {tile.kind === "launch" && (
-                  <div class="tile-launch-stats">
-                    <div>
-                      <div class="tile-stat-num">
-                        {launchBenchmarks.shaleUsableWarmSeconds}
-                        <span class="unit">s</span>
-                      </div>
-                      <span class="tile-stat-cap">Warm</span>
-                    </div>
-                    <div>
-                      <div class="tile-stat-num">
-                        {launchBenchmarks.shaleUsableColdSeconds}
-                        <span class="unit">s</span>
-                      </div>
-                      <span class="tile-stat-cap">Cold</span>
-                    </div>
-                  </div>
-                )}
-                {tile.kind === "launch" && (
-                  <p class="tile-compare dim">
-                    {launchBenchmarks.competitors.join(", ")}: {launchBenchmarks.competitorRangeLabel}
-                  </p>
-                )}
-                {tile.kind === "visual" && (
-                  <div class="tile-visual-img">
-                    <img src={tile.image} alt={tile.imageAlt} loading="lazy" decoding="async" />
-                  </div>
-                )}
-                {tile.kind === "mini" && tile.mini === "cli" && (
-                  <div class="mini-cli" aria-hidden="true">
-                    $ shale-cli slice cube.stl -o plate.gcode
-                  </div>
-                )}
-                {tile.kind === "mini" && tile.mini === "shale-file" && (
-                  <div class="mini-shale" aria-hidden="true">
-                    <span class="mini-shale-icon">▣</span>
-                    <span class="mini-shale-name">bench-a1.shale</span>
-                  </div>
-                )}
-              </div>
-            </article>
-          ))
-        }
-      </div>
-    </div>
-  </section>
-
-  <section id="media" aria-labelledby="media-title">
-    <div class="wrap">
-      <div class="section-head section-head--row">
-        <div class="section-head--lead">
-          <p class="eyebrow">App</p>
-          <h2 id="media-title">Three workspaces, one window.</h2>
+      <div class="demo-grid">
+        <div class="demo-span-2">
+          <ToolpathDemo client:visible />
         </div>
-        <p class="muted section-head-dek">Prepare, preview, and send — captured from the shipping build.</p>
-      </div>
-      <div class="media-bento">
-        {
-          mediaSlots
-            .filter((m) => m.kind === "screenshot")
-            .map((m, i) => (
-              <figure class:list={["media-bento-item", i === 0 && "media-bento-item--hero"]} data-reveal>
-                <AppFrame title={`Shale — ${m.id}`}>
-                  <img
-                    src={m.src}
-                    alt={m.alt}
-                    loading="lazy"
-                    width="960"
-                    height="540"
-                    decoding="async"
-                  />
-                </AppFrame>
-                <figcaption class="media-caption">{m.caption}</figcaption>
-              </figure>
-            ))
-        }
+        <SliceSettingsDemo client:visible />
+        <PrinterCatalog client:visible />
+        <CliTerminal client:visible />
+        <McpChat client:visible />
       </div>
     </div>
   </section>
@@ -207,12 +103,10 @@ const heroShot = mediaSlots.find((m) => m.id === "prepare");
     <div class="wrap">
       <div class="section-head section-head--row">
         <div class="section-head--lead">
-          <p class="eyebrow">Download</p>
           <h2 id="downloads-title">Get Shale {version}</h2>
         </div>
         <p class="muted section-head-dek">
-          <a href={releasePageUrl}>GitHub Releases</a> hosts the installer and headless packages.
-          Verify with <a href={checksumsUrl}>SHA256SUMS.txt</a>.
+          <a href={releasePageUrl}>GitHub Releases</a> · <a href={checksumsUrl}>SHA256SUMS.txt</a>
         </p>
       </div>
       <div class="download-grid">
@@ -245,102 +139,22 @@ const heroShot = mediaSlots.find((m) => m.id === "prepare");
           ))
         }
       </div>
-
-      <div class="panel cli-docs cli-scroll panel--lift" style="margin-top: 2rem;">
-        <h3>Headless install</h3>
-        <p class="muted">
-          From <a href={`${repoUrl}/blob/main/docs/INSTALL-CLI.md`}>docs/INSTALL-CLI.md</a>. Point at
-          CuraEngine and the resource tree at run time.
-        </p>
-        {
-          windowsCli && (
-            <div>
-              <h4>Windows</h4>
-              <p class="muted">
-                Unzip <code class="mono">{windowsCli.fileName}</code> anywhere and run from that
-                folder:
-              </p>
-              <pre>{`Expand-Archive .\\${windowsCli.fileName} -DestinationPath .\\shale-cli
-cd shale-cli
-.\\shale-cli.exe info`}</pre>
-            </div>
-          )
-        }
-        {
-          linuxCli && (
-            <>
-              <h4>Linux</h4>
-              <pre>{`tar -xzf ${linuxCli.fileName}
-sudo install -m755 shale-${version}-linux-x64/shale-cli /usr/local/bin/`}</pre>
-            </>
-          )
-        }
-        <h4>MCP client</h4>
-        <pre class="cli-scroll"><code>{mcpJson}</code></pre>
-      </div>
-    </div>
-  </section>
-
-  <section id="coming" aria-labelledby="coming-title">
-    <div class="wrap">
-      <div class="section-head">
-        <p class="eyebrow">Roadmap</p>
-        <h2 id="coming-title">Coming next</h2>
-        <p class="muted">Planned after v0.1 — not in this build.</p>
-      </div>
-      <div class="bento">
-        {
-          comingNext.map((item, i) => (
-            <article class="panel" data-reveal data-reveal-delay={(i % 3) + 1}>
-              <span class="badge">{item.status}</span>
-              <h3 style="margin-top: 0.75rem;">{item.title}</h3>
-              <p class="muted">{item.body}</p>
-            </article>
-          ))
-        }
-      </div>
-    </div>
-  </section>
-
-  <section class="closing-slogan" aria-label="Closing">
-    <div class="wrap">
-      <p class="slogan-display" data-reveal>{slogan}</p>
     </div>
   </section>
 
   <footer class="site-footer" slot="footer">
     <div class="wrap">
       <p>
-        <a href={repoUrl}>Shale on GitHub</a> — source, issues, and release assets.
+        <a href={repoUrl}>Shale on GitHub</a>
       </p>
-      <p class="dim">Licence notes</p>
       <ul>
         <li>
-          <strong>CuraEngine</strong> — AGPL-3.0. Shale starts it as a separate process; you
-          provide the binary.
+          <strong>CuraEngine</strong> — AGPL-3.0
         </li>
         <li>
-          <strong>Bambu Studio profiles</strong> — read as data from an installed Bambu Studio tree.
-        </li>
-        <li>
-          <strong>Shale itself</strong> — {shaleLicense} (<a
-            href={`${repoUrl}/blob/main/LICENSING.md`}>LICENSING.md</a
-          >).
+          <strong>Shale</strong> — {shaleLicense}
         </li>
       </ul>
     </div>
   </footer>
 </Base>
-
-<style>
-  .cli-docs h3,
-  .cli-docs h4 {
-    font-size: 1.02rem;
-    margin: 1.15rem 0 0.45rem;
-    font-weight: 600;
-  }
-
-  .cli-docs h3:first-child {
-    margin-top: 0;
-  }
-</style>

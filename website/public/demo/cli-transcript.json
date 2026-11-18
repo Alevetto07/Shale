@@ -1,0 +1,13 @@
+{
+  "label": "Recorded output — typical `shale-cli` session on Windows (v0.1.3); commands run on the author's machine, pasted here for the demo.",
+  "lines": [
+    { "type": "prompt", "text": "$ shale-cli info" },
+    { "type": "out", "text": "Shale 0.1.3 · CuraEngine backend · 15 Bambu printers selectable" },
+    { "type": "out", "text": "Resources: CuraEngine found · materials dir OK" },
+    { "type": "prompt", "text": "$ shale-cli printers --search a1" },
+    { "type": "out", "text": "bambu_lab_a1          A1" },
+    { "type": "out", "text": "bambu_lab_a1_mini     A1 mini" },
+    { "type": "prompt", "text": "$ shale-cli slice cube.stl --printer bambu_lab_a1 --layer 0.2 --infill 20 -o cube.gcode" },
+    { "type": "out", "text": "Sliced 1 model · 54 layers · 2.19 m filament · wrote cube.gcode" }
+  ]
+}

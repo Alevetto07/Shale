@@ -6,11 +6,19 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "screenshots": "node scripts/capture-screenshots.mjs"
+    "screenshots": "node scripts/capture-screenshots.mjs",
+    "demo-data": "node scripts/generate-toolpath.mjs"
   },
   "dependencies": {
+    "@react-three/drei": "^10.0.6",
+    "@react-three/fiber": "^9.1.2",
+    "motion": "^12.4.7",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "three": "^0.172.0"
   },
   "devDependencies": {
+    "@astrojs/react": "^4.2.0",
     "@fontsource/geist-mono": "^5.2.5",
     "@fontsource/inter": "^5.2.5",
     "astro": "^5.1.0",

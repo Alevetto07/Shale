@@ -1,0 +1,21 @@
+{
+  "label": "Recorded MCP exchange — same tool calls as docs; not a live agent in the browser.",
+  "messages": [
+    {
+      "role": "user",
+      "text": "Slice cube.stl for my A1 at 0.2 mm layers and 20% infill."
+    },
+    {
+      "role": "assistant",
+      "text": "Calling shale slice with printer bambu_lab_a1, layer_height 0.2, infill 20."
+    },
+    {
+      "role": "tool",
+      "text": "slice → cube.gcode · 54 layers · 2.19 m PLA"
+    },
+    {
+      "role": "assistant",
+      "text": "G-code is ready at cube.gcode. Say if you want it sent to a printer on your account."
+    }
+  ]
+}

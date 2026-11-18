@@ -14,9 +14,13 @@
   align-items: center;
 }
 
+.hero-demo {
+  min-height: 280px;
+}
+
 @media (min-width: 960px) {
   .hero-shell {
-    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.2fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.95fr);
     gap: clamp(2.5rem, 4vw, 3.5rem);
   }
 }

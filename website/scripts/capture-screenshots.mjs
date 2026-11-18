@@ -12,11 +12,9 @@ const viewports = [
 ];
 
 const sections = [
-  { id: "hero", selector: ".hero", fullPage: false, wait: 1600 },
-  { id: "features", selector: "#features", fullPage: false, wait: 400 },
-  { id: "media", selector: "#media", fullPage: false, wait: 400 },
-  { id: "downloads", selector: "#downloads", fullPage: false, wait: 400 },
-  { id: "coming", selector: "#coming", fullPage: false, wait: 400 },
+  { id: "hero", selector: ".hero", fullPage: false, wait: 2000 },
+  { id: "demos", selector: "#demos", fullPage: false, wait: 1200 },
+  { id: "downloads", selector: "#downloads", fullPage: false, wait: 600 },
   { id: "footer", selector: ".site-footer", fullPage: false, wait: 300 },
 ];
 

@@ -1,0 +1,17 @@
+[
+  { "id": "bambu_lab_a1", "name": "A1", "manufacturer": "Bambu Lab", "bed_mm": 256 },
+  { "id": "bambu_lab_a1_mini", "name": "A1 mini", "manufacturer": "Bambu Lab", "bed_mm": 180 },
+  { "id": "bambu_lab_a2l", "name": "A2L", "manufacturer": "Bambu Lab", "bed_mm": 256 },
+  { "id": "bambu_lab_h2c", "name": "H2C", "manufacturer": "Bambu Lab", "bed_mm": 256 },
+  { "id": "bambu_lab_h2d", "name": "H2D", "manufacturer": "Bambu Lab", "bed_mm": 256 },
+  { "id": "bambu_lab_h2d_pro", "name": "H2D Pro", "manufacturer": "Bambu Lab", "bed_mm": 256 },
+  { "id": "bambu_lab_h2s", "name": "H2S", "manufacturer": "Bambu Lab", "bed_mm": 256 },
+  { "id": "bambu_lab_h3c", "name": "H3C", "manufacturer": "Bambu Lab", "bed_mm": 256 },
+  { "id": "bambu_lab_p1p", "name": "P1P", "manufacturer": "Bambu Lab", "bed_mm": 256 },
+  { "id": "bambu_lab_p1s", "name": "P1S", "manufacturer": "Bambu Lab", "bed_mm": 256 },
+  { "id": "bambu_lab_p2s", "name": "P2S", "manufacturer": "Bambu Lab", "bed_mm": 256 },
+  { "id": "bambu_lab_x1", "name": "X1", "manufacturer": "Bambu Lab", "bed_mm": 256 },
+  { "id": "bambu_lab_x1_carbon", "name": "X1 Carbon", "manufacturer": "Bambu Lab", "bed_mm": 256 },
+  { "id": "bambu_lab_x1e", "name": "X1E", "manufacturer": "Bambu Lab", "bed_mm": 256 },
+  { "id": "bambu_lab_x2d", "name": "X2D", "manufacturer": "Bambu Lab", "bed_mm": 256 }
+]
