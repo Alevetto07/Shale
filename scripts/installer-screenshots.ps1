@@ -38,7 +38,7 @@ public static class WinCap {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, ref RECT lpRect);
 }
-"@
+"@ -ReferencedAssemblies @('System.Drawing.dll', 'System.Windows.Forms.dll')
 
 function Set-LogPixels([int]$value) {
   Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name LogPixels -Value $value -Type DWord -Force
@@ -56,7 +56,6 @@ function Wait-InstallerWindow([int]$timeoutSec = 45) {
   return $null
 }
 
-Add-Type -AssemblyName System.Windows.Forms
 $scales = @(@{ px = 96; label = "100" }, @{ px = 120; label = "125" }, @{ px = 144; label = "150" })
 foreach ($scale in $scales) {
   Set-LogPixels $scale.px
