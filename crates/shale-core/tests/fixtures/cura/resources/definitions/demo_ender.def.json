@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "name": "Demo Ender",
+  "inherits": "demo_base",
+  "metadata": {
+    "visible": true,
+    "manufacturer": "Demo",
+    "quality_definition": "demo_base",
+    "preferred_quality_type": "draft",
+    "preferred_variant_name": "0.4mm Nozzle",
+    "preferred_material": "generic_pla",
+    "machine_extruder_trains": { "0": "demo_base_extruder_0" }
+  },
+  "overrides": {
+    "machine_width": { "default_value": 235 },
+    "machine_depth": { "default_value": 235 },
+    "machine_height": { "default_value": 250 },
+    "machine_name": { "default_value": "Demo Ender" },
+    "machine_start_gcode": { "default_value": "G28 ; home the demo printer\n" },
+    "machine_end_gcode": { "default_value": "G1 X0 Y{machine_depth}\\n" }
+  }
+}

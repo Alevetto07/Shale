@@ -1,0 +1,41 @@
+/**
+ * Saturn — warm amber and sand on deep brown-black.
+ */
+
+[data-ui-theme="saturn"] {
+  color-scheme: dark;
+
+  --bg: #0c0906;
+  --panel: #15100a;
+  --panel-raised: #1b140d;
+  --ink: #f2e8dc;
+  --ink-2: rgba(242, 232, 220, 0.78);
+  --ink-3: rgba(242, 232, 220, 0.56);
+  --line: rgba(242, 232, 220, 0.12);
+  --line-strong: rgba(242, 232, 220, 0.24);
+  --accent: #e8b86a;
+  --accent-soft: rgba(232, 184, 106, 0.16);
+  --accent-muted: rgba(232, 184, 106, 0.48);
+  --danger: #c45c4a;
+  --danger-hover: #d97062;
+
+  --muted: var(--ink-2);
+  --dim: var(--ink-3);
+
+  --surface-hover: rgba(242, 232, 220, 0.07);
+  --surface-active: rgba(232, 184, 106, 0.14);
+  --surface-inset: color-mix(in srgb, var(--panel) 84%, var(--bg));
+
+  --scrollbar-thumb: rgba(242, 232, 220, 0.32);
+  --scrollbar-track: var(--panel);
+
+  --shadow-sheet: 0 18px 48px rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 30px 90px rgba(0, 0, 0, 0.72);
+
+  font-family: var(--mono);
+  font-weight: 400;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: var(--text-base);
+  line-height: 1.45;
+}

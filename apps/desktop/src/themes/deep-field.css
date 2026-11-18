@@ -1,0 +1,44 @@
+/**
+ * Andromeda (id deep-field) — default Shale UI style.
+ */
+
+:root,
+[data-ui-theme="deep-field"] {
+  color-scheme: dark;
+
+  --bg: #06070b;
+  --panel: #0b0d14;
+  --panel-raised: #0e1119;
+  --ink: #e9e8f2;
+  --ink-2: rgba(233, 232, 242, 0.76);
+  --ink-3: rgba(233, 232, 242, 0.56);
+  --line: rgba(233, 232, 242, 0.12);
+  --line-strong: rgba(233, 232, 242, 0.22);
+  --accent: #b9b3ff;
+  --accent-soft: rgba(185, 179, 255, 0.14);
+  --accent-muted: rgba(185, 179, 255, 0.45);
+  --danger: #b4474a;
+  --danger-hover: #c85a5d;
+
+  --muted: var(--ink-2);
+  --dim: var(--ink-3);
+  --ink-dim: var(--ink-3);
+
+  --surface-hover: rgba(233, 232, 242, 0.06);
+  --surface-active: rgba(185, 179, 255, 0.12);
+  --surface-inset: color-mix(in srgb, var(--panel) 82%, var(--bg));
+
+  --scrollbar-thumb: rgba(233, 232, 242, 0.3);
+  --scrollbar-track: var(--panel);
+
+  --mono: "Geist Mono", ui-monospace, monospace;
+  --prose: "Inter", system-ui, sans-serif;
+  --wordmark: "Space Grotesk", system-ui, sans-serif;
+
+  font-family: var(--mono);
+  font-weight: 400;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: var(--text-base);
+  line-height: 1.45;
+}

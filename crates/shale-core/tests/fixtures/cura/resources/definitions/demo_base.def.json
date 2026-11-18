@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "name": "Demo Base",
+  "inherits": "fdmprinter",
+  "metadata": { "visible": false, "manufacturer": "Demo" },
+  "overrides": {
+    "speed_print": { "value": 50 },
+    "adhesion_type": { "value": "'skirt'" },
+    "machine_width": { "default_value": 220 },
+    "infill_pattern": { "value": "'lines' if infill_sparse_density > 50 else 'cubic'" }
+  }
+}

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shale</title>
+    <script>
+      (function () {
+        var allowed = { "deep-field": 1, saturn: 1, nebula: 1, lunar: 1 };
+        var id = "deep-field";
+        try {
+          var stored = localStorage.getItem("shale.ui-style");
+          if (stored && allowed[stored]) id = stored;
+        } catch (e) {}
+        document.documentElement.dataset.uiTheme = id;
+        document.documentElement.style.colorScheme = id === "lunar" ? "light" : "dark";
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Frontend
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run build
+
+      - name: Printer resources
+        shell: bash
+        run: ./scripts/fetch-resources.sh
+
+      - name: NSIS installer
+        working-directory: apps/desktop
+        run: npx tauri build --bundles nsis
+
+      - name: Verify Shale.exe is a GUI subsystem binary
+        shell: bash
+        run: python3 scripts/verify-gui-subsystem.py target/release/Shale.exe
+
+      - name: CLI and MCP binaries
+        run: cargo build --release --locked -p shale-cli -p shale-mcp
+
+      - name: Package CLI zip
+        shell: pwsh
+        run: ./scripts/package-cli.ps1 -SkipBuild
+
+      - name: Stage Windows release assets
+        shell: bash
+        run: |
+          mkdir -p dist/release-assets
+          cp target/release/bundle/nsis/*.exe dist/release-assets/
+          cp dist/shale-*-windows-x64.zip dist/release-assets/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-assets
+          path: dist/release-assets/*
+          if-no-files-found: error
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Package CLI tarball
+        run: ./scripts/package-cli.sh
+
+      - name: Stage Linux release assets
+        run: |
+          mkdir -p dist/release-assets
+          cp dist/shale-*-linux-x64.tar.gz dist/release-assets/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-assets
+          path: dist/release-assets/*
+          if-no-files-found: error
+
+  publish:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/release-assets
+          merge-multiple: true
+
+      - name: SHA-256 checksums
+        run: |
+          cd dist/release-assets
+          sha256sum Shale_*_x64-setup.exe shale-*-windows-x64.zip shale-*-linux-x64.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: false
+          body_path: .github/release-notes-v0.1.3.md
+          files: |
+            dist/release-assets/Shale_*_x64-setup.exe
+            dist/release-assets/shale-*-windows-x64.zip
+            dist/release-assets/shale-*-linux-x64.tar.gz
+            dist/release-assets/SHA256SUMS.txt

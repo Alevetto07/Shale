@@ -1,0 +1,102 @@
+{
+  "version": 2,
+  "name": "Demo FDM",
+  "metadata": { "visible": false, "type": "machine" },
+  "settings": {
+    "resolution": {
+      "children": {
+        "layer_height": { "type": "float", "default_value": 0.1 },
+        "layer_height_0": {
+          "type": "float",
+          "default_value": 0.3,
+          "resolve": "min(extruderValues('layer_height_0'))"
+        },
+        "line_width": { "type": "float", "default_value": 0.4, "value": "machine_nozzle_size" }
+      }
+    },
+    "infill": {
+      "children": {
+        "infill_sparse_density": { "type": "float", "default_value": 20 },
+        "infill_pattern": {
+          "type": "enum",
+          "default_value": "grid",
+          "value": "'lines' if infill_sparse_density > 25 else 'grid'"
+        },
+        "infill_line_distance": {
+          "type": "float",
+          "default_value": 2,
+          "value": "0 if infill_sparse_density == 0 else (line_width * 100) / infill_sparse_density"
+        }
+      }
+    },
+    "machine": {
+      "children": {
+        "machine_width": { "type": "float", "default_value": 100 },
+        "machine_depth": { "type": "float", "default_value": 100 },
+        "machine_height": { "type": "float", "default_value": 100 },
+        "machine_center_is_zero": { "type": "bool", "default_value": false },
+        "machine_nozzle_size": { "type": "float", "default_value": 0.4 },
+        "machine_name": { "type": "str", "default_value": "Demo" },
+        "machine_extruder_count": { "type": "int", "default_value": 1 },
+        "machine_gcode_flavor": { "type": "enum", "default_value": "RepRap (Marlin/Sprinter)" },
+        "mesh_rotation_matrix": { "type": "str", "default_value": "[[1,0,0], [0,1,0], [0,0,1]]" },
+        "material_diameter": { "type": "float", "default_value": 1.75 },
+        "machine_start_gcode": { "type": "str", "default_value": "G28 ; generic\n" }
+      }
+    },
+    "material": {
+      "children": {
+        "default_material_print_temperature": { "type": "float", "default_value": 210 },
+        "default_material_bed_temperature": { "type": "float", "default_value": 60 },
+        "material_print_temperature": {
+          "type": "float",
+          "default_value": 210,
+          "value": "default_material_print_temperature"
+        },
+        "material_print_temperature_layer_0": {
+          "type": "float",
+          "default_value": 215,
+          "value": "material_print_temperature"
+        },
+        "material_bed_temperature": {
+          "type": "float",
+          "default_value": 60,
+          "value": "default_material_bed_temperature",
+          "resolve": "max(extruderValues('material_bed_temperature'))"
+        },
+        "material_bed_temperature_layer_0": {
+          "type": "float",
+          "default_value": 60,
+          "value": "resolveOrValue('material_bed_temperature')"
+        },
+        "retraction_amount": { "type": "float", "default_value": 6.5 }
+      }
+    },
+    "speed": {
+      "children": {
+        "speed_print": { "type": "float", "default_value": 60 },
+        "speed_travel": {
+          "type": "float",
+          "default_value": 150,
+          "value": "150.0 if speed_print < 60 else 250.0 if speed_print > 100 else speed_print * 2.5"
+        },
+        "support_angle": {
+          "type": "float",
+          "default_value": 50,
+          "value": "math.floor(math.degrees(math.atan(line_width / 2.0 / layer_height)))"
+        }
+      }
+    },
+    "support": {
+      "children": {
+        "support_enable": {
+          "type": "bool",
+          "default_value": false,
+          "resolve": "any(extruderValues('support_enable'))"
+        },
+        "adhesion_type": { "type": "enum", "default_value": "brim" },
+        "broken_setting": { "type": "float", "default_value": 1, "value": "nope(" }
+      }
+    }
+  }
+}

@@ -1,0 +1,2968 @@
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("./fonts/SpaceGrotesk-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("./fonts/GeistMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("./fonts/GeistMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/Inter-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/Inter-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Colour and type tokens: themes/tokens.css + themes/deep-field.css */
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+}
+
+button, input, select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: transparent;
+  border: 0;
+  padding: 0.15rem 0.35rem;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+button:hover { color: var(--ink); }
+button:disabled { opacity: 0.35; cursor: not-allowed; }
+button.primary, button.selected { color: var(--accent); }
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A column, not a grid: the tab strip, the banners and the plate come and go,
+   and a fixed row count would hand the plate the wrong slice of the window. */
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* Main workspaces fill the window below the tab strip. */
+.app > .workspace,
+.app > .home-pane,
+.app > .device {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.home-pane {
+  position: relative;
+  overflow: hidden;
+}
+
+.device { flex: 1 1 auto; }
+
+.viewport-mock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  padding: 1.25rem 1rem 6.5rem;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--ink-2);
+}
+.plate[data-preview="yes"] .viewport-mock {
+  padding: 1.25rem 1rem 6.75rem;
+}
+.viewport-mock-meta {
+  margin: 0 0 0.6rem;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.viewport-mock-bed {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.15;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
+/* One strip of chrome: the window is undecorated, so this is the caption as
+   well as the menu bar. It is deliberately shorter than the old topbar — the
+   start screen's upper part had a title bar's worth of height above it. */
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  padding: 0 0 0 1rem;
+  height: 34px;
+  flex: 0 0 auto;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.titlebar-gap {
+  flex: 1 1 auto;
+  align-self: stretch;
+}
+
+.titlebar-buttons {
+  display: flex;
+  align-self: stretch;
+  flex: 0 0 auto;
+}
+
+.titlebar-buttons button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  cursor: default;
+  padding: 0;
+}
+.titlebar-glyph {
+  display: block;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1;
+  color: inherit;
+}
+.titlebar-glyph-minimize {
+  width: 10px;
+  height: 1px;
+  background: currentColor;
+}
+.titlebar-glyph-maximize {
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 1px solid currentColor;
+}
+.titlebar-glyph-restore {
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 1px solid currentColor;
+  box-shadow: inset 3px 3px 0 0 var(--bg), inset 4px 4px 0 0 currentColor;
+}
+.titlebar-glyph-close {
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1;
+}
+.titlebar-buttons button:hover { background: #14161f; color: var(--ink); }
+.titlebar-buttons .titlebar-close:hover { background: #b4474a; color: #fff; }
+
+.brand {
+  display: flex;
+  align-items: center;
+  /* A title bar, not a masthead: the mark and the wordmark are one line. */
+  gap: 0.5rem;
+  flex: 0 0 auto;
+}
+.brand-mark {
+  height: 16px;
+  width: auto;
+  display: block;
+}
+.wordmark {
+  margin: 0;
+  font-family: var(--wordmark);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.top-actions {
+  display: flex;
+  gap: 0.4rem;
+  font-size: 13px;
+}
+.top-actions button.primary { color: var(--accent); }
+
+.banner {
+  margin: 0 1.4rem 0.4rem;
+  color: var(--ink-2);
+  font-family: var(--prose);
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: pre-wrap;
+  max-height: 9rem;
+  overflow: auto;
+}
+.banner.error { color: var(--ink); }
+.banner.subtle {
+  color: var(--ink-3);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.2rem;
+}
+.banner .banner-action {
+  margin-left: 0.75rem;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  color: var(--accent);
+}
+
+code { font-family: var(--mono); }
+
+.workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0.5rem;
+  padding: 0.4rem 1rem 1rem;
+}
+
+.panel {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.2rem 0.4rem 1.5rem 0.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  background: var(--panel);
+  min-height: 0;
+  align-content: flex-start;
+}
+.panel > .frame {
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+.frame {
+  border: 1px solid var(--line);
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--panel) 82%, var(--bg));
+}
+.frame-bar {
+  border-bottom: 1px solid var(--line);
+  padding: 0.2rem 0.45rem;
+}
+.frame--closed .frame-bar { border-bottom-color: transparent; }
+.frame-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--duration-slow, 220ms) var(--ease-out, ease);
+}
+.frame-body[data-open="yes"] {
+  grid-template-rows: 1fr;
+}
+.frame-body > .frame-content {
+  overflow: hidden;
+  min-height: 0;
+}
+.frame--closed .frame-body > .frame-content {
+  visibility: hidden;
+}
+.frame--open .frame-body > .frame-content {
+  visibility: visible;
+}
+@media (prefers-reduced-motion: reduce) {
+  .frame-body {
+    transition: none;
+  }
+}
+.frame-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.1rem 0.15rem;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 2px;
+  text-align: left;
+}
+.frame-toggle:hover { background: rgba(233, 232, 242, 0.05); }
+.frame-caret {
+  color: var(--ink-3);
+  font-size: 9px;
+  line-height: 1;
+  flex: none;
+  opacity: 0.85;
+}
+.frame-toggle:hover .frame-caret { color: var(--accent); }
+.frame-title {
+  color: var(--ink-3);
+  flex: 1 1 auto;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.frame-toggle:hover .frame-title { color: var(--ink-2); }
+.frame--closed .frame-title { opacity: 0.75; }
+.frame-content {
+  color: var(--ink);
+  padding: 0.4rem 0.7rem 0.6rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+label {
+  display: grid;
+  grid-template-columns: 12ch 1fr;
+  gap: 0.6rem;
+  align-items: center;
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+label input,
+label button,
+label .ascii-step,
+label .ascii-select,
+label .ascii-field,
+label .ascii-check {
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+input, select {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0.15rem 0;
+  color: var(--ink);
+  appearance: none;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+input[type="number"] { -moz-appearance: textfield; }
+
+.ascii-check {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.1rem 0;
+  text-align: left;
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.ascii-check-box {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--muted);
+  box-sizing: border-box;
+  position: relative;
+}
+.ascii-check-box[data-on="1"]::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  background: var(--accent);
+}
+
+.ascii-step, .ascii-field {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  color: var(--muted);
+}
+.ascii-step input, .ascii-field input {
+  width: 8ch;
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  color: var(--ink);
+}
+.ascii-field input { text-align: left; }
+.ascii-step button, .ascii-select-closed {
+  color: var(--muted);
+  padding: 0;
+}
+.ascii-step button:hover, .ascii-select-closed:hover { color: var(--ink); }
+
+.ascii-select { position: relative; min-width: 0; }
+.ascii-select-closed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  width: 100%;
+  min-height: 1.55rem;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 65%, transparent);
+  text-align: left;
+  color: var(--ink);
+}
+.ascii-select-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ascii-select-caret {
+  flex: none;
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 1;
+}
+.ascii-select-closed:hover .ascii-select-caret { color: var(--accent); }
+.ascii-menu {
+  position: absolute;
+  z-index: 8;
+  left: 0;
+  right: 0;
+  top: calc(100% + 0.15rem);
+  max-height: 16rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  background: var(--panel);
+}
+.ascii-menu-edge, .ascii-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  padding: 0.05rem 0;
+  font-size: 13px;
+}
+.ascii-option.cursor, .ascii-option[aria-selected="true"] { color: var(--accent); }
+
+.meta, .hint, .caption {
+  margin: 0.2rem 0 0;
+  color: var(--ink-2);
+  font-family: var(--prose);
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: pre-line;
+}
+
+.models, .instructions { list-style: none; margin: 0; padding: 0; }
+.instructions li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: baseline;
+  font-size: 12px;
+}
+.instructions li > span::before { content: "+ "; color: var(--muted); }
+.scrubber .ascii-check { width: auto; flex: none; }
+.instructions button { color: var(--dim); padding: 0; }
+button.model { display: block; width: 100%; text-align: left; padding-left: 0; }
+button.model::before { content: "  "; }
+button.model.selected { color: var(--accent); }
+button.model.selected::before { content: "> "; color: var(--accent); }
+
+.modes, .row, .axes { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+
+/* The cut row carries four controls; without this each asks for the full width
+   and they stack into four lines. */
+.cut-row select,
+.cut-row input[type="number"] { width: auto; flex: 1 1 4.5rem; min-width: 0; }
+/* "both halves" is two words; at a 4.5rem basis the select clipped it to
+   "both halv" and the arrow ate the last letter. */
+.cut-row select[aria-label="Keep after cutting"] { flex: 1.3 1 6.5rem; }
+.cut-row button { flex: 0 0 auto; }
+
+/* The ruler's number, floating at the middle of the line it describes. */
+.measure-label {
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: rgba(6, 7, 11, 0.88);
+  color: var(--ink);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.measure-readout { font-size: 11px; color: var(--muted); align-self: center; }
+.measure-row button[aria-pressed="true"] { border-color: var(--ink); color: var(--ink); }
+.measure-deltas { font-variant-numeric: tabular-nums; }
+.axes label { grid-template-columns: 3ch 1fr; flex: 1; min-width: 5rem; }
+
+.stage {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  /* One column that cannot exceed the stage. Without this the column is sized
+     to its content, and the canvas — a device-pixel buffer — makes it wider
+     than the pane, which pushed the plate and its legend off the right edge. */
+  grid-template-columns: minmax(0, 1fr);
+  position: relative;
+  background: var(--bg);
+}
+.plate {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  /* The canvas is sized in device pixels and will happily grow past its column;
+     clipping here keeps the plate inside the stage, which is what keeps the
+     legend — positioned against this box — on screen. */
+  overflow: hidden;
+}
+.plate-field, .margin-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.margin-field { position: fixed; z-index: 3; }
+.plate canvas { display: block; max-width: 100%; max-height: 100%; }
+.caption {
+  position: absolute;
+  left: 1rem;
+  right: 1rem;
+  bottom: 0.8rem;
+  margin: 0;
+  text-align: center;
+  pointer-events: none;
+  z-index: 2;
+}
+.credit, .credit-line {
+  margin: 0.15rem 0 0;
+  color: var(--ink-3);
+  font-family: var(--prose);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.4;
+}
+.credit-line { display: block; }
+.credit a {
+  color: var(--ink-2);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.credit a:hover { color: var(--ink); }
+
+.scrubber {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  /* Wrap, because two more verbs now live in this row and a button label
+     broken across two lines stops reading as a button. Nothing shrinks: the
+     slider drops to its own line when the controls need the width. */
+  flex-wrap: wrap;
+  padding: 0.7rem 0.2rem 0.2rem;
+  color: var(--muted);
+  font-size: 13px;
+}
+.ascii-slider {
+  position: relative;
+  flex: 1;
+  min-width: 12rem;
+  color: var(--ink);
+}
+.ascii-slider .readout { color: var(--muted); }
+.ascii-slider .glyphs { letter-spacing: 0; color: var(--ink-2); }
+.ascii-slider .glyphs .active, .ascii-slider .readout .active { color: var(--accent); }
+.ascii-slider input[type="range"] {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.4rem;
+  opacity: 0;
+  cursor: ew-resize;
+  border: 0;
+}
+.meter {
+  margin: 0;
+  color: var(--ink);
+  letter-spacing: 0;
+  white-space: pre;
+}
+
+@media (max-width: 900px) {
+  .workspace { grid-template-columns: 1fr; }
+}
+
+.app { position: relative; }
+
+.start {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+}
+.start .plate-field { z-index: 0; }
+.start-menu {
+  position: absolute;
+  z-index: 2;
+  left: 28px;
+  bottom: 28px;
+  width: min(320px, calc(100% - 56px));
+  max-height: calc(100% - 72px);
+  overflow: auto;
+  padding: 14px 16px 12px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.start .brand-mark { height: 32px; }
+.start .wordmark { font-size: 22px; }
+.start-list, .start-panel, .start-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.start-list button, .start-scroll button, .start-back, .start-panel > button {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.8rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.26rem 0.5rem;
+  border-radius: 3px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.start-list button[aria-current="true"],
+.start-scroll button.selected,
+.start-list button:focus-visible,
+.start-scroll button:focus-visible,
+.start-back:focus-visible {
+  color: var(--accent);
+}
+.start-hint, .start-label, .start-empty {
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.start-label, .start-empty { margin: 0.45rem 0 0.1rem; }
+.start-recents {
+  position: absolute;
+  z-index: 2;
+  right: 28px;
+  bottom: 28px;
+  width: calc((var(--recents-inner-ch, 28) + 2) * 1ch);
+  color: var(--line);
+  pointer-events: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+.start-recents--collapsed {
+  width: auto;
+}
+.start-recents-rule,
+.start-recents-line {
+  display: grid;
+  grid-template-columns: 1ch calc(var(--recents-inner-ch, 28) * 1ch) 1ch;
+  align-items: baseline;
+  white-space: nowrap;
+}
+.start-recents-fill {
+  overflow: hidden;
+  color: var(--line);
+}
+.start-recents-bar {
+  color: var(--line);
+  text-align: center;
+}
+.start-recents-cell {
+  min-width: 0;
+  max-width: calc(var(--recents-inner-ch, 28) * 1ch);
+  overflow: hidden;
+  color: var(--ink-2);
+}
+.start-recents-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5ch;
+  width: 100%;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.start-recents-hide {
+  padding: 0;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: lowercase;
+  color: var(--ink-3);
+}
+.start-recents-hide:hover { color: var(--accent); }
+.start-recents-empty {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+.start-recents-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5ch;
+  width: 100%;
+  min-width: 0;
+}
+.start-recents-row:hover .recent-forget,
+.start-recents-row:focus-within .recent-forget {
+  opacity: 1;
+}
+button.recent-row {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ink-2);
+  border-radius: 0;
+}
+button.recent-row:hover,
+button.recent-row:focus-visible {
+  color: var(--ink);
+}
+button.recent-row.dim { color: var(--ink-3); }
+.recent-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-meta-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.15rem;
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-family: var(--prose);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+.recent-meta-line.dim { color: var(--ink-3); }
+.recent-machine {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.recent-forget {
+  flex: none;
+  width: 2ch;
+  opacity: 0;
+  padding: 0;
+  font-size: 9px;
+  letter-spacing: 0;
+  text-align: right;
+  color: var(--ink-3);
+}
+.recent-forget:hover { color: var(--accent); }
+.start-recents-tab {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.2rem 0.35rem;
+  color: var(--ink-3);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: lowercase;
+}
+.start-recents-tab:hover { color: var(--accent); }
+.start-recents-tab-label { color: var(--ink-2); }
+.start-detail {
+  display: flex;
+  align-items: baseline;
+  color: var(--ink-2);
+  font-family: var(--prose);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  max-width: 100%;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.start-scroll { max-height: 240px; overflow: auto; }
+.start-panel label { grid-template-columns: 8ch 1fr; }
+.start-credit {
+  position: absolute;
+  z-index: 2;
+  left: 28px;
+  right: 28px;
+  top: 16px;
+  margin: 0;
+  text-align: right;
+  pointer-events: none;
+  color: var(--ink-3);
+  font-family: var(--prose);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+.project-name {
+  margin: 0 0 0 0.8rem;
+  color: var(--ink-3);
+  font-family: var(--prose);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.top-actions { flex-wrap: wrap; justify-content: flex-end; }
+.banner.floating {
+  position: absolute;
+  z-index: 5;
+  left: 28px;
+  right: 28px;
+  bottom: 36px;
+  margin: 0;
+  background: var(--panel);
+  padding: 0.45rem 0.6rem;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(233, 232, 242, 0.28) var(--panel);
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; background: var(--panel); }
+*::-webkit-scrollbar-thumb { background: rgba(233, 232, 242, 0.28); }
+*::-webkit-scrollbar-corner { background: var(--panel); }
+
+/* Menu bar ---------------------------------------------------------------- */
+
+/* Inside the title bar the menu is one compact row; the dropdowns are the same
+   panels they always were. */
+.titlebar .menubar {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: visible;
+  font-size: 11px;
+}
+
+.menubar {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+}
+
+.menu-group {
+  position: relative;
+}
+
+.menu-title {
+  padding: 0.3rem 0.55rem;
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.menu-title:hover,
+.menu-title.open {
+  color: var(--ink);
+  background: rgba(233, 232, 242, 0.07);
+}
+
+.menu-sheet {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  min-width: 15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0.35rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+}
+
+.menu-sheet.wide {
+  min-width: 20rem;
+  gap: 0.55rem;
+  padding: 0.85rem 0.95rem;
+}
+
+.menu-sheet button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.menu-sheet button:hover:not(:disabled) {
+  background: rgba(185, 179, 255, 0.14);
+  color: var(--ink);
+}
+
+.menu-sheet button.checked {
+  color: var(--ink);
+}
+/* State is the accent rule at the left, not a tick in the corner: the theme has
+   one accent and no icons. */
+.menu-sheet button.checked {
+  padding-left: 0.9rem;
+}
+.menu-sheet button.checked::before {
+  content: "";
+  position: absolute;
+  left: 0.35rem;
+  top: 0.45rem;
+  bottom: 0.45rem;
+  width: 2px;
+  background: var(--accent);
+}
+
+.menu-sheet button:disabled {
+  color: var(--dim);
+}
+
+.menu-sheet hr {
+  width: 100%;
+  margin: 0.25rem 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.menu-sheet kbd {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+}
+
+.menu-label {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.menu-sheet select,
+.menu-field input {
+  width: 100%;
+  padding: 0.32rem 0.45rem;
+  background: #0e1119;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 0.82rem;
+}
+
+.menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.84rem;
+  color: var(--ink-2);
+}
+
+.menu-row select {
+  width: 8.6rem;
+}
+
+.menu-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.menu-field input {
+  width: 4.6rem;
+  text-align: right;
+}
+
+.menu-field em {
+  font-style: normal;
+  font-size: 0.7rem;
+  color: var(--dim);
+}
+
+.menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+
+.menu-toggle em {
+  font-style: normal;
+  font-size: 0.75rem;
+  color: var(--dim);
+}
+
+.menu-note {
+  margin: 0;
+  max-width: 19rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--dim);
+}
+
+.menu-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+.menu-printer-name {
+  font-size: 0.8rem;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 18rem;
+}
+
+.menu-status .chip {
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.menu-slice {
+  padding: 0.34rem 0.95rem;
+  border: 1px solid rgba(185, 179, 255, 0.45);
+  border-radius: 7px;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.menu-slice:hover:not(:disabled) {
+  background: rgba(185, 179, 255, 0.12);
+}
+
+/* Settings sheet. It used to be a two-column grid with the tabs down the left;
+   the process panel now owns its own tabs, so the sheet is a single column and
+   must not impose a column on its child — a grid child that is not placed
+   collapses into the first column, which is how the whole panel once ended up
+   117 px wide with its tabs stacked vertically. */
+.menu-sheet.settings-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: min(46rem, calc(100vw - 3rem));
+  max-height: min(32rem, calc(100vh - 6rem));
+  padding: 0.75rem;
+  z-index: 120;
+}
+.menu-sheet.settings-sheet > .process-sheet { min-width: 0; flex: 1 1 auto; }
+.menu-sheet.settings-sheet .settings-body { overflow-y: auto; min-height: 0; }
+
+.settings-scope {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.settings-scope select {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-scope-note {
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+.settings-tabs {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 0.15rem;
+  border-right: 1px solid var(--line);
+  padding-right: 0.5rem;
+  overflow-y: auto;
+}
+
+.settings-tabs button {
+  text-align: left;
+  padding: 0.3rem 0.45rem;
+  border-radius: 0.25rem;
+  color: var(--muted);
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.settings-tabs button.selected {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.settings-body {
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.settings-heading {
+  margin: 0.5rem 0 0.35rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.settings-reset {
+  margin-top: 0.6rem;
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings-reset:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+.setting-revert {
+  margin-left: 0.35rem;
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.setting-revert:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Plates: a row of chips, the one in front marked. */
+.plates {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.plate-chip {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line, #2b2b2b);
+}
+
+.plate-tab {
+  display: grid;
+  gap: 0.05rem;
+  text-align: left;
+  line-height: 1.25;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 4px 7px 4px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+/* A plate is a name and a count, not `1 plate 1 (1)`: the number in front of a
+   name read as part of the name, and the bracketed count read as a footnote. */
+.plate-tab .plate-name { font-size: 12px; }
+.plate-tab .plate-count {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+}
+.plate-tab.active .plate-count { opacity: 0.7; }
+
+/* The active plate was written as an inverted chip — ink behind, paper in front —
+   which is a light-theme habit: on this background it read as a white tile. It is
+   a tinted panel with the accent under it now. */
+.plate-tab.active {
+  background: rgba(185, 179, 255, 0.1);
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.plate-drop {
+  background: none;
+  border: none;
+  border-left: 1px solid var(--line, #2b2b2b);
+  color: inherit;
+  font: inherit;
+  padding: 0 5px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.plate-drop:hover {
+  opacity: 1;
+}
+
+.paint-patches {
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.paint-patch,
+.paint-clear,
+.paint-back {
+  font-family: inherit;
+  border: 1px solid var(--line, #2a2a2a);
+  background: transparent;
+  color: inherit;
+  padding: 0.15rem 0.45rem;
+  cursor: pointer;
+}
+
+.paint-patch:hover,
+.paint-clear:hover {
+  border-color: var(--ink, #e6e6e6);
+}
+
+/* ── the tab strip and the pane switch ──────────────────────────────────────
+   Two rows, the way a slicer's header reads: the projects that are open, then
+   the four places a project can be looked at. Small caps for the pane names so
+   they read as places, not as buttons that do something. */
+
+.tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0 1.4rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.doc-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.doc-tabs::-webkit-scrollbar { display: none; }
+
+.doc-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  max-width: 15rem;
+  /* An inactive tab is still a tab: with a transparent border it read as loose
+     text sitting next to the real one. */
+  border: 1px solid rgba(233, 232, 242, 0.1);
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
+  padding: 0 0.1rem 0 0.55rem;
+  color: var(--ink-2);
+  background: rgba(6, 7, 11, 0.55);
+  position: relative;
+  top: 1px;
+}
+.doc-tab:hover { color: var(--ink); background: rgba(233, 232, 242, 0.08); }
+.doc-tab.active {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--ink);
+}
+/* A hairline of accent under the tab you are in: it is the same signal the
+   pane switch uses, one row down. */
+.doc-tab.active::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px 0;
+  height: 1px;
+  background: var(--accent);
+  opacity: 0.85;
+}
+
+.doc-name {
+  border: 0;
+  padding: 0.32rem 0;
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--prose);
+  font-size: 12.5px;
+  letter-spacing: 0;
+  color: inherit;
+}
+.doc-name:hover { color: inherit; }
+.doc-dirty {
+  color: var(--accent);
+  margin-left: 0.35rem;
+  font-size: 15px;
+  line-height: 1;
+}
+.doc-close {
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 0.35rem;
+  color: var(--ink-3);
+  opacity: 0;
+}
+/* Every tab keeps a visible way out; at full strength only on the one in hand. */
+.doc-close { opacity: 0.45; }
+.doc-tab:hover .doc-close,
+.doc-tab.active .doc-close { opacity: 1; }
+.doc-close:hover { color: var(--ink); }
+
+/* The tab strip's own controls. `+` is a button with a box around it, not a
+   stray glyph between two words: it is the only control here that makes
+   something out of nothing, and it should look like one. */
+.doc-rule {
+  width: 1px;
+  align-self: stretch;
+  margin: 0.3rem 0.35rem;
+  background: var(--line);
+}
+.doc-add,
+.doc-open {
+  align-self: center;
+  padding: 0.22rem 0.5rem;
+  color: var(--ink-3);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  border-radius: 4px;
+}
+.doc-add {
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+.doc-add:hover {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+.doc-open { color: var(--ink-2); }
+.doc-open:hover { color: var(--ink); background: rgba(233, 232, 242, 0.06); }
+
+.mode-bar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+/* The four workspaces are a segmented control, not a row of links: the well
+   behind them and the filled chip say which pane the window is showing, and the
+   whole chip is the hit target — a bare underlined word is a 12 px target. */
+.mode-chips {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 45%, transparent);
+}
+
+.mode-chip {
+  /* Equal cells: four choices of one control, not four words of different
+     widths. The number is the longest label plus its padding, so the control
+     does not resize as you move between panes. */
+  min-width: 6.4rem;
+  text-align: center;
+  padding: 0.34rem 0.8rem 0.3rem;
+  border-radius: 999px;
+  font-family: var(--prose);
+  font-size: 11.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  transition: color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+.mode-chip:hover:not(:disabled) {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+}
+.mode-chip.active {
+  /* A fill, not an outline: the panel colour alone is the same shade as the bar
+     behind it, so the accent has to be in the fill for the chip to read as set. */
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 24%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.mode-chip.waiting {
+  /* Preview before a slice is genuinely unavailable, not merely unselected:
+     dim enough to say so, bright enough to still be read as a word — and still
+     a button, because the click is what explains why. */
+  color: var(--ink-3);
+  opacity: 0.55;
+}
+
+.mode-printer {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── process sheet ───────────────────────────────────────────────────────── */
+
+.process-sheet { display: flex; flex-direction: column; min-height: 0; }
+
+.process-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Every button in a menu sheet is a full-width row by default (that is what a
+   menu is). These two strips are not menus, so they take their width back. */
+.process-tabs { display: flex; flex-wrap: wrap; }
+.process-tabs button {
+  display: inline-flex;
+  width: auto;
+  justify-content: center;
+  gap: 0.25rem;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 11px;
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+}
+.process-tabs button:hover { color: var(--ink); }
+.process-tabs button.selected { color: var(--ink); border-bottom-color: var(--accent); }
+
+.process-advanced { display: flex; align-items: center; gap: 0.35rem; font-size: 11px; color: var(--ink-3); }
+.process-advanced input { accent-color: var(--accent); }
+
+.process-presets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.process-presets-label { color: var(--ink-3); font-size: 10px; margin-right: 0.3rem; }
+.process-presets .process-preset {
+  display: inline-flex;
+  width: auto;
+  justify-content: center;
+  gap: 0.25rem;
+  border-radius: 0;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 10.5px;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.process-preset:hover { color: var(--ink); }
+.process-preset.on { border-color: var(--accent); color: var(--accent); }
+
+.process-tools { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0; }
+.process-search { flex: 1 1 14rem; min-width: 12rem; }
+.process-search input {
+  width: 100%;
+  min-width: 11rem;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  padding: 0.25rem 0.45rem;
+}
+.menu-sheet .process-visibility {
+  display: inline-flex;
+  width: auto;
+  justify-content: center;
+  border-radius: 0;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 10.5px;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.process-visibility:hover { color: var(--ink); border-color: var(--accent); }
+
+.setting-row { align-items: center; }
+.setting-name { display: inline-flex; align-items: center; gap: 0.3rem; }
+/* The question mark is the only place a description lives; the row stays a row. */
+.setting-q {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--ink-3);
+  font-size: 8px;
+  line-height: 1;
+  cursor: help;
+}
+.setting-q:hover { color: var(--accent); border-color: var(--accent); }
+.setting-number { display: inline-flex; align-items: center; gap: 0.3rem; }
+.setting-number input { width: 5.2rem; }
+.setting-row[data-changed="yes"] .setting-name { color: var(--accent); }
+
+.picker-group { margin-bottom: 0.8rem; }
+.picker-row { display: flex; align-items: center; gap: 0.45rem; font-size: 11px; color: var(--ink-2); padding: 0.1rem 0; }
+.picker-row input { accent-color: var(--accent); }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ── slices ──────────────────────────────────────────────────────────────── */
+
+.slice-list { display: flex; flex-direction: column; gap: 2px; }
+
+.slice-row {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr;
+  grid-template-areas:
+    "name data"
+    "diff diff";
+  gap: 0.15rem 0.6rem;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11px;
+  padding: 0.35rem 0.45rem;
+  cursor: pointer;
+}
+.slice-row:hover { border-color: var(--line); }
+.slice-row.on { border-color: var(--accent); color: var(--ink); }
+.slice-name { grid-area: name; color: var(--ink); }
+.slice-data { grid-area: data; font-variant-numeric: tabular-nums; }
+.slice-diff { grid-area: diff; color: var(--ink-3); }
+
+.slice-again {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0;
+  padding: 0.35rem 0.8rem;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  color: var(--ink-2);
+  font-size: 11px;
+}
+.slice-again button {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  padding: 0.1rem 0.5rem;
+  cursor: pointer;
+}
+
+/* ── device ──────────────────────────────────────────────────────────────── */
+
+.device {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* The page scrolls, but the bar itself was a strip of grey down the edge and
+     the 84rem cap left the right third of a wide screen empty. */
+  scrollbar-width: none;
+  padding: 2.4rem 1.4rem 3rem;
+  /* Two columns: the machine on the left, what is going to it on the right.
+     One column of sections left two-thirds of a wide screen empty. */
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: start;
+  gap: 2.2rem 3rem;
+  max-width: none;
+}
+
+.device::-webkit-scrollbar { display: none; }
+
+.device-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2.2rem;
+  min-width: 0;
+}
+
+/* A narrow window still gets the whole page, in one column. */
+@media (max-width: 1080px) {
+  .device { grid-template-columns: minmax(0, 1fr); }
+}
+
+.device-head { display: flex; flex-direction: column; gap: 0.35rem; }
+
+.device-kicker {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.device-title {
+  margin: 0;
+  font-family: var(--wordmark);
+  font-weight: 600;
+  font-size: 40px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.device-sub {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.device-status {
+  margin: 0.55rem 0 0;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  border-left: 2px solid var(--line);
+  padding-left: 0.6rem;
+}
+.device-status.live { border-color: var(--accent); color: var(--ink-2); }
+
+/* The certificate question. It is a question, not an error toast: no red, no
+   icon, an accent edge and a press. */
+.device-pin {
+  margin-top: 0.9rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  background: var(--panel);
+}
+.device-pin p {
+  margin: 0 0 0.7rem;
+  font-family: var(--prose);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.device-pin button {
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.4rem 0.7rem;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.device-pin button:hover { border-color: var(--accent); color: var(--accent); }
+
+.device-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.device-card {
+  background: var(--panel);
+  padding: 1rem 1.1rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.device-label {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.device-big {
+  margin: 0;
+  font-family: var(--wordmark);
+  font-weight: 600;
+  font-size: 30px;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.device-note {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-3);
+  max-width: 46ch;
+}
+
+.device-panel {
+  border-top: 1px solid var(--line);
+  padding-top: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.device-spools {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.6rem;
+}
+.device-spools li { display: flex; align-items: baseline; gap: 0.5rem; }
+.device-spools .bay {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+.device-spools .spool {
+  font-family: var(--prose);
+  font-size: 14px;
+  color: var(--ink);
+}
+.device-spools .spool.empty { color: var(--ink-3); font-style: italic; }
+
+.device-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.4rem;
+}
+.device-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-family: var(--prose);
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.device-form input {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0.3rem 0;
+  min-width: 15rem;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.device-form input:focus { border-color: var(--accent); outline: none; }
+.device-form input::placeholder { color: rgba(233, 232, 242, 0.28); }
+.device-form input.access-code {
+  min-width: 18rem;
+}
+.device-form input.access-code::placeholder {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.device-form select {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0.3rem 0;
+  min-width: 11rem;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+}
+.device-form select:focus { border-color: var(--accent); outline: none; }
+
+/* The live half: a progress rule, four readouts, and the only four buttons in
+   the app that move a machine. */
+.device-live {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.3rem 1.4rem 1.5rem;
+  border: 1px solid var(--line);
+}
+
+.device-bar {
+  height: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.device-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 420ms ease;
+}
+
+.device-readouts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.6rem;
+  font-family: var(--prose);
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.device-readouts b {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.device-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+.device-controls button {
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 0.42rem 1rem;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease;
+}
+.device-controls button:hover:not(:disabled) { border-color: var(--ink-2); color: var(--ink); }
+.device-controls button:disabled { opacity: 0.32; cursor: default; }
+.device-controls button.device-go {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.device-controls button.device-go:hover:not(:disabled) { background: var(--accent); color: var(--bg); }
+.device-controls .device-note { margin: 0; }
+
+.device-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  border-left: 1px solid var(--accent);
+  padding-left: 0.9rem;
+}
+.device-confirm p {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.device-confirm p b { color: var(--ink); font-weight: 500; }
+.device-confirm div { display: flex; gap: 0.7rem; }
+
+/* ── finding a setting ─────────────────────────────────────────────────────
+   Eleven tabs is past the point where you can hunt: Bambu Studio puts a search
+   field above its tabs, so this one does too. A setting that has been moved off
+   the profile wears a dot and a way back. */
+
+.settings-search {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0 1.1rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--prose);
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.settings-search input {
+  flex: 1 1 auto;
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 0.3rem 0.5rem;
+  font-family: var(--prose);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
+}
+.settings-search input:focus {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  outline: none;
+}
+.settings-search input::placeholder { color: rgba(233, 232, 242, 0.3); font-style: italic; }
+.settings-search em {
+  font-style: normal;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.settings-hit {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+}
+/* A hit is one line of a list: the name takes the room, the control and the
+   group label keep theirs. A grid here looked right on paper and broke the list
+   in the window — the group label clipped to three letters and the whole sheet
+   grew a horizontal scrollbar — because a grid that does not know the widest
+   label pushes everything else out. Flex with a floor does not. */
+.settings-hit > .menu-row {
+  /* A content-sized basis let the row collapse to a third of the sheet and wrap
+     its own label; a zero basis makes it claim the room the group label leaves. */
+  flex: 1 1 0%;
+  min-width: 0;
+  border-bottom: 0;
+}
+.settings-hit-group {
+  flex: 0 0 auto;
+  font-family: var(--prose);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+/* the name of an overridden setting, and the cross that puts it back */
+.menu-row > .menu-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.menu-name.moved { color: var(--ink); }
+.menu-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ink-2);
+}
+.menu-reset:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
+
+/* ── what the plate costs ───────────────────────────────────────────────────
+   A slicer's corner card: time, filament, weight, layers. It sits on the plate
+   rather than in a panel because it is about the plate, and it reads in
+   tabular figures so two slices can be compared at a glance. */
+
+.job-card {
+  position: absolute;
+  left: 1rem;
+  top: 1rem;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  box-sizing: border-box;
+  width: 20rem;
+  min-width: 20rem;
+  max-width: 20rem;
+  padding: 0.7rem 0.85rem 0.8rem;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.job-state {
+  font-family: var(--prose);
+  font-size: 9.5px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.job-state.quiet { color: var(--ink-3); letter-spacing: 0.18em; }
+
+.job-card dl {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  margin: 0;
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+.job-card dl > div {
+  display: grid;
+  grid-template-columns: 6.75rem minmax(0, 1fr);
+  column-gap: 0.5rem;
+  align-items: baseline;
+  width: 100%;
+}
+.job-total dt,
+.job-total dd {
+  color: var(--accent);
+}
+
+.job-card dt {
+  font-family: var(--prose);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+  min-width: 0;
+}
+.job-card dd {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink);
+  text-align: right;
+  white-space: nowrap;
+  min-width: 0;
+}
+.job-card--panel {
+  position: static;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  overflow: visible;
+  pointer-events: auto;
+}
+.panel .job-card--panel dl > div {
+  grid-template-columns: minmax(5.5rem, 6.75rem) minmax(0, 1fr);
+}
+
+/* ── the features in the toolpath ──────────────────────────────────────────
+   Bambu Studio's preview lists what the slice is made of down the right-hand
+   side, with a switch per kind. Same idea: the colour is the colour the line is
+   drawn in, so the list doubles as the key. */
+
+.legend {
+  position: absolute;
+  right: 1rem;
+  top: 1rem;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 10.5rem;
+  max-width: min(12.5rem, calc(100% - 20rem));
+  max-height: min(16rem, calc(100% - 8rem));
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0.5rem 0.35rem 0.45rem;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+
+.legend header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  padding: 0.05rem 0.45rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--prose);
+  font-size: 9.5px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.legend header span { flex: 1 1 auto; }
+.legend header em {
+  font-style: normal;
+  letter-spacing: 0.12em;
+  color: var(--ink-3);
+}
+.legend header button {
+  padding: 0 0.15rem;
+  font-family: var(--prose);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.legend header button:hover:not(:disabled) { color: var(--accent); }
+.legend header button:disabled { opacity: 0.35; }
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.24rem 0.45rem;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  text-align: left;
+}
+.legend-row:hover { background: rgba(255, 255, 255, 0.04); color: var(--ink); }
+.legend-row i {
+  width: 0.55rem;
+  height: 0.55rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+.legend-row span { flex: 1 1 auto; }
+.legend-row em {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.legend-row.off { color: var(--ink-3); }
+.legend-row.off i { opacity: 0.2; }
+.legend-row.off span { text-decoration: line-through; text-decoration-thickness: 1px; }
+
+/* ── drop-downs carry a caret, not the platform's glyph ──────────────────────
+   WebView2 draws a small `v` for a select that has lost its native chrome, so
+   every list looked like it was labelled with a letter. One drawn caret instead,
+   the same shape at every size. */
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6'%3E%3Cpath d='M0 0l4.5 5L9 0z' fill='%23807f8d'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.2rem center;
+  padding-right: 1.15rem;
+}
+
+.device-confirm p.device-warn {
+  margin: 0.55rem 0 0;
+  max-width: 46ch;
+  color: var(--accent);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+/* The sheet's own footnote: what the setting under the hand does, in the
+   printer definition's words. Fixed height so hovering never shifts the rows. */
+/* The sheet is a two-column grid (categories | rows). Without this the
+   footnote fell into the first column and read as a caption for the category
+   list; it belongs under all of it. */
+.settings-help {
+  grid-column: 1 / -1;
+  position: sticky;
+  bottom: 0;
+  margin: 0;
+  padding: 0.55rem 0.9rem 0.6rem;
+  min-height: 2.9rem;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink-dim);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+.settings-help.idle { opacity: 0.55; font-style: italic; }
+
+/* The speed ramp in the legend. It replaces the kind swatches as the thing that
+   explains the colours on the plate, so it sits above them and reads as a scale:
+   a bar, two numbers, nothing else. */
+.legend-scale {
+  margin: 0.15rem 0 0.5rem;
+  padding: 0 0.15rem;
+}
+.legend-scale-title {
+  display: block;
+  color: var(--ink-dim);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.legend-ramp {
+  display: flex;
+  gap: 1px;
+  height: 0.55rem;
+  margin: 0.3rem 0 0.18rem;
+  border-radius: 2px;
+  overflow: hidden;
+  /* The gaps show the panel behind them, so the five stops read as five bands
+     rather than one smooth wash. */
+  background: var(--panel);
+}
+.legend-ramp i { flex: 1; min-width: 0; }
+.legend-scale-ends {
+  display: flex;
+  justify-content: space-between;
+  color: var(--ink-dim);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
+.legend-row i.muted { opacity: 0.22; }
+
+/* The footer's groups. Each control has a one-word label in small caps and the
+   groups are separated by a hairline, so `[ solid wire ascii ]` reads as one
+   choice rather than five words in a row. */
+.scrub-group {
+  display: inline-flex;
+  flex: none;
+  white-space: nowrap;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding-right: 0.7rem;
+  margin-right: 0.15rem;
+  border-right: 1px solid var(--line);
+}
+.scrub-group:last-of-type { border-right: 0; }
+.scrub-group em {
+  font-style: normal;
+  color: var(--ink-3);
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-right: 0.15rem;
+}
+
+/* The object list. Bambu has one above the settings, and it is the only way to
+   pick a part that is hidden behind another one — the viewport raycast cannot
+   reach it, and on a full plate most parts are behind something. */
+.objects {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.object-line {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+}
+.object-row {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.3rem 0.4rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.object-row:hover { background: rgba(233, 232, 242, 0.05); color: var(--ink); }
+.object-row.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--ink);
+}
+.object-index {
+  color: var(--ink-3);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 0.9em;
+}
+.object-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.object-slot {
+  color: var(--accent);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.object-drop {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 0.35rem;
+  cursor: pointer;
+  opacity: 0;
+}
+.object-line:hover .object-drop { opacity: 0.7; }
+.object-drop:hover { opacity: 1; color: var(--accent); }
+
+.start-dot {
+  color: var(--ink-3);
+  margin: 0 0.32rem;
+  flex: none;
+}
+.start-machine {
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.row.paint-brush {
+  gap: 0.4rem;
+  margin-bottom: 0.15rem;
+}
+
+/* Two brushes as one control: a pair of quiet words that becomes a pair of
+   pressed ones, so the panel says which brush is in your hand. */
+.paint-brush-button {
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.14rem 0.5rem;
+  cursor: pointer;
+}
+
+/* The brush in your hand is filled, not tinted: a 10% wash was indistinguishable
+   from the idle button at a glance, and picking the wrong brush paints the
+   opposite of what you meant. */
+.paint-brush-button.on {
+  color: #14131a;
+  border-color: var(--accent, #d9a441);
+  background: var(--accent, #d9a441);
+  font-weight: 600;
+}
+/* Armed for a pick: the button and the next click are one gesture, so the
+   button has to look held down until the click lands. */
+.face-arm.on {
+  color: #14131a;
+  border-color: var(--accent, #d9a441);
+  background: var(--accent, #d9a441);
+  font-weight: 600;
+}
+
+/* The queue, as rows you can drop one at a time. It sits below the live
+   readouts because the machine is what you look at; the queue is what you set
+   up and walk away from. */
+.device-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.device-queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.device-queue-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-size: 0.76rem;
+}
+
+.device-queue-list li.running {
+  border-color: var(--accent, #b9b3ff);
+  color: var(--ink);
+}
+
+.device-queue-list .queue-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-queue-list .queue-size {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.device-queue-list button {
+  border: none;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0 0.1rem;
+}
+
+.device-queue-list button:hover {
+  color: var(--ink);
+}
+
+/* Pins: a small cluster under the cut row, because they are a property of the
+   cut and not a tool of their own. */
+.boolean-row {
+  /* A verb, three answers: the label carries the word so the buttons stay one
+     word each and the row never wraps into the next section. */
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.boolean-label {
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-right: 0.2rem;
+}
+
+.cut-pins {
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Every tick box in the app, drawn rather than borrowed: a native checkbox
+   inside a near-black panel is a light square from another program. */
+input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  width: 0.78rem;
+  height: 0.78rem;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid rgba(233, 232, 242, 0.28);
+  border-radius: 2px;
+  background: rgba(6, 7, 11, 0.6);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  inset: 0.16rem;
+  transform: scale(0.2);
+  opacity: 0;
+  background: var(--accent, #d9a441);
+  clip-path: polygon(14% 44%, 0 62%, 40% 100%, 100% 18%, 84% 4%, 38% 66%);
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+
+input[type="checkbox"]:hover {
+  border-color: rgba(233, 232, 242, 0.5);
+}
+
+input[type="checkbox"]:checked {
+  border-color: var(--accent, #d9a441);
+  background: rgba(217, 164, 65, 0.14);
+}
+
+input[type="checkbox"]:checked::before {
+  transform: scale(1);
+  opacity: 1;
+}
+
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent, #d9a441);
+  outline-offset: 2px;
+}
+
+.cut-pin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+}
+
+.cut-pin-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+}
+
+.cut-pin-field input {
+  width: 3.1rem;
+  font-size: 0.72rem;
+  padding: 0.12rem 0.24rem;
+}
+
+/* `.row` is declared further down and would win a tie, hence both classes. */
+.row.cut-joint {
+  flex-wrap: wrap;
+  row-gap: 0.2rem;
+}
+
+/* What the tab becomes, under the control that decides it: on one line with
+   `dovetail  [root]  tip 12 · deep 6` the three numbers read as the same kind
+   of thing, and two of them are not for typing. */
+.row.cut-joint .cut-joint-note {
+  flex: 1 0 100%;
+  padding-left: 1.35rem;
+  font-size: 0.66rem;
+  color: var(--ink-3);
+  letter-spacing: 0.02em;
+}
+
+.cut-pin-count {
+  font-size: 0.72rem;
+  padding: 0.14rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+/* The brush reach field sits with the brush, not with the model's numbers: it
+   is how wide the stroke is, and it changes nothing about the part. */
+.paint-radius {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  font-size: 0.72rem;
+  color: var(--ink-2);
+}
+
+.paint-radius input {
+  width: 2.9rem;
+  font-size: 0.72rem;
+  padding: 0.12rem 0.24rem;
+}
+
+.paint-hint {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--accent);
+  letter-spacing: 0.01em;
+}
+
+/* Presets: a small, quiet block at the foot of the settings sheet. */
+.presets {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-top: 0.7rem;
+  margin-top: 0.2rem;
+  border-top: 1px solid var(--line);
+}
+.preset-title {
+  margin: 0;
+  font-family: var(--prose);
+  font-size: 9.5px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.preset-row {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+/* The names are the list: a select hides them behind a click, and a clip (or a
+   person) should see what has been saved without opening anything. */
+.preset-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.preset-name {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+.preset-name.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.preset-row input,
+.preset-row select {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 0.22rem 0.4rem;
+}
+.preset-row button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font-family: var(--prose);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 0.28rem 0.45rem;
+  cursor: pointer;
+}
+.preset-row button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.preset-row button:disabled { opacity: 0.4; cursor: default; }
+.preset-diff,
+.preset-note {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--ink-3);
+  line-height: 1.45;
+}
+.preset-note { color: var(--accent); }
+
+/* The cost clip has to read as a cost clip: the job card floats over the plate
+   at twice its size, on the same panel colour, so the numbers are the subject. */
+.job-card.demo-cost {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 24rem;
+  gap: 0.5rem;
+  padding: 1.1rem 1.5rem 1.2rem;
+  z-index: 40;
+  background: var(--panel);
+  backdrop-filter: none;
+  border-color: #2a2b3a;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.65);
+}
+/* Scaling the card blurred its own text and pushed the labels out of the box;
+   the demo card is laid out large instead, so every row is crisp and inside. */
+.job-card.demo-cost .job-state { font-size: 11px; }
+.job-card.demo-cost dt { font-size: 12px; }
+.job-card.demo-cost dd { font-size: 17px; }
+
+/* ------------------------------------------------------------------ boxes
+   A boxed element is a border with a label sitting on its top edge, drawn in
+   the same mono as everything else. It replaces the bracketed text — `[ send ]`
+   — that stood in for a box in a theme that has no icons: the border says
+   where the control begins and ends, and the label says what it does without
+   spending two characters on punctuation. */
+.box {
+  position: relative;
+  border: 1px solid var(--line, #23252f);
+  padding: 1.1rem 1rem 0.9rem;
+  margin-top: 1.1rem;
+}
+/* Corner ticks were accent-coloured and misaligned under Geist Mono / WebView2. */
+.box-inline {
+  display: inline-flex;
+  margin-top: 0;
+  padding: 0.15rem 0.45rem;
+  vertical-align: middle;
+}
+.box-inline input {
+  border: 0;
+  background: transparent;
+  min-width: 6ch;
+}
+.box-label {
+  position: absolute;
+  top: -0.62rem;
+  left: 0.7rem;
+  margin: 0;
+  padding: 0 0.35rem;
+  background: var(--bg, #06070b);
+  font-family: var(--mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 0.62rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent, #b9b3ff);
+}
+
+/* The button that used to be written with brackets. */
+.chip {
+  font-family: var(--mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  color: var(--ink, #e9e8f2);
+  background: transparent;
+  border: 1px solid var(--line, #23252f);
+  border-radius: 0;
+  padding: 0.28rem 0.6rem;
+  cursor: pointer;
+}
+.chip:hover:not(:disabled) {
+  border-color: var(--accent, #b9b3ff);
+  color: var(--accent, #b9b3ff);
+}
+.chip:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.chip.quiet {
+  color: var(--muted, #8b8b9c);
+}
+
+/* ------------------------------------------------------------------ cloud */
+.cloud-panel {
+  font-family: var(--mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 0.72rem;
+}
+.cloud-line {
+  margin: 0.15rem 0;
+  color: var(--ink, #e9e8f2);
+}
+.cloud-line.dim,
+.cloud-host,
+.cloud-empty {
+  color: var(--muted, #8b8b9c);
+}
+.cloud-host {
+  margin: 0 0 0.6rem;
+  font-size: 0.64rem;
+  letter-spacing: 0.06em;
+}
+.cloud-empty {
+  margin: 0.6rem 0;
+  font-size: 0.66rem;
+  line-height: 1.25;
+  white-space: pre;
+}
+.cloud-form {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.6rem 0 0.75rem;
+  max-width: 22rem;
+}
+.cloud-form label {
+  display: grid;
+  gap: 0.2rem;
+}
+.cloud-form label span {
+  font-size: 0.6rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted, #8b8b9c);
+}
+.cloud-form input {
+  font-family: inherit;
+  font-size: 0.74rem;
+  color: var(--ink, #e9e8f2);
+  background: var(--panel, #0b0d14);
+  border: 1px solid var(--line, #23252f);
+  border-radius: 0;
+  padding: 0.3rem 0.45rem;
+}
+.cloud-form input:focus {
+  outline: none;
+  border-color: var(--accent, #b9b3ff);
+}
+.cloud-form .chip {
+  justify-self: start;
+  margin-top: 0.15rem;
+}
+.cloud-devices {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+  background: var(--line, #23252f);
+  border: 1px solid var(--line, #23252f);
+}
+.cloud-device {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.4rem 0.55rem;
+  background: var(--panel, #0b0d14);
+}
+.cloud-device.dim .cloud-name,
+.cloud-device.dim .cloud-state {
+  color: var(--muted, #8b8b9c);
+}
+.cloud-name {
+  color: var(--ink, #e9e8f2);
+}
+.cloud-model,
+.cloud-state {
+  font-size: 0.64rem;
+  color: var(--muted, #8b8b9c);
+}
+.cloud-actions {
+  display: flex;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+}
+.cloud-note {
+  margin: 0.7rem 0 0;
+  color: #ff9a9a;
+  font-size: 0.68rem;
+  white-space: pre-wrap;
+}
+.cloud-sent {
+  margin: 0.5rem 0 0;
+  color: var(--accent, #b9b3ff);
+  font-size: 0.68rem;
+}
+
+
+/* A button with no class of its own is a word in brackets today. The border
+   says the same thing without spending the two characters, and the label can
+   then be the verb it always was. */
+button:not([class]) {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+}
+button:not([class]):hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+button:not([class]):disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* A rule drawn in characters, for the places a border would be too quiet. */
+.ascii-rule {
+  margin: 0.35rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  line-height: 1;
+  color: var(--line);
+  white-space: pre;
+  overflow: hidden;
+}
