@@ -781,7 +781,7 @@ mod tests {
         let preset = broken.join("user/default/process/orphan.json");
         let lookup = orca_family_lookup_dirs(
             &[bundled.join("BBL")],
-            &[broken.clone()],
+            std::slice::from_ref(&broken),
             "process",
         );
         assert!(flatten_preset_from_dirs(&preset, &lookup).is_err());
