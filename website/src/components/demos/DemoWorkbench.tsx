@@ -32,9 +32,9 @@ function ToolpathPanel() {
       <header className="demo-panel__head">
         <div>
           <p className="demo-panel__eyebrow">Toolpath</p>
-          <h2 className="demo-panel__title">Real cube slice · 3D preview</h2>
+          <h2 className="demo-panel__title">T-wing slice · 3D preview</h2>
           <p className="demo-panel__note">
-            Offline slice of <code>examples/cube.stl</code> ({visibleLayerCount} effective layers). Not live CuraEngine in-browser.
+            Plane-cut of <code>examples/t-wing.stl</code> ({visibleLayerCount} effective layers in UI). Illustrative — not live CuraEngine in-browser.
           </p>
         </div>
         <div className="toolpath-controls">

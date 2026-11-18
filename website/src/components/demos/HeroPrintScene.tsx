@@ -31,10 +31,10 @@ export function HeroPrintScene() {
   const active = data ? heroLayer : layer;
 
   return (
-    <div className="hero-print" data-synthetic aria-label="Synthetic layer-build preview of a 20 mm calibration cube">
+    <div className="hero-print" data-synthetic aria-label="Illustrative layer-build preview of examples/t-wing.stl">
       <GcodeViewer data={data} plateMm={plateMm} layerIndex={active} infill={infill} hero className="hero-print__canvas" />
       <div className="hero-print__chrome">
-        <span className="hero-print__tag">Synthetic benchy-style demo</span>
+        <span className="hero-print__tag">Illustrative · t-wing.stl</span>
         <span className="hero-print__layer">
           Layer {active + 1}
           {data ? ` / ${data.layers.length}` : ""}

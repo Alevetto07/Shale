@@ -59,7 +59,7 @@ import {
         <p class="hero-meta dim">v{version} · {shaleLicense}</p>
       </div>
       <div class="hero-demo" data-reveal>
-        <HeroPrintSceneRoot client:load />
+        <HeroPrintSceneRoot client:visible />
       </div>
     </div>
   </section>
@@ -67,10 +67,11 @@ import {
   <section id="demos" aria-labelledby="demos-title">
     <div class="wrap">
       <div class="section-head">
-        <h2 id="demos-title">Try the tools</h2>
+        <p class="eyebrow section-eyebrow">Workbench</p>
+        <h2 id="demos-title">Slice, catalogue, connect</h2>
         <p class="muted">
-          Live widgets below — synthetic paths, recorded CLI/MCP, and catalogue data from the v0.1.3
-          tree. Nothing here starts a print.
+          Interactive previews below — illustrative toolpaths from <code>examples/t-wing.stl</code>, scripted
+          CLI/MCP, and Bambu catalogue data from v0.1.3. Nothing here starts a print.
         </p>
       </div>
       <DemoWorkbench client:visible />

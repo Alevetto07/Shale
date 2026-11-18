@@ -94,7 +94,7 @@ export function SliceSettingsDemo() {
           <dd className="mono">{timeLabel}</dd>
         </div>
       </dl>
-      <p className="demo-footnote dim">Scaled from committed cube-slice.json metadata — illustrative, not live CuraEngine.</p>
+      <p className="demo-footnote dim">Scaled from committed demo-slice.json metadata — illustrative, not live CuraEngine.</p>
     </section>
   );
 }

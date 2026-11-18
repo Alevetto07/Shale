@@ -48,9 +48,11 @@
 
 .demo-panel__title {
   margin: 0;
-  font-size: clamp(1.25rem, 2vw, 1.55rem);
+  font-size: clamp(1.35rem, 2.4vw, 1.75rem);
   font-weight: 600;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.038em;
+  color: var(--ink);
+  text-shadow: 0 0 48px color-mix(in srgb, var(--path) 22%, transparent);
 }
 
 .demo-panel__note {
@@ -97,9 +99,12 @@
     0 40px 120px rgba(0, 0, 0, 0.55);
 }
 
-.hero-print__canvas {
-  min-height: 100%;
+.hero-print__canvas,
+.hero-layer-canvas {
+  width: 100%;
   height: 100%;
+  min-height: 100%;
+  display: block;
   border: none;
   background: transparent;
 }

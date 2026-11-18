@@ -173,6 +173,14 @@ section[id],
   margin: 0 0 0.5rem;
 }
 
+.section-eyebrow {
+  color: var(--path);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
 .section-head--lead {
   width: 100%;
   text-align: left;

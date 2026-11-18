@@ -62,7 +62,7 @@ export function CliTerminal({ autoStart = false }: { autoStart?: boolean }) {
           <span className="dot dot--r" />
           <span className="dot dot--y" />
           <span className="dot dot--g" />
-          <span className="rich-terminal__title">shale-cli — zsh</span>
+          <span className="rich-terminal__title">shale-cli — illustrative</span>
         </div>
         <pre className="rich-terminal__body">
           {visible.map((line, i) => (

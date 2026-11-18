@@ -1,10 +1,12 @@
 import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { coverageFromPng } from "./canvas-coverage.mjs";
 
 const outDir =
   process.env.SCREENSHOT_OUT ?? join(process.cwd(), "docs/screenshots-redesign");
 const baseUrl = process.env.SITE_URL ?? "http://127.0.0.1:4321";
+const MIN_CANVAS_COVERAGE = Number(process.env.MIN_CANVAS_COVERAGE ?? "0.25");
 
 const viewports = [
   { tag: "desktop", width: 1440, height: 900 },
@@ -12,18 +14,35 @@ const viewports = [
 ];
 
 const sections = [
-  { id: "hero", selector: ".hero", fullPage: false, wait: 3500, settle: ".hero-print canvas" },
+  { id: "hero", selector: ".hero", fullPage: false, wait: 4000, settle: ".hero-layer-canvas" },
   { id: "demos", selector: "#demos", fullPage: false, wait: 4500, settle: ".printer-row--rich" },
-  { id: "toolpath", selector: "#toolpath", fullPage: false, wait: 3000, settle: ".demo-panel__viewer canvas" },
+  {
+    id: "toolpath",
+    selector: "#toolpath",
+    fullPage: false,
+    wait: 3500,
+    settle: ".demo-panel__viewer canvas",
+    canvas: ".hero-print canvas",
+    canvasAlt: ".demo-panel__viewer canvas",
+  },
   { id: "printers", selector: "#printers", fullPage: false, wait: 2000, settle: ".printer-row--rich.is-active" },
   { id: "cli", selector: "#cli", fullPage: false, wait: 3500, settle: ".term-out" },
   { id: "downloads", selector: "#downloads", fullPage: false, wait: 600 },
   { id: "footer", selector: ".site-footer", fullPage: false, wait: 300 },
 ];
 
+async function canvasInkCoverage(page, selector) {
+  const canvas = page.locator(selector).first();
+  if ((await canvas.count()) === 0) return { coverage: 0, litPixels: 0 };
+  const buf = await canvas.screenshot({ type: "png" });
+  return coverageFromPng(buf);
+}
+
 await mkdir(outDir, { recursive: true });
 
 const browser = await chromium.launch();
+const regressions = [];
+
 for (const vp of viewports) {
   const page = await browser.newPage({
     viewport: { width: vp.width, height: vp.height },
@@ -34,7 +53,14 @@ for (const vp of viewports) {
       el.classList.add("is-visible");
     });
   });
-  await page.waitForSelector(".hero-print canvas", { timeout: 20000 }).catch(() => {});
+  await page.waitForSelector(".hero-layer-canvas", { timeout: 25000 });
+
+  await page.waitForTimeout(2500);
+  const heroCov = await canvasInkCoverage(page, ".hero-layer-canvas");
+  console.log(`[${vp.tag}] hero canvas coverage=${heroCov.coverage?.toFixed(3)} lit=${heroCov.litPixels}`);
+  if ((heroCov.coverage ?? 0) < MIN_CANVAS_COVERAGE) {
+    regressions.push(`${vp.tag} hero coverage ${heroCov.coverage} < ${MIN_CANVAS_COVERAGE}`);
+  }
 
   for (const section of sections) {
     const el = await page.$(section.selector);
@@ -56,6 +82,15 @@ for (const vp of viewports) {
       await page.waitForSelector(section.settle, { timeout: 15000 }).catch(() => {});
     }
     await page.waitForTimeout(section.wait);
+
+    if (section.id === "toolpath") {
+      const toolCov = await canvasInkCoverage(page, ".demo-panel__viewer canvas");
+      console.log(`[${vp.tag}] toolpath canvas coverage=${toolCov.coverage?.toFixed(3)} lit=${toolCov.litPixels}`);
+      if ((toolCov.coverage ?? 0) < MIN_CANVAS_COVERAGE) {
+        regressions.push(`${vp.tag} toolpath coverage ${toolCov.coverage} < ${MIN_CANVAS_COVERAGE}`);
+      }
+    }
+
     const path = join(outDir, `${section.id}-${vp.tag}.png`);
     await el.screenshot({ path });
     console.log(`Wrote ${path}`);
@@ -70,5 +105,11 @@ for (const vp of viewports) {
   await page.close();
 }
 await browser.close();
+
+if (regressions.length) {
+  console.error("Visual regression failures:");
+  for (const r of regressions) console.error(" -", r);
+  process.exit(1);
+}
 
 console.log(`Screenshots in ${outDir}`);

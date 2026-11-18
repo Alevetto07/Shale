@@ -1,21 +1,21 @@
 {
-  "label": "Recorded MCP exchange — same tool calls as docs; not a live agent in the browser.",
+  "label": "Illustrative agent exchange — scripted for the marketing site; not a recording of shale-mcp.",
   "messages": [
     {
       "role": "user",
-      "text": "Slice cube.stl for my A1 at 0.2 mm layers and 20% infill."
+      "text": "Slice examples/t-wing.stl for my A1 at 0.2 mm, 20% infill."
     },
     {
       "role": "assistant",
-      "text": "Calling shale slice with printer bambu_lab_a1, layer_height 0.2, infill 20."
+      "text": "I'll use the Bambu A1 profile and CuraEngine-backed pipeline from shale-core when resources are configured on the host."
     },
     {
       "role": "tool",
-      "text": "slice → cube.gcode · 54 layers · 2.19 m PLA"
+      "text": "slice → t-wing.gcode · illustrative · ~119 layers · demo preview uses demo-slice.json"
     },
     {
       "role": "assistant",
-      "text": "G-code is ready at cube.gcode. Say if you want it sent to a printer on your account."
+      "text": "G-code would land as t-wing.gcode. The browser demo shows a 2.5D slice of the same STL for visuals only."
     }
   ]
 }

@@ -20,7 +20,7 @@ await page.evaluate(() => {
   });
 });
 
-await page.waitForSelector(".hero-print canvas", { timeout: 20000 });
+await page.waitForSelector(".hero-layer-canvas", { timeout: 20000 });
 await page.waitForTimeout(1200);
 
 for (const i of [1, 2, 3]) {

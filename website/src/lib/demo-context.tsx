@@ -59,7 +59,7 @@ export function DemoProvider({ children }: { children: ReactNode }) {
   const [walls, setWalls] = useState(3);
 
   useEffect(() => {
-    fetch("/demo/cube-slice.json")
+    fetch("/demo/demo-slice.json")
       .then((r) => r.json())
       .then((json: SliceData) => {
         setData(json);
