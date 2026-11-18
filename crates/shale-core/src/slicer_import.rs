@@ -178,31 +178,6 @@ fn bundled_vendor_dirs() -> Vec<PathBuf> {
         .collect()
 }
 
-fn orca_family_dirs(system: &[PathBuf], user_roots: &[PathBuf]) -> Vec<PathBuf> {
-    let mut dirs = system.to_vec();
-    for root in user_roots {
-        for kind in ["machine", "filament", "process"] {
-            let path = root.join(kind);
-            if path.is_dir() {
-                dirs.push(path);
-            }
-        }
-        // Bambu user layout: user/<id>/{machine,filament,process}
-        if let Ok(read) = std::fs::read_dir(root.join("user")) {
-            for entry in read.flatten() {
-                let user = entry.path();
-                for kind in ["machine", "filament", "process"] {
-                    let path = user.join(kind);
-                    if path.is_dir() {
-                        dirs.push(path);
-                    }
-                }
-            }
-        }
-    }
-    dirs
-}
-
 fn discover_user_json(config_root: &Path) -> Vec<(String, PathBuf)> {
     let mut found = Vec::new();
     let mut stack = vec![config_root.to_path_buf()];
