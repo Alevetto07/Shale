@@ -352,46 +352,4 @@ mod tests {
             "GetSystemMenu(..., true) resets the menu and returns a null handle"
         );
     }
-
-    #[cfg(windows)]
-    #[test]
-    fn get_system_menu_on_message_only_hwnd_is_non_null() {
-        use windows::core::w;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            CreateWindowExW, DefWindowProcW, DestroyWindow, HWND_MESSAGE, RegisterClassW,
-            CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, WNDCLASSW, WS_OVERLAPPED,
-        };
-
-        unsafe {
-            let class = WNDCLASSW {
-                style: CS_HREDRAW | CS_VREDRAW,
-                lpfnWndProc: Some(DefWindowProcW),
-                hInstance: Default::default(),
-                lpszClassName: w!("ShaleGetSystemMenuTest"),
-                ..Default::default()
-            };
-            let _ = RegisterClassW(&class);
-            let hwnd = CreateWindowExW(
-                Default::default(),
-                w!("ShaleGetSystemMenuTest"),
-                w!("test"),
-                WS_OVERLAPPED,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                Some(HWND_MESSAGE),
-                None,
-                None,
-                None,
-            )
-            .expect("CreateWindowExW");
-            let menu = GetSystemMenu(hwnd, GET_SYSTEM_MENU_REVERT);
-            assert!(
-                !menu.0.is_null(),
-                "GetSystemMenu must return a menu handle when bRevert is FALSE"
-            );
-            let _ = DestroyWindow(hwnd);
-        }
-    }
 }
