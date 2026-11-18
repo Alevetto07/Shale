@@ -71,6 +71,9 @@ export const releasePageUrl = `${repoUrl}/releases/tag/${releaseTag}`;
 export const primaryDownload =
   downloads.find((d) => d.primary) ?? downloads[0];
 
+/** Copyable one-liner for the hero install row (Windows desktop installer). */
+export const installCommand = `curl -fL -o ${primaryDownload.fileName} "${downloadUrl(primaryDownload.fileName)}"`;
+
 export const mcpEnvExample = {
   SHALE_CURAENGINE: "/usr/bin/CuraEngine",
   SHALE_CURA_DIR: "/usr/share/cura/resources",

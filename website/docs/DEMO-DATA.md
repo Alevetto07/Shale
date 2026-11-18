@@ -11,6 +11,11 @@
 - Planar: `t-wing-planar.gcode` (0.1 mm, 238 layers).
 - Curved: `t-wing-curved.gcode` (shale-nonplanar post-process) — **v0.2 in development**, labelled in UI.
 
+## Print timeline (`public/demo/demo-slice-timeline.json`)
+
+- **Source:** same `t-wing_972c.gcode`; move counts per feature lane + sampled log lines.
+- **Generator:** `scripts/gcode-timeline.mjs`.
+
 ## CLI / MCP
 
 Illustrative replays; slice stats aligned with `t-wing_972c.gcode` where cited.

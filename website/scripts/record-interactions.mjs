@@ -20,50 +20,36 @@ await page.evaluate(() => {
   });
 });
 
-await page.waitForSelector(".gcode-viewer--hero canvas", { timeout: 60000 });
-await page.waitForTimeout(400);
-
-for (const i of [1, 2]) {
-  await page.locator(".field-picker-btn").nth(i).click();
-  await page.waitForTimeout(350);
-}
-
-await page.mouse.move(520, 260);
-await page.mouse.move(760, 340, { steps: 12 });
-await page.waitForTimeout(300);
-
-await page.locator("#demos").scrollIntoViewIfNeeded();
-await page.waitForTimeout(800);
-
-await page.getByRole("button", { name: /Play layers/i }).click();
-await page.waitForTimeout(1400);
-
-await page.getByLabel("Travel").check();
-await page.waitForTimeout(350);
-await page.getByLabel("Travel").uncheck();
-await page.waitForTimeout(250);
-
-await page.locator("#toolpath input[type='range']").first().fill("95");
-await page.waitForTimeout(450);
-
-await page.getByPlaceholder("Search").fill("p1");
-await page.getByRole("option", { name: /P1S/i }).click();
-await page.waitForTimeout(500);
-
-await page.locator("#slice-settings input[type='range']").nth(1).fill("32");
-await page.waitForTimeout(400);
-
-await page.locator("#cli").scrollIntoViewIfNeeded();
-await page.waitForSelector(".term-out", { timeout: 10000 });
+await page.waitForSelector("#app-demo", { timeout: 45000 });
 await page.waitForTimeout(600);
 
-await page.locator("#coming-next").scrollIntoViewIfNeeded();
-await page.waitForTimeout(700);
-await page.locator(".compare-slider input").first().fill("65");
-await page.waitForTimeout(500);
+await page.getByRole("button", { name: /Preview layers/i }).click();
+await page.waitForTimeout(2500);
 
-await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
-await page.waitForTimeout(500);
+await page.getByRole("button", { name: /Slice/i }).click();
+await page.waitForTimeout(800);
+await page.getByRole("button", { name: /Settings/i }).click();
+await page.waitForTimeout(800);
+
+await page.locator(".workflow-pause").click();
+await page.waitForTimeout(400);
+
+for (const i of [0, 1, 2]) {
+  await page.locator(".field-picker-btn").nth(i).click();
+  await page.waitForTimeout(450);
+}
+
+await page.locator(".workflow-pause").click();
+await page.waitForTimeout(3200);
+
+await page.locator("#activity").scrollIntoViewIfNeeded();
+await page.getByRole("button", { name: /^Play$/i }).click();
+await page.waitForTimeout(1400);
+
+await page.locator("#demos").scrollIntoViewIfNeeded();
+await page.waitForTimeout(600);
+await page.getByRole("tab", { name: /CLI/i }).click();
+await page.waitForTimeout(700);
 
 const video = page.video();
 await page.close();

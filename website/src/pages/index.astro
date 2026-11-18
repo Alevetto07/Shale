@@ -2,10 +2,12 @@
 import Base from "../layouts/Base.astro";
 import Sha256Field from "../components/Sha256Field.astro";
 import "../components/Hero.css";
-import { FieldThemePicker } from "../components/demos/FieldThemePicker";
-import HeroPrintSceneRoot from "../components/demos/HeroPrintSceneRoot";
-import DemoWorkbench from "../components/demos/DemoWorkbench";
+import AppWorkflowDemo from "../components/app-demo/AppWorkflowDemo";
+import GcodeActivityTimeline from "../components/app-demo/GcodeActivityTimeline";
+import SoftwareSurfaceDemo from "../components/app-demo/SoftwareSurfaceDemo";
+import ArtifactSplitSection from "../components/app-demo/ArtifactSplitSection";
 import NonplanarTeaser from "../components/demos/NonplanarTeaser";
+import { FieldThemePicker } from "../components/demos/FieldThemePicker";
 import { StatCounter } from "../components/demos/StatCounter";
 import {
   slogan,
@@ -18,66 +20,70 @@ import {
   releasePageUrl,
   primaryDownload,
   launchBenchmarks,
+  installCommand,
 } from "../config/site";
 ---
 
-<Base preloadImage="/media/prepare-hero-1200.webp">
+<Base>
   <div class="page-bed" aria-hidden="true"></div>
 
-  <section class="hero" aria-labelledby="hero-title">
-    <div class="wrap hero-shell">
-      <div class="hero-copy">
-        <h1 id="hero-title">Shale</h1>
-        <p class="hero-line">{slogan}</p>
-        <p class="hero-deck">
-          Bambu-only slicer on CuraEngine — sign in, slice with Studio presets, send when you are
+  <section class="hero-narrow" aria-labelledby="hero-title">
+    <div class="wrap--narrow">
+      <p class="version-sticker">v{version} · Bambu only</p>
+      <h1 id="hero-title">Shale</h1>
+      <p class="hero-line">{slogan}</p>
+      <ol class="hero-facts">
+        <li>
+          <strong>Bambu-only</strong> slicer on unmodified CuraEngine — sign in, slice with Studio presets, send when
           ready.
-        </p>
-        <FieldThemePicker client:load />
-        <ul class="hero-stats" aria-label="Launch benchmarks">
-          <li class="hero-stat-item">
-            <span class="hero-stat-value"
-              ><StatCounter client:visible value={launchBenchmarks.shaleUsableWarmSeconds} decimals={1} />
-              <span class="unit">s</span></span
-            >
-            <span class="hero-stat-label">Warm</span>
-          </li>
-          <li class="hero-stat-item">
-            <span class="hero-stat-value"
-              ><StatCounter client:visible value={launchBenchmarks.shaleUsableColdSeconds} decimals={1} />
-              <span class="unit">s</span></span
-            >
-            <span class="hero-stat-label">Cold</span>
-          </li>
-          <li class="hero-stat-item">
-            <span class="hero-stat-value">{launchBenchmarks.competitorRangeLabel}</span>
-            <span class="hero-stat-label">Typical slicers</span>
-          </li>
-        </ul>
-        <div class="hero-actions">
-          <a class="btn btn-primary" href={downloadUrl(primaryDownload.fileName)}>
-            Download for Windows
-          </a>
-          <a class="hero-secondary" href="#downloads">All packages</a>
+        </li>
+        <li>
+          <strong>Warm launch</strong>
+          <StatCounter client:load value={launchBenchmarks.shaleUsableWarmSeconds} decimals={1} /> s vs typical{" "}
+          {launchBenchmarks.competitorRangeLabel}.
+        </li>
+        <li>
+          <strong>Real toolpaths</strong> on this page from <code>t-wing_972c.gcode</code> (CuraEngine 5.13 via Shale).
+        </li>
+      </ol>
+      <FieldThemePicker client:load />
+      <div class="hero-cta-stack">
+        <div class="btn-row">
+          <a class="btn btn-primary" href={downloadUrl(primaryDownload.fileName)}>Download</a>
+          <a class="btn btn--ghost" href={repoUrl}>Source on GitHub</a>
         </div>
-        <p class="hero-meta dim">v{version} · {shaleLicense}</p>
+        <div class="install-cmd">
+          <code>{installCommand}</code>
+          <button type="button" data-copy={installCommand}>Copy</button>
+        </div>
       </div>
-      <div class="hero-demo" data-reveal>
-        <HeroPrintSceneRoot client:visible />
-      </div>
+      <AppWorkflowDemo client:visible />
     </div>
   </section>
 
-  <section id="demos" aria-labelledby="demos-title">
+  <section class="section-tight" aria-labelledby="activity-heading">
+    <div class="wrap--narrow">
+      <p id="activity-heading" class="screen-reader-only">G-code activity</p>
+      <GcodeActivityTimeline client:visible />
+    </div>
+  </section>
+
+  <section id="demos" class="section-tight" aria-labelledby="demos-title">
     <div class="wrap">
       <div class="section-head">
-        <h2 id="demos-title">Slice, catalogue, connect</h2>
+        <h2 id="demos-title">The software</h2>
         <p class="muted">
-          Real CuraEngine G-code from <code>examples/t-wing.stl</code> in the toolpath viewer; CLI/MCP replays are
-          illustrative. Nothing here starts a print.
+          Interactive surfaces from the desktop app — real CuraEngine G-code in the preview pane; CLI/MCP replays are
+          illustrative.
         </p>
       </div>
-      <DemoWorkbench client:visible />
+      <SoftwareSurfaceDemo client:visible />
+    </div>
+  </section>
+
+  <section class="section-tight" aria-labelledby="artifacts-heading">
+    <div class="wrap">
+      <ArtifactSplitSection client:visible />
     </div>
   </section>
 

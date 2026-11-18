@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import "../styles/engineering.css";
 import "../styles/demos.css";
 import "../styles/workbench.css";
 import "@fontsource/space-grotesk/600.css";
@@ -44,8 +45,9 @@ const dl = downloadUrl(primaryDownload.fileName);
           Shale<span>v{version}</span>
         </a>
         <nav class="nav-links nav-links-desktop" aria-label="Site">
-          <a href="#features">Features</a>
-          <a href="#media">App</a>
+          <a href="#app-demo">App demo</a>
+          <a href="#activity">Timeline</a>
+          <a href="#demos">Software</a>
           <a href="#downloads">Download</a>
           <a href={repoUrl}>GitHub</a>
         </nav>
@@ -53,8 +55,9 @@ const dl = downloadUrl(primaryDownload.fileName);
           <details class="nav-menu">
             <summary class="nav-menu-trigger">Menu</summary>
             <div class="nav-menu-panel" role="navigation" aria-label="Mobile">
-              <a href="#features">Features</a>
-              <a href="#media">App</a>
+              <a href="#app-demo">App demo</a>
+              <a href="#activity">Timeline</a>
+              <a href="#demos">Software</a>
               <a href="#downloads">Download</a>
               <a href={repoUrl}>GitHub</a>
             </div>

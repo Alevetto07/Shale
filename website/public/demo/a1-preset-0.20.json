@@ -1,0 +1,20 @@
+{
+  "name": "0.20mm Standard @BBL A1",
+  "label": "standard",
+  "source": "Bambu Studio process profile (resolved by Shale)",
+  "values": {
+    "layer_height": "0.2",
+    "wall_line_count": "2",
+    "infill_sparse_density": "15",
+    "infill_pattern": "grid",
+    "top_layers": "5",
+    "bottom_layers": "3",
+    "speed_wall_0": "200",
+    "speed_wall": "300",
+    "speed_infill": "270",
+    "speed_topbottom": "200",
+    "support_enable": "0",
+    "prime_tower_enable": "1",
+    "z_seam_type": "back"
+  }
+}

@@ -14,7 +14,15 @@ const viewports = [
 ];
 
 const sections = [
-  { id: "hero", selector: ".hero", fullPage: false, wait: 5000, settle: ".gcode-viewer--hero canvas" },
+  {
+    id: "hero",
+    selector: ".hero-narrow",
+    fullPage: false,
+    wait: 5000,
+    settle: "#app-demo .gcode-viewer canvas, #app-demo .ascii-frame",
+  },
+  { id: "app-demo", selector: "#app-demo", fullPage: false, wait: 4000, settle: "#app-demo" },
+  { id: "activity", selector: "#activity", fullPage: false, wait: 2000, settle: "#activity" },
   { id: "coming-next", selector: "#coming-next", fullPage: false, wait: 4000, settle: "#coming-next canvas" },
   { id: "demos", selector: "#demos", fullPage: false, wait: 4500, settle: ".printer-row--rich" },
   {
@@ -23,7 +31,6 @@ const sections = [
     fullPage: false,
     wait: 3500,
     settle: ".demo-panel__viewer canvas",
-    canvas: ".hero-print canvas",
     canvasAlt: ".demo-panel__viewer canvas",
   },
   { id: "printers", selector: "#printers", fullPage: false, wait: 2000, settle: ".printer-row--rich.is-active" },
@@ -56,10 +63,12 @@ for (const vp of viewports) {
       el.classList.add("is-visible");
     });
   });
-  await page.waitForSelector(".gcode-viewer--hero canvas", { timeout: 35000 });
+  await page.waitForSelector("#app-demo", { timeout: 35000 });
+  await page.getByRole("button", { name: /Preview layers/i }).click();
+  await page.waitForSelector("#app-demo .gcode-viewer canvas", { timeout: 45000 }).catch(() => {});
 
   await page.waitForTimeout(3500);
-  const heroCov = await canvasInkCoverage(page, ".gcode-viewer--hero canvas");
+  const heroCov = await canvasInkCoverage(page, "#app-demo .gcode-viewer canvas");
   console.log(`[${vp.tag}] hero canvas coverage=${heroCov.coverage?.toFixed(3)} lit=${heroCov.litPixels}`);
   if ((heroCov.coverage ?? 0) < MIN_CANVAS_COVERAGE) {
     regressions.push(`${vp.tag} hero coverage ${heroCov.coverage} < ${MIN_CANVAS_COVERAGE}`);
