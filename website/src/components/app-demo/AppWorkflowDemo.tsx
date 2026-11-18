@@ -1,41 +1,96 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { DemoProvider, useDemo } from "../../lib/demo-context";
 import { GcodeViewer } from "../demos/GcodeViewer";
+import { FieldThemePicker } from "../demos/FieldThemePicker";
 import { meter, shaleBox, WORKFLOW_STEPS, type WorkflowStepId } from "./shale-app-tokens";
 
 const STEP_MS = 3600;
 
-function Skeleton({ widths = ["w90", "w75", "w55"] as const }) {
+function Sidebar({ stepId }: { stepId: WorkflowStepId }) {
+  const { estimates, data } = useDemo();
+  const sliceTimeS = Math.round(Number(data?.meta?.time_s ?? estimates.time_s));
+  const sliceFilM = Number(data?.meta?.filament_m ?? estimates.filament_m);
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-      {widths.map((w) => (
-        <div key={w} className={`skeleton-line skeleton-line--${w}`} />
-      ))}
-    </div>
+    <aside className="shale-app__sidebar">
+      <div className="shale-app__tabs">
+        <span className={stepId === "printer" || stepId === "import" || stepId === "settings" || stepId === "slice" ? "is-on" : ""}>
+          Prepare
+        </span>
+        <span className={stepId === "preview" ? "is-on" : ""}>Preview</span>
+        <span className={stepId === "send" || stepId === "cli" ? "is-on" : ""}>Device</span>
+      </div>
+
+      {stepId === "printer" && (
+        <>
+          <p className="sidebar-label">Printer</p>
+          <p>
+            <span className="accent-dot">●</span> Bambu Lab A1
+          </p>
+          <p className="dim">256 × 256 × 256 mm · 0.4 mm nozzle</p>
+          <p className="dim">BBL PLA · chamber off</p>
+        </>
+      )}
+
+      {(stepId === "import" || stepId === "settings" || stepId === "slice" || stepId === "preview" || stepId === "send" || stepId === "cli") && (
+        <>
+          <p className="sidebar-label">Objects</p>
+          <p>t-wing.stl</p>
+          <p className="dim">Plate 1 · 42 × 24 mm footprint</p>
+        </>
+      )}
+
+      {(stepId === "settings" || stepId === "slice" || stepId === "preview" || stepId === "send") && (
+        <>
+          <p className="sidebar-label">Process</p>
+          <p>0.20mm Standard @BBL A1</p>
+          <p className="dim">PLA · 20 % grid infill · 2 walls</p>
+        </>
+      )}
+
+      {(stepId === "slice" || stepId === "preview" || stepId === "send" || stepId === "cli") && (
+        <>
+          <p className="sidebar-label">Slice summary</p>
+          <p>
+            {estimates.layers} layers · {sliceTimeS} s
+          </p>
+          <p className="dim">{sliceFilM.toFixed(2)} m filament</p>
+          <p className="dim">Real baseline · t-wing_972c.gcode</p>
+        </>
+      )}
+
+      {stepId === "send" && (
+        <>
+          <p className="sidebar-label">Device</p>
+          <p>
+            <span className="accent-dot">●</span> My A1 · idle
+          </p>
+        </>
+      )}
+    </aside>
   );
 }
 
 function StepPrinter() {
   return (
     <div className="ascii-frame">
-      <div className="ascii-frame__title">Choose printer · Bambu Lab</div>
+      <FrameTitle>Choose printer — Bambu Lab catalogue</FrameTitle>
       <p>
-        <span style={{ color: "var(--accent)" }}>●</span> Bambu Lab A1 · 256×256×256
+        <span className="accent-dot">●</span> Bambu Lab A1 · 256×256×256
       </p>
-      <p className="dim">Bambu Lab P1S · 256×256×256</p>
-      <p className="dim">Bambu Lab X1 Carbon · 256×256×256</p>
-      <Skeleton widths={["w75", "w55"]} />
+      <p className="dim">P1S · X1 Carbon · A1 mini…</p>
     </div>
   );
+}
+
+function FrameTitle({ children }: { children: ReactNode }) {
+  return <div className="ascii-frame__title">{children}</div>;
 }
 
 function StepImport() {
   return (
     <div className="ascii-frame">
-      <div className="ascii-frame__title">examples/t-wing.stl</div>
-      <p>t-wing · 42.3 × 24.1 × 8.6 mm</p>
-      <p className="dim">Plate 1 · centred · mm</p>
-      <Skeleton />
+      <FrameTitle>examples/t-wing.stl</FrameTitle>
+      <p>Import · centre on build plate</p>
     </div>
   );
 }
@@ -43,11 +98,10 @@ function StepImport() {
 function StepSettings() {
   return (
     <div className="ascii-frame">
-      <div className="ascii-frame__title">Process · 0.20mm Standard @BBL A1</div>
+      <FrameTitle>Process sheet</FrameTitle>
       <p>layer_height ━━━━━●━━━━ 0.20</p>
       <p>infill_sparse_density ━━●━━━━━━ 20 %</p>
       <p>wall_line_count ●━━━━━━━━ 2</p>
-      <p className="dim">PLA · skirt · tree support off</p>
     </div>
   );
 }
@@ -55,35 +109,36 @@ function StepSettings() {
 function StepSlice() {
   return (
     <div className="ascii-frame">
-      <div className="ascii-frame__title">CuraEngine · slicing t-wing.stl</div>
-      <p>{meter(0.72)} 72 %</p>
-      <p className="dim">Layer 86 / 120 · estimating support…</p>
+      <FrameTitle>CuraEngine</FrameTitle>
+      <p>{meter(0.72)} slicing…</p>
+      <p className="dim">Wall generation · infill · skin</p>
     </div>
   );
 }
 
 function StepPreviewInner() {
-  const { data, layer, setLayer } = useDemo();
+  const { data, layer, setLayer, showTravel } = useDemo();
   const max = (data?.layers.length ?? 1) - 1;
-  const idx = Math.min(layer, max);
 
   useEffect(() => {
-    setLayer(max);
+    setLayer(Math.max(0, max - 1));
   }, [max, setLayer]);
 
+  const idx = Math.min(layer, max);
+
   return (
-    <div className="shale-app__viewport">
-      <GcodeViewer
-        data={data}
-        layerIndex={idx}
-        showTravel={false}
-        buildProgress={0.65}
-        hero
-        className="gcode-viewer--app"
-      />
-      <p className="dim" style={{ position: "absolute", bottom: 6, left: 8, margin: 0, fontSize: "0.65rem" }}>
-        Real CuraEngine G-code · layer {idx + 1}/{data?.layers.length ?? "—"}
-      </p>
+    <div className="shale-app__preview-wrap">
+      <div className="shale-app__viewport">
+        <GcodeViewer
+          data={data}
+          layerIndex={idx}
+          showTravel={showTravel}
+          buildProgress={1}
+          hero
+          showLegend
+          className="gcode-viewer--app"
+        />
+      </div>
     </div>
   );
 }
@@ -95,27 +150,23 @@ function StepPreview() {
 function StepSend() {
   return (
     <div className="ascii-frame">
-      <div className="ascii-frame__title">Device · LAN</div>
-      <p>
-        <span style={{ color: "var(--accent)" }}>●</span> My A1 · idle · 192.168.0.42
-      </p>
-      <p>{meter(0)} transfer</p>
-      <p className="dim">120 layers · 863 s · 0.95 m PLA — ready to send</p>
+      <FrameTitle>Send to printer</FrameTitle>
+      <p>{meter(0)} LAN upload</p>
+      <p className="dim">863 s · 0.95 m — gcode ready</p>
     </div>
   );
 }
 
 function StepCli() {
   return (
-    <div className="ascii-frame" style={{ fontSize: "0.65rem" }}>
+    <div className="ascii-frame ascii-frame--cli">
       <p>
-        <span style={{ color: "var(--accent)" }}>$</span> shale-cli slice examples/t-wing.stl --printer bambu_lab_a1
+        <span className="accent-dot">$</span> shale-cli slice examples/t-wing.stl --printer bambu_lab_a1
       </p>
-      <p className="dim">Sliced 1 model · 120 layers · 0.95 m · ~863 s</p>
+      <p className="dim">120 layers · 0.95 m · ~863 s</p>
       <p>
-        <span style={{ color: "var(--accent)" }}>MCP</span> slice_model → tool result: gcode_path
+        MCP <span className="dim">slice_model → gcode_path</span>
       </p>
-      <p className="dim">Illustrative replay — stats match real t-wing_972c.gcode</p>
     </div>
   );
 }
@@ -143,28 +194,18 @@ function StepBody({ stepId }: { stepId: WorkflowStepId }) {
 
 function AppFrame({ stepIndex }: { stepIndex: number }) {
   const step = WORKFLOW_STEPS[stepIndex];
-  const frame = `${shaleBox.tl}${shaleBox.h.repeat(18)}${shaleBox.tr}`;
-
   return (
     <div className="shale-app">
       <div className="shale-app__titlebar">
-        <span>
-          {frame} Shale · {step.label}
+        <span className="shale-app__title">
+          <span className="shale-app__title-mark" aria-hidden="true">{`${shaleBox.tl}${shaleBox.h.repeat(3)}${shaleBox.tr}`}</span>
+          <span className="shale-app__title-text">Shale</span>
+          <span className="shale-app__title-step">{step.label}</span>
         </span>
-        <span className="field-picker field-picker--mini" aria-hidden="true">
-          Andromeda · Saturn · Nebula · Lunar
-        </span>
+        <FieldThemePicker />
       </div>
       <div className="shale-app__body">
-        <aside className="shale-app__sidebar" aria-hidden="true">
-          <div className="shale-app__tabs">
-            <span className="is-on">Prepare</span>
-            <span>Preview</span>
-            <span>Device</span>
-          </div>
-          <p className="dim">t-wing.stl</p>
-          <Skeleton widths={["w90", "w55"]} />
-        </aside>
+        <Sidebar stepId={step.id} />
         <div className="shale-app__main">
           <StepBody stepId={step.id} />
         </div>
@@ -204,7 +245,7 @@ function WorkflowTimeline({
 }
 
 function AppWorkflowDemoInner() {
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(4);
   const [paused, setPaused] = useState(false);
 
   const bump = useCallback(() => {

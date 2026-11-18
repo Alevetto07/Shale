@@ -84,7 +84,7 @@ export function DemoProvider({
   const [showTravel, setShowTravel] = useState(false);
   const [layerHeight, setLayerHeight] = useState(0.2);
   const [infill, setInfill] = useState(20);
-  const [walls, setWalls] = useState(3);
+  const [walls, setWalls] = useState(2);
   const [armed, setArmed] = useState(eager);
 
   const loadSlice = useCallback(
@@ -105,6 +105,17 @@ export function DemoProvider({
   useEffect(() => {
     if (eager) loadSlice(sliceUrl);
   }, [eager, loadSlice, sliceUrl]);
+
+  useEffect(() => {
+    const onScrub = (e: Event) => {
+      const { layer } = (e as CustomEvent<{ layer: number }>).detail ?? {};
+      if (typeof layer === "number" && data) {
+        setLayer(Math.min(layer, data.layers.length - 1));
+      }
+    };
+    window.addEventListener("shale-timeline-scrub", onScrub);
+    return () => window.removeEventListener("shale-timeline-scrub", onScrub);
+  }, [data]);
 
   const baseMeta = data?.meta ?? {};
   const baseLayers = Number(baseMeta.layers ?? 120);
@@ -175,7 +186,7 @@ function DemoArmOnVisible({
 }) {
   useEffect(() => {
     if (armed) return;
-    const el = document.querySelector("#demos, .hero-print");
+    const el = document.querySelector("#demos, #app-demo, #toolpath");
     if (!el) return;
     const io = new IntersectionObserver(
       (entries) => {

@@ -66,17 +66,35 @@
 .gcode-viewer {
   position: relative;
   width: 100%;
-  min-height: clamp(280px, 48vw, 420px);
+  height: clamp(300px, 52vw, 420px);
+  min-height: clamp(300px, 52vw, 420px);
+  max-height: min(62vh, 480px);
   border-radius: var(--radius-md);
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: #06080c;
 }
 
+.gcode-viewer--toolpath {
+  height: clamp(320px, 46vh, 460px);
+}
+
 .gcode-viewer canvas {
-  display: block;
+  display: block !important;
+  position: absolute !important;
+  inset: 0 !important;
   width: 100% !important;
   height: 100% !important;
+}
+
+.gcode-viewer__sleep {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  z-index: 1;
+  font-size: 0.85rem;
 }
 
 .gcode-viewer--loading {

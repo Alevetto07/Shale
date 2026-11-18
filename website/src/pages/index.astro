@@ -7,7 +7,6 @@ import GcodeActivityTimeline from "../components/app-demo/GcodeActivityTimeline"
 import SoftwareSurfaceDemo from "../components/app-demo/SoftwareSurfaceDemo";
 import ArtifactSplitSection from "../components/app-demo/ArtifactSplitSection";
 import NonplanarTeaser from "../components/demos/NonplanarTeaser";
-import { FieldThemePicker } from "../components/demos/FieldThemePicker";
 import { StatCounter } from "../components/demos/StatCounter";
 import {
   slogan,
@@ -46,8 +45,7 @@ import {
           <strong>Real toolpaths</strong> on this page from <code>t-wing_972c.gcode</code> (CuraEngine 5.13 via Shale).
         </li>
       </ol>
-      <FieldThemePicker client:load />
-      <div class="hero-cta-stack">
+      <div class="hero-cta-stack hero-cta-stack--spaced">
         <div class="btn-row">
           <a class="btn btn-primary" href={downloadUrl(primaryDownload.fileName)}>Download</a>
           <a class="btn btn--ghost" href={repoUrl}>Source on GitHub</a>
@@ -57,6 +55,8 @@ import {
           <button type="button" data-copy={installCommand}>Copy</button>
         </div>
       </div>
+    </div>
+    <div class="app-workflow-bleed">
       <AppWorkflowDemo client:visible />
     </div>
   </section>
