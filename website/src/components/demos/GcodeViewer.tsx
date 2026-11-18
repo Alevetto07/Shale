@@ -142,8 +142,8 @@ function LineLayers({
             .map(([x, y]) => new THREE.Vector3(x - center.x, lay.z, y - center.y));
           if (vecs.length < 2) return null;
           if (pathSpan(vecs) > 70) return null;
-          if (polylineLength(vecs) > 55) return null;
-          const limitR = Math.max(18, footprint * 0.55);
+          if (seg.type === "travel" && polylineLength(vecs) > 50) return null;
+          const limitR = Math.max(28, footprint * 0.85);
           if (vecs.some((v) => Math.hypot(v.x, v.z) > limitR)) return null;
           const width =
             seg.type === "wall-outer" ? 2.5 : seg.type === "wall-inner" ? 2.2 : seg.type === "skin" ? 2 : 1.6;

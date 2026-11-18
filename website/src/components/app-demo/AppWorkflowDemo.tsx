@@ -246,7 +246,7 @@ function WorkflowTimeline({
 
 function AppWorkflowDemoInner() {
   const [step, setStep] = useState(4);
-  const [paused, setPaused] = useState(false);
+  const [paused, setPaused] = useState(true);
 
   const bump = useCallback(() => {
     setStep((s) => (s + 1) % WORKFLOW_STEPS.length);

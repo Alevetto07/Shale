@@ -21,17 +21,10 @@ await page.evaluate(() => {
 });
 
 await page.waitForSelector("#app-demo", { timeout: 45000 });
-await page.locator(".workflow-timeline button").nth(5).click();
-await page.locator(".workflow-pause").click();
-await page.waitForSelector("#app-demo .gcode-viewer canvas", { timeout: 45000 });
-await page.waitForTimeout(1200);
-
-await page.locator(".workflow-pause").click();
-await page.waitForTimeout(300);
+await page.waitForSelector("#app-demo .gcode-viewer canvas", { timeout: 60000 });
+await page.waitForTimeout(2000);
 await page.locator(".field-picker-btn").nth(1).click();
-await page.waitForTimeout(400);
-await page.locator(".workflow-pause").click();
-await page.waitForTimeout(2800);
+await page.waitForTimeout(600);
 
 await page.locator("#activity").scrollIntoViewIfNeeded();
 await page.getByRole("button", { name: /^Play$/i }).click();

@@ -65,7 +65,7 @@ for (const vp of viewports) {
   });
   await page.waitForSelector("#app-demo", { timeout: 35000 });
   await page.locator(".workflow-pause").click().catch(() => {});
-  await page.locator(".workflow-timeline button").nth(5).click();
+  await page.locator(".workflow-timeline button", { hasText: /^Preview layers$/ }).click();
   await page.locator(".workflow-pause").click().catch(() => {});
   await page.waitForSelector("#app-demo .gcode-viewer canvas", { timeout: 45000 }).catch(() => {});
 
@@ -103,7 +103,7 @@ for (const vp of viewports) {
       await page.waitForSelector(section.settle, { timeout: 15000 }).catch(() => {});
     }
     if (section.id === "app-demo") {
-      await page.locator(".workflow-timeline button").nth(5).click();
+      await page.locator(".workflow-timeline button", { hasText: /^Preview layers$/ }).click();
       await page.locator(".workflow-pause").click().catch(() => {});
       await page.waitForSelector("#app-demo .gcode-viewer canvas", { timeout: 45000 }).catch(() => {});
       await page.waitForTimeout(vp.tag === "mobile" ? 4500 : 2800);
