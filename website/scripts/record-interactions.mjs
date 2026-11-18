@@ -21,35 +21,31 @@ await page.evaluate(() => {
 });
 
 await page.waitForSelector("#app-demo", { timeout: 45000 });
-await page.waitForTimeout(600);
-
-await page.getByRole("button", { name: /Preview layers/i }).click();
-await page.waitForTimeout(2500);
-
-await page.getByRole("button", { name: /Slice/i }).click();
-await page.waitForTimeout(800);
-await page.getByRole("button", { name: /Settings/i }).click();
-await page.waitForTimeout(800);
+await page.locator(".workflow-timeline button").nth(5).click();
+await page.locator(".workflow-pause").click();
+await page.waitForSelector("#app-demo .gcode-viewer canvas", { timeout: 45000 });
+await page.waitForTimeout(1200);
 
 await page.locator(".workflow-pause").click();
+await page.waitForTimeout(300);
+await page.locator(".field-picker-btn").nth(1).click();
 await page.waitForTimeout(400);
-
-for (const i of [0, 1, 2]) {
-  await page.locator(".field-picker-btn").nth(i).click();
-  await page.waitForTimeout(450);
-}
-
 await page.locator(".workflow-pause").click();
-await page.waitForTimeout(3200);
+await page.waitForTimeout(2800);
 
 await page.locator("#activity").scrollIntoViewIfNeeded();
 await page.getByRole("button", { name: /^Play$/i }).click();
-await page.waitForTimeout(1400);
+await page.waitForTimeout(1500);
 
 await page.locator("#demos").scrollIntoViewIfNeeded();
-await page.waitForTimeout(600);
-await page.getByRole("tab", { name: /CLI/i }).click();
-await page.waitForTimeout(700);
+await page.locator("#demos [role='tab']", { hasText: "Workbench" }).click();
+await page.waitForSelector("#toolpath .demo-panel__viewer canvas", { timeout: 45000 });
+await page.locator("#toolpath").scrollIntoViewIfNeeded();
+await page.waitForTimeout(2000);
+await page.getByLabel("Travel").check();
+await page.waitForTimeout(400);
+await page.getByLabel("Travel").uncheck();
+await page.waitForTimeout(300);
 
 const video = page.video();
 await page.close();

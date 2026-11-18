@@ -1,6 +1,5 @@
 /**
- * Build a compact print-time timeline from CuraEngine G-code (for swimlane UI).
- * Usage: node gcode-timeline.mjs <in.gcode> <out.json>
+ * Swimlane timeline from real G-code: segments placed between ;TIME_ELAPSED marks.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
@@ -11,8 +10,7 @@ if (!inPath || !outPath) {
   process.exit(1);
 }
 
-const text = readFileSync(inPath, "utf8");
-const lines = text.split("\n");
+const lines = readFileSync(inPath, "utf8").split("\n");
 
 let meta = { filament_m: 0, time_s: 0, layer_height_mm: 0.2 };
 for (const line of lines) {
@@ -27,10 +25,20 @@ const typeMap = {
   SKIN: "skin",
   FILL: "infill",
   SUPPORT: "support",
-  SKIRT: "skirt",
 };
 
-const lanes = {
+let layerIndex = 0;
+let curType = "infill";
+let lastE = null;
+let layerStartT = 0;
+let elapsed = 0;
+/** @type {{ type: string, layer: number }[]} */
+let buffer = [];
+/** @type {{ layer: number, t: number }[]} */
+const layerTimes = [{ layer: 0, t: 0 }];
+/** @type {{ type: string, t0: number, t1: number, layer: number }[]} */
+const segments = [];
+const laneCounts = {
   "wall-outer": 0,
   "wall-inner": 0,
   skin: 0,
@@ -38,33 +46,48 @@ const lanes = {
   support: 0,
   travel: 0,
 };
-let layerIndex = 0;
-let curType = "travel";
-let moves = 0;
-const log = [];
-let x = 0,
-  y = 0,
-  lastE = null;
 
-function mapType(t) {
-  return typeMap[t.replace(";TYPE:", "").trim()] ?? "travel";
+function flushLayer(endT) {
+  const n = buffer.length;
+  if (n === 0) {
+    layerStartT = endT;
+    return;
+  }
+  const span = Math.max(0.001, endT - layerStartT);
+  for (let i = 0; i < n; i++) {
+    const m = buffer[i];
+    const t0 = layerStartT + (i / n) * span;
+    const t1 = layerStartT + ((i + 1) / n) * span;
+  segments.push({ type: m.type, t0: round(t0), t1: round(t1), layer: m.layer });
+    laneCounts[m.type] = (laneCounts[m.type] ?? 0) + 1;
+  }
+  buffer = [];
+  layerStartT = endT;
 }
 
 for (const raw of lines) {
   const line = raw.trim();
   if (!line) continue;
+
   if (line.startsWith(";LAYER:")) {
     layerIndex = Number(line.slice(7));
-    if (log.length < 120 && log.length % 3 === 0) log.push(line);
+    continue;
+  }
+  if (line.startsWith(";TIME_ELAPSED:")) {
+    elapsed = Number(line.slice(14));
+    flushLayer(elapsed);
+    layerTimes.push({ layer: layerIndex, t: elapsed });
     continue;
   }
   if (line.startsWith(";TYPE:")) {
-    curType = mapType(line);
+    const key = line.slice(6).trim();
+    curType = typeMap[key] ?? "infill";
     continue;
   }
-  if (line.startsWith(";TIME:") || line.startsWith(";Filament")) continue;
-  if (line.startsWith(";") && log.length < 40 && moves % 400 === 12) log.push(line.slice(0, 96));
-  if (!line.match(/^(G0|G1)\b/i)) continue;
+  if (line.startsWith(";")) continue;
+
+  const g = line.match(/^(G0|G1)\b/i);
+  if (!g) continue;
 
   let ne = lastE;
   const tok = /([XYZEF])(-?\d*\.?\d+)/gi;
@@ -73,38 +96,46 @@ for (const raw of lines) {
     if (m[1] === "E") ne = Number(m[2]);
   }
   const isExtrude =
-    /^G1/i.test(line) && ne !== null && lastE !== null && ne > lastE + 1e-6;
+    g[1].toUpperCase() === "G1" && ne !== null && lastE !== null && ne > lastE + 1e-6;
   lastE = ne ?? lastE;
-  moves += 1;
 
-  const type = isExtrude ? (curType === "travel" ? "infill" : curType) : "travel";
-  if (type in lanes) lanes[type] += 1;
-
-  if (log.length < 100 && moves % 180 === 0) {
-    const t = meta.time_s > 0 ? ((layerIndex / 120) * meta.time_s) | 0 : layerIndex;
-    const mm = String(Math.floor(t / 60)).padStart(2, "0");
-    const ss = String(t % 60).padStart(2, "0");
-    log.push(`+${mm}:${ss} L${layerIndex} · ${type} · ${line.slice(0, 72)}`);
-  }
+  const type = isExtrude ? curType : "travel";
+  buffer.push({ type, layer: layerIndex });
 }
 
-const total = Object.values(lanes).reduce((a, b) => a + b, 0) || 1;
-const laneList = Object.entries(lanes).map(([id, count]) => ({
-  id,
-  count,
-  fraction: count / total,
-}));
+flushLayer(meta.time_s || elapsed);
+if (layerTimes[layerTimes.length - 1]?.t < meta.time_s) {
+  layerTimes.push({ layer: layerIndex, t: meta.time_s });
+}
 
-const payload = {
-  label: `Real CuraEngine G-code · ${basename(inPath)}`,
-  meta: {
-    ...meta,
-    moves,
-    layers: layerIndex + 1,
-  },
-  lanes: laneList,
-  log: log.slice(0, 96),
-};
+const maxSegs = 3500;
+const stride = Math.max(1, Math.ceil(segments.length / maxSegs));
+const sampled = segments.filter((_, i) => i % stride === 0);
 
-writeFileSync(outPath, JSON.stringify(payload));
-console.log(`Wrote ${outPath} · ${moves} moves · ${laneList.length} lanes`);
+const log = [];
+let gi = 0;
+for (const line of lines) {
+  if (!line.match(/^(G1|;LAYER|;TYPE)/)) continue;
+  if (gi++ % 180 !== 0) continue;
+  log.push(line.trim().slice(0, 88));
+  if (log.length >= 64) break;
+}
+
+const lanes = Object.entries(laneCounts).map(([id, count]) => ({ id, count }));
+
+writeFileSync(
+  outPath,
+  JSON.stringify({
+    label: `Real CuraEngine G-code · ${basename(inPath)}`,
+    meta: { ...meta, moves: segments.length, layers: layerTimes.length },
+    layer_times: layerTimes,
+    lanes,
+    segments: sampled,
+    log,
+  }),
+);
+console.log(`Wrote ${outPath}: ${sampled.length}/${segments.length} segments`);
+
+function round(n) {
+  return Math.round(n * 1000) / 1000;
+}
