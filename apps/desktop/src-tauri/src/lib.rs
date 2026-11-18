@@ -3936,6 +3936,11 @@ fn preset_import(app: AppHandle, source: String) -> Result<shale_core::preset::P
 }
 
 #[tauri::command]
+fn slicer_detect() -> Vec<shale_core::slicer_import::SlicerInstall> {
+    shale_core::slicer_import::detect_installs()
+}
+
+#[tauri::command]
 fn cost_settings(app: AppHandle) -> Result<shale_core::cost::CostSettings, String> {
     let dir = config_dir(&app)?;
     let path = dir.join("cost.json");
@@ -4835,6 +4840,7 @@ pub fn run() {
             preset_rename,
             preset_export,
             preset_import,
+            slicer_detect,
             cost_settings,
             set_cost_settings,
             cost_estimate,

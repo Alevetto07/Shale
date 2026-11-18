@@ -146,6 +146,17 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   display: flex;
   align-self: stretch;
   flex: 0 0 auto;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.titlebar-menus {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .titlebar-buttons button {
@@ -161,35 +172,11 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   cursor: default;
   padding: 0;
 }
-.titlebar-glyph {
+.titlebar-svg {
+  width: 10px;
+  height: 10px;
   display: block;
-  font-family: var(--mono);
-  font-size: 13px;
-  line-height: 1;
-  color: inherit;
-}
-.titlebar-glyph-minimize {
-  width: 10px;
-  height: 1px;
-  background: currentColor;
-}
-.titlebar-glyph-maximize {
-  width: 10px;
-  height: 10px;
-  box-sizing: border-box;
-  border: 1px solid currentColor;
-}
-.titlebar-glyph-restore {
-  width: 10px;
-  height: 10px;
-  box-sizing: border-box;
-  border: 1px solid currentColor;
-  box-shadow: inset 3px 3px 0 0 var(--bg), inset 4px 4px 0 0 currentColor;
-}
-.titlebar-glyph-close {
-  font-size: 15px;
-  font-weight: 400;
-  line-height: 1;
+  pointer-events: none;
 }
 .titlebar-buttons button:hover { background: #14161f; color: var(--ink); }
 .titlebar-buttons .titlebar-close:hover { background: #b4474a; color: #fff; }

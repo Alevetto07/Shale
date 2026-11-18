@@ -45,6 +45,8 @@ import {
 import type { QuickFallbacks } from "./ProcessSheet";
 import { pickQualityType } from "./profile-pick";
 import { TitleBar } from "./TitleBar";
+import { SetupWizard } from "./SetupWizard";
+import { shouldShowSetupWizard } from "./setup-wizard";
 import { useRecents } from "./recents";
 import type { TransformMode, ViewStyle, ColourMode } from "./Viewport";
 
@@ -254,6 +256,12 @@ export function App() {
   const [measureSpan, setMeasureSpan] = useState<MeasureSpan | null>(null);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("solid");
   const [uiStyle, setUiStyle] = useState<UiStyleId>(() => readUiStyle());
+  const [setupWizardOpen, setSetupWizardOpen] = useState(() => {
+    if (import.meta.env.VITE_SHALE_MOCK === "1") {
+      return new URLSearchParams(window.location.search).get("setup") === "1";
+    }
+    return shouldShowSetupWizard();
+  });
   const chooseUiStyle = (id: UiStyleId) => {
     setUiStyle(id);
     writeUiStyle(id);
@@ -2761,7 +2769,7 @@ export function App() {
             enginePath={enginePath}
             libDir={libDir}
             backend={backend}
-            version={status?.version ?? "0.1.3"}
+            version={status?.version ?? "0.1.4"}
             onReturn={() => {
               setScreen("slicer");
               setPane("prepare");
@@ -2781,6 +2789,7 @@ export function App() {
             onQuit={() => void quit()}
             uiStyle={uiStyle}
             onUiStyle={chooseUiStyle}
+            onRerunSetup={() => setSetupWizardOpen(true)}
           />
         </div>
       ) : pane === "device" ? (
@@ -3988,6 +3997,15 @@ export function App() {
         </main>
       </div>
       )}
+      <SetupWizard
+        open={setupWizardOpen}
+        printers={printers}
+        printerId={printerId}
+        uiStyle={uiStyle}
+        onUiStyle={chooseUiStyle}
+        onChoosePrinter={setPrinterId}
+        onClose={() => setSetupWizardOpen(false)}
+      />
     </div>
   );
 }

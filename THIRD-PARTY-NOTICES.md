@@ -1,6 +1,6 @@
 # Third-party notices
 
-Shale 0.1.3 is a Rust and TypeScript program that links the components below
+Shale 0.1.4 is a Rust and TypeScript program that links the components below
 into the binary the installer ships. This file is installed next to
 `Shale.exe`; it is the notice Apache-2.0 §4(d) asks for, and it is here so the
 licences travel with the program rather than with a web page.

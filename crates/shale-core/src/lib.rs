@@ -49,6 +49,7 @@ pub mod queue;
 pub mod removal;
 pub mod resolver;
 pub mod session;
+pub mod slicer_import;
 pub mod supports;
 pub mod template;
 mod value;
