@@ -3,6 +3,7 @@ name = "shale-host"
 version = "0.1.3"
 edition = "2021"
 description = "Bambu LAN host for Shale: MQTT status, FTPS upload, print control"
+license.workspace = true
 publish = false
 
 [features]

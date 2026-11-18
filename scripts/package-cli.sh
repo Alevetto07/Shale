@@ -26,7 +26,7 @@ rm -rf "$stage"
 mkdir -p "$stage"
 cp "target/$target/release/shale-cli" "$stage/shale"
 cp "target/$target/release/shale-mcp" "$stage/"
-cp docs/INSTALL-CLI.md THIRD-PARTY-NOTICES.md LICENSING.md "$stage/"
+cp docs/INSTALL-CLI.md LICENSE THIRD-PARTY-NOTICES.md LICENSING.md "$stage/"
 
 tar -C dist -czf "dist/shale-$version-$bundle.tar.gz" "shale-$version-$bundle"
 echo "packaged dist/shale-$version-$bundle.tar.gz"

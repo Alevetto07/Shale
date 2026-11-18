@@ -24,4 +24,4 @@ Install **CuraEngine 5.13** and Cura/Bambu profile data separately (or run `scri
 
 ### Licence
 
-Shale’s own source licence is **not yet chosen**. CuraEngine and Bambu Studio profiles are **AGPL-3.0** when you supply them at runtime. See `README.md` and `LICENSING.md`.
+Shale is **AGPL-3.0-or-later**. CuraEngine and Bambu Studio profiles remain **AGPL-3.0** when you supply them at runtime. See `LICENSE`, `README.md`, and `LICENSING.md`.

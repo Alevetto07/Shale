@@ -156,9 +156,11 @@ CuraEngine build instructions: [CuraEngine wiki](https://github.com/Ultimaker/Cu
 
 ## Licence and third-party notices
 
-**Shale’s own licence: to be decided.** Alessio has not yet chosen a licence for this repository’s original source. Do not assume you may redistribute or reuse the Shale code until that choice is recorded in [LICENSING.md](LICENSING.md).
+**Shale** (this repository’s original source) is licensed under the [GNU Affero General Public License v3.0 or later](LICENSE) (AGPL-3.0-or-later). Copyright © Alessio. Source for a deployed copy must be offered to users who interact with the programme over a network, as the AGPL requires.
 
-Runtime and bundled components keep their own terms:
+Contributions are accepted under the [Developer Certificate of Origin](CONTRIBUTING.md) (`Signed-off-by` in commit messages); there is no contributor licence agreement.
+
+Runtime dependencies and bundled libraries keep their own terms:
 
 | Component | Licence | Notes |
 | --- | --- | --- |
@@ -167,7 +169,7 @@ Runtime and bundled components keep their own terms:
 | [Bambu Studio](https://github.com/bambulab/BambuStudio) profiles (when fetched or installed) | **AGPL-3.0** | JSON profile data only; Shale does not link Bambu Studio. |
 | [fdm_materials](https://github.com/Ultimaker/fdm_materials) | CC0-1.0 | Material XML used as data. |
 
-The **desktop installer and CLI archives** ship [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) (Rust/Tauri/Manifold and other linked libraries). They do **not** ship CuraEngine or Bambu profile sources; therefore full AGPL texts for those projects are not duplicated inside the installer. Upstream licence texts:
+The **desktop installer and CLI archives** ship [LICENSE](LICENSE) (Shale’s AGPL) and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) (Rust/Tauri/Manifold and other linked libraries). The Windows installer shows the licence acceptance page from `LICENSE`. They do **not** ship CuraEngine or Bambu profile sources; upstream licence texts for those runtime dependencies:
 
 - CuraEngine: [LICENSE](https://github.com/Ultimaker/CuraEngine/blob/5.13.0/LICENSE)
 - Bambu Studio: [LICENSE](https://github.com/bambulab/BambuStudio/blob/master/LICENSE)
@@ -176,6 +178,7 @@ See [THIRD_PARTY_NOTICES/README.md](THIRD_PARTY_NOTICES/README.md) and [LICENSIN
 
 ## More documentation
 
+- [CONTRIBUTING.md](CONTRIBUTING.md) — DCO and contribution guidelines
 - [docs/INSTALL-CLI.md](docs/INSTALL-CLI.md) — environment variables and headless install
 - [docs/WINDOWS-RELEASE.md](docs/WINDOWS-RELEASE.md) — Windows installer build
 - [docs/printer-host.md](docs/printer-host.md) — LAN device control

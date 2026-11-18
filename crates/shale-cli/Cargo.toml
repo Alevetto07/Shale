@@ -3,6 +3,7 @@ name = "shale-cli"
 version = "0.1.3"
 edition = "2021"
 description = "Shale without the window: slice a model from a terminal"
+license.workspace = true
 publish = false
 
 # Not `shale`: on Windows a file name is case-insensitive, so `shale.exe` and

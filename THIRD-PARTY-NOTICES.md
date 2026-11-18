@@ -1,12 +1,13 @@
 # Third-party notices
 
-Shale 0.1.0 is a Rust and TypeScript program that links the components below
+Shale 0.1.3 is a Rust and TypeScript program that links the components below
 into the binary the installer ships. This file is installed next to
 `Shale.exe`; it is the notice Apache-2.0 §4(d) asks for, and it is here so the
 licences travel with the program rather than with a web page.
 
-Shale's own source licence is undecided: see [LICENSING.md](LICENSING.md). That
-question is separate from the ones below, which are settled.
+Shale's own source is under AGPL-3.0-or-later; see [LICENSE](LICENSE) in the
+install directory. The table below covers **other** projects compiled or linked
+into the binary, not CuraEngine or Bambu profile data (see [LICENSING.md](LICENSING.md)).
 
 ## The mesh engine
 

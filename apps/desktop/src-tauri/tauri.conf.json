@@ -31,6 +31,8 @@
     "shortDescription": "The last slicer you'll ever download.",
     "longDescription": "Shale is a desktop 3D-printing slicer for Bambu Lab printers — prepare, slice, preview and send from one window.",
     "copyright": "Copyright © Alessio",
+    "license": "AGPL-3.0-or-later",
+    "licenseFile": "../../../LICENSE",
     "active": true,
     "fileAssociations": [
       {
@@ -56,6 +58,7 @@
     },
     "targets": ["deb", "appimage", "nsis", "app", "dmg"],
     "resources": {
+      "../../../LICENSE": "LICENSE",
       "../../../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
     },
     "icon": [
