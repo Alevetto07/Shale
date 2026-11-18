@@ -4808,7 +4808,7 @@ pub fn run() {
         // command, so no command ever blocks on the disk. When it lands, the
         // window is told and asks for the printer list again.
         .setup(move |app| {
-            if let Ok(dir) = config_dir(&app.handle()) {
+            if let Ok(dir) = config_dir(app.handle()) {
                 let imported = dir.join("imported-profiles");
                 let _ = std::fs::create_dir_all(&imported);
                 std::env::set_var("SHALE_IMPORTED_PROFILES", &imported);

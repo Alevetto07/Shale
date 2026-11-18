@@ -739,7 +739,7 @@ mod tests {
         set_test_profiles_root(Some(bundled.clone()));
         std::env::set_var("SHALE_TEST", "1");
         let appdata = fixture_root().join("appdata");
-        std::env::set_var("APPDATA", appdata);
+        std::env::set_var("APPDATA", &appdata);
         let dest = scratch("overlay");
         let preset_dir = scratch("presets");
         let preset = appdata.join("BambuStudio/user/default/process/custom.json");
@@ -776,7 +776,7 @@ mod tests {
     #[test]
     fn list_offers_marks_missing_inherits() {
         let bundled = fixture_root().join("bundled");
-        set_test_profiles_root(Some(bundled));
+        set_test_profiles_root(Some(bundled.clone()));
         let broken = fixture_root().join("broken-user/BambuStudio");
         let preset = broken.join("user/default/process/orphan.json");
         let lookup = orca_family_lookup_dirs(
