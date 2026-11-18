@@ -1,7 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
+import AppFrame from "../components/AppFrame.astro";
 import { AndromedaField } from "../components/AndromedaField";
-import { SloganReveal } from "../components/SloganReveal";
 import "../components/Hero.css";
 import {
   slogan,
@@ -36,24 +36,28 @@ const mcpJson = JSON.stringify(
   null,
   2,
 );
+
+function bentoClass(span: "normal" | "wide") {
+  return span === "wide" ? "bento-item--span-3" : "bento-item--span-2";
+}
 ---
 
 <Base>
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-field">
-      <AndromedaField client:load />
+      <AndromedaField client:visible />
     </div>
     <div class="wrap hero-inner">
-      <p class="hero-kicker">Bambu Lab only · v{version}</p>
+      <p class="eyebrow hero-kicker">Bambu Lab only · v{version}</p>
       <h1 id="hero-title">Shale</h1>
       <div class="hero-tagline-wrap">
-        <SloganReveal text={slogan} className="hero-slogan" immediate client:load />
+        <p class="slogan-display slogan-display--hero" data-reveal>{slogan}</p>
       </div>
       <p class="hero-lede">
-        A slicer that looks as good as it prints. Sign in with your Bambu account,
-        manage your printers, and slice with Bambu Studio's presets.
+        A calm slicer for Bambu Lab printers — built on unmodified CuraEngine, with
+        Bambu Studio presets, account sign-in, and a workspace that stays out of your way.
       </p>
-      <p class="hero-stat">{launchStatLine()}</p>
+      <p class="hero-stat" role="status">{launchStatLine()}</p>
       <p class="hero-under">
         <span class="dim">Under the hood:</span> {underTheHood}
       </p>
@@ -76,19 +80,27 @@ const mcpJson = JSON.stringify(
   <section id="features" aria-labelledby="features-title">
     <div class="wrap">
       <div class="section-head" data-reveal>
-        <h2 id="features-title">Why Shale</h2>
+        <p class="eyebrow">Features</p>
+        <h2 id="features-title">Built for how you already print</h2>
         <p>
-          Not a science project — the things you would switch slicers for, shipping in
-          v0.1.
+          Account, presets, send, and headless tools — everything in v{version} is aimed at
+          Bambu workflows, not a generic printer list.
         </p>
       </div>
-      <div class="grid-3">
+      <div class="bento">
         {
           features.map((f, i) => (
-            <article class="card" data-reveal data-reveal-delay={(i % 3) + 1}>
-              <span class="feature-icon" aria-hidden="true">
-                {f.icon}
-              </span>
+            <article
+              class:list={[
+                "card",
+                "bento-item",
+                bentoClass(f.span),
+                f.id === "fast" && "bento-item--row-2",
+              ]}
+              data-reveal
+              data-reveal-delay={(i % 3) + 1}
+            >
+              <span class="bento-kicker" aria-hidden="true" />
               <h3>{f.title}</h3>
               <p class="muted">{f.body}</p>
             </article>
@@ -101,40 +113,50 @@ const mcpJson = JSON.stringify(
   <section id="media" aria-labelledby="media-title">
     <div class="wrap">
       <div class="section-head" data-reveal>
-        <h2 id="media-title">See it in the window</h2>
+        <p class="eyebrow">App</p>
+        <h2 id="media-title">The real workspace</h2>
         <p>
-          Prepare, preview and device send — captured from the real app. Drop more
-          stills or a short promo into <code class="mono">website/public/media/</code>
-          when you have them.
+          Prepare, preview, and device send — framed like the window you open on your machine.
+          Drop more stills into <code class="mono">website/public/media/</code> when you have them.
         </p>
       </div>
-      <div class="grid-2 media-grid">
+      <div class="media-bento">
         {
-          mediaSlots.map((m, i) =>
-            m.kind === "video" ? (
+          mediaSlots.map((m, i) => {
+            const layoutClass =
+              m.layout === "hero"
+                ? "media-bento-item--hero"
+                : m.layout === "tall"
+                  ? "media-bento-item--tall"
+                  : "";
+            return (
               <figure
-                class="card media-card media-card--placeholder"
+                class:list={["media-bento-item", layoutClass]}
                 data-reveal
                 data-reveal-delay={(i % 2) + 1}
               >
-                <div class="media-placeholder" role="img" aria-label={m.alt}>
-                  <span class="badge">Video slot</span>
-                </div>
-                <figcaption>{m.caption}</figcaption>
+                {m.kind === "video" ? (
+                  <AppFrame title="Shale — promo">
+                    <div class="media-placeholder" role="img" aria-label={m.alt}>
+                      <span class="badge">Video slot</span>
+                    </div>
+                  </AppFrame>
+                ) : (
+                  <AppFrame title={`Shale — ${m.id}`}>
+                    <img
+                      src={m.src}
+                      alt={m.alt}
+                      loading="lazy"
+                      width="960"
+                      height="540"
+                      decoding="async"
+                    />
+                  </AppFrame>
+                )}
+                <figcaption class="media-caption">{m.caption}</figcaption>
               </figure>
-            ) : (
-              <figure class="card media-card" data-reveal data-reveal-delay={(i % 2) + 1}>
-                <img
-                  src={m.src}
-                  alt={m.alt}
-                  loading="lazy"
-                  width="960"
-                  height="540"
-                />
-                <figcaption class="muted">{m.caption}</figcaption>
-              </figure>
-            ),
-          )
+            );
+          })
         }
       </div>
     </div>
@@ -143,17 +165,22 @@ const mcpJson = JSON.stringify(
   <section id="downloads" aria-labelledby="downloads-title">
     <div class="wrap">
       <div class="section-head" data-reveal>
-        <h2 id="downloads-title">Download</h2>
+        <p class="eyebrow">Download</p>
+        <h2 id="downloads-title">v{version} release assets</h2>
         <p>
-          Shale {version} on <a href={releasePageUrl}>GitHub Releases</a>: the Windows
-          installer and the headless packages. Verify downloads against{" "}
+          Shale {version} on <a href={releasePageUrl}>GitHub Releases</a>: the Windows installer
+          and the headless packages. Verify downloads against{" "}
           <a href={checksumsUrl}>SHA256SUMS.txt</a>.
         </p>
       </div>
-      <div class="grid-3 download-grid">
+      <div class="download-grid">
         {
           downloads.map((d, i) => (
-            <article class="card download-card" data-reveal data-reveal-delay={(i % 3) + 1}>
+            <article
+              class="card download-card"
+              data-reveal
+              data-reveal-delay={(i % 3) + 1}
+            >
               <h3>{d.title}</h3>
               <p class="muted">{d.description}</p>
               <p class="mono dim file-name">{d.fileName}</p>
@@ -185,7 +212,7 @@ const mcpJson = JSON.stringify(
         }
       </div>
 
-      <div class="cli-docs card cli-scroll" style="margin-top: 2rem;" data-reveal>
+      <div class="cli-docs card cli-scroll" style="margin-top: 1.5rem;" data-reveal>
         <h3>Headless install</h3>
         <p class="muted">
           From <a href={`${repoUrl}/blob/main/docs/INSTALL-CLI.md`}>docs/INSTALL-CLI.md</a>.
@@ -196,8 +223,8 @@ const mcpJson = JSON.stringify(
             <div>
               <h4>Windows</h4>
               <p class="muted">
-                Unzip <code class="mono">{windowsCli.fileName}</code> anywhere and run from
-                that folder:
+                Unzip <code class="mono">{windowsCli.fileName}</code> anywhere and run from that
+                folder:
               </p>
               <pre>{`Expand-Archive .\\${windowsCli.fileName} -DestinationPath .\\shale-cli
 cd shale-cli
@@ -212,8 +239,7 @@ cd shale-cli
             <>
               <h4>Linux</h4>
               <p class="muted">
-                Extract <code class="mono">{linuxCli.fileName}</code>, then install (Debian
-                example):
+                Extract <code class="mono">{linuxCli.fileName}</code>, then install (Debian example):
               </p>
               <pre>{`tar -xzf ${linuxCli.fileName}
 cd shale-${version}-linux-x64
@@ -228,9 +254,8 @@ export SHALE_MATERIALS_DIR=/usr/share/cura/resources/materials`}</pre>
 
         <h4>MCP client</h4>
         <p class="muted">
-          Stdio is what most clients expect — same JSON shape as Claude Desktop in the
-          repo docs. Loopback HTTP:
-          <code class="mono">shale-mcp --http 127.0.0.1:PORT</code>.
+          Stdio is what most clients expect — same JSON shape as Claude Desktop in the repo docs.
+          Loopback HTTP: <code class="mono">shale-mcp --http 127.0.0.1:PORT</code>.
         </p>
         <pre class="cli-scroll"><code>{mcpJson}</code></pre>
       </div>
@@ -240,13 +265,18 @@ export SHALE_MATERIALS_DIR=/usr/share/cura/resources/materials`}</pre>
   <section id="coming" aria-labelledby="coming-title">
     <div class="wrap">
       <div class="section-head" data-reveal>
+        <p class="eyebrow">Roadmap</p>
         <h2 id="coming-title">Coming next</h2>
         <p>Planned after v0.1 — not in this build.</p>
       </div>
-      <div class="grid-3">
+      <div class="bento">
         {
           comingNext.map((item, i) => (
-            <article class="card" data-reveal data-reveal-delay={(i % 3) + 1}>
+            <article
+              class="card bento-item bento-item--span-2"
+              data-reveal
+              data-reveal-delay={(i % 3) + 1}
+            >
               <span class="badge">{item.status}</span>
               <h3 style="margin-top: 0.75rem;">{item.title}</h3>
               <p class="muted">{item.body}</p>
@@ -259,24 +289,24 @@ export SHALE_MATERIALS_DIR=/usr/share/cura/resources/materials`}</pre>
 
   <section class="closing-slogan" aria-label="Closing">
     <div class="wrap">
-      <SloganReveal text={slogan} as="h2" client:visible />
+      <p class="slogan-display" data-reveal>{slogan}</p>
     </div>
   </section>
 
-  <footer class="site-footer">
+  <footer class="site-footer" slot="footer">
     <div class="wrap">
       <p>
-        <a href={repoUrl}>Shale on GitHub</a> — source, issues and release assets.
+        <a href={repoUrl}>Shale on GitHub</a> — source, issues, and release assets.
       </p>
       <p class="dim">Licence notes</p>
       <ul>
         <li>
-          <strong>CuraEngine</strong> — AGPL-3.0. Shale starts it as a separate
-          process; you provide the binary.
+          <strong>CuraEngine</strong> — AGPL-3.0. Shale starts it as a separate process; you
+          provide the binary.
         </li>
         <li>
-          <strong>Bambu Studio profiles</strong> — read as data from an installed
-          Bambu Studio tree (AGPL-3.0 applies to that upstream material).
+          <strong>Bambu Studio profiles</strong> — read as data from an installed Bambu Studio
+          tree (AGPL-3.0 applies to that upstream material).
         </li>
         <li>
           <strong>Shale itself</strong> — {shaleLicense} (see
@@ -291,89 +321,18 @@ export SHALE_MATERIALS_DIR=/usr/share/cura/resources/materials`}</pre>
 </Base>
 
 <style>
-  .media-grid img {
-    width: 100%;
-    height: auto;
-    display: block;
-    border-radius: calc(var(--radius) - 2px);
-    border: 1px solid var(--line);
-  }
-
-  .media-card {
-    margin: 0;
-  }
-
-  .media-card figcaption {
-    margin-top: 0.85rem;
-    font-size: 0.92rem;
-  }
-
-  .media-placeholder {
-    aspect-ratio: 16 / 9;
-    display: grid;
-    place-items: center;
-    background: #04050a;
-    border: 1px dashed var(--line);
-    border-radius: calc(var(--radius) - 2px);
-  }
-
-  .download-card h3 {
-    margin-top: 0;
-  }
-
-  .file-name {
-    font-size: 0.82rem;
-    word-break: break-all;
-  }
-
-  .checksums {
-    display: grid;
-    gap: 0.5rem;
-    margin: 1rem 0 1.25rem;
-    font-size: 0.88rem;
-  }
-
-  .checksums div {
-    display: grid;
-    gap: 0.15rem;
-  }
-
-  .checksums dt {
-    font-family: var(--mono);
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--ink-3);
-  }
-
-  .checksums dd {
-    margin: 0;
-    color: var(--ink-2);
-  }
-
-  .sha {
-    font-family: var(--mono);
-    font-size: 0.72rem;
-    word-break: break-all;
-  }
-
   .cli-docs h3,
   .cli-docs h4 {
-    font-size: 1.05rem;
-    margin: 1.25rem 0 0.5rem;
+    font-size: 1.02rem;
+    margin: 1.15rem 0 0.45rem;
+    font-weight: 600;
   }
 
   .cli-docs h3:first-child {
     margin-top: 0;
   }
 
-  article.card h3 {
-    font-size: 1.1rem;
-    margin: 0 0 0.5rem;
+  .bento-item h3 {
+    font-size: 1.08rem;
   }
-
-  article.card p {
-    margin: 0;
-  }
-
 </style>

@@ -2,63 +2,54 @@ import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-const outDir = "/opt/cursor/artifacts";
+const outDir =
+  process.env.SCREENSHOT_OUT ?? join(process.cwd(), "docs/screenshots-redesign");
 const baseUrl = process.env.SITE_URL ?? "http://127.0.0.1:4321";
 
-const jobs = [
-  {
-    name: "site-1440x900",
-    width: 1440,
-    height: 900,
-    fullPage: true,
-    heroViewport: false,
-  },
-  {
-    name: "site-1440x900-hero",
-    width: 1440,
-    height: 900,
-    fullPage: false,
-    heroViewport: true,
-  },
-  {
-    name: "site-390x844",
-    width: 390,
-    height: 844,
-    fullPage: true,
-    heroViewport: false,
-  },
-  {
-    name: "site-390x844-hero",
-    width: 390,
-    height: 844,
-    fullPage: false,
-    heroViewport: true,
-  },
+const viewports = [
+  { tag: "desktop", width: 1440, height: 900 },
+  { tag: "mobile", width: 390, height: 844 },
+];
+
+const sections = [
+  { id: "hero", selector: ".hero", fullPage: false, wait: 1600 },
+  { id: "features", selector: "#features", fullPage: false, wait: 400 },
+  { id: "media", selector: "#media", fullPage: false, wait: 400 },
+  { id: "downloads", selector: "#downloads", fullPage: false, wait: 400 },
+  { id: "coming", selector: "#coming", fullPage: false, wait: 400 },
+  { id: "footer", selector: ".site-footer", fullPage: false, wait: 300 },
 ];
 
 await mkdir(outDir, { recursive: true });
 
 const browser = await chromium.launch();
-for (const job of jobs) {
+for (const vp of viewports) {
   const page = await browser.newPage({
-    viewport: { width: job.width, height: job.height },
+    viewport: { width: vp.width, height: vp.height },
   });
   await page.goto(baseUrl, { waitUntil: "networkidle" });
-  await page.evaluate(() => window.scrollTo(0, 0));
 
-  const path = join(outDir, `${job.name}.png`);
-  if (job.heroViewport) {
-    await page.waitForTimeout(1400);
-    await page.screenshot({
-      path,
-      clip: { x: 0, y: 0, width: job.width, height: job.height },
-    });
-  } else {
-    await page.waitForTimeout(700);
-    await page.screenshot({ path, fullPage: job.fullPage });
+  for (const section of sections) {
+    const el = await page.$(section.selector);
+    if (!el) {
+      console.warn(`Missing ${section.selector}`);
+      continue;
+    }
+    await el.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(section.wait);
+    const path = join(outDir, `${section.id}-${vp.tag}.png`);
+    await el.screenshot({ path });
+    console.log(`Wrote ${path}`);
   }
+
+  const fullPath = join(outDir, `full-page-${vp.tag}.png`);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: fullPath, fullPage: true });
+  console.log(`Wrote ${fullPath}`);
+
   await page.close();
 }
 await browser.close();
 
-console.log(`Wrote ${jobs.length} screenshots to ${outDir}`);
+console.log(`Screenshots in ${outDir}`);

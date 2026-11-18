@@ -10,7 +10,7 @@ interface Props {
 
 const {
   title = "Shale — Bambu Lab slicer",
-  description = `The Bambu Lab slicer with a calm dark workspace and Bambu Studio presets. ${launchComparisonSentence()}`,
+  description = `Bambu Lab slicer built on unmodified CuraEngine. ${launchComparisonSentence()}`,
 } = Astro.props;
 
 const dl = downloadUrl(primaryDownload.fileName);
@@ -28,15 +28,15 @@ const dl = downloadUrl(primaryDownload.fileName);
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
-    <header class="site-header">
+    <header class="site-header" id="site-header">
       <div class="wrap site-header-inner">
         <a class="logo" href="/">
           Shale<span>v{version}</span>
         </a>
         <nav class="nav-links nav-links-desktop" aria-label="Site">
           <a href="#features">Features</a>
-          <a href="#downloads">Downloads</a>
-          <a href="#media">Screenshots</a>
+          <a href="#media">App</a>
+          <a href="#downloads">Download</a>
           <a href={repoUrl}>GitHub</a>
         </nav>
         <div class="header-actions">
@@ -44,12 +44,12 @@ const dl = downloadUrl(primaryDownload.fileName);
             <summary class="nav-menu-trigger">Menu</summary>
             <div class="nav-menu-panel" role="navigation" aria-label="Mobile">
               <a href="#features">Features</a>
-              <a href="#downloads">Downloads</a>
-              <a href="#media">Screenshots</a>
+              <a href="#media">App</a>
+              <a href="#downloads">Download</a>
               <a href={repoUrl}>GitHub</a>
             </div>
           </details>
-          <a class="btn btn-nav-dl" href={dl}>Download</a>
+          <a class="btn btn-primary btn-nav-dl" href={dl}>Download</a>
         </div>
       </div>
     </header>
@@ -60,11 +60,22 @@ const dl = downloadUrl(primaryDownload.fileName);
     <script is:inline>
       (function () {
         const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-        const nodes = document.querySelectorAll("[data-reveal]");
+        const header = document.getElementById("site-header");
+        const onScroll = () => {
+          if (!header) return;
+          header.classList.toggle("is-scrolled", window.scrollY > 8);
+        };
+        onScroll();
+        window.addEventListener("scroll", onScroll, { passive: true });
+
+        const reveal = document.querySelectorAll("[data-reveal], .slogan-display");
         if (reduced) {
-          nodes.forEach((el) => el.classList.add("is-visible"));
+          reveal.forEach((el) => {
+            el.classList.add("is-visible");
+          });
           return;
         }
+
         const io = new IntersectionObserver(
           (entries) => {
             for (const entry of entries) {
@@ -74,9 +85,14 @@ const dl = downloadUrl(primaryDownload.fileName);
               }
             }
           },
-          { rootMargin: "0px 0px -8% 0px", threshold: 0.12 },
+          { rootMargin: "0px 0px -6% 0px", threshold: 0.14 },
         );
-        nodes.forEach((el) => io.observe(el));
+        reveal.forEach((el) => io.observe(el));
+
+        const heroSlogan = document.querySelector(".slogan-display--hero");
+        if (heroSlogan) {
+          requestAnimationFrame(() => heroSlogan.classList.add("is-visible"));
+        }
 
         const menu = document.querySelector(".nav-menu");
         if (menu) {

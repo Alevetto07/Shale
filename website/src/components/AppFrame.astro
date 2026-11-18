@@ -1,0 +1,89 @@
+---
+interface Props {
+  title?: string;
+  class?: string;
+}
+
+const { title = "Shale", class: className = "" } = Astro.props;
+---
+
+<figure class:list={["app-frame", className]}>
+  <div class="app-frame-chrome" aria-hidden="true">
+    <div class="app-frame-bar">
+      <span class="app-frame-traffic">
+        <i></i><i></i><i></i>
+      </span>
+      <span class="app-frame-title">{title}</span>
+    </div>
+  </div>
+  <div class="app-frame-viewport">
+    <slot />
+  </div>
+</figure>
+
+<style>
+  .app-frame {
+    margin: 0;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: var(--glass-face);
+    border: 1px solid var(--glass-hairline);
+    box-shadow:
+      var(--glass-shadow),
+      inset 0 1px 0 var(--glass-rim);
+  }
+
+  .app-frame-chrome {
+    display: block;
+  }
+
+  .app-frame-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.55rem 0.75rem;
+    background: rgba(0, 0, 0, 0.35);
+    border-bottom: 1px solid var(--glass-hairline);
+  }
+
+  .app-frame-traffic {
+    display: inline-flex;
+    gap: 0.35rem;
+  }
+
+  .app-frame-traffic i {
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .app-frame-traffic i:nth-child(1) {
+    background: rgba(255, 106, 96, 0.75);
+  }
+  .app-frame-traffic i:nth-child(2) {
+    background: rgba(255, 193, 68, 0.75);
+  }
+  .app-frame-traffic i:nth-child(3) {
+    background: rgba(86, 212, 126, 0.75);
+  }
+
+  .app-frame-title {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--ink-3);
+    letter-spacing: 0.04em;
+  }
+
+  .app-frame-viewport {
+    display: block;
+    background: #030408;
+  }
+
+  .app-frame-viewport :global(img) {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+</style>

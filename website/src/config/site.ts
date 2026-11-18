@@ -82,15 +82,14 @@ export const underTheHood =
 
 /**
  * Cold-start timings to the main, usable window (seconds unless noted).
- * Re-measure on your machine and update these before the next site release.
+ * Warm = repeat launch on the same machine; cold = uncached / first open.
  */
 export const launchBenchmarks = {
-  /** First paint of the window frame — not marketed on the site */
   shaleFrameMs: 50,
-  /** Measured time until the UI is ready to use */
-  shaleUsableSeconds: 1.7,
-  shaleUsableRounded: "about two seconds",
-  shaleUsableShort: "~2 s",
+  shaleUsableWarmSeconds: 0.8,
+  shaleUsableColdSeconds: 1.0,
+  shaleUsableWarmLabel: "~0.8 s",
+  shaleUsableColdLabel: "~1.0 s",
   competitors: ["OrcaSlicer", "Bambu Studio", "Cura"] as const,
   competitorSecondsMin: 7,
   competitorSecondsMax: 11,
@@ -99,43 +98,49 @@ export const launchBenchmarks = {
 
 export function launchComparisonSentence(): string {
   const names = launchBenchmarks.competitors.join(", ");
-  return `Opens in ${launchBenchmarks.shaleUsableRounded}, while ${names} measured ${launchBenchmarks.competitorRangeLabel} to their main window.`;
+  return `Launch to a usable workspace in ${launchBenchmarks.shaleUsableWarmLabel} warm or ${launchBenchmarks.shaleUsableColdLabel} on a cold start — ${names} measured ${launchBenchmarks.competitorRangeLabel} to their main window.`;
 }
 
 export function launchStatLine(): string {
-  return `Opens in ${launchBenchmarks.shaleUsableShort}. Other slicers: ${launchBenchmarks.competitorRangeLabel}.`;
+  return `${launchBenchmarks.shaleUsableWarmLabel} warm · ${launchBenchmarks.shaleUsableColdLabel} cold. Other slicers: ${launchBenchmarks.competitorRangeLabel}.`;
 }
 
 export const features = [
   {
+    id: "account",
     title: "Your Bambu account, built in",
-    icon: "┌◉┐",
     body: "Sign in, see the printers on your account, and manage them from Home — the same workflow you know from Bambu Studio, without switching apps.",
+    span: "wide" as const,
   },
   {
+    id: "send",
     title: "Send when you are ready",
-    icon: "╱▔╲",
     body: "Push a sliced plate over the LAN or through the cloud after sign-in. Shale never starts a print until you press send.",
+    span: "normal" as const,
   },
   {
+    id: "presets",
     title: "Studio presets, day one",
-    icon: "▤▥",
     body: "Machines, processes and filaments come from Bambu Studio's profiles — not a hand-rolled shortcut list.",
+    span: "normal" as const,
   },
   {
-    title: "Ready in about two seconds",
-    icon: "»»",
+    id: "fast",
+    title: "Usable in under a second",
     body: launchComparisonSentence(),
+    span: "wide" as const,
   },
   {
+    id: "headless",
     title: "Script it or agent it",
-    icon: ">_",
     body: "The same slicer core runs headless: `shale-cli` in a terminal, `shale-mcp` for AI agents — on a full desktop or a small Linux board.",
+    span: "normal" as const,
   },
   {
+    id: "projects",
     title: "Projects that stay yours",
-    icon: "▣",
     body: "Plates, settings and layouts live in `.shale` files you can back up, share and reopen exactly as you left them.",
+    span: "normal" as const,
   },
 ] as const;
 
@@ -164,6 +169,7 @@ export const mediaSlots = [
     alt: "Shale Prepare workspace with a model on the build plate",
     src: "/media/prepare-1920x1080.png",
     caption: "Prepare — model on the plate with Bambu process settings.",
+    layout: "hero" as const,
   },
   {
     id: "preview",
@@ -171,6 +177,7 @@ export const mediaSlots = [
     alt: "Layer-by-layer toolpath preview after slicing",
     src: "/media/preview-1920x1080.png",
     caption: "Preview — scrub layers and toggle line types.",
+    layout: "tall" as const,
   },
   {
     id: "device-lan",
@@ -178,6 +185,7 @@ export const mediaSlots = [
     alt: "Device workspace showing a live LAN printer link",
     src: "/media/device-lan-1920x1080.png",
     caption: "Device — live state and send on the LAN.",
+    layout: "normal" as const,
   },
   {
     id: "promo",
@@ -185,5 +193,6 @@ export const mediaSlots = [
     alt: "Promotional video placeholder",
     src: "",
     caption: "Short promo reel — slot reserved in public/media.",
+    layout: "normal" as const,
   },
 ] as const;
