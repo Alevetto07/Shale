@@ -62,6 +62,38 @@ fn machine_sequence(
     render_sequence(gcode, &filament_type, resolved, models).map(Some)
 }
 
+/// Bambu template names that the resolver spells in Cura's vocabulary (see
+/// `docs/SETTINGS-MAP.md`).
+fn bambu_cura_template_aliases() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("default_acceleration", "acceleration_print"),
+        ("outer_wall_acceleration", "acceleration_wall_0"),
+        ("inner_wall_acceleration", "acceleration_wall_x"),
+        ("initial_layer_acceleration", "acceleration_layer_0"),
+        ("sparse_infill_acceleration", "acceleration_infill"),
+        ("top_surface_acceleration", "acceleration_topbottom"),
+        ("travel_acceleration", "acceleration_travel"),
+        ("outer_wall_speed", "speed_wall_0"),
+        ("inner_wall_speed", "speed_wall_x"),
+        ("sparse_infill_speed", "speed_infill"),
+        ("internal_solid_infill_speed", "speed_topbottom"),
+        ("top_surface_speed", "speed_topbottom"),
+        ("initial_layer_speed", "speed_layer_0"),
+        ("travel_speed", "speed_travel"),
+        ("travel_speed_z", "speed_z_hop"),
+        ("support_speed", "speed_support"),
+        ("bridge_speed", "speed_bridge"),
+        ("retraction_length", "retraction_amount"),
+        ("z_hop", "retraction_hop"),
+        ("wall_loops", "wall_line_count"),
+        ("sparse_infill_density", "infill_sparse_density"),
+        ("top_shell_layers", "top_layers"),
+        ("bottom_shell_layers", "bottom_layers"),
+        ("layer_height", "layer_height"),
+        ("initial_layer_print_height", "layer_height_0"),
+    ]
+}
+
 /// Fill a machine's own start and end templates. Separated from the catalogue
 /// so a test can render the real A1 sequence from the fixtures without reading
 /// two thousand profiles first.
@@ -76,6 +108,104 @@ pub fn render_sequence(
     let mut values = Values::new();
     for (key, value) in &resolved.global {
         values.set_setting(key, value);
+    }
+    for (key, value) in crate::bambu::template_scalars_for_slice(
+        &resolved.printer_id,
+        &resolved.variant_name,
+        &resolved.quality_type,
+        &resolved.material_id,
+    ) {
+        if values.get(&key).is_none() {
+            values.set_setting(&key, &value);
+        }
+    }
+    for (key, list) in crate::bambu::template_lists_for_slice(
+        &resolved.printer_id,
+        &resolved.variant_name,
+        &resolved.quality_type,
+        &resolved.material_id,
+    ) {
+        if values.get(&key).is_none() {
+            values.set_list(&key, list);
+        }
+    }
+    if values.get("nozzle_diameter_at_nozzle_id").is_none() {
+        if let Some(list) = values.get("nozzle_diameter").cloned() {
+            values.set("nozzle_diameter_at_nozzle_id", list);
+        } else if let Some(text) = resolved.global.get("machine_nozzle_size") {
+            let diam = text.parse::<f64>().unwrap_or(0.4);
+            let slots = resolved.extruders.len().max(2);
+            values.set_list(
+                "nozzle_diameter_at_nozzle_id",
+                vec![Value::Num(diam); slots],
+            );
+        }
+    }
+    for (name, default) in [
+        ("current_nozzle_id", 0.0),
+        ("current_extruder", 0.0),
+        ("current_filament_id", 0.0),
+        ("initial_nozzle_id", 0.0),
+        ("initial_no_support_extruder", 0.0),
+        ("initial_no_support_filament_id", 0.0),
+        ("initial_no_support_hotend", 0.0),
+        ("cooling_filter_enabled", 0.0),
+        ("long_retraction_when_ec", 0.0),
+        ("long_retraction_when_cut", 0.0),
+        ("next_hotend", 0.0),
+        ("next_filament_id", 0.0),
+        ("toolchange_count", 0.0),
+        ("wipe_tower_center_pos_valid", 0.0),
+        ("hold_chamber_temp_for_flat_print", 0.0),
+        ("support_chamber_temp_control", 0.0),
+        ("support_air_filtration", 0.0),
+        ("layer_num", 0.0),
+    ] {
+        if values.get(name).is_none() {
+            values.set(name, default);
+        }
+    }
+    if values.get("activate_air_filtration").is_none() {
+        let slots = resolved.extruders.len().max(1);
+        values.set_list(
+            "activate_air_filtration",
+            vec![Value::Num(0.0); slots],
+        );
+    }
+    let tool_slots = resolved.extruders.len().max(2);
+    if values.get("filament_map").is_none() {
+        values.set_list("filament_map", vec![Value::Num(0.0); tool_slots]);
+    }
+    if values.get("first_filaments").is_none() {
+        values.set_list("first_filaments", vec![Value::Num(0.0); tool_slots]);
+    }
+    if values.get("first_non_support_filaments").is_none() {
+        values.set_list(
+            "first_non_support_filaments",
+            vec![Value::Num(-1.0); tool_slots],
+        );
+    }
+    if values.get("filament_diameter").is_none() {
+        let diam = resolved
+            .global
+            .get("material_diameter")
+            .and_then(|text| text.parse::<f64>().ok())
+            .unwrap_or(1.75);
+        values.set_list(
+            "filament_diameter",
+            vec![Value::Num(diam); tool_slots],
+        );
+    }
+    if values.get("filament_max_volumetric_speed").is_none() {
+        let default_speed = resolved
+            .global
+            .get("material_max_volumetric_speed")
+            .and_then(|text| text.parse::<f64>().ok())
+            .unwrap_or(15.0);
+        values.set_list(
+            "filament_max_volumetric_speed",
+            vec![Value::Num(default_speed); tool_slots],
+        );
     }
     let mut lists: std::collections::BTreeMap<String, Vec<Value>> =
         std::collections::BTreeMap::new();
@@ -125,6 +255,42 @@ pub fn render_sequence(
         }
         // Left unset when nothing resolved: the render then names the missing
         // name and the slice stops, rather than starting a machine at 0 degrees.
+        if !list.is_empty() {
+            values.set_list(bambu, list);
+        }
+    }
+    // Orca/Bambu machine and filament templates also quote `bed_temperature*`
+    // rather than Cura's `material_bed_temperature*`.
+    for (bambu, cura) in [
+        ("bed_temperature", "material_bed_temperature"),
+        (
+            "bed_temperature_initial_layer",
+            "material_bed_temperature_layer_0",
+        ),
+    ] {
+        let global = resolved
+            .global
+            .get(cura)
+            .or_else(|| resolved.global.get("material_bed_temperature"));
+        let mut list: Vec<Value> = Vec::new();
+        for extruder in &resolved.extruders {
+            let text = extruder
+                .get(cura)
+                .or_else(|| extruder.get("material_bed_temperature"))
+                .or(global);
+            match text {
+                Some(text) => list.push(template::value_of(text)),
+                None => {
+                    list.clear();
+                    break;
+                }
+            }
+        }
+        if list.is_empty() {
+            list = global
+                .map(|text| vec![template::value_of(text)])
+                .unwrap_or_default();
+        }
         if !list.is_empty() {
             values.set_list(bambu, list);
         }
@@ -208,6 +374,30 @@ pub fn render_sequence(
         // scan routine by this name.
         values.set("curr_bed_type", Value::Text("Textured PEI Plate".into()));
     }
+    if values.get("scan_first_layer").is_none() {
+        let scan = resolved
+            .global
+            .get("scan_first_layer")
+            .map(String::as_str)
+            .unwrap_or("0");
+        values.set_setting("scan_first_layer", scan);
+    }
+    for &(bambu, cura) in bambu_cura_template_aliases() {
+        if values.get(bambu).is_none() {
+            let text = resolved
+                .global
+                .get(cura)
+                .or_else(|| {
+                    resolved
+                        .extruders
+                        .first()
+                        .and_then(|extruder| extruder.get(cura))
+                });
+            if let Some(text) = text {
+                values.set_setting(bambu, text);
+            }
+        }
+    }
 
     // Where the first layer sits, which the wipe and the bed scan both use.
     let mut min = [f64::INFINITY; 3];
@@ -238,7 +428,29 @@ pub fn render_sequence(
             ],
         );
     }
+    if values.get("max_print_z").is_none() {
+        let height = if max[2].is_finite() && min[0].is_finite() {
+            max[2]
+        } else {
+            resolved
+                .global
+                .get("machine_height")
+                .and_then(|text| text.parse::<f64>().ok())
+                .unwrap_or(resolved.summary.machine_height)
+        };
+        values.set("max_print_z", height);
+    }
+    if values.get("max_layer_z").is_none() {
+        let z = if max[2].is_finite() && min[0].is_finite() {
+            max[2]
+        } else {
+            0.0
+        };
+        values.set("max_layer_z", z);
+    }
 
+    template::ensure_runtime_scalar_defaults(&gcode.start, &mut values)?;
+    template::ensure_runtime_scalar_defaults(&gcode.end, &mut values)?;
     let start = template::render(&gcode.start, &values)?;
     let end = template::render(&gcode.end, &values)?;
     Ok((start, end))
@@ -271,6 +483,24 @@ pub struct SliceOutcome {
     pub machine_gcode: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nonplanar_report: Option<shale_nonplanar::NonplanarReport>,
+    /// [`NonplanarOptions::defer_post_pass`]: raw CuraEngine moves before inverse.
+    #[serde(skip)]
+    pub engine_gcode: Option<String>,
+    /// [`NonplanarOptions::defer_post_pass`]: undeformed-mesh baseline from the same job.
+    #[serde(skip)]
+    pub planar_baseline_gcode: Option<String>,
+}
+
+/// Cura stores `machine_max_feedrate_*` in mm/s; F words use mm/min.
+fn machine_max_feedrate_mm_per_min(resolved: &ResolvedSettings) -> f64 {
+    for key in ["machine_max_feedrate_x", "machine_max_speed_x"] {
+        if let Some(raw) = resolved.global.get(key) {
+            if let Ok(v) = raw.parse::<f64>() {
+                return (v * 60.0).max(600.0);
+            }
+        }
+    }
+    (resolved.summary.speed_print * 60.0).max(600.0)
 }
 
 pub fn slice(
@@ -348,6 +578,17 @@ pub fn slice(
             resolved.global.insert(key.clone(), value.clone());
         }
     }
+    // CuraEngine expects `by object` / `all`; Bambu profiles use one_at_a_time / all_at_once.
+    if let Some(seq) = resolved.global.get_mut("print_sequence") {
+        let mapped = match seq.as_str() {
+            "one_at_a_time" | "by_object" | "by object" => "by object",
+            "all_at_once" | "all" => "all",
+            other => other,
+        };
+        if mapped != seq.as_str() {
+            *seq = mapped.to_string();
+        }
+    }
     // The layer height also drives the layer estimate, so an overridden height
     // has to be read back out of the merged map rather than the profile's copy.
     if let Some(height) = resolved
@@ -390,6 +631,7 @@ pub fn slice(
         force_setting(&mut resolved, "ironing_enabled", "false");
     }
     let mut pre_deform_meshes: Vec<TriangleMesh> = Vec::new();
+    let mut undeformed_paths = Vec::new();
     let mut estimated_layers = 1u32;
     let mut baked_paths = Vec::new();
     // The header's bounding box, measured on the same meshes the engine is
@@ -418,6 +660,13 @@ pub fn slice(
             resolved.summary.machine_center_is_zero,
         );
         if nonplanar_active {
+            let und_path = model_dir.join(format!("model-{index}-undeformed.stl"));
+            mesh::write_binary_stl(&und_path, &baked)?;
+            undeformed_paths.push(EngineMesh {
+                path: und_path,
+                settings: model.settings.clone(),
+                extruder: model.slot,
+            });
             let np_in = crate::nonplanar_bridge::to_nonplanar(&baked);
             let (deformed, _ctx) = shale_nonplanar::prepare_pre_pass(
                 &np_in,
@@ -526,6 +775,24 @@ pub fn slice(
             .insert("machine_end_gcode".into(), end.clone());
     }
 
+    let mut planar_baseline_gcode = String::new();
+    if nonplanar_active && !undeformed_paths.is_empty() {
+        let baseline_path = output_path.with_extension("planar-baseline.gcode");
+        let baseline = engine.slice(
+            &EngineRequest {
+                global: resolved.global.clone(),
+                extruders: resolved.extruders.clone(),
+                models: undeformed_paths,
+                modifiers: modifiers.clone(),
+                output_gcode: baseline_path.clone(),
+                estimated_layers,
+            },
+            on_progress,
+        )?;
+        planar_baseline_gcode = fs::read_to_string(&baseline.gcode_path)?;
+        let _ = fs::remove_file(&baseline.gcode_path);
+    }
+
     let output = engine.slice(
         &EngineRequest {
             global: resolved.global.clone(),
@@ -538,19 +805,33 @@ pub fn slice(
         on_progress,
     )?;
     let mut gcode = fs::read_to_string(&output.gcode_path)?;
+    let defer_post_pass = nonplanar_active && settings.nonplanar.defer_post_pass;
+    let deferred_engine_gcode = defer_post_pass.then(|| gcode.clone());
+    let deferred_planar_baseline = defer_post_pass.then(|| planar_baseline_gcode.clone());
     let mut nonplanar_report = None;
-    if nonplanar_active && !pre_deform_meshes.is_empty() {
+    if nonplanar_active && !pre_deform_meshes.is_empty() && !settings.nonplanar.defer_post_pass {
         let reference = shale_nonplanar::merge_meshes(
             &pre_deform_meshes
                 .iter()
                 .map(crate::nonplanar_bridge::to_nonplanar)
                 .collect::<Vec<_>>(),
         );
+        let machine_height = resolved
+            .summary
+            .machine_height
+            .max(1.0);
+        let max_feed = machine_max_feedrate_mm_per_min(&resolved);
         let (mapped, report) = shale_nonplanar::apply_post_pass(
             &gcode,
+            &planar_baseline_gcode,
             &reference,
             &settings.nonplanar,
             layer_height,
+            printer_id,
+            shale_nonplanar::MachineLimits {
+                z_max_mm: machine_height,
+                max_feed_mm_per_min: max_feed,
+            },
         );
         gcode = mapped;
         let mut report = report;
@@ -558,6 +839,11 @@ pub fn slice(
             .notes
             .push("ironing_enabled was forced off for curved-top slicing".into());
         nonplanar_report = Some(report);
+    } else if nonplanar_active
+        && !pre_deform_meshes.is_empty()
+        && settings.nonplanar.defer_post_pass
+    {
+        nonplanar_report = None;
     }
     // CuraEngine does not always say the print time on stdout; it writes it
     // into the file's own `;TIME:` line. The header is read before the summary
@@ -599,6 +885,8 @@ pub fn slice(
         machine_gcode: machine_gcode.is_some(),
         log_tail: output.log_tail,
         nonplanar_report,
+        engine_gcode: deferred_engine_gcode,
+        planar_baseline_gcode: deferred_planar_baseline,
     })
 }
 

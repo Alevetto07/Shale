@@ -6,7 +6,7 @@
 
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -35,9 +35,15 @@ impl CliEngine {
     pub fn from_env() -> Self {
         if let Some(program) = env::var_os("SHALE_CURAENGINE") {
             let program = PathBuf::from(program);
-            let lib_dir = env::var_os("SHALE_CURAENGINE_LIB_DIR")
-                .map(PathBuf::from)
-                .or_else(|| program.parent().map(Path::to_path_buf));
+            // Shell wrappers (Linux AppImage launcher) set LD_LIBRARY_PATH
+            // themselves; only ELF binaries need a library directory here.
+            let lib_dir = if program_is_elf(&program) {
+                env::var_os("SHALE_CURAENGINE_LIB_DIR")
+                    .map(PathBuf::from)
+                    .or_else(|| program.parent().map(Path::to_path_buf))
+            } else {
+                None
+            };
             return Self { program, lib_dir };
         }
         if let Some(found) = find_installed_engine() {
@@ -337,11 +343,23 @@ fn map_to_json(values: &std::collections::BTreeMap<String, String>) -> Json {
     Json::Object(object)
 }
 
+fn program_is_elf(program: &Path) -> bool {
+    let mut header = [0_u8; 4];
+    fs::File::open(program)
+        .and_then(|mut file| file.read_exact(&mut header))
+        .map(|_| header == [0x7f, b'E', b'L', b'F'])
+        .unwrap_or(false)
+}
+
 pub(crate) fn apply_lib_dir(command: &mut Command, lib_dir: Option<&Path>) {
     let Some(lib_dir) = lib_dir else {
         return;
     };
-    for key in ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PATH"] {
+    #[cfg(windows)]
+    let keys = ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PATH"];
+    #[cfg(not(windows))]
+    let keys = ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"];
+    for key in keys {
         let mut paths = vec![lib_dir.to_path_buf()];
         if let Some(existing) = env::var_os(key) {
             paths.extend(env::split_paths(&existing));

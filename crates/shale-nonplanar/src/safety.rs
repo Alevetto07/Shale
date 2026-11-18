@@ -6,8 +6,8 @@ use crate::inverse::map_gcode_inverse;
 
 /// Ignore sub-millimetre horizontal hops when chaining extrusions (layer Z-steps at fixed XY).
 const VERTICAL_STEP_HORIZ_MM: f64 = 0.05;
-/// Tiny tolerance above the configured cap (degrees).
-const SLOPE_TOLERANCE_DEG: f64 = 0.5;
+/// Reporting / validation slack above `max_angle_deg` (inverse quantization, hard clamp).
+pub const SLOPE_CAP_TOLERANCE_DEG: f64 = 0.5;
 
 pub(crate) fn dampen_cell(field: &mut DeformField, x: f64, y: f64, factor: f64) {
     let fx = (x - field.grid.origin[0]) / field.grid.step;
@@ -56,7 +56,7 @@ struct Violation {
 
 /// Scan finished G-code and list extrusion segments in the curved band that exceed the cap.
 pub fn slope_violations(gcode: &str, field: &DeformField, max_deg: f64) -> Vec<(f64, f64, f64)> {
-    let limit = max_deg + SLOPE_TOLERANCE_DEG;
+    let limit = max_deg + SLOPE_CAP_TOLERANCE_DEG;
   let mut out = Vec::new();
     scan_violations(gcode, field, limit, &mut |v| out.push((v.x, v.y, v.slope_deg)));
     out
@@ -293,4 +293,26 @@ fn hard_clamp_band_extrusions(gcode: &str, field: &DeformField) -> String {
         out.push('\n');
     }
     out
+}
+
+#[cfg(test)]
+mod equiv_tests {
+    use super::*;
+    use crate::deform::build_deform_field;
+    use crate::equivalence::check_planar_equivalence;
+    use crate::height_field::build_height_field;
+    use crate::test_meshes::box_mesh;
+
+    #[test]
+    fn slope_safety_keeps_planar_shell() {
+        let mesh = box_mesh(20.0, 20.0, 10.0);
+        let grid = build_height_field(&mesh, 1.0, 10.0, 1.6);
+        let mut field = build_deform_field(grid, 1.6, 0.4, 0.2, 10.0);
+        let planar = "G1 X5 Y5 Z2 E0\nG1 X15 Y5 Z2 E1\nG0 X15 Y15 Z9\nG1 X15 Y15 Z9 E2\nG1 X5 Y15 Z9.2 E3\n";
+        let mut report = crate::config::NonplanarReport::default();
+        let out = enforce_slope_safety(&mut field, planar, 0.2, &mut report);
+        let floor = field.global_band_floor_z();
+        let eq = check_planar_equivalence(planar, &out, floor);
+        assert!(eq.ok, "{eq:?} notes={:?}", report.notes);
+    }
 }

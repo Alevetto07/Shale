@@ -1,12 +1,19 @@
 //! Toolhead envelope models for swept collision checks.
 
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct HeadEnvelope {
     pub printer_id: String,
     pub calibrated: bool,
+    #[serde(default)]
+    pub calibration_tier: Option<String>,
+    #[serde(default)]
+    pub needs_measurement: Vec<String>,
+    #[serde(default)]
+    pub note: Option<String>,
     pub nozzle_height_mm: f64,
     pub tip_land_radius_mm: f64,
     pub nozzle_cone_half_angle_deg: f64,
@@ -46,13 +53,60 @@ impl HeadEnvelope {
     }
 }
 
-static A1: OnceLock<HeadEnvelope> = OnceLock::new();
+static ENVELOPES: OnceLock<HashMap<String, HeadEnvelope>> = OnceLock::new();
+
+fn load_envelopes() -> &'static HashMap<String, HeadEnvelope> {
+    ENVELOPES.get_or_init(|| {
+        let files: &[(&str, &str)] = &[
+            ("bambu_lab_a1", include_str!("../data/bambu_a1_head.json")),
+            (
+                "bambu_lab_a1_mini",
+                include_str!("../data/bambu_a1_mini_head.json"),
+            ),
+            ("bambu_lab_p1s", include_str!("../data/bambu_p1s_head.json")),
+            ("bambu_lab_p1p", include_str!("../data/bambu_p1p_head.json")),
+            (
+                "bambu_lab_x1_carbon",
+                include_str!("../data/bambu_x1_carbon_head.json"),
+            ),
+            ("bambu_lab_h2d", include_str!("../data/bambu_h2d_head.json")),
+        ];
+        let mut map = HashMap::new();
+        for (id, text) in files {
+            let env: HeadEnvelope =
+                serde_json::from_str(text).unwrap_or_else(|err| panic!("{id} envelope JSON: {err}"));
+            map.insert(id.to_string(), env);
+        }
+        map
+    })
+}
+
+/// Catalogue printer ids that ship a head envelope.
+pub fn envelope_catalogue() -> Vec<&'static str> {
+    vec![
+        "bambu_lab_a1",
+        "bambu_lab_a1_mini",
+        "bambu_lab_p1s",
+        "bambu_lab_p1p",
+        "bambu_lab_x1_carbon",
+        "bambu_lab_h2d",
+    ]
+}
+
+pub fn head_envelope_for_printer(printer_id: &str) -> Option<&'static HeadEnvelope> {
+    let key = printer_id.to_ascii_lowercase();
+    let map = load_envelopes();
+    map.get(&key).or_else(|| {
+        // Accept common aliases (e.g. UI shorthand).
+        if key == "bambu_lab_x1c" {
+            return map.get("bambu_lab_x1_carbon");
+        }
+        None
+    })
+}
 
 pub fn bambu_a1_envelope() -> &'static HeadEnvelope {
-    A1.get_or_init(|| {
-        let text = include_str!("../data/bambu_a1_head.json");
-        serde_json::from_str(text).expect("embedded A1 head envelope JSON")
-    })
+    head_envelope_for_printer("bambu_lab_a1").expect("embedded A1 envelope")
 }
 
 #[cfg(test)]
@@ -62,8 +116,18 @@ mod tests {
     #[test]
     fn embedded_a1_envelope_loads() {
         let env = bambu_a1_envelope();
-        assert!(!env.calibrated);
+        assert!(env.calibrated);
         assert!((env.nozzle_height_mm - 4.76).abs() < 0.01);
         assert!(env.radius_at_z(5.0) > env.tip_land_radius_mm);
+        assert!(!env.needs_measurement.is_empty());
+    }
+
+    #[test]
+    fn all_catalogue_envelopes_load() {
+        for id in envelope_catalogue() {
+            let env = head_envelope_for_printer(id).expect(id);
+            assert!(env.calibrated);
+            assert_eq!(env.printer_id, id);
+        }
     }
 }

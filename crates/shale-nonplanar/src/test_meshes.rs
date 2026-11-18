@@ -75,6 +75,7 @@ pub fn sphere_mesh(radius: f64) -> Mesh {
 
 /// Low deck with a tall pillar beside it (for collision regression tests).
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn pillar_beside_mesh() -> Mesh {
     let mut mesh = box_mesh(40.0, 20.0, 2.0);
     let pillar = box_mesh(8.0, 8.0, 30.0);

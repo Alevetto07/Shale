@@ -33,7 +33,7 @@ slice options
   --infill PERCENT    sparse infill density
   --supports          enable support
   --set KEY=VALUE     any Cura setting, repeatable
-  --nonplanar MODE    experimental: off or curved-tops (Bambu A1 only)
+  --nonplanar MODE    experimental: off or curved-tops (Bambu printers with head envelope)
   --max-angle DEG     clearance limit for curved tops (default 10)
   -o, --output PATH   where to write the G-code
 
@@ -305,9 +305,26 @@ fn slice_command(args: &[String]) -> Result<(), String> {
     println!("layers   {}", outcome.toolpath.layers.len());
     if let Some(report) = &outcome.nonplanar_report {
         println!(
-            "nonplanar {} islands={} flattened={}",
-            report.mode, report.top_islands, report.islands_flattened
+            "nonplanar {} islands={} flattened={} equiv={} collisions_fixed={}",
+            report.mode,
+            report.top_islands,
+            report.islands_flattened,
+            report.planar_equivalence_ok,
+            report.collision_adjustments.len()
         );
+        if let Some(safety) = &report.safety {
+            println!(
+                "nonplanar_safety ok={} violations={} max_slope={:.2}°",
+                safety.ok,
+                safety.violations.len(),
+                safety.max_extrusion_slope_deg.unwrap_or(0.0)
+            );
+            if !safety.violations.is_empty() && std::env::var_os("SHALE_TRACE").is_some() {
+                for v in &safety.violations {
+                    eprintln!("  safety {}: {}", v.kind, v.detail);
+                }
+            }
+        }
     }
     Ok(())
 }

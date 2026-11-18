@@ -186,10 +186,15 @@ pub fn map_gcode_inverse(field: &DeformField, gcode: &str, nominal_layer: f64) -
             })
             .max(1.0) as usize;
 
+        let band_floor_seg = field.global_band_floor_z();
         let mut line_start_phys = [
             position[0],
             position[1],
-            field.inverse_z(position[0], position[1], position[2]),
+            if position[2] < band_floor_seg - 1e-6 {
+                position[2]
+            } else {
+                field.inverse_z(position[0], position[1], position[2])
+            },
         ];
         let mut prev_phys = line_start_phys;
         if have_last_phys && extruding {
@@ -219,13 +224,17 @@ pub fn map_gcode_inverse(field: &DeformField, gcode: &str, nominal_layer: f64) -
             let x = position[0] + dx * t;
             let y = position[1] + dy * t;
             let z_def = position[2] + (target[2] - position[2]) * t;
-            let z_phys = clamp_slope_z(
-                field,
-                prev_phys,
-                x,
-                y,
-                field.inverse_z(x, y, z_def),
-            );
+            let z_phys = if z_def < band_floor_seg - 1e-6 {
+                z_def
+            } else {
+                clamp_slope_z(
+                    field,
+                    prev_phys,
+                    x,
+                    y,
+                    field.inverse_z(x, y, z_def),
+                )
+            };
             if seg < segments {
                 let step_horiz =
                     ((x - prev_phys[0]).powi(2) + (y - prev_phys[1]).powi(2)).sqrt();

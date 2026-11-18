@@ -51,6 +51,15 @@ jobs:
           SHALE_CURAENGINE_LIB_DIR: ${{ github.workspace }}/vendor/cura-appimage-root/squashfs-root
         run: cargo test --workspace --locked
 
+      - name: Rust clippy
+        env:
+          SHALE_CURA_DIR: ${{ github.workspace }}/vendor/Cura
+          SHALE_MATERIALS_DIR: ${{ github.workspace }}/vendor/fdm_materials
+          SHALE_ORCA_DIR: ${{ github.workspace }}/vendor/BambuStudio/resources/profiles
+          SHALE_CURAENGINE: ${{ github.workspace }}/vendor/curaengine/CuraEngine
+          SHALE_CURAENGINE_LIB_DIR: ${{ github.workspace }}/vendor/cura-appimage-root/squashfs-root
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
   windows:
     runs-on: windows-latest
     steps:
@@ -71,15 +80,30 @@ jobs:
           npm run build
 
       - name: Printer resources
-        shell: bash
-        run: ./scripts/fetch-resources.sh
+        shell: pwsh
+        run: ./scripts/fetch-resources.ps1
+
+      - name: CuraEngine 5.13 (installer extract)
+        shell: pwsh
+        run: ./scripts/fetch-curaengine.ps1
 
       - name: Rust tests
         env:
           SHALE_CURA_DIR: ${{ github.workspace }}/vendor/Cura
           SHALE_MATERIALS_DIR: ${{ github.workspace }}/vendor/fdm_materials
           SHALE_ORCA_DIR: ${{ github.workspace }}/vendor/BambuStudio/resources/profiles
+          SHALE_CURAENGINE: ${{ github.workspace }}/vendor/curaengine/CuraEngine.exe
+          SHALE_CURAENGINE_LIB_DIR: ${{ github.workspace }}/vendor/curaengine
         run: cargo test --workspace --locked
+
+      - name: Rust clippy
+        env:
+          SHALE_CURA_DIR: ${{ github.workspace }}/vendor/Cura
+          SHALE_MATERIALS_DIR: ${{ github.workspace }}/vendor/fdm_materials
+          SHALE_ORCA_DIR: ${{ github.workspace }}/vendor/BambuStudio/resources/profiles
+          SHALE_CURAENGINE: ${{ github.workspace }}/vendor/curaengine/CuraEngine.exe
+          SHALE_CURAENGINE_LIB_DIR: ${{ github.workspace }}/vendor/curaengine
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: NSIS installer
         working-directory: apps/desktop

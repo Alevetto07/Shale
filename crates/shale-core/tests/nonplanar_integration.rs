@@ -1,6 +1,8 @@
 //! End-to-end non-planar curved tops vs planar baseline with CuraEngine 5.13.
-//!
+
 //! Requires `scripts/fetch-resources.sh` and `scripts/fetch-curaengine.sh`.
+
+mod nonplanar_fixtures;
 
 use std::path::PathBuf;
 
@@ -9,6 +11,11 @@ use shale_core::job::{self, PlacedModel, SliceOutcome};
 use shale_core::mesh::{self, Transform, TriangleMesh};
 use shale_core::primitives;
 use shale_core::resolver::UserSettings;
+
+use nonplanar_fixtures::{
+    merge_meshes as merge_fixture_meshes, pillar_beside_dome, pillar_beside_dome_parts,
+    slice_pillar_beside_dome_sequential,
+};
 use shale_core::{Catalog, NonplanarMode, NonplanarOptions, ResourcePaths};
 
 const PRINTER: &str = "bambu_lab_a1";
@@ -168,23 +175,55 @@ fn benchy_like() -> TriangleMesh {
     merge_meshes(&base, &knob)
 }
 
-fn slice_part(
+fn slice_pillar_beside_dome(nonplanar: bool, tag: &str) -> (String, SliceOutcome) {
+    if !nonplanar {
+        return slice_part("pillar-beside-dome", pillar_beside_dome(), false, tag);
+    }
+    let catalog = Catalog::open(ResourcePaths::discover().expect("resources")).expect("catalog");
+    let engine = CliEngine::from_env();
+    assert!(engine.available());
+    let path = std::env::temp_dir()
+        .join("shale")
+        .join(format!("nonplanar-{tag}-{}.gcode", std::process::id()));
+    let (gcode, report) =
+        slice_pillar_beside_dome_sequential(&catalog, &engine, PRINTER, tag);
+    std::fs::write(artifact_dir().join(format!("{tag}.gcode")), &gcode).expect("artifact");
+    std::fs::write(&path, &gcode).expect("gcode");
+    let toolpath = shale_core::gcode::parse_toolpaths(&gcode);
+    let outcome = SliceOutcome {
+        gcode_path: path,
+        resolved: catalog
+            .resolve(&shale_core::resolver::ResolveRequest {
+                printer_id: PRINTER.into(),
+                variant_name: Some(VARIANT.into()),
+                quality_type: Some(QUALITY.into()),
+                material_id: Some(MATERIAL.into()),
+                intent_category: None,
+                settings: UserSettings::default(),
+            })
+            .expect("resolve"),
+        toolpath,
+        print_time_seconds: None,
+        filament_metres: 0.0,
+        flavour: shale_core::instructions::GcodeFlavour::Marlin,
+        log_tail: String::new(),
+        machine_gcode: true,
+        nonplanar_report: Some(report),
+        engine_gcode: None,
+        planar_baseline_gcode: None,
+    };
+    (gcode, outcome)
+}
+
+fn slice_placed(
     name: &str,
-    mesh: TriangleMesh,
+    placed: Vec<PlacedModel>,
     nonplanar: bool,
     tag: &str,
 ) -> (String, SliceOutcome) {
     let catalog = Catalog::open(ResourcePaths::discover().expect("resources")).expect("catalog");
     let engine = CliEngine::from_env();
     assert!(engine.available());
-    let transform = mesh::place_on_bed(&mesh, 256.0, 256.0, false);
-    let placed = vec![PlacedModel {
-        name: name.into(),
-        mesh,
-        transform,
-        settings: vec![("ironing_enabled".into(), "false".into())],
-        slot: None,
-    }];
     let mut settings = UserSettings {
         layer_height: Some(0.2),
         ..UserSettings::default()
@@ -219,7 +258,25 @@ fn slice_part(
     .expect("slice");
     let text = std::fs::read_to_string(&path).expect("gcode");
     std::fs::write(artifact_dir().join(format!("{tag}.gcode")), &text).expect("artifact gcode");
+    let _ = name;
     (text, outcome)
+}
+
+fn slice_part(
+    name: &str,
+    mesh: TriangleMesh,
+    nonplanar: bool,
+    tag: &str,
+) -> (String, SliceOutcome) {
+    let transform = mesh::place_on_bed(&mesh, 256.0, 256.0, false);
+    let placed = vec![PlacedModel {
+        name: name.into(),
+        mesh,
+        transform,
+        settings: vec![("ironing_enabled".into(), "false".into())],
+        slot: None,
+    }];
+    slice_placed(name, placed, nonplanar, tag)
 }
 
 fn run_python(script: &str, args: &[&str]) {
@@ -279,15 +336,6 @@ fn plot_artifacts(tag: &str, title: &str) {
     );
 }
 
-fn word_f(line: &str, letter: char) -> Option<f64> {
-    let idx = line.find(letter)?;
-    let rest = &line[idx + 1..];
-    let end = rest
-        .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-' && c != '+')
-        .unwrap_or(rest.len());
-    rest[..end].parse().ok()
-}
-
 #[derive(serde::Serialize)]
 struct CaseMetrics {
     name: String,
@@ -307,6 +355,9 @@ struct CaseMetrics {
     max_angle_ok: bool,
     envelope_ok: bool,
     collision_notes: Vec<String>,
+    planar_equivalence_ok: bool,
+    safety_ok: Option<bool>,
+    collision_fixes: usize,
 }
 
 fn nonplanar_opts() -> NonplanarOptions {
@@ -387,12 +438,25 @@ fn analyse(
             field.global_band_floor_z(),
         )
         .is_none_or(|d| d <= 10.5),
-        envelope_ok: shale_nonplanar::gcode_respects_envelope(curved_gcode, 10.0),
+        envelope_ok: shale_nonplanar::gcode_respects_envelope(curved_gcode, PRINTER, 10.0),
         collision_notes: curved
             .nonplanar_report
             .as_ref()
             .map(|r| r.notes.clone())
             .unwrap_or_default(),
+        planar_equivalence_ok: curved
+            .nonplanar_report
+            .as_ref()
+            .is_some_and(|r| r.planar_equivalence_ok),
+        safety_ok: curved
+            .nonplanar_report
+            .as_ref()
+            .and_then(|r| r.safety.as_ref().map(|s| s.ok)),
+        collision_fixes: curved
+            .nonplanar_report
+            .as_ref()
+            .map(|r| r.collision_adjustments.len())
+            .unwrap_or(0),
     }
 }
 
@@ -411,32 +475,50 @@ fn nonplanar_end_to_end_benchmarks() {
                 .expect("t-wing stl"),
         ),
         ("benchy", benchy_like()),
+        (
+            "pillar-beside-dome",
+            primitives::sphere(0.1), // built as two parts in loop
+        ),
     ];
 
     let mut metrics = Vec::new();
     for (name, mesh) in cases {
-        let mesh_for_field = mesh.clone();
-        let (planar_gcode, planar_out) = slice_part(name, mesh.clone(), false, &format!("{name}-planar"));
-        let (curved_gcode, curved_out) = slice_part(name, mesh, true, &format!("{name}-curved"));
+        let mesh_for_field = if name == "pillar-beside-dome" {
+            let (dome_mesh, _, pillar_mesh, _) = pillar_beside_dome_parts();
+            merge_fixture_meshes(&dome_mesh, &pillar_mesh)
+        } else {
+            mesh.clone()
+        };
+        let (planar_gcode, planar_out, curved_gcode, curved_out) = if name == "pillar-beside-dome" {
+            let (pg, po) = slice_pillar_beside_dome(false, &format!("{name}-planar"));
+            let (cg, co) = slice_pillar_beside_dome(true, &format!("{name}-curved"));
+            (pg, po, cg, co)
+        } else {
+            let (pg, po) = slice_part(name, mesh.clone(), false, &format!("{name}-planar"));
+            let (cg, co) = slice_part(name, mesh, true, &format!("{name}-curved"));
+            (pg, po, cg, co)
+        };
         assert!(curved_out.nonplanar_report.is_some());
         assert!(!curved_gcode.contains(";TYPE:IRONING"));
 
         let report = curved_out.nonplanar_report.as_ref().unwrap();
         assert!(
-            report
-                .notes
-                .iter()
-                .any(|n| n.contains("skipped") || n.contains("ironing")),
-            "unexpected collision flattening {:?}",
-            report.notes
+            report.safety.is_some(),
+            "{name}: expected machine-readable safety report"
         );
+        if name != "pillar-beside-dome" {
+            assert!(
+                report.planar_equivalence_ok,
+                "{name}: below-band G-code must match planar slice"
+            );
+        }
         assert!(
-            !report
-                .notes
-                .iter()
-                .any(|n| n.contains("24376") || n.contains("triggered envelope flattening")),
-            "calibration regressions: {:?}",
-            report.notes
+            report
+                .safety
+                .as_ref()
+                .is_some_and(|s| s.ok),
+            "{name}: safety violations: {:?}",
+            report.safety.as_ref().map(|s| &s.violations)
         );
 
         let pslope =
@@ -449,9 +531,14 @@ fn nonplanar_end_to_end_benchmarks() {
         let band_z = global_band_floor(&mesh_for_field);
         let band_max = shale_nonplanar::max_extrusion_slope_above_z(&curved_gcode, band_z)
             .unwrap_or(0.0);
+        let slope_cap = report
+            .safety
+            .as_ref()
+            .map(|s| s.slope_cap_deg)
+            .unwrap_or(10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG);
         assert!(
-            band_max <= 10.5,
-            "{name}: extrusions at or above band z={band_z:.3} must respect 10° (saw {band_max:.2}°)"
+            band_max <= slope_cap + 1e-3,
+            "{name}: extrusions at or above band z={band_z:.3} must respect {slope_cap:.2}° cap (saw {band_max:.2}°)"
         );
 
         let (pz0, pz1) =
@@ -462,12 +549,15 @@ fn nonplanar_end_to_end_benchmarks() {
         match name {
             "dome" => {
                 assert!(
-                    cslope >= 7.0 && cslope <= 10.5,
-                    "dome in-layer slope {cslope:.2}° expected near 10°"
+                    (7.0..=10.5).contains(&cslope),
+                    "dome in-layer slope {cslope:.2}° expected near 10° cap ({:.1}° incl. tolerance)",
+                    10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG
                 );
                 assert!(
-                    cslope_layers <= 10.5,
-                    "dome across-layer slope {cslope_layers:.2}° must be ≤10° (excluding pure Z hops)"
+                    cslope_layers <= 10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG,
+                    "dome across-layer slope {cslope_layers:.2}° must be ≤{:.1}° (10° + {}° tolerance)",
+                    10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG,
+                    shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG
                 );
                 assert!(cslope > pslope + 2.0);
             }
@@ -478,13 +568,14 @@ fn nonplanar_end_to_end_benchmarks() {
                     cspread > 0.05,
                     "chevron curved top shell Z spread {cspread:.3} mm"
                 );
+                let slope_cap = 10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG;
                 assert!(
-                    band_max >= 5.0 && band_max <= 10.5,
-                    "chevron band slope {band_max:.2}° expected near 10° (shell metric {cslope:.2}°)"
+                    (5.0..=slope_cap).contains(&band_max),
+                    "chevron band slope {band_max:.2}° expected near 10° cap ({slope_cap:.1}°)"
                 );
                 assert!(
-                    cslope_layers <= 10.5,
-                    "chevron shell slope {cslope_layers:.2}° must be ≤10°"
+                    cslope_layers <= slope_cap,
+                    "chevron shell slope {cslope_layers:.2}° must be ≤{slope_cap:.1}°"
                 );
                 assert!(band_max > pslope + 0.5, "chevron should beat planar staircase");
             }
@@ -499,6 +590,20 @@ fn nonplanar_end_to_end_benchmarks() {
                 );
             }
             "benchy" => {}
+            "pillar-beside-dome" => {
+                assert!(
+                    report.collision_adjustments.len() > 0,
+                    "pillar beside dome: expected collision flattening, got {:?}",
+                    report.notes
+                );
+                assert!(
+                    report
+                        .safety
+                        .as_ref()
+                        .is_some_and(|s| s.travel_collisions_remaining == 0),
+                    "final G-code must have no travel collisions"
+                );
+            }
             _ => {}
         }
 

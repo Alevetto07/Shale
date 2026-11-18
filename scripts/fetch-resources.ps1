@@ -53,12 +53,26 @@ if (-not (Test-Path (Join-Path $Materials "LICENSE"))) {
     Write-Error "fdm_materials LICENSE is missing. Refusing to continue without the CC0 text."
 }
 
+$BambuRepo = Join-Path $Dest "BambuStudio"
+$BambuProfiles = Join-Path $BambuRepo "resources\profiles"
+if (-not (Test-Path (Join-Path $BambuRepo ".git"))) {
+    git clone --filter=blob:none --sparse --depth 1 `
+        https://github.com/bambulab/BambuStudio.git $BambuRepo
+}
+git -C $BambuRepo sparse-checkout set --no-cone resources/profiles
+if (-not (Test-Path (Join-Path $BambuProfiles "BBL\process"))) {
+    Write-Error "Bambu BBL process profiles did not check out."
+}
+
 @"
 Cura $CuraTag $CuraCommit
 fdm_materials $MaterialsCommit
+BambuStudio profiles (sparse HEAD of master)
 "@ | Set-Content -Path (Join-Path $Dest "REVISIONS") -Encoding utf8
 
 Write-Output "Resources ready in $Dest"
 Write-Output "  Cura $CuraTag ($CuraCommit)"
 Write-Output "  fdm_materials $MaterialsCommit"
+Write-Output "  BambuStudio profiles at $BambuProfiles"
+Write-Output "  set SHALE_ORCA_DIR=$BambuProfiles"
 Write-Output "Cura 5.13 does not ship a Bambu Lab A1 definition. That printer arrived in a later Cura release."
