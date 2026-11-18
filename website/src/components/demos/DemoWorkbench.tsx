@@ -75,7 +75,9 @@ function ToolpathPanel() {
         layerIndex={layer}
         showTravel={showTravel}
         buildProgress={buildProgress}
-        className="demo-panel__viewer"
+        singleLayer
+        linesOnly
+        className="demo-panel__viewer gcode-viewer--toolpath"
       />
     </section>
   );
