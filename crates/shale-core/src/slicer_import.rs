@@ -275,11 +275,12 @@ pub fn list_preset_offers(slicer_id: &str) -> Result<Vec<PresetOffer>, String> {
                     Err(err) => (false, Some(err)),
                 };
                 let id = format!("{slicer_id}:{kind}:{}", path.display());
+                let label = display_name_from_json(&path, &kind);
                 offers.push(PresetOffer {
                     id,
                     path: path.display().to_string(),
-                    kind,
-                    name: display_name_from_json(&path, &kind),
+                    kind: kind.clone(),
+                    name: label,
                     slicer: slicer_id.to_string(),
                     supported,
                     note,
@@ -748,7 +749,10 @@ mod tests {
         let merged = flatten_preset_from_dirs(&preset, &lookup).expect("merge");
         let layer = merged
             .get("layer_height")
-            .and_then(|v| v.as_f64())
+            .and_then(|v| {
+                v.as_f64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+            })
             .expect("layer_height");
         assert!((layer - 0.24).abs() < 0.001);
         set_test_profiles_root(None);

@@ -120,7 +120,7 @@ impl Library {
         if let Ok(guard) = SESSION_LIBRARY.read() {
             if let Some((cached_root, library)) = guard.as_ref() {
                 if cached_root == &root {
-                    return library.clone();
+                    return Self::apply_imported_overlay(library.clone());
                 }
             }
         }
@@ -455,7 +455,7 @@ fn resolve_chain(
 }
 
 /// Build a lowercase stem → parsed JSON map from every `.json` file under `dirs`.
-pub fn raw_profile_index(dirs: &[Path]) -> HashMap<String, Json> {
+pub fn raw_profile_index(dirs: &[PathBuf]) -> HashMap<String, Json> {
     let mut index: HashMap<String, PathBuf> = HashMap::new();
     for dir in dirs {
         let Ok(entries) = fs::read_dir(dir) else {
@@ -502,8 +502,7 @@ pub fn flatten_preset_from_dirs(
     if let Some(parent) = preset_path.parent() {
         dirs.push(parent.to_path_buf());
     }
-    let dir_refs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
-    let mut raw = raw_profile_index(&dir_refs);
+    let mut raw = raw_profile_index(&dirs);
     if !raw.contains_key(&lower) {
         let text = std::fs::read_to_string(preset_path)
             .map_err(|err| format!("read {}: {err}", preset_path.display()))?;
