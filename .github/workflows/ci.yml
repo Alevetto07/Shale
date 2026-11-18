@@ -95,14 +95,14 @@ jobs:
       - name: Installer UI screenshots (100/125/150% DPI)
         shell: pwsh
         run: |
-          $setup = Get-ChildItem -Path apps/desktop/src-tauri/target/release/bundle/nsis/Shale_*_x64-setup.exe -ErrorAction Stop | Select-Object -First 1
+          $setup = Get-ChildItem -Path target/release/bundle/nsis/Shale_*_x64-setup.exe -ErrorAction Stop | Select-Object -First 1
           ./scripts/installer-screenshots.ps1 -Installer $setup.FullName -OutDir dist/installer-screenshots
 
       - name: Title bar smoke (UI Automation)
         shell: pwsh
         continue-on-error: true
         run: |
-          $exe = Resolve-Path apps/desktop/src-tauri/target/release/Shale.exe
+          $exe = Resolve-Path target/release/Shale.exe
           ./scripts/titlebar-smoke.ps1 -Exe $exe.Path
 
       - uses: actions/upload-artifact@v4
