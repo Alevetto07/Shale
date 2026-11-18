@@ -24,6 +24,10 @@ const SC_RESTORE: u32 = 0xF120;
 const VK_SPACE: u32 = 0x20;
 /// Matches `.titlebar { height: 34px; }` in the desktop shell.
 const CUSTOM_TITLEBAR_HEIGHT_PX: i32 = 34;
+/// `GetSystemMenu` with `bRevert == TRUE` resets the menu and the returned handle is
+/// undefined (null in practice), so Alt+Space would hit the early return in
+/// `track_system_menu` and show nothing.
+const GET_SYSTEM_MENU_REVERT: BOOL = BOOL(0);
 
 type WndProc = unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT;
 
@@ -208,7 +212,11 @@ unsafe fn apply_system_menu_item_states(menu: HMENU, hwnd: HWND) {
 }
 
 unsafe fn track_system_menu(hwnd: HWND) -> LRESULT {
-    let menu = GetSystemMenu(hwnd, true);
+    let menu = GetSystemMenu(hwnd, GET_SYSTEM_MENU_REVERT);
+    debug_assert!(
+        !menu.0.is_null(),
+        "GetSystemMenu returned null; bRevert must be FALSE"
+    );
     if menu.0.is_null() {
         return LRESULT(0);
     }
@@ -335,5 +343,55 @@ mod tests {
         assert!(!enabled(&states, SC_SIZE));
         assert!(!enabled(&states, SC_MINIMIZE));
         assert!(enabled(&states, SC_MAXIMIZE));
+    }
+
+    #[test]
+    fn get_system_menu_revert_is_false() {
+        assert!(
+            !GET_SYSTEM_MENU_REVERT.as_bool(),
+            "GetSystemMenu(..., true) resets the menu and returns a null handle"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn get_system_menu_on_message_only_hwnd_is_non_null() {
+        use windows::core::w;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DefWindowProcW, DestroyWindow, HWND_MESSAGE, RegisterClassW,
+            CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, WNDCLASSW, WS_OVERLAPPED,
+        };
+
+        unsafe {
+            let class = WNDCLASSW {
+                style: CS_HREDRAW | CS_VREDRAW,
+                lpfnWndProc: Some(DefWindowProcW),
+                hInstance: Default::default(),
+                lpszClassName: w!("ShaleGetSystemMenuTest"),
+                ..Default::default()
+            };
+            let _ = RegisterClassW(&class);
+            let hwnd = CreateWindowExW(
+                Default::default(),
+                w!("ShaleGetSystemMenuTest"),
+                w!("test"),
+                WS_OVERLAPPED,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                Some(HWND_MESSAGE),
+                None,
+                None,
+                None,
+            )
+            .expect("CreateWindowExW");
+            let menu = GetSystemMenu(hwnd, GET_SYSTEM_MENU_REVERT);
+            assert!(
+                !menu.0.is_null(),
+                "GetSystemMenu must return a menu handle when bRevert is FALSE"
+            );
+            let _ = DestroyWindow(hwnd);
+        }
     }
 }
