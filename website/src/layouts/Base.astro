@@ -76,11 +76,8 @@ const dl = downloadUrl(primaryDownload.fileName);
         window.addEventListener("scroll", onScroll, { passive: true });
 
         const reveal = document.querySelectorAll("[data-reveal], .slogan-display");
-        if (reduced) {
-          reveal.forEach((el) => {
-            el.classList.add("is-visible");
-          });
-          return;
+        if (!reduced) {
+          document.documentElement.classList.add("motion-reveal");
         }
 
         const io = new IntersectionObserver(

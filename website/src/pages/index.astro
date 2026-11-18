@@ -103,11 +103,11 @@ const heroShot = mediaSlots.find((m) => m.id === "prepare");
   <section id="features" aria-labelledby="features-title">
     <div class="wrap">
       <div class="section-head section-head--row">
-        <div>
+        <div class="section-head--lead">
           <p class="eyebrow">Features</p>
           <h2 id="features-title">Everything in v{version}, on the plate.</h2>
         </div>
-        <p class="muted">
+        <p class="muted section-head-dek">
           Account, presets, send, speed, headless tools, and portable projects — each tile shows
           the real UI or the measured number.
         </p>
@@ -173,11 +173,11 @@ const heroShot = mediaSlots.find((m) => m.id === "prepare");
   <section id="media" aria-labelledby="media-title">
     <div class="wrap">
       <div class="section-head section-head--row">
-        <div>
+        <div class="section-head--lead">
           <p class="eyebrow">App</p>
           <h2 id="media-title">Three workspaces, one window.</h2>
         </div>
-        <p class="muted">Prepare, preview, and send — captured from the shipping build.</p>
+        <p class="muted section-head-dek">Prepare, preview, and send — captured from the shipping build.</p>
       </div>
       <div class="media-bento">
         {
@@ -206,11 +206,11 @@ const heroShot = mediaSlots.find((m) => m.id === "prepare");
   <section id="downloads" class="section-downloads" aria-labelledby="downloads-title">
     <div class="wrap">
       <div class="section-head section-head--row">
-        <div>
+        <div class="section-head--lead">
           <p class="eyebrow">Download</p>
           <h2 id="downloads-title">Get Shale {version}</h2>
         </div>
-        <p class="muted">
+        <p class="muted section-head-dek">
           <a href={releasePageUrl}>GitHub Releases</a> hosts the installer and headless packages.
           Verify with <a href={checksumsUrl}>SHA256SUMS.txt</a>.
         </p>
@@ -246,7 +246,7 @@ const heroShot = mediaSlots.find((m) => m.id === "prepare");
         }
       </div>
 
-      <div class="panel cli-docs cli-scroll panel--lift" style="margin-top: 2rem;" data-reveal>
+      <div class="panel cli-docs cli-scroll panel--lift" style="margin-top: 2rem;">
         <h3>Headless install</h3>
         <p class="muted">
           From <a href={`${repoUrl}/blob/main/docs/INSTALL-CLI.md`}>docs/INSTALL-CLI.md</a>. Point at

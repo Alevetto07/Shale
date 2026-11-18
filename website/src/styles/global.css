@@ -160,12 +160,26 @@ section[id],
 
 .section-head {
   margin-bottom: clamp(2rem, 4.5vw, 2.75rem);
+  text-align: left;
+}
+
+.section-head .eyebrow {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 0 0 0.5rem;
+}
+
+.section-head--lead {
+  width: 100%;
+  text-align: left;
 }
 
 .section-head--row {
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+  align-items: stretch;
 }
 
 @media (min-width: 768px) {
@@ -176,9 +190,15 @@ section[id],
     gap: 2rem;
   }
 
-  .section-head--row p {
+  .section-head--row > .section-head--lead {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .section-head--row > .section-head-dek {
     max-width: 36ch;
     text-align: right;
+    flex: 0 1 36ch;
   }
 }
 
@@ -382,16 +402,19 @@ pre {
   margin: auto 0 0;
   border-radius: calc(var(--radius-lg) - 4px);
   overflow: hidden;
-  aspect-ratio: 16 / 10;
-  background: #030408;
+  aspect-ratio: 4 / 3;
+  background: #0a0e14;
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .tile-visual-img img {
   display: block;
-  width: 100%;
-  height: 100%;
+  width: 118%;
+  height: 118%;
+  margin: -9% 0 0 -9%;
   object-fit: cover;
-  object-position: top center;
+  object-position: 12% 8%;
+  filter: brightness(1.18) contrast(1.12) saturate(1.06);
 }
 
 .tile-launch-stats {
@@ -589,35 +612,36 @@ pre {
   line-height: 1.45;
 }
 
-/* Scroll reveal — interruptible CSS only */
+/* Scroll reveal — visible without JS; motion is progressive enhancement */
 [data-reveal] {
-  opacity: 0;
-  transform: translateY(16px);
-  transition:
-    opacity var(--motion-medium) var(--ease-spring),
-    transform var(--motion-medium) var(--ease-spring);
-}
-
-[data-reveal].is-visible {
   opacity: 1;
   transform: none;
 }
 
-[data-reveal-delay="1"] {
-  transition-delay: 0.06s;
-}
-[data-reveal-delay="2"] {
-  transition-delay: 0.12s;
-}
-[data-reveal-delay="3"] {
-  transition-delay: 0.18s;
-}
+@media (prefers-reduced-motion: no-preference) {
+  html.motion-reveal [data-reveal].is-visible {
+    animation: reveal-in var(--motion-medium) var(--ease-spring) both;
+  }
 
-@media (prefers-reduced-motion: reduce) {
-  [data-reveal] {
-    opacity: 1;
-    transform: none;
-    transition: none;
+  html.motion-reveal [data-reveal-delay="1"].is-visible {
+    animation-delay: 0.06s;
+  }
+  html.motion-reveal [data-reveal-delay="2"].is-visible {
+    animation-delay: 0.12s;
+  }
+  html.motion-reveal [data-reveal-delay="3"].is-visible {
+    animation-delay: 0.18s;
+  }
+
+  @keyframes reveal-in {
+    from {
+      opacity: 0.65;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
 }
 
@@ -630,27 +654,13 @@ pre {
   line-height: 1.1;
   letter-spacing: -0.032em;
   color: var(--ink);
-  opacity: 0;
-  transform: translateY(12px);
-  transition:
-    opacity 0.85s var(--ease-spring),
-    transform 0.85s var(--ease-spring);
-}
-
-.slogan-display.is-visible {
   opacity: 1;
   transform: none;
 }
 
-.slogan-display--hero.is-visible {
-  transition-delay: 0.12s;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .slogan-display {
-    opacity: 1;
-    transform: none;
-    transition: none;
+@media (prefers-reduced-motion: no-preference) {
+  html.motion-reveal .slogan-display.is-visible {
+    animation: reveal-in 0.85s var(--ease-spring) both;
   }
 }
 

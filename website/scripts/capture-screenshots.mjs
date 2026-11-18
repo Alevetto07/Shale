@@ -28,6 +28,11 @@ for (const vp of viewports) {
     viewport: { width: vp.width, height: vp.height },
   });
   await page.goto(baseUrl, { waitUntil: "networkidle" });
+  await page.evaluate(() => {
+    document.querySelectorAll("[data-reveal], .slogan-display").forEach((el) => {
+      el.classList.add("is-visible");
+    });
+  });
 
   for (const section of sections) {
     const el = await page.$(section.selector);
