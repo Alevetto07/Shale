@@ -1,6 +1,36 @@
 import { getCurrentWindow } from "./platform/window";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import mark from "./brand/shale-mark-dark.svg";
+
+function TitleBarIcon({ kind }: { kind: "minimize" | "maximize" | "restore" | "close" }) {
+  if (kind === "close") {
+    return (
+      <svg className="titlebar-svg" viewBox="0 0 10 10" aria-hidden focusable="false">
+        <path d="M1.2 1.2 L8.8 8.8 M8.8 1.2 L1.2 8.8" stroke="currentColor" strokeWidth="1.15" />
+      </svg>
+    );
+  }
+  if (kind === "minimize") {
+    return (
+      <svg className="titlebar-svg" viewBox="0 0 10 10" aria-hidden focusable="false">
+        <rect x="1" y="7.5" width="8" height="1" fill="currentColor" />
+      </svg>
+    );
+  }
+  if (kind === "restore") {
+    return (
+      <svg className="titlebar-svg" viewBox="0 0 10 10" aria-hidden focusable="false">
+        <rect x="2.5" y="0.8" width="6.2" height="6.2" fill="none" stroke="currentColor" strokeWidth="1" />
+        <path d="M1 3.2 H6.8 V9 H1 Z" fill="var(--bg, #06070b)" stroke="currentColor" strokeWidth="1" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="titlebar-svg" viewBox="0 0 10 10" aria-hidden focusable="false">
+      <rect x="1.2" y="1.2" width="7.6" height="7.6" fill="none" stroke="currentColor" strokeWidth="1" />
+    </svg>
+  );
+}
 
 /**
  * Shale's own title bar.
@@ -20,14 +50,17 @@ export function TitleBar({
   children: ReactNode;
 }) {
   const [maximised, setMaximised] = useState(false);
+  const win = getCurrentWindow();
 
   useEffect(() => {
-    const win = getCurrentWindow();
     let cancelled = false;
     const read = () => {
-      void win.isMaximized().then((value) => {
-        if (!cancelled) setMaximised(value);
-      }).catch(() => undefined);
+      void win
+        .isMaximized()
+        .then((value) => {
+          if (!cancelled) setMaximised(value);
+        })
+        .catch(() => undefined);
     };
     read();
     const stop = win.onResized(() => read());
@@ -35,14 +68,16 @@ export function TitleBar({
       cancelled = true;
       void stop.then((off) => off());
     };
-  }, []);
+  }, [win]);
 
-  const win = getCurrentWindow();
+  const onCaptionDoubleClick = useCallback(() => {
+    void win.toggleMaximize();
+  }, [win]);
 
   return (
     <header className="titlebar" data-tauri-drag-region>
-      <div className="brand" data-tauri-drag-region>
-        <img className="brand-mark" src={mark} alt="" data-tauri-drag-region />
+      <div className="brand" data-tauri-drag-region onDoubleClick={onCaptionDoubleClick}>
+        <img className="brand-mark" src={mark} alt="" data-tauri-drag-region draggable={false} />
         <p className="wordmark" data-tauri-drag-region>
           Shale
         </p>
@@ -52,11 +87,18 @@ export function TitleBar({
           </p>
         )}
       </div>
-      {children}
-      <span className="titlebar-gap" data-tauri-drag-region />
+      <div className="titlebar-menus" data-tauri-drag-region onDoubleClick={onCaptionDoubleClick}>
+        {children}
+      </div>
+      <span className="titlebar-gap" data-tauri-drag-region onDoubleClick={onCaptionDoubleClick} />
       <div className="titlebar-buttons">
-        <button type="button" className="titlebar-minimize" aria-label="Minimise" onClick={() => void win.minimize()}>
-          <span className="titlebar-glyph titlebar-glyph-minimize" aria-hidden />
+        <button
+          type="button"
+          className="titlebar-minimize"
+          aria-label="Minimise"
+          onClick={() => void win.minimize()}
+        >
+          <TitleBarIcon kind="minimize" />
         </button>
         <button
           type="button"
@@ -64,20 +106,10 @@ export function TitleBar({
           aria-label={maximised ? "Restore" : "Maximise"}
           onClick={() => void win.toggleMaximize()}
         >
-          <span
-            className={maximised ? "titlebar-glyph titlebar-glyph-restore" : "titlebar-glyph titlebar-glyph-maximize"}
-            aria-hidden
-          />
+          <TitleBarIcon kind={maximised ? "restore" : "maximize"} />
         </button>
-        <button
-          type="button"
-          aria-label="Close"
-          className="titlebar-close"
-          onClick={() => void win.close()}
-        >
-          <span className="titlebar-glyph titlebar-glyph-close" aria-hidden>
-            {"\u00d7"}
-          </span>
+        <button type="button" aria-label="Close" className="titlebar-close" onClick={() => void win.close()}>
+          <TitleBarIcon kind="close" />
         </button>
       </div>
     </header>

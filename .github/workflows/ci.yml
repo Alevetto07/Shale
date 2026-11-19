@@ -92,8 +92,24 @@ jobs:
         shell: bash
         run: python3 scripts/verify-gui-subsystem.py target/release/Shale.exe
 
+      - name: Installer UI screenshots (100/125/150% DPI)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $setup = Get-ChildItem -Path target/release/bundle/nsis/Shale_*_x64-setup.exe -ErrorAction Stop | Select-Object -First 1
+          ./scripts/installer-screenshots.ps1 -Installer $setup.FullName -OutDir dist/installer-screenshots
+
+      - name: Title bar smoke (UI Automation)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $exe = Resolve-Path target/release/Shale.exe
+          ./scripts/titlebar-smoke.ps1 -Exe $exe.Path
+
       - uses: actions/upload-artifact@v4
         with:
           name: shale-windows-nsis
-          path: target/release/bundle/nsis/*.exe
+          path: |
+            target/release/bundle/nsis/*.exe
+            dist/installer-screenshots/**
           if-no-files-found: error

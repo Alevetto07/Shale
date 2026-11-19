@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { PrinterInfo, RecentProject } from "./api";
 import { PlateField } from "./field/PlateField";
 import { RecentProjectsPanel, type RecentProjectsPanelHandle } from "./RecentProjectsPanel";
-import { UiStylePicker } from "./UiStylePicker";
+import { SettingsView } from "./SettingsView";
 import { uiStyleById, type UiStyleId } from "./ui-styles";
-import { AsciiField, AsciiSelect } from "./widgets";
+import { AsciiField } from "./widgets";
 
 type Panel = "menu" | "printers" | "settings" | "about";
 
@@ -43,6 +43,7 @@ export function StartScreen({
   onBackend,
   onApplyEngine,
   onQuit,
+  onRerunSetup,
   uiStyle,
   onUiStyle,
 }: {
@@ -72,6 +73,7 @@ export function StartScreen({
   onBackend: (value: string) => void;
   onApplyEngine: () => void;
   onQuit: () => void;
+  onRerunSetup?: () => void;
 }) {
   const [panel, setPanel] = useState<Panel>("menu");
   const [cursor, setCursor] = useState(0);
@@ -215,34 +217,27 @@ export function StartScreen({
           </div>
         )}
         {panel === "settings" && (
-          <div className="start-panel">
+          <div className="start-panel start-panel--settings">
             <button type="button" className="start-back" onClick={() => setPanel("menu")}>
               Back
             </button>
-            <UiStylePicker compact value={uiStyle} onChange={onUiStyle} />
-            <label>
-              backend
-              <AsciiSelect
-                label="backend"
-                value={backend}
-                options={[
-                  { value: "cli", label: "cli" },
-                  { value: "arcus", label: "arcus" },
-                ]}
-                onChange={onBackend}
-              />
-            </label>
-            <label>
-              binary
-              <AsciiField label="binary" value={enginePath} onChange={onEnginePath} />
-            </label>
-            <label>
-              libs
-              <AsciiField label="libs" value={libDir} onChange={onLibDir} />
-            </label>
-            <button type="button" onClick={onApplyEngine}>
-              Check engine
-            </button>
+            <SettingsView
+              compact
+              version={version}
+              printers={printers}
+              printerId={printerId}
+              enginePath={enginePath}
+              libDir={libDir}
+              backend={backend}
+              uiStyle={uiStyle}
+              onUiStyle={onUiStyle}
+              onChoosePrinter={onChoosePrinter}
+              onEnginePath={onEnginePath}
+              onLibDir={onLibDir}
+              onBackend={onBackend}
+              onApplyEngine={onApplyEngine}
+              onRerunSetup={onRerunSetup}
+            />
           </div>
         )}
         {panel === "about" && (
