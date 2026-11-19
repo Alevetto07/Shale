@@ -62,9 +62,11 @@ fn auto_plan_flat_cube_no_surfaces() {
             .collect(),
         triangles: baked.triangles.clone(),
     };
-    let mut opts = NonplanarOptions::default();
-    opts.mode = NonplanarMode::Auto;
-    opts.max_angle_deg = 10.0;
+    let opts = NonplanarOptions {
+        mode: NonplanarMode::Auto,
+        max_angle_deg: 10.0,
+        ..NonplanarOptions::default()
+    };
     let plan = shale_nonplanar::plan_auto_placement(&m, &[], &opts, 0.2);
     assert_eq!(plan.enabled_surface_count, 0, "flat cube should stay planar");
     assert!(plan.fallback_to_planar);
@@ -83,8 +85,10 @@ fn auto_plan_sphere_enables_curved_band() {
             .collect(),
         triangles: baked.triangles.clone(),
     };
-    let mut opts = NonplanarOptions::default();
-    opts.mode = NonplanarMode::Auto;
+    let opts = NonplanarOptions {
+        mode: NonplanarMode::Auto,
+        ..NonplanarOptions::default()
+    };
     let analysis = shale_core::auto_spans::analyse_for_nonplanar(&baked);
     let spans = shale_core::auto_spans::spans_for_auto(&analysis.spans);
     let plan = shale_nonplanar::plan_auto_placement(&m, &spans, &opts, 0.2);
@@ -664,7 +668,7 @@ fn nonplanar_end_to_end_benchmarks() {
             "benchy" => {}
             "pillar-beside-dome" => {
                 assert!(
-                    report.collision_adjustments.len() > 0,
+                    !report.collision_adjustments.is_empty(),
                     "pillar beside dome: expected collision flattening, got {:?}",
                     report.notes
                 );

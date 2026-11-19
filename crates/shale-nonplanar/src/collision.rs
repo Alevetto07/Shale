@@ -321,7 +321,7 @@ mod tests {
             let e_pos = word(line, 'E').unwrap_or(0.0);
             let extruding = extrude && e_pos > 0.0;
             if move_collides(
-                &envelope,
+                envelope,
                 &printed,
                 position[0],
                 position[1],

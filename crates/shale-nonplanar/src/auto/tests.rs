@@ -111,7 +111,7 @@ mod auto_placement {
                     && v[1].abs() <= 4.5
                     && (v[2] - 21.0).abs() < 1.5
             })
-            .map(|v| v[2] as f64)
+            .map(|v| v[2])
             .collect();
         assert!(zs.len() >= 8, "expected bridge slab verts, got {}", zs.len());
         let spread = zs.iter().copied().fold(f64::NEG_INFINITY, f64::max)

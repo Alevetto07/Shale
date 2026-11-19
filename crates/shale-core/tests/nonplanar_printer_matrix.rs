@@ -266,7 +266,7 @@ fn curved_top_safety_matrix() {
             }
             if *model_name == "pillar-beside-dome" {
                 assert!(
-                    report.collision_adjustments.len() > 0,
+                    !report.collision_adjustments.is_empty(),
                     "{printer_id}: expected collision flattening on pillar fixture, got 0"
                 );
                 assert_eq!(

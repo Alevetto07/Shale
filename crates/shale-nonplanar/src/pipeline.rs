@@ -85,6 +85,9 @@ pub fn rebuild_field(mesh: &Mesh, options: &NonplanarOptions, nominal_layer_heig
 ///
 /// `planar_baseline_gcode` must be a **planar** slice of the same job on the undeformed
 /// mesh (physical machine coordinates), used only for below-band equivalence.
+// Cura's G-code plus the field, the printer envelope and its limits: this is the
+// pipeline stage boundary, so the arguments stay explicit.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_post_pass(
     deformed_slice_gcode: &str,
     planar_baseline_gcode: &str,
@@ -434,7 +437,7 @@ pub fn max_extrusion_slope_in_box(gcode: &str, min: [f64; 3], max: [f64; 3]) -> 
             let dy = point[1] - prev[1];
             let dz = point[2] - prev[2];
             let horiz = (dx * dx + dy * dy).sqrt();
-            if horiz > VERTICAL_STEP_HORIZ_MM && horiz > 1e-9 {
+            if horiz > VERTICAL_STEP_HORIZ_MM {
                 any = true;
                 max_deg = max_deg.max(dz.atan2(horiz).abs().to_degrees());
             }

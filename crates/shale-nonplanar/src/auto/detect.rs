@@ -78,10 +78,8 @@ pub fn detect(
 ) -> DetectionReport {
     let grid = build_height_field(mesh, grid_step, max_angle_deg, band_thickness);
     let mut features = top_island_features(&grid, mesh.bounds(), band_thickness, max_angle_deg);
-    let mut next_id = features.len() as u32 + 1;
-    for span in spans {
+    for (next_id, span) in (features.len() as u32 + 1..).zip(spans.iter()) {
         features.push(span_to_feature(next_id, span));
-        next_id += 1;
     }
     DetectionReport { features }
 }

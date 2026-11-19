@@ -338,15 +338,11 @@ pub fn apply_plan_to_field(
     layer_h: f64,
 ) {
     if plan.enabled_surface_count == 0 {
-        for s in &mut field.island_strength {
-            *s = 0.0;
-        }
+        field.island_strength.fill(0.0);
         return;
     }
     let len = field.island_strength.len();
-    for s in &mut field.island_strength {
-        *s = 0.0;
-    }
+    field.island_strength.fill(0.0);
     let origin = field.grid.origin;
     let step = field.grid.step;
     let width = field.grid.width;
@@ -369,6 +365,9 @@ pub fn apply_plan_to_field(
     }
 }
 
+// Grid geometry plus the field and the surface being stamped; a struct here
+// would only move the same fields one level down.
+#[allow(clippy::too_many_arguments)]
 fn stamp_surface(
     origin: [f64; 2],
     step: f64,
