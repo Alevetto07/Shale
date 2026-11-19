@@ -6,7 +6,7 @@
 
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -351,7 +351,6 @@ fn program_uses_external_lib_dir(program: &Path) -> bool {
     let Ok(mut file) = fs::File::open(program) else {
         return true;
     };
-    use std::io::Read;
     let mut header = [0_u8; 4];
     let Ok(n) = file.read(&mut header) else {
         return true;
@@ -370,7 +369,11 @@ pub(crate) fn apply_lib_dir(command: &mut Command, lib_dir: Option<&Path>) {
     let Some(lib_dir) = lib_dir else {
         return;
     };
-    for key in ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PATH"] {
+    #[cfg(windows)]
+    let keys = ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PATH"];
+    #[cfg(not(windows))]
+    let keys = ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"];
+    for key in keys {
         let mut paths = vec![lib_dir.to_path_buf()];
         if let Some(existing) = env::var_os(key) {
             paths.extend(env::split_paths(&existing));

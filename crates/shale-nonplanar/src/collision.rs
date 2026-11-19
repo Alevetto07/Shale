@@ -1,6 +1,6 @@
 //! Swept toolhead envelope check against already-printed material.
 
-use crate::config::NonplanarReport;
+use crate::config::{CollisionAdjustment, NonplanarReport};
 use crate::deform::DeformField;
 use crate::envelope::HeadEnvelope;
 
@@ -120,11 +120,17 @@ pub fn flatten_on_collision(
     };
     report.top_islands = crate::height_field::count_top_islands(&field.grid);
 
+    report.envelope_id = envelope.printer_id.clone();
     if !envelope.calibrated {
         report.notes.push(
-            "collision flattening skipped (uncalibrated A1 head envelope)".into(),
+            "collision flattening skipped (uncalibrated head envelope)".into(),
         );
         return report;
+    }
+    if envelope.calibration_tier.as_deref() == Some("conservative") {
+        report.notes.push(
+            "collision flattening uses conservative envelope; measure sock/duct per JSON".into(),
+        );
     }
 
     let step = field.grid.step;
@@ -137,7 +143,9 @@ pub fn flatten_on_collision(
     let mut collisions = 0usize;
     for raw in gcode.lines() {
         let line = raw.trim();
-        if !(line.starts_with('G') && (line.contains('X') || line.contains('Y'))) {
+        if !(line.starts_with('G')
+            && (line.contains('X') || line.contains('Y') || line.contains('Z')))
+        {
             continue;
         }
         if let Some(x) = word(line, 'X') {
@@ -162,6 +170,12 @@ pub fn flatten_on_collision(
             extruding,
         ) {
             collisions += 1;
+            report.collision_adjustments.push(CollisionAdjustment {
+                x: position[0],
+                y: position[1],
+                z: position[2],
+                action: "dampen_island".into(),
+            });
             dampen_island(field, position[0], position[1], 0.35);
         }
         if extruding {
@@ -257,17 +271,80 @@ mod tests {
     }
 
     #[test]
-    fn flatten_skipped_when_uncalibrated() {
+    fn flatten_runs_with_conservative_a1_envelope() {
         let mesh = box_mesh(20.0, 20.0, 10.0);
         let grid = build_height_field(&mesh, 1.0, 30.0, 2.0);
         let mut field = build_deform_field(grid, 2.0, 0.4, 0.2, 30.0);
         let gcode = "G0 X0 Y0 Z0.2\nG1 X10 Y10 Z0.3 E1\n";
         let report = flatten_on_collision(&mut field, gcode, bambu_a1_envelope(), 10.0);
-        assert!(report
-            .notes
-            .iter()
-            .any(|n| n.contains("skipped")));
-        assert_eq!(field.island_strength[0], 1.0);
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|n| n.contains("conservative") || n.contains("post-pass")),
+            "{:?}",
+            report.notes
+        );
+        assert_eq!(report.envelope_id, "bambu_lab_a1");
+    }
+
+    #[test]
+    fn concat_pillar_gcode_produces_collisions_when_present() {
+        let path = std::path::Path::new("/tmp/shale-pillar-concat.gcode");
+        if !path.is_file() {
+            return;
+        }
+        let gcode = std::fs::read_to_string(path).expect("concat gcode");
+        let envelope = bambu_a1_envelope();
+        let mut printed = PrintedHeightMap::new([99.8, 104.8], 0.35, 163, 134);
+        let mut position = [0.0; 3];
+        let mut collisions = 0usize;
+        let mut extrusions = 0usize;
+        let mut max_printed = 0.0f64;
+        for raw in gcode.lines() {
+            let line = raw.trim();
+            if !(line.starts_with('G')
+                && (line.contains('X') || line.contains('Y') || line.contains('Z')))
+            {
+                continue;
+            }
+            if let Some(x) = word(line, 'X') {
+                position[0] = x;
+            }
+            if let Some(y) = word(line, 'Y') {
+                position[1] = y;
+            }
+            if let Some(z) = word(line, 'Z') {
+                position[2] = z;
+            }
+            let extrude = line.starts_with("G1") && line.contains('E');
+            let e_pos = word(line, 'E').unwrap_or(0.0);
+            let extruding = extrude && e_pos > 0.0;
+            if move_collides(
+                &envelope,
+                &printed,
+                position[0],
+                position[1],
+                position[2],
+                10.0,
+                extruding,
+            ) {
+                collisions += 1;
+            }
+            if extruding {
+                printed.raise(position[0], position[1], position[2]);
+                extrusions += 1;
+                max_printed = max_printed.max(position[2]);
+            }
+        }
+        assert!(
+            extrusions > 1000 && max_printed > 40.0,
+            "raises={extrusions} max_z={max_printed:.2}"
+        );
+        assert!(
+            collisions > 100,
+            "expected pillar→dome travels to strike tall pillar, got {collisions} (max_z={max_printed:.2})"
+        );
     }
 
     #[test]

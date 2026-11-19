@@ -87,17 +87,17 @@ pub fn build_height_field(
     let (min, max) = mesh.bounds();
     let step = step.max(0.1);
     let pad = step * 2.0;
-    let origin = [min[0] as f64 - pad, min[1] as f64 - pad];
-    let width = (((max[0] - min[0]) as f64 + 2.0 * pad) / step).ceil() as usize + 1;
-    let height = (((max[1] - min[1]) as f64 + 2.0 * pad) / step).ceil() as usize + 1;
+    let origin = [min[0] - pad, min[1] - pad];
+    let width = (((max[0] - min[0]) + 2.0 * pad) / step).ceil() as usize + 1;
+    let height = (((max[1] - min[1]) + 2.0 * pad) / step).ceil() as usize + 1;
     // Ray acceptance uses a generous angle so shallow ramps (e.g. 12°) are still
     // detected; `max_angle_deg` is enforced later via slope clamping on the grid.
-    let detection_angle_deg = max_angle_deg.max(55.0).min(89.0);
+    let detection_angle_deg = max_angle_deg.clamp(55.0, 89.0);
     let detect_slope = detection_angle_deg.to_radians().tan();
     let cos_limit = (1.0 / (1.0 + detect_slope * detect_slope).sqrt()).max(0.0);
 
     let mut z_top = vec![None; width * height];
-    let ray_top = max[2] as f64 + 1.0;
+    let ray_top = max[2] + 1.0;
 
     for iy in 0..height {
         for ix in 0..width {

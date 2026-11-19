@@ -75,8 +75,8 @@ pub use supports::{
 };
 pub use value::Value;
 pub use shale_nonplanar::{
-    plan_auto_placement, AutoPlacementReport, DetectionReport, NonplanarMode, NonplanarOptions,
-    NonplanarReport, PlannedSurface, SurfacePreview,
+    plan_auto_placement, safety_report_from_gcode, AutoPlacementReport, DetectionReport,
+    NonplanarMode, NonplanarOptions, NonplanarReport, PlannedSurface, SafetyReport, SurfacePreview,
 };
 
 mod error;

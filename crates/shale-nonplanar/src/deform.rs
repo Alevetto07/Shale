@@ -186,10 +186,8 @@ pub fn build_deform_field(
     max_angle_deg: f64,
 ) -> DeformField {
     let mut max_top = 0.0f64;
-    for z in &grid.z_top_smooth {
-        if let Some(v) = z {
-            max_top = max_top.max(*v);
-        }
+    for v in grid.z_top_smooth.iter().flatten() {
+        max_top = max_top.max(*v);
     }
     let deformed_top_z = max_top;
     let min_layer = 0.08;

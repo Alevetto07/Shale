@@ -12,9 +12,11 @@
 //! The mutex is a courtesy, not a lock on data: if it cannot be created the app
 //! starts anyway, because failing to open must never be the more likely outcome.
 
+#[cfg(windows)]
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 /// The mutex handle, so a retry can let go of the name before it re-execs.
+#[cfg(windows)]
 static MUTEX: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Claim the single-instance mutex. `true` if this process is the only Shale.
@@ -214,6 +216,7 @@ pub fn focus_existing(_title: &str) -> bool {
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub fn say(caption: &str, message: &str) {
     eprintln!("{caption}: {message}");
 }

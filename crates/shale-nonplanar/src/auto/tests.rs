@@ -155,7 +155,19 @@ mod auto_placement {
                 i + 1
             ));
         }
-        let (mapped, report) = apply_post_pass(&planar, &mesh, &opts, layer_h, &spans);
+        let (mapped, report) = apply_post_pass(
+            &planar,
+            &planar,
+            &mesh,
+            &opts,
+            layer_h,
+            &spans,
+            "bambu_lab_a1",
+            crate::MachineLimits {
+                z_max_mm: 256.0,
+                max_feed_mm_per_min: 6000.0,
+            },
+        );
         let extrusion_zs: Vec<f64> = mapped
             .lines()
             .filter(|l| l.starts_with("G1") && l.contains('E') && l.contains('Z'))

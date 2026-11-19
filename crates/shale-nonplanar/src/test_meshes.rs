@@ -73,7 +73,7 @@ pub fn sphere_mesh(radius: f64) -> Mesh {
     Mesh { vertices, triangles }
 }
 
-/// Low deck with a tall pillar beside it (for collision regression tests).
+/// Tilted top slab (for curved-top regression tests).
 #[cfg(test)]
 pub fn tilted_top_slab(w: f64, d: f64, t: f64, tilt_deg: f64) -> Mesh {
     let tilt = tilt_deg.to_radians();
@@ -124,7 +124,9 @@ pub fn cantilever_mesh() -> Mesh {
     mesh
 }
 
+/// Low deck with a tall pillar beside it (for collision regression tests).
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn pillar_beside_mesh() -> Mesh {
     let mut mesh = box_mesh(40.0, 20.0, 2.0);
     let pillar = box_mesh(8.0, 8.0, 30.0);
