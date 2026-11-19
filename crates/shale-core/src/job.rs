@@ -390,6 +390,7 @@ pub fn slice(
         force_setting(&mut resolved, "ironing_enabled", "false");
     }
     let mut pre_deform_meshes: Vec<TriangleMesh> = Vec::new();
+    let mut auto_support_spans: Vec<shale_nonplanar::SupportSpanInput> = Vec::new();
     let mut estimated_layers = 1u32;
     let mut baked_paths = Vec::new();
     // The header's bounding box, measured on the same meshes the engine is
@@ -417,12 +418,26 @@ pub fn slice(
             resolved.summary.machine_depth,
             resolved.summary.machine_center_is_zero,
         );
+        let spans_for_slice = if settings.nonplanar.mode == shale_nonplanar::NonplanarMode::Auto {
+            let analysis = crate::auto_spans::analyse_for_nonplanar(&baked);
+            crate::auto_spans::spans_for_auto(&analysis.spans)
+        } else {
+            Vec::new()
+        };
+        if settings.nonplanar.mode == shale_nonplanar::NonplanarMode::Auto {
+            let machine_mesh = pre_deform_meshes.last().cloned().expect("pre_deform mesh");
+            let machine_analysis = crate::auto_spans::analyse_for_nonplanar(&machine_mesh);
+            auto_support_spans.extend(crate::auto_spans::spans_for_auto(
+                &machine_analysis.spans,
+            ));
+        }
         if nonplanar_active {
             let np_in = crate::nonplanar_bridge::to_nonplanar(&baked);
             let (deformed, _ctx) = shale_nonplanar::prepare_pre_pass(
                 &np_in,
                 &settings.nonplanar,
                 layer_height,
+                &spans_for_slice,
             );
             baked = crate::nonplanar_bridge::from_nonplanar(&deformed);
         }
@@ -551,6 +566,7 @@ pub fn slice(
             &reference,
             &settings.nonplanar,
             layer_height,
+            &auto_support_spans,
         );
         gcode = mapped;
         let mut report = report;

@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 pub enum NonplanarMode {
     #[default]
     Off,
+    /// Apply curved-top deformation to the whole printable top shell.
     CurvedTops,
+    /// Detect sloped/curved tops and enable bands only where they help.
+    Auto,
 }
 
 impl NonplanarMode {
@@ -15,12 +18,21 @@ impl NonplanarMode {
         match name.to_ascii_lowercase().as_str() {
             "off" | "none" | "" => Some(Self::Off),
             "curved-tops" | "curved_tops" | "curvedtops" => Some(Self::CurvedTops),
+            "auto" | "automatic" => Some(Self::Auto),
             _ => None,
         }
     }
 
     pub fn active(self) -> bool {
-        matches!(self, Self::CurvedTops)
+        matches!(self, Self::CurvedTops | Self::Auto)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::CurvedTops => "curved-tops",
+            Self::Auto => "auto",
+        }
     }
 }
 
@@ -81,4 +93,6 @@ pub struct NonplanarReport {
     pub islands_flattened: usize,
     pub fallback_to_planar: bool,
     pub notes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_placement: Option<crate::auto::AutoPlacementReport>,
 }

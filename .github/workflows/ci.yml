@@ -28,7 +28,9 @@ jobs:
             librsvg2-dev \
             patchelf \
             libsoup-3.0-dev \
-            build-essential
+            build-essential \
+            libstdc++-13-dev \
+            cmake
 
       - name: Frontend
         working-directory: apps/desktop
@@ -48,8 +50,37 @@ jobs:
           SHALE_MATERIALS_DIR: ${{ github.workspace }}/vendor/fdm_materials
           SHALE_ORCA_DIR: ${{ github.workspace }}/vendor/BambuStudio/resources/profiles
           SHALE_CURAENGINE: ${{ github.workspace }}/vendor/curaengine/CuraEngine
-          SHALE_CURAENGINE_LIB_DIR: ${{ github.workspace }}/vendor/cura-appimage-root/squashfs-root
+          LIBRARY_PATH: /usr/lib/gcc/x86_64-linux-gnu/13
         run: cargo test --workspace --locked
+
+      - name: Auto nonplanar E2E bench
+        env:
+          SHALE_CURA_DIR: ${{ github.workspace }}/vendor/Cura
+          SHALE_MATERIALS_DIR: ${{ github.workspace }}/vendor/fdm_materials
+          SHALE_ORCA_DIR: ${{ github.workspace }}/vendor/BambuStudio/resources/profiles
+          SHALE_CURAENGINE: ${{ github.workspace }}/vendor/curaengine/CuraEngine
+          LIBRARY_PATH: /usr/lib/gcc/x86_64-linux-gnu/13
+        run: ./scripts/bench-auto-nonplanar.sh
+
+      - name: Upload auto-placement bench
+        uses: actions/upload-artifact@v4
+        with:
+          name: nonplanar-bench-e2e
+          path: |
+            artifacts/nonplanar/bench-e2e-report.json
+            artifacts/nonplanar/bench-e2e-table.md
+            artifacts/nonplanar/planar-supports-parity.json
+          if-no-files-found: warn
+
+      - name: Planar supports G-code parity vs base
+        env:
+          SHALE_CURA_DIR: ${{ github.workspace }}/vendor/Cura
+          SHALE_MATERIALS_DIR: ${{ github.workspace }}/vendor/fdm_materials
+          SHALE_ORCA_DIR: ${{ github.workspace }}/vendor/BambuStudio/resources/profiles
+          SHALE_CURAENGINE: ${{ github.workspace }}/vendor/curaengine/CuraEngine
+          LIBRARY_PATH: /usr/lib/gcc/x86_64-linux-gnu/13
+          PLANAR_PARITY_BASE_REF: origin/cursor/v02-nonplanar-88ff
+        run: ./scripts/planar-supports-gcode-parity.sh
 
   windows:
     runs-on: windows-latest
