@@ -8,5 +8,7 @@
 
 ## NSIS installer
 
-- **Assets:** Regenerated 150×57 header and 164×314 sidebar BMPs; short English strings in `English.nsh`.
+- **Assets:** `scripts/generate-nsis-art.py` (Pillow) emits 150×57 header and 164×314 sidebar BMPs; `scripts/verify-nsis-langstrings.py` checks custom `English.nsh` against Tauri 2.12.6 `installer.nsi`.
+- **Strings:** `English.nsh` is the full Tauri English catalog plus short Shale overrides (custom language files replace the builtin file).
+- **Shortcuts:** Finish-page checkbox (opt-in); silent installs strip auto-created desktop links in `NSIS_HOOK_POSTINSTALL`.
 - **CI:** `scripts/installer-screenshots.ps1` sets per-user `LogPixels` to 96 / 120 / 144, runs the setup wizard, captures up to six pages per scale, uploads `dist/installer-screenshots` with the NSIS artefact.

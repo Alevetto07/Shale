@@ -25,6 +25,8 @@ Check "Shale.exe installed at $exe" (Test-Path $exe)
 Check "uninstaller present" (Test-Path (Join-Path $appDir "uninstall.exe"))
 Check "notices shipped" (Test-Path (Join-Path $appDir "THIRD-PARTY-NOTICES.md"))
 Check "no admin install dir" (-not (Test-Path "C:\Program Files\Shale"))
+$desk = Join-Path ([Environment]::GetFolderPath("Desktop")) "Shale.lnk"
+Check "no desktop shortcut on silent install ($desk)" (-not (Test-Path $desk))
 
 Write-Host "== associations"
 $shaleKey = "HKCU:\Software\Classes\.shale"

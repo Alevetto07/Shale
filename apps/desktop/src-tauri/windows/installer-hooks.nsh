@@ -14,6 +14,9 @@
   WriteRegStr HKCU "Software\Classes\.stl\OpenWithProgids" "Shale project" ""
   WriteRegStr HKCU "Software\Classes\.step\OpenWithProgids" "Shale project" ""
   WriteRegStr HKCU "Software\Classes\.stp\OpenWithProgids" "Shale project" ""
+  ; Tauri creates a desktop shortcut for silent/passive installs; GUI users opt in on the
+  ; finish page after this hook, so remove any shortcut the install section may have added.
+  Delete "$DESKTOP\${PRODUCTNAME}.lnk"
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
@@ -33,8 +36,8 @@
   ; leaves an empty .shale key behind, so the key goes last: Shale was the only
   ; owner of that extension.
   DeleteRegKey HKCU "Software\Classes\.shale"
-  ; Parsed catalogue cache lives in roaming app data, not beside the binary.
-  RMDir /r "$APPDATA\Shale\catalog-cache"
+  ; Catalogue cache in %APPDATA% is removed only when the user ticks deleteAppData
+  ; on the uninstaller finish page (Tauri handles $DELETE_APPDATA).
   ; Earlier builds used this folder; remove it if nothing else is there.
   RMDir /r "$LOCALAPPDATA\Shale\cache"
   RMDir "$LOCALAPPDATA\Shale"
