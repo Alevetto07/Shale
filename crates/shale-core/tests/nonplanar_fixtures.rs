@@ -1,4 +1,5 @@
 //! Shared non-planar integration / matrix meshes.
+#![allow(dead_code)] // Each test binary includes this module and uses a different subset.
 
 use std::path::PathBuf;
 
@@ -76,6 +77,19 @@ pub fn pillar_beside_dome() -> TriangleMesh {
     merge_meshes(&dome_mesh, &pillar_mesh)
 }
 
+/// The printer's own 0.20 mm standard process. The hard-coded A1 key is wrong for
+/// the A1 mini and the P/X/H envelope printers, whose Orca keys end in their own
+/// model suffix.
+fn pillar_quality(catalog: &Catalog, printer_id: &str) -> String {
+    let qualities = catalog.qualities_for(printer_id, Some(PILLAR_VARIANT));
+    qualities
+        .iter()
+        .find(|q| q.quality_type.contains("0_20") || q.quality_type.contains("0.20"))
+        .or_else(|| qualities.first())
+        .map(|q| q.quality_type.clone())
+        .unwrap_or_else(|| PILLAR_QUALITY.into())
+}
+
 fn slice_deferred_engine_gcode(
     catalog: &Catalog,
     engine: &dyn SlicingEngine,
@@ -98,7 +112,7 @@ fn slice_deferred_engine_gcode(
         engine,
         printer_id,
         Some(PILLAR_VARIANT.into()),
-        Some(PILLAR_QUALITY.into()),
+        Some(pillar_quality(catalog, printer_id)),
         &[Some(PILLAR_MATERIAL.into())],
         settings,
         placed,
@@ -167,7 +181,7 @@ pub fn slice_pillar_beside_dome_sequential(
         engine,
         printer_id,
         Some(PILLAR_VARIANT.into()),
-        Some(PILLAR_QUALITY.into()),
+        Some(pillar_quality(catalog, printer_id)),
         &[Some(PILLAR_MATERIAL.into())],
         planar_settings,
         &[PlacedModel {
