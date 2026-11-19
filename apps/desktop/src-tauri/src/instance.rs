@@ -15,6 +15,7 @@
 #[cfg(windows)]
 use std::sync::atomic::{AtomicPtr, Ordering};
 
+#[cfg(windows)]
 /// The mutex handle, so a retry can let go of the name before it re-execs.
 #[cfg(windows)]
 static MUTEX: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());

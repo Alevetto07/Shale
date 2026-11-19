@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { PreviewPath, SupportOverlay, Transform } from "./api";
 import { localCentre, rotateScale, translationForCentre, worldCentre } from "./coords";
+import { canFrameBed, modelsToFrame, shouldFrameModels } from "./framer";
 
 export type TransformMode = "translate" | "rotate" | "scale";
 export type ViewStyle = "solid" | "wire" | "ascii";
@@ -132,6 +133,10 @@ export function Viewport(props: ViewportProps) {
       />
     );
   }
+  const sceneBg =
+    typeof document !== "undefined"
+      ? getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() || "#06070b"
+      : "#06070b";
   const cx = props.centerIsZero ? 0 : props.width / 2;
   const cy = props.centerIsZero ? 0 : props.depth / 2;
   return (
@@ -145,7 +150,7 @@ export function Viewport(props: ViewportProps) {
         camera.lookAt(cx, cy, 0);
       }}
     >
-      <color attach="background" args={["#06070b"]} />
+      <color attach="background" args={[sceneBg]} />
       <ambientLight intensity={0.55} />
       <directionalLight position={[120, -80, 220]} intensity={0.9} color="#e9e8f2" />
       <directionalLight position={[-80, 140, 40]} intensity={0.18} color="#8a8798" />
@@ -240,6 +245,50 @@ function modelBox(model: SceneModel): THREE.Box3 {
   return box;
 }
 
+function boxOutlineGeometry(box: THREE.Box3): THREE.BufferGeometry {
+  const { min, max } = box;
+  const corners = [
+    new THREE.Vector3(min.x, min.y, min.z),
+    new THREE.Vector3(max.x, min.y, min.z),
+    new THREE.Vector3(max.x, max.y, min.z),
+    new THREE.Vector3(min.x, max.y, min.z),
+    new THREE.Vector3(min.x, min.y, max.z),
+    new THREE.Vector3(max.x, min.y, max.z),
+    new THREE.Vector3(max.x, max.y, max.z),
+    new THREE.Vector3(min.x, max.y, max.z),
+  ];
+  const edges = [
+    [0, 1],
+    [1, 2],
+    [2, 3],
+    [3, 0],
+    [4, 5],
+    [5, 6],
+    [6, 7],
+    [7, 4],
+    [0, 4],
+    [1, 5],
+    [2, 6],
+    [3, 7],
+  ];
+  const positions: number[] = [];
+  for (const [a, b] of edges) {
+    positions.push(corners[a].x, corners[a].y, corners[a].z, corners[b].x, corners[b].y, corners[b].z);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  return geometry;
+}
+
+function SelectionOutline({ box }: { box: THREE.Box3 }) {
+  const geometry = useMemo(() => boxOutlineGeometry(box), [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z]);
+  return (
+    <lineSegments geometry={geometry} raycast={() => null} renderOrder={4}>
+      <lineBasicMaterial color="#b9b3ff" transparent opacity={0.92} depthTest={false} depthWrite={false} />
+    </lineSegments>
+  );
+}
+
 function frameBox(camera: THREE.PerspectiveCamera, controls: { target: THREE.Vector3; update: () => void }, box: THREE.Box3) {
   const centre = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
@@ -275,29 +324,27 @@ function Framer({
   const camera = useThree((state) => state.camera) as THREE.PerspectiveCamera;
   const invalidate = useThree((state) => state.invalidate);
   const controls = useThree((state) => state.controls) as { target: THREE.Vector3; update: () => void } | null;
-  const modelsRef = useMemo(() => ({ current: models }), []);
-  modelsRef.current = models;
+  const modelSignal = useMemo(
+    () => models.reduce((count, model) => count + model.positions.length, models.length),
+    [models],
+  );
   useEffect(() => {
     if (!controls?.target || !controls.update) return;
-    // A frame request frames the part, not the machine. Falling back to the
-    // build volume meant `f` — and the frame the preview asks for after a
-    // slice — showed a plate with a speck on it while the toolpaths sat
-    // invisible at the distance that framing implies.
-    if (frameToken > 0) {
-      const chosen = modelsRef.current.find((model) => model.selected);
-      const parts = chosen ? [chosen] : modelsRef.current.filter((model) => model.positions.length > 0);
-      if (parts.length > 0) {
-        const box = new THREE.Box3();
-        for (const part of parts) box.union(modelBox(part));
-        const size = box.getSize(new THREE.Vector3());
-        // 24 mm of padding swamped a 60 mm part: framing should leave air for
-        // the skirt, not a third of the viewport.
-        box.expandByScalar(Math.max(10, Math.max(size.x, size.y, size.z) * 0.45));
-        frameBox(camera, controls, box);
-        invalidate();
-        return;
-      }
+  // A frame request frames the part, not the machine. Falling back to the
+  // build volume before the bed size is known framed (0,0) at machine scale
+  // zero; after import the camera must re-aim at the geometry even when the
+  // user has not pressed F yet.
+    if (shouldFrameModels(models)) {
+      const parts = modelsToFrame(models) as SceneModel[];
+      const box = new THREE.Box3();
+      for (const part of parts) box.union(modelBox(part));
+      const size = box.getSize(new THREE.Vector3());
+      box.expandByScalar(Math.max(10, Math.max(size.x, size.y, size.z) * 0.45));
+      frameBox(camera, controls, box);
+      invalidate();
+      return;
     }
+    if (!canFrameBed(width, depth)) return;
     const x0 = centerIsZero ? -width / 2 : 0;
     const y0 = centerIsZero ? -depth / 2 : 0;
     const box = new THREE.Box3(
@@ -306,7 +353,18 @@ function Framer({
     );
     frameBox(camera, controls, box);
     invalidate();
-  }, [camera, controls, width, depth, height, centerIsZero, frameToken, modelsRef, invalidate]);
+  }, [
+    camera,
+    controls,
+    width,
+    depth,
+    height,
+    centerIsZero,
+    frameToken,
+    modelSignal,
+    models,
+    invalidate,
+  ]);
   return null;
 }
 
@@ -447,6 +505,7 @@ function PrintModel({
     number,
   ];
   const pivot = worldCentre(model.positions, model.transform);
+  const bounds = useMemo(() => modelBox(model), [model.positions, model.transform]);
 
   // A stroke is the path the cursor took over the surface, in the mesh's own
   // frame — the same frame as `model.positions`, which is the frame the core
@@ -530,6 +589,7 @@ function PrintModel({
       {model.selected && node && !measuring && (
         <TransformControls object={node} mode={mode} onMouseUp={publish} />
       )}
+      {model.selected && !measuring && viewStyle !== "wire" && <SelectionOutline box={bounds} />}
       <group
         ref={setNode}
         position={pivot}

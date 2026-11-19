@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
  * Headless UI capture with VITE_SHALE_MOCK=1 + vite preview.
- * Usage: node scripts/ui-screenshots.mjs --out docs/screens/after --width 1280
+ * Usage: node scripts/ui-screenshots.mjs --out docs/screens/ui-styles --width 1280
  */
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -14,41 +15,37 @@ const desktop = path.join(root, "apps/desktop");
 const require = createRequire(path.join(desktop, "package.json"));
 const { chromium } = require("playwright");
 
-const shots = [
-  { name: "home", url: "/?mock=home&recents=1" },
-  { name: "home-empty", url: "/?mock=home-empty&recents=0" },
-  { name: "home-about", url: "/?mock=home", click: [{ text: "About and credits", role: "button" }] },
-  { name: "home-settings", url: "/?mock=home", click: [{ text: "Settings", role: "button" }] },
-  { name: "home-printers", url: "/?mock=home", click: [{ text: "Printers", role: "button" }] },
-  { name: "prepare", url: "/?mock=workspace-preview&pane=prepare" },
-  { name: "preview", url: "/?mock=workspace-preview&pane=preview" },
-  { name: "device-lan", url: "/?mock=device-lan&pane=device" },
-  { name: "device-cloud-in", url: "/?mock=device-cloud-in&cloud=in&pane=device" },
-  { name: "device-cloud-out", url: "/?mock=device-cloud-out&cloud=out&pane=device" },
-  {
-    name: "process-sheet",
-    url: "/?mock=workspace-preview&pane=prepare",
-    click: [{ text: "Slice settings", role: "button" }],
-  },
-  {
-    name: "visibility-sheet",
-    url: "/?mock=workspace-preview&pane=prepare",
-    click: [
-      { text: "Slice settings", role: "button" },
-      { text: "settings shown", role: "button" },
-    ],
-  },
-  {
-    name: "titlebar-menu",
-    url: "/?mock=workspace-preview&pane=prepare",
-    click: [{ text: "File", role: "button" }],
-  },
+const UI_THEMES = [
+  { id: "deep-field", slug: "andromeda" },
+  { id: "saturn", slug: "saturn" },
+  { id: "nebula", slug: "nebula" },
+  { id: "lunar", slug: "lunar" },
 ];
+
+const TEMPLATE_SHOTS = [
+  { name: "home", url: "/?mock=home&recents=1" },
+  {
+    name: "home-settings",
+    url: "/?mock=home",
+    click: [{ text: "Settings", role: "button", within: ".start-menu" }],
+  },
+  { name: "prepare", url: "/?mock=workspace-preview&pane=prepare" },
+  { name: "prepare-import-framed", url: "/?mock=workspace-prepare&pane=prepare" },
+  { name: "preview", url: "/?mock=workspace-preview&pane=preview" },
+  { name: "device", url: "/?mock=device-lan&pane=device" },
+];
+
+function withTheme(url, themeId) {
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}uiStyle=${themeId}`;
+}
 
 function arg(name, fallback) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : fallback;
 }
+
+const MIN_CAPTURE_BYTES = 12_000;
 
 async function build() {
   await new Promise((resolve, reject) => {
@@ -59,9 +56,27 @@ async function build() {
     });
     child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error("build failed"))));
   });
+  const assets = path.join(desktop, "dist", "assets");
+  const bundle = readdirSync(assets).find((file) => file.startsWith("index-") && file.endsWith(".js"));
+  if (!bundle) throw new Error("mock build did not produce an index bundle");
+  const source = readFileSync(path.join(assets, bundle), "utf8");
+  if (!source.includes("mock plate")) {
+    throw new Error(
+      "built bundle is not a mock build (missing mock viewport). Set VITE_SHALE_MOCK=1 for capture.",
+    );
+  }
+}
+
+function freePort(port) {
+  try {
+    execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, { stdio: "ignore" });
+  } catch {
+    // nothing listening
+  }
 }
 
 async function previewServer() {
+  freePort(4173);
   const child = spawn("npx", ["vite", "preview", "--host", "127.0.0.1", "--port", "4173", "--strictPort"], {
     cwd: desktop,
     env: { ...process.env, VITE_SHALE_MOCK: "1" },
@@ -81,8 +96,32 @@ async function previewServer() {
   throw new Error("vite preview did not start");
 }
 
+function buildShotList(width, height) {
+  const shots = [];
+  for (const theme of UI_THEMES) {
+    for (const template of TEMPLATE_SHOTS) {
+      shots.push({
+        name: `${theme.slug}-${template.name}`,
+        url: withTheme(template.url, theme.id),
+        click: template.click,
+        width,
+        height,
+      });
+    }
+    if (width === 1280) {
+      shots.push({
+        name: `${theme.slug}-home-1080p`,
+        url: withTheme("/?mock=home&recents=1", theme.id),
+        width: 1920,
+        height: 1080,
+      });
+    }
+  }
+  return shots;
+}
+
 async function main() {
-  const outDir = path.resolve(root, arg("--out", "docs/screens/after"));
+  const outDir = path.resolve(root, arg("--out", "docs/screens/ui-styles"));
   const width = Number(arg("--width", "1280"));
   const height = Number(arg("--height", "800"));
   await mkdir(outDir, { recursive: true });
@@ -91,36 +130,64 @@ async function main() {
   const browser = await chromium.launch({
     args: ["--use-angle=swiftshader-webgl", "--enable-webgl", "--ignore-gpu-blocklist"],
   });
-  const context = await browser.newContext({
-    viewport: { width, height },
-    deviceScaleFactor: 1,
-  });
+  const shots = buildShotList(width, height);
   const capture = [];
   for (const shot of shots) {
+    const shotWidth = shot.width ?? width;
+    const shotHeight = shot.height ?? height;
+    const context = await browser.newContext({
+      viewport: { width: shotWidth, height: shotHeight },
+      deviceScaleFactor: 1,
+    });
     const page = await context.newPage();
+    const pageErrors = [];
+    page.on("pageerror", (err) => pageErrors.push(err.message));
     await page.goto(base + shot.url, { waitUntil: "networkidle" });
     await page.waitForTimeout(1800);
-    if (shot.url.includes("pane=prepare") || shot.url.includes("pane=preview") || shot.url.includes("pane=device")) {
-      await page.waitForSelector(".workspace, .device-pane, .viewport-mock", { timeout: 15_000 }).catch(() => {});
+    if (shot.url.includes("pane=prepare") || shot.url.includes("pane=preview")) {
+      await page.waitForSelector(".workspace .viewport-mock, .workspace", { timeout: 15_000 });
+    } else if (shot.url.includes("pane=device")) {
+      await page.waitForSelector(".device", { timeout: 15_000 });
     } else {
-      await page.waitForSelector(".home-pane, .start", { timeout: 15_000 }).catch(() => {});
+      await page.waitForSelector(".home-pane .start, .start", { timeout: 15_000 });
     }
     await page.waitForTimeout(400);
     for (const step of shot.click ?? []) {
-      const locator = page.getByRole(step.role, { name: step.text, exact: false }).first();
+      const root = step.within ? page.locator(step.within) : page;
+      const locator = root.getByRole(step.role, { name: step.text, exact: false }).first();
       if (await locator.count()) {
         await locator.click();
         await page.waitForTimeout(600);
       }
     }
-    const file = path.join(outDir, `${shot.name}-${width}x${height}.png`);
+    const file = path.join(outDir, `${shot.name}-${shotWidth}x${shotHeight}.png`);
     await page.screenshot({ path: file, fullPage: false });
+    const bytes = statSync(file).size;
+    if (bytes < MIN_CAPTURE_BYTES) {
+      throw new Error(
+        `${shot.name} screenshot too small (${bytes} B); likely blank UI. Console: ${pageErrors.join("; ") || "none"}`,
+      );
+    }
+    if (pageErrors.length > 0) {
+      throw new Error(`${shot.name} had page errors: ${pageErrors.join("; ")}`);
+    }
     capture.push(file);
-    await page.close();
+    await context.close();
   }
   await browser.close();
   child.kill("SIGTERM");
-  const manifest = { width, height, captured_at: new Date().toISOString(), files: capture.map((f) => path.relative(root, f)) };
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // already stopped
+  }
+  const manifest = {
+    width,
+    height,
+    captured_at: new Date().toISOString(),
+    files: capture.map((f) => path.relative(root, f)),
+  };
   await writeFile(path.join(outDir, `manifest-${width}x${height}.json`), JSON.stringify(manifest, null, 2));
   console.log(JSON.stringify(manifest, null, 2));
 }

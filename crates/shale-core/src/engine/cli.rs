@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value as Json;
 
-use super::{EngineOutput, EngineProgress, EngineRequest, SlicingEngine};
+use super::{absolutize_path, EngineOutput, EngineProgress, EngineRequest, SlicingEngine};
 use crate::error::Error;
 
 #[derive(Clone, Debug)]
@@ -63,6 +63,7 @@ impl CliEngine {
             command.current_dir(dir);
         }
         apply_lib_dir(&mut command, self.lib_dir.as_deref());
+        hide_engine_console(&mut command);
         if std::env::var_os("SHALE_TRACE").is_some() {
             // The engine's own argv, so a fail-fast (0xc0000409) can be read
             // against the flag it choked on instead of guessed at.
@@ -79,15 +80,35 @@ impl CliEngine {
                     output.status
                 ))
             }
-            Err(err) => Err(format!(
-                "could not start CuraEngine at '{}': {err}. On Windows, Shale looks for CuraEngine.exe inside an UltiMaker Cura folder under Program Files. Set SHALE_CURAENGINE to the full path if it lives somewhere else. DLLs are loaded from {}.",
-                self.program.display(),
-                self.lib_dir
-                    .as_ref()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "the system search path".into())
-            )),
+            Err(err) => Err(engine_start_failure_message(&self.program, self.lib_dir.as_deref(), &err)),
         }
+    }
+}
+
+fn lib_dir_display(lib_dir: Option<&Path>) -> String {
+    lib_dir
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "the system search path".into())
+}
+
+fn engine_start_failure_message(program: &Path, lib_dir: Option<&Path>, err: &std::io::Error) -> String {
+    let base = format!(
+        "could not start CuraEngine at '{}': {err}",
+        program.display()
+    );
+    #[cfg(windows)]
+    {
+        format!(
+            "{base}. Shale looks for CuraEngine.exe inside an UltiMaker Cura folder under Program Files. Set SHALE_CURAENGINE to the full path if it lives somewhere else. DLLs are loaded from {}.",
+            lib_dir_display(lib_dir)
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        format!(
+            "{base}. Set SHALE_CURAENGINE to the CuraEngine binary (for example from an UltiMaker Cura install or your package manager). Native libraries are loaded from {}.",
+            lib_dir_display(lib_dir)
+        )
     }
 }
 
@@ -149,18 +170,23 @@ impl SlicingEngine for CliEngine {
         if request.models.is_empty() {
             return Err(Error::Engine("nothing to slice".into()));
         }
-        if let Some(parent) = request.output_gcode.parent() {
+        let output_gcode = absolutize_path(&request.output_gcode)?;
+        if let Some(parent) = output_gcode.parent() {
             fs::create_dir_all(parent)?;
         }
-        let resolved_path = request.output_gcode.with_extension("resolved.json");
-        fs::write(&resolved_path, resolved_document(request)?)?;
+        let resolved_path = output_gcode.with_extension("resolved.json");
+        let resolved_request = EngineRequest {
+            output_gcode: output_gcode.clone(),
+            ..request.clone()
+        };
+        fs::write(&resolved_path, resolved_document(&resolved_request)?)?;
 
         let mut command = Command::new(&self.program);
         command
             .arg("slice")
             .arg("-p")
             .arg("-o")
-            .arg(&request.output_gcode)
+            .arg(&output_gcode)
             .arg("-r")
             .arg(&resolved_path);
         // `-s` applies to the object just loaded, so per-part overrides go
@@ -171,7 +197,7 @@ impl SlicingEngine for CliEngine {
             if let Some(index) = model.extruder {
                 command.arg(extruder_flag(index));
             }
-            command.arg("-l").arg(&model.path);
+            command.arg("-l").arg(absolutize_path(&model.path)?);
             for (key, value) in &model.settings {
                 command.arg("-s").arg(format!("{key}={value}"));
             }
@@ -182,7 +208,7 @@ impl SlicingEngine for CliEngine {
             if let Some(index) = modifier.extruder {
                 command.arg(extruder_flag(index));
             }
-            command.arg("-l").arg(&modifier.path);
+            command.arg("-l").arg(absolutize_path(&modifier.path)?);
             for (key, value) in &modifier.settings {
                 command.arg("-s").arg(format!("{key}={value}"));
             }
@@ -191,6 +217,7 @@ impl SlicingEngine for CliEngine {
             command.current_dir(dir);
         }
         apply_lib_dir(&mut command, self.lib_dir.as_deref());
+        hide_engine_console(&mut command);
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         if std::env::var_os("SHALE_TRACE").is_some() {
@@ -240,6 +267,7 @@ impl SlicingEngine for CliEngine {
         let started = Instant::now();
         let mut fraction = 0.04;
         let mut log: Vec<String> = Vec::new();
+        let mut layer_counter = LayerCounter::open(&output_gcode);
         on_progress(EngineProgress::new(fraction, "CuraEngine started"));
 
         let push_log = |line: String, log: &mut Vec<String>| {
@@ -256,7 +284,10 @@ impl SlicingEngine for CliEngine {
                 }
                 push_log(line, &mut log);
             }
-            if let Some(layers) = count_layers(&request.output_gcode) {
+            if layer_counter.is_none() {
+                layer_counter = LayerCounter::open(&output_gcode);
+            }
+            if let Some(layers) = layer_counter.as_mut().and_then(|counter| counter.refresh()) {
                 if request.estimated_layers > 0 {
                     let estimate =
                         (layers as f32 / request.estimated_layers as f32).clamp(0.05, 0.97);
@@ -301,16 +332,16 @@ impl SlicingEngine for CliEngine {
                 "CuraEngine exited with status {status}.\n{log_tail}"
             )));
         }
-        if !request.output_gcode.is_file() {
+        if !output_gcode.is_file() {
             return Err(Error::Engine(format!(
                 "CuraEngine finished without writing {}",
-                request.output_gcode.display()
+                output_gcode.display()
             )));
         }
         let _ = fs::remove_file(&resolved_path);
         on_progress(EngineProgress::new(1.0, "Slicing finished"));
         Ok(EngineOutput {
-            gcode_path: request.output_gcode.clone(),
+            gcode_path: output_gcode,
             print_time_seconds: print_time(&log_tail),
             log_tail,
         })
@@ -323,7 +354,7 @@ fn resolved_document(request: &EngineRequest) -> Result<String, Error> {
     for (index, extruder) in request.extruders.iter().enumerate() {
         root.insert(format!("extruder.{index}"), map_to_json(extruder));
     }
-    serde_json::to_string_pretty(&Json::Object(root))
+    serde_json::to_string(&Json::Object(root))
         .map_err(|err| Error::message(format!("could not encode resolved settings: {err}")))
 }
 
@@ -364,6 +395,21 @@ fn program_uses_external_lib_dir(program: &Path) -> bool {
     // PE (Windows) and Mach-O binaries are native executables, not shell wrappers.
     n >= 2 && header[0] == b'M' && header[1] == b'Z'
 }
+
+/// Hide console windows for CuraEngine children when the GUI sets `SHALE_HIDE_ENGINE_CONSOLE`.
+#[cfg(windows)]
+pub(crate) fn hide_engine_console(command: &mut Command) {
+    if std::env::var_os("SHALE_HIDE_ENGINE_CONSOLE")
+        .is_some_and(|value| value != "0" && !value.is_empty())
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn hide_engine_console(_command: &mut Command) {}
 
 pub(crate) fn apply_lib_dir(command: &mut Command, lib_dir: Option<&Path>) {
     let Some(lib_dir) = lib_dir else {
@@ -436,19 +482,71 @@ fn layer_fraction(lower: &str) -> Option<f32> {
     Some((current / total).clamp(0.0, 1.0))
 }
 
-fn count_layers(path: &Path) -> Option<u32> {
-    let text = fs::read_to_string(path).ok()?;
-    let count = text.matches(";LAYER:").count() as u32;
-    if count == 0 {
-        None
-    } else {
-        Some(count)
+struct LayerCounter {
+    reader: BufReader<std::fs::File>,
+    count: u32,
+    finished: bool,
+}
+
+impl LayerCounter {
+    fn open(path: &Path) -> Option<Self> {
+        let file = std::fs::File::open(path).ok()?;
+        Some(Self {
+            reader: BufReader::new(file),
+            count: 0,
+            finished: false,
+        })
+    }
+
+    fn refresh(&mut self) -> Option<u32> {
+        if self.finished {
+            return if self.count == 0 {
+                None
+            } else {
+                Some(self.count)
+            };
+        }
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let read = self.reader.read_line(&mut line).ok()?;
+            if read == 0 {
+                self.finished = true;
+                break;
+            }
+            if line.contains(";LAYER:") {
+                self.count = self.count.saturating_add(1);
+            }
+        }
+        if self.count == 0 {
+            None
+        } else {
+            Some(self.count)
+        }
     }
 }
 
 #[cfg(test)]
 mod path_tests {
     use std::path::PathBuf;
+
+    use super::absolutize_path;
+
+    #[test]
+    fn a_relative_output_path_becomes_absolute_against_cwd() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let previous = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(dir.path()).expect("chdir");
+        let resolved =
+            absolutize_path(std::path::Path::new("nested/out.gcode")).expect("absolutize");
+        std::env::set_current_dir(previous).ok();
+        assert!(resolved.is_absolute(), "{}", resolved.display());
+        assert!(
+            resolved.ends_with("nested/out.gcode"),
+            "{}",
+            resolved.display()
+        );
+    }
 
     #[test]
     fn a_temp_path_with_spaces_stays_one_argument() {

@@ -12,9 +12,11 @@ use std::path::Path;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::Error;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Material {
     pub id: String,
     pub brand: String,
@@ -28,14 +30,14 @@ pub struct Material {
     pub machines: Vec<MachineMaterial>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct MachineMaterial {
     pub products: Vec<String>,
     pub settings: HashMap<String, f64>,
     pub hotends: Vec<HotendMaterial>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct HotendMaterial {
     pub id: String,
     pub settings: HashMap<String, f64>,

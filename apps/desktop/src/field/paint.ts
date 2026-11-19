@@ -6,10 +6,12 @@
  * the shared clock is capped at about 30 fps by the caller.
  */
 
+import { DEFAULT_PLATE_TUNE, type PlateTune } from "./plate-tune";
+
 export const RAMP = " .:-=+*#%@";
 export const CELL = 11;
 const LENS = 96;
-const BG = [6, 7, 11] as const;
+const DEFAULT_BG = [6, 7, 11] as const;
 
 export interface FieldPainter {
   paint(time: number, pointerX: number, pointerY: number, comet: boolean): void;
@@ -18,6 +20,8 @@ export interface FieldPainter {
 export function createField(
   canvas: HTMLCanvasElement,
   image: HTMLImageElement,
+  backgroundRgb: readonly [number, number, number] = DEFAULT_BG,
+  tune: PlateTune = DEFAULT_PLATE_TUNE,
 ): FieldPainter {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) {
@@ -77,12 +81,16 @@ export function createField(
     baseB = new Uint8Array(count);
     offsetX = new Float32Array(count);
     offsetY = new Float32Array(count);
-    const fit = Math.max(width / iw, height / ih) * 1.03;
+    const scaleBase =
+      tune.fitMode === "contain"
+        ? Math.min(width / iw, height / ih)
+        : Math.max(width / iw, height / ih);
+    const fit = scaleBase * (tune.fitScaleMul ?? (tune.fitMode === "contain" ? 0.94 : 1.03));
     fitted = {
       drawW: iw * fit,
       drawH: ih * fit,
-      originX: (width - iw * fit) / 2,
-      originY: (height - ih * fit) / 2,
+      originX: (width - iw * fit) / 2 + (tune.fitBiasX ?? 0) * width,
+      originY: (height - ih * fit) / 2 + (tune.fitBiasY ?? 0) * height,
     };
     // The picture is fixed. Only a sparse, deterministic set of cells pulses,
     // each on its own period, so the field reads as a still frame with a few
@@ -95,7 +103,8 @@ export function createField(
     for (let row = 0; row < rows; row += 1) {
       for (let col = 0; col < cols; col += 1) {
         const hash = ((col * 73856093) ^ (row * 19349663)) >>> 0;
-        if (hash % 97 !== 0) continue;
+        const period = tune.twinklePeriod ?? 97;
+        if (period <= 0 || hash % period !== 0) continue;
         const index = row * cols + col;
         twinkleList.push(index);
         const wobble = (hash >>> 8) % 1000;
@@ -104,7 +113,7 @@ export function createField(
         twinkleAmp[index] = wobble % 3 === 0 ? 2 : 1;
       }
     }
-    fillBackground(buffer, width, height);
+    fillBackground(buffer, width, height, backgroundRgb);
     return true;
   };
 
@@ -115,20 +124,70 @@ export function createField(
         const index = row * cols + col;
         const cx = col * CELL + CELL / 2;
         const cy = row * CELL + CELL / 2;
-        const localX = Math.min(drawW - 0.001, Math.max(0, cx - originX + shiftX));
-        const localY = Math.min(drawH - 0.001, Math.max(0, cy - originY + shiftY));
-        const sx = Math.min(iw - 1, Math.floor((localX / drawW) * iw));
-        const sy = Math.min(ih - 1, Math.floor((localY / drawH) * ih));
+        const rawX = cx - originX + shiftX;
+        const rawY = cy - originY + shiftY;
+        if (rawX < 0 || rawY < 0 || rawX >= drawW || rawY >= drawH) {
+          baseGlyph[index] = 0;
+          continue;
+        }
+        const localX = rawX;
+        const localY = rawY;
+        const inset = tune.sampleInset ?? 0;
+        let sx = Math.min(iw - 1, Math.floor((localX / drawW) * iw));
+        let sy = Math.min(ih - 1, Math.floor((localY / drawH) * ih));
+        if (sx <= inset || sx >= iw - 1 - inset || sy <= inset || sy >= ih - 1 - inset) {
+          baseGlyph[index] = 0;
+          continue;
+        }
         const pixel = (sy * iw + sx) * 4;
         const red = pixels[pixel];
         const green = pixels[pixel + 1];
         const blue = pixels[pixel + 2];
-        const luma = Math.pow((0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255, 0.45);
-        const step = Math.round(luma * (RAMP.length - 1));
+        const emptyMax = tune.emptyPixelMax;
+        if (emptyMax != null && Math.max(red, green, blue) <= emptyMax) {
+          baseGlyph[index] = 0;
+          continue;
+        }
+        if (tune.matchBackgroundEmpty) {
+          const dr = Math.abs(red - backgroundRgb[0]);
+          const dg = Math.abs(green - backgroundRgb[1]);
+          const db = Math.abs(blue - backgroundRgb[2]);
+          if (dr + dg + db < 22) {
+            baseGlyph[index] = 0;
+            continue;
+          }
+        }
+        let luma = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
+        luma = Math.pow(luma, tune.lumaPower ?? 0.45);
+        luma *= tune.lumaGain ?? 1;
+        const floor = tune.lumaFloor ?? 0;
+        if (luma < floor) {
+          baseGlyph[index] = 0;
+          baseR[index] = 0;
+          baseG[index] = 0;
+          baseB[index] = 0;
+          continue;
+        }
+        const step = Math.round(Math.min(1, luma) * (RAMP.length - 1));
         baseGlyph[index] = step;
-        baseR[index] = red;
-        baseG[index] = green;
-        baseB[index] = blue;
+        const mode = tune.glyphFrom ?? "pixel";
+        if (mode === "graphite") {
+          const lo = tune.glyphTintLo ?? [78, 88, 104];
+          const hi = tune.glyphTintHi ?? [38, 44, 58];
+          const t = step / Math.max(1, RAMP.length - 1);
+          baseR[index] = Math.round(lo[0] + (hi[0] - lo[0]) * t);
+          baseG[index] = Math.round(lo[1] + (hi[1] - lo[1]) * t);
+          baseB[index] = Math.round(lo[2] + (hi[2] - lo[2]) * t);
+        } else if (mode === "nebula") {
+          const t = step / Math.max(1, RAMP.length - 1);
+          baseR[index] = Math.round(120 + 100 * t);
+          baseG[index] = Math.round(70 + 40 * t);
+          baseB[index] = Math.round(160 + 70 * t);
+        } else {
+          baseR[index] = red;
+          baseG[index] = green;
+          baseB[index] = blue;
+        }
       }
     }
   };
@@ -252,7 +311,7 @@ export function createField(
       if (x1 <= x0 || y1 <= y0) return;
     }
 
-    clearRect(buffer, width, x0, y0, x1 - x0, y1 - y0);
+    clearRect(buffer, width, x0, y0, x1 - x0, y1 - y0, backgroundRgb);
     const c0 = Math.max(0, Math.floor((x0 - CELL - 16) / CELL));
     const c1 = Math.min(cols - 1, Math.ceil((x1 + 16) / CELL));
     const r0 = Math.max(0, Math.floor((y0 - CELL - 16) / CELL));
@@ -278,9 +337,20 @@ export function createField(
         let blue = Math.min(255, baseB[index] * gain);
         if (red + green + blue < 24) {
           const ink = 0.22 + influence * 0.5 + (lit ? 0.3 : 0);
-          red = 233 * ink;
-          green = 232 * ink;
-          blue = 242 * ink;
+          const mode = tune.glyphFrom ?? "pixel";
+          if (mode === "graphite") {
+            red = 72 * ink;
+            green = 80 * ink;
+            blue = 96 * ink;
+          } else if (mode === "nebula") {
+            red = 140 * ink;
+            green = 90 * ink;
+            blue = 200 * ink;
+          } else {
+            red = 233 * ink;
+            green = 232 * ink;
+            blue = 242 * ink;
+          }
         }
         stamp(
           buffer,
@@ -344,8 +414,13 @@ function glyphMasks(): Uint8Array[] {
   return masks;
 }
 
-function fillBackground(buffer: Uint8ClampedArray, width: number, height: number) {
-  clearRect(buffer, width, 0, 0, width, height);
+function fillBackground(
+  buffer: Uint8ClampedArray,
+  width: number,
+  height: number,
+  bg: readonly [number, number, number],
+) {
+  clearRect(buffer, width, 0, 0, width, height, bg);
 }
 
 function clearRect(
@@ -355,6 +430,7 @@ function clearRect(
   y: number,
   w: number,
   h: number,
+  bg: readonly [number, number, number],
 ) {
   const x0 = Math.max(0, x);
   const y0 = Math.max(0, y);
@@ -363,9 +439,9 @@ function clearRect(
   for (let row = y0; row < y1; row += 1) {
     let index = (row * width + x0) * 4;
     for (let col = x0; col < x1; col += 1) {
-      buffer[index] = BG[0];
-      buffer[index + 1] = BG[1];
-      buffer[index + 2] = BG[2];
+      buffer[index] = bg[0];
+      buffer[index + 1] = bg[1];
+      buffer[index + 2] = bg[2];
       buffer[index + 3] = 255;
       index += 4;
     }

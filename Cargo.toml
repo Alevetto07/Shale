@@ -9,6 +9,9 @@ members = [
     "apps/desktop/src-tauri",
 ]
 
+[workspace.package]
+license = "AGPL-3.0-or-later"
+
 # Import, tessellation and slicing all spend their time inside dependencies
 # (serde_json, zip, truck, tokio). Optimising only the dependency crates keeps
 # `cargo build -p shale-desktop` in the same ballpark as before while the
@@ -27,3 +30,9 @@ opt-level = 1
 
 [profile.test.package."*"]
 opt-level = 3
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = true

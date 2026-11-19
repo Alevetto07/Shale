@@ -80,7 +80,7 @@ export function mockStatus(): Status {
     engine_message: "",
     engine_backend: "cli",
     printer_count: MOCK_PRINTERS.length,
-    version: "0.1.0",
+    version: "0.1.4",
     catalog_loading: false,
     catalog_full: true,
   };

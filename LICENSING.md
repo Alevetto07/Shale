@@ -1,6 +1,6 @@
 # Licensing
 
-Shale is a new program. **Its own source code does not have a licence yet.** Alessio (the repository owner) needs to choose one before the project is distributed. Until that choice is written down here, do not assume the code is open source, and do not copy it into another project.
+Shale's original source code is licensed under the **GNU Affero General Public License v3.0 or later** (AGPL-3.0-or-later). The full text is in [LICENSE](LICENSE) at the repository root and is shipped beside `Shale.exe` and in CLI packages.
 
 The pieces Shale runs *with* keep their own licences. They are not relicensed by being used from this repository.
 
@@ -38,7 +38,7 @@ The wordmark is Space Grotesk, weight 600. Panels and controls are Geist Mono. L
 
 ## STEP tessellation (Apache-2.0)
 
-Shale tessellates STEP boundary representation itself, instead of asking for an STL. The kernel is [truck](https://github.com/ricosjp/truck): `truck-stepio`, `truck-modeling`, `truck-meshalgo`, and `truck-topology`, all Apache-2.0. The STEP parser underneath (`ruststep`) is Apache-2.0. The constrained Delaunay step uses `spade`, which is MIT OR Apache-2.0. Cargo fetches them. Their source is not copied into this repository. Shale's own code is still unlicensed, as stated at the top of this file.
+Shale tessellates STEP boundary representation itself, instead of asking for an STL. The kernel is [truck](https://github.com/ricosjp/truck): `truck-stepio`, `truck-modeling`, `truck-meshalgo`, and `truck-topology`, all Apache-2.0. The STEP parser underneath (`ruststep`) is Apache-2.0. The constrained Delaunay step uses `spade`, which is MIT OR Apache-2.0. Cargo fetches them. Their source is not copied into this repository. Shale's own code is under AGPL-3.0-or-later, as stated at the top of this file.
 
 ## The libraries the host brought in
 
@@ -68,11 +68,11 @@ Open CASCADE (OCCT) was the other candidate. It is LGPL-2.1 with an additional e
 
 ## MCP SDK (Apache-2.0)
 
-`crates/shale-mcp` depends on the [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) crate to speak the Model Context Protocol. That crate is Apache-2.0. Shale does not copy its source; Cargo fetches it as a normal dependency. Shale's own code is still unlicensed, as stated at the top of this file.
+`crates/shale-mcp` depends on the [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) crate to speak the Model Context Protocol. That crate is Apache-2.0. Shale does not copy its source; Cargo fetches it as a normal dependency. Shale's own code is under AGPL-3.0-or-later, as stated at the top of this file.
 
 ## What you need to do before a release
 
-1. Choose a licence for Shale's own code and replace the note at the top of this file.
+1. Ship [LICENSE](LICENSE) (AGPL-3.0-or-later) beside the binaries and in the Windows installer (`bundle.licenseFile`).
 2. Keep the fetch script's pins, and ship or document the Cura `LICENSE` and the fdm_materials `LICENSE` next to the data.
 3. If a CuraEngine binary is bundled, ship it unmodified and comply with the AGPL-3.0 for that binary.
 4. If a later version links OpenCASCADE, add the LGPL-2.1 text and the OCCT exception, and keep that library replaceable. The current tessellator does not.

@@ -1,0 +1,41 @@
+/**
+ * Nebula — magenta and violet glow on inky space.
+ */
+
+[data-ui-theme="nebula"] {
+  color-scheme: dark;
+
+  --bg: #09060e;
+  --panel: #120a1a;
+  --panel-raised: #181024;
+  --ink: #efe6f8;
+  --ink-2: rgba(239, 230, 248, 0.78);
+  --ink-3: rgba(239, 230, 248, 0.56);
+  --line: rgba(239, 230, 248, 0.12);
+  --line-strong: rgba(239, 230, 248, 0.24);
+  --accent: #e07aff;
+  --accent-soft: rgba(224, 122, 255, 0.15);
+  --accent-muted: rgba(224, 122, 255, 0.48);
+  --danger: #ff6b88;
+  --danger-hover: #ff8299;
+
+  --muted: var(--ink-2);
+  --dim: var(--ink-3);
+
+  --surface-hover: rgba(224, 122, 255, 0.08);
+  --surface-active: rgba(224, 122, 255, 0.16);
+  --surface-inset: color-mix(in srgb, var(--panel) 80%, #1a0828);
+
+  --scrollbar-thumb: rgba(239, 230, 248, 0.3);
+  --scrollbar-track: var(--panel);
+
+  --shadow-sheet: 0 18px 52px rgba(40, 0, 60, 0.55);
+  --shadow-float: 0 32px 96px rgba(30, 0, 48, 0.65);
+
+  font-family: var(--mono);
+  font-weight: 400;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: var(--text-base);
+  line-height: 1.45;
+}

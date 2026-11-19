@@ -1,0 +1,64 @@
+/**
+ * Structural design tokens shared by every UI theme.
+ * Colour values live in per-theme files (e.g. deep-field.css).
+ */
+
+:root {
+  /* Spacing scale (4px base) */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-7: 2rem;
+  --space-8: 2.5rem;
+
+  /* Corner radii */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  /* Typography scale */
+  --text-2xs: 0.62rem;
+  --text-xs: 0.68rem;
+  --text-sm: 0.72rem;
+  --text-md: 0.82rem;
+  --text-base: 13px;
+  --text-lg: 14px;
+
+  /* Elevation & surfaces */
+  --shadow-sheet: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --shadow-float: 0 30px 90px rgba(0, 0, 0, 0.65);
+  --blur-panel: 6px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-fast: 120ms;
+  --duration-mid: 160ms;
+  --duration-slow: 220ms;
+  --transition-interactive: color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    opacity var(--duration-fast) var(--ease-out);
+
+  /* Focus */
+  --focus-ring: 1px solid var(--accent);
+  --focus-offset: 2px;
+
+  /* Aliases used in a few late-added rules */
+  --ink-dim: var(--ink-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-mid: 0ms;
+    --duration-slow: 0ms;
+    --transition-interactive: none;
+  }
+}

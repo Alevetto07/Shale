@@ -1,8 +1,9 @@
 [package]
 name = "shale-cli"
-version = "0.1.0"
+version = "0.1.4"
 edition = "2021"
 description = "Shale without the window: slice a model from a terminal"
+license.workspace = true
 publish = false
 
 # Not `shale`: on Windows a file name is case-insensitive, so `shale.exe` and
@@ -15,3 +16,6 @@ path = "src/main.rs"
 [dependencies]
 shale-core = { path = "../shale-core" }
 serde_json = "1"
+
+[dev-dependencies]
+shale-core = { path = "../shale-core" }

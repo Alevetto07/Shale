@@ -446,22 +446,28 @@ mod tests {
         FeatureKind, RegionRole, SupportComparison, SupportParams, SupportPlan, SupportRegion,
     };
 
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("shale-project-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp_dir(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("shale-project-{name}-"))
+            .tempdir()
+            .unwrap();
+        let path = dir.path().to_path_buf();
+        (dir, path)
     }
 
-    fn triangle() -> Vec<u8> {
+    fn triangle() -> (tempfile::NamedTempFile, Vec<u8>) {
         let mesh = TriangleMesh {
             vertices: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 8.0, 4.0]],
             triangles: vec![[0, 1, 2]],
         };
-        let path =
-            std::env::temp_dir().join(format!("shale-project-tri-{}.stl", std::process::id()));
-        write_binary_stl(&path, &mesh).unwrap();
-        fs::read(&path).unwrap()
+        let file = tempfile::Builder::new()
+            .prefix("shale-project-tri-")
+            .suffix(".stl")
+            .tempfile()
+            .unwrap();
+        write_binary_stl(file.path(), &mesh).unwrap();
+        let bytes = fs::read(file.path()).unwrap();
+        (file, bytes)
     }
 
     fn sample_support() -> SupportPlan {
@@ -495,7 +501,7 @@ mod tests {
 
     #[test]
     fn project_round_trip_keeps_bambu_process_and_overrides() {
-        let dir = temp_dir("bambu-round");
+        let (_root, dir) = temp_dir("bambu-round");
         let path = dir.join("override-roundtrip.shale");
         let saved = ProjectData {
             name: "override-roundtrip".into(),
@@ -520,7 +526,10 @@ mod tests {
         };
         write_project(&path, &saved).unwrap();
         let loaded = read_project(&path).unwrap().data;
-        assert_eq!(loaded.quality_type.as_deref(), Some("0_20mm_standard_bbl_a1"));
+        assert_eq!(
+            loaded.quality_type.as_deref(),
+            Some("0_20mm_standard_bbl_a1")
+        );
         assert_eq!(loaded.variant_name.as_deref(), Some("0.4 mm"));
         assert_eq!(loaded.material_id.as_deref(), Some("bambu_pla_basic"));
         assert_eq!(loaded.settings.layer_height, Some(0.16));
@@ -528,9 +537,9 @@ mod tests {
 
     #[test]
     fn project_round_trip_keeps_step_bytes_and_choices() {
-        let dir = temp_dir("round");
+        let (_root, dir) = temp_dir("round");
         let path = dir.join("bracket.shale");
-        let stl = triangle();
+        let (_stl_file, stl) = triangle();
         let step = include_bytes!("../../../examples/block-20.step").to_vec();
         let signature = b"ISO-10303-21";
         assert!(
@@ -631,7 +640,7 @@ mod tests {
 
     #[test]
     fn missing_model_entry_is_an_error() {
-        let dir = temp_dir("missing-entry");
+        let (_root, dir) = temp_dir("missing-entry");
         let path = dir.join("gap.shale");
         let mut raw = Vec::new();
         {
@@ -653,11 +662,12 @@ mod tests {
 
     #[test]
     fn missing_project_file_is_an_error() {
-        let path = std::env::temp_dir().join(format!(
-            "shale-no-such-project-{}-{}.shale",
-            std::process::id(),
-            now_ms()
-        ));
+        let missing = tempfile::Builder::new()
+            .prefix("shale-no-such-project-")
+            .suffix(".shale")
+            .tempfile()
+            .unwrap();
+        let path = missing.path().to_path_buf();
         let _ = fs::remove_file(&path);
         let err = read_project(&path).unwrap_err();
         let text = err.to_string();
@@ -667,7 +677,7 @@ mod tests {
 
     #[test]
     fn recents_keep_eight_and_mark_missing_files() {
-        let dir = temp_dir("recents");
+        let (_root, dir) = temp_dir("recents");
         let first = dir.join("one.shale");
         fs::write(&first, b"a").unwrap();
         let second = dir.join("two.shale");

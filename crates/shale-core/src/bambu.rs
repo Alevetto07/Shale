@@ -16,9 +16,33 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
+static SESSION_LIBRARY: RwLock<Option<(PathBuf, Library)>> = RwLock::new(None);
+
+/// Drop the in-memory Bambu library after imported profiles change.
+pub fn invalidate_session_library() {
+    if let Ok(mut guard) = SESSION_LIBRARY.write() {
+        *guard = None;
+    }
+}
+
+#[cfg(test)]
+static TEST_PROFILES_ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+#[cfg(test)]
+pub(crate) fn set_test_profiles_root(dir: Option<PathBuf>) {
+    if let Ok(mut guard) = TEST_PROFILES_ROOT.write() {
+        *guard = dir;
+    }
+}
+
+use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
+use rayon::prelude::*;
+
+use crate::catalog_cache::{load_bambu_library, store_bambu_library_async};
 use crate::definition::{Definition, RawSetting};
 use crate::instance::InstanceFile;
 use crate::material::{MachineMaterial, Material};
@@ -39,7 +63,7 @@ const MAX_DEPTH: usize = 12;
 /// Bambu Studio keeps them in files beside the machine profile rather than in
 /// the profile itself, and they are templates, not G-code: see
 /// `crate::template` for the filling.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MachineGcode {
     pub start: String,
     pub end: String,
@@ -72,6 +96,7 @@ fn machine_gcode(dir: &Path, profile_file: &str) -> Option<MachineGcode> {
     })
 }
 
+#[derive(Clone)]
 pub struct Library {
     pub definitions: Vec<Definition>,
     pub instances: Vec<InstanceFile>,
@@ -89,7 +114,40 @@ impl Library {
     /// Load from the configured profile root, or an empty library when no
     /// slicer is installed. Never fails: a missing library is normal.
     pub fn load() -> Self {
-        Self::from_root(root())
+        let Some(root) = profiles_root() else {
+            return Self::empty();
+        };
+        if let Ok(guard) = SESSION_LIBRARY.read() {
+            if let Some((cached_root, library)) = guard.as_ref() {
+                if cached_root == &root {
+                    return Self::apply_imported_overlay(library.clone());
+                }
+            }
+        }
+        if let Some(library) = load_bambu_library(&root) {
+            let library = Self::apply_imported_overlay(library);
+            if let Ok(mut guard) = SESSION_LIBRARY.write() {
+                *guard = Some((root.clone(), library.clone()));
+            }
+            return library;
+        }
+        let library = Self::apply_imported_overlay(Self::from_root(Some(root.clone())));
+        if let Ok(mut guard) = SESSION_LIBRARY.write() {
+            *guard = Some((root.clone(), library.clone()));
+        }
+        store_bambu_library_async(root, library.clone());
+        library
+    }
+
+    fn apply_imported_overlay(mut library: Self) -> Self {
+        let Some(overlay_root) = imported_profiles_root() else {
+            return library;
+        };
+        if !overlay_root.is_dir() {
+            return library;
+        }
+        library.merge(Self::from_root(Some(overlay_root)));
+        library
     }
 
     pub fn from_root(root: Option<PathBuf>) -> Self {
@@ -215,7 +273,14 @@ impl Library {
     }
 }
 
-fn root() -> Option<PathBuf> {
+/// Directory that holds Orca/Bambu `resources/profiles`, from env or common installs.
+pub fn profiles_root() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Ok(guard) = TEST_PROFILES_ROOT.read() {
+        if let Some(dir) = guard.as_ref() {
+            return Some(dir.clone());
+        }
+    }
     if let Some(dir) = std::env::var_os("SHALE_ORCA_DIR") {
         return Some(PathBuf::from(dir));
     }
@@ -335,6 +400,17 @@ fn profiles_in(dir: &Path) -> Vec<(String, Json)> {
         }
         index.insert(stem.to_ascii_lowercase(), path);
     }
+    let raw: HashMap<String, Json> = index
+        .par_iter()
+        .filter_map(|(lower, path)| {
+            use std::fs::File;
+            use std::io::BufReader;
+            let file = File::open(path).ok()?;
+            let reader = BufReader::new(file);
+            let value: Json = serde_json::from_reader(reader).ok()?;
+            Some((lower.clone(), value))
+        })
+        .collect();
     let mut stems: Vec<(String, String)> = index
         .iter()
         .filter_map(|(lower, path)| {
@@ -347,7 +423,7 @@ fn profiles_in(dir: &Path) -> Vec<(String, Json)> {
     let mut memo: HashMap<String, Json> = HashMap::new();
     let mut out = Vec::with_capacity(stems.len());
     for (stem, lower) in stems {
-        if let Some(values) = resolve_chain(&index, &mut memo, &lower, 0) {
+        if let Some(values) = resolve_chain(&raw, &mut memo, &lower, 0) {
             out.push((stem, values));
         }
     }
@@ -356,7 +432,7 @@ fn profiles_in(dir: &Path) -> Vec<(String, Json)> {
 
 /// Read `stem.json` and merge everything it inherits, parent first.
 fn resolve_chain(
-    index: &HashMap<String, PathBuf>,
+    raw: &HashMap<String, Json>,
     memo: &mut HashMap<String, Json>,
     stem: &str,
     depth: usize,
@@ -367,17 +443,107 @@ fn resolve_chain(
     if let Some(cached) = memo.get(stem) {
         return Some(cached.clone());
     }
-    let path = index.get(stem)?;
-    let text = fs::read_to_string(path).ok()?;
-    let value: Json = serde_json::from_str(&text).ok()?;
+    let value = raw.get(stem)?;
     let parent = value
         .get("inherits")
         .and_then(|name| name.as_str())
-        .and_then(|name| resolve_chain(index, memo, &name.to_ascii_lowercase(), depth + 1));
+        .and_then(|name| resolve_chain(raw, memo, &name.to_ascii_lowercase(), depth + 1));
     let mut merged = parent.unwrap_or_else(|| Json::Object(Default::default()));
-    merge_json(&mut merged, &value);
+    merge_json(&mut merged, value);
     memo.insert(stem.to_string(), merged.clone());
     Some(merged)
+}
+
+/// Build a lowercase stem → parsed JSON map from every `.json` file under `dirs`.
+pub fn raw_profile_index(dirs: &[PathBuf]) -> HashMap<String, Json> {
+    let mut index: HashMap<String, PathBuf> = HashMap::new();
+    for dir in dirs {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            if stem.contains(" template ") {
+                continue;
+            }
+            index.insert(stem.to_ascii_lowercase(), path);
+        }
+    }
+    index
+        .par_iter()
+        .filter_map(|(lower, path)| {
+            use std::fs::File;
+            use std::io::BufReader;
+            let file = File::open(path).ok()?;
+            let reader = BufReader::new(file);
+            let value: Json = serde_json::from_reader(reader).ok()?;
+            Some((lower.clone(), value))
+        })
+        .collect()
+}
+
+/// Merge a preset's `inherits` chain using JSON libraries found under `lookup_dirs`.
+pub fn flatten_preset_from_dirs(
+    preset_path: &Path,
+    lookup_dirs: &[PathBuf],
+) -> Result<Json, String> {
+    let stem = preset_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| "preset file has no name".to_string())?;
+    let lower = stem.to_ascii_lowercase();
+    let mut dirs: Vec<PathBuf> = lookup_dirs.to_vec();
+    if let Some(parent) = preset_path.parent() {
+        dirs.push(parent.to_path_buf());
+    }
+    let mut raw = raw_profile_index(&dirs);
+    if !raw.contains_key(&lower) {
+        let text = std::fs::read_to_string(preset_path)
+            .map_err(|err| format!("read {}: {err}", preset_path.display()))?;
+        let value: Json =
+            serde_json::from_str(&text).map_err(|err| format!("json in {}: {err}", preset_path.display()))?;
+        raw.insert(lower.clone(), value);
+    }
+    if let Some(parent) = raw
+        .get(&lower)
+        .and_then(|v| v.get("inherits"))
+        .and_then(|v| v.as_str())
+    {
+        let parent_key = parent.to_ascii_lowercase();
+        if !raw.contains_key(&parent_key) {
+            return Err(format!("missing inherits parent `{parent}` for `{stem}`"));
+        }
+    }
+    let mut memo = HashMap::new();
+    resolve_chain(&raw, &mut memo, &lower, 0)
+        .ok_or_else(|| format!("could not resolve inherits for `{stem}`"))
+}
+
+/// Optional overlay tree written by slicer import (`…/imported-profiles`).
+pub fn imported_profiles_root() -> Option<PathBuf> {
+    std::env::var_os("SHALE_IMPORTED_PROFILES").map(PathBuf::from)
+}
+
+impl Library {
+    /// Append another library's entries, skipping definition ids that already exist.
+    pub fn merge(&mut self, other: Library) {
+        let existing: HashSet<String> = self.definitions.iter().map(|d| d.id.clone()).collect();
+        for definition in other.definitions {
+            if existing.contains(&definition.id) {
+                continue;
+            }
+            self.definitions.push(definition);
+        }
+        self.instances.extend(other.instances);
+        self.materials.extend(other.materials);
+        self.gcode.extend(other.gcode);
+    }
 }
 
 fn merge_json(into: &mut Json, from: &Json) {
@@ -581,7 +747,10 @@ fn insert_cura_scalar(out: &mut HashMap<String, String>, cura_key: &str, value: 
 /// Bambu machine keys that CuraEngine understands for time estimation.
 fn machine_values_for_cura(values: &Json) -> HashMap<String, String> {
     const MAP: &[(&str, &str)] = &[
-        ("machine_max_acceleration_extruding", "machine_max_acceleration_e"),
+        (
+            "machine_max_acceleration_extruding",
+            "machine_max_acceleration_e",
+        ),
         ("machine_max_acceleration_x", "machine_max_acceleration_x"),
         ("machine_max_acceleration_y", "machine_max_acceleration_y"),
         ("machine_max_acceleration_z", "machine_max_acceleration_z"),
@@ -923,7 +1092,7 @@ pub fn template_scalars_for_slice(
     quality_type: &str,
     material_id: &str,
 ) -> HashMap<String, String> {
-    let Some(root) = root() else {
+    let Some(root) = profiles_root() else {
         return HashMap::new();
     };
     let Some(dir) = vendor_dir_for_printer(&root, printer_id) else {
@@ -1002,7 +1171,7 @@ pub fn template_lists_for_slice(
     quality_type: &str,
     material_id: &str,
 ) -> HashMap<String, Vec<crate::template::Value>> {
-    let Some(root) = root() else {
+    let Some(root) = profiles_root() else {
         return HashMap::new();
     };
     let Some(dir) = vendor_dir_for_printer(&root, printer_id) else {
@@ -1318,7 +1487,7 @@ mod tests {
     use super::*;
 
     fn installed() -> Option<Library> {
-        let root = root()?;
+        let root = profiles_root()?;
         let library = Library::from_root(Some(root));
         (!library.is_empty()).then_some(library)
     }
@@ -1421,13 +1590,19 @@ mod tests {
         assert!((height - 0.2).abs() < 1e-9);
         assert!(quality.values.contains_key("infill_sparse_density"));
         assert!(quality.values.contains_key("wall_line_count"));
-        assert_eq!(quality.values.get("speed_wall_0").map(String::as_str), Some("200"));
-        assert_eq!(quality.values.get("speed_travel").map(String::as_str), Some("700"));
+        assert_eq!(
+            quality.values.get("speed_wall_0").map(String::as_str),
+            Some("200")
+        );
+        assert_eq!(
+            quality.values.get("speed_travel").map(String::as_str),
+            Some("700")
+        );
     }
 
     #[test]
     fn the_whole_library_reads_quickly() {
-        let Some(root) = root() else { return };
+        let Some(root) = profiles_root() else { return };
         // The first read is the disk's time, not the code's: on a cold page
         // cache Windows Defender opens every one of the ~780 profile files and
         // that alone took 38 s on this machine. What this test guards is that

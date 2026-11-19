@@ -38,27 +38,7 @@
   font-display: swap;
 }
 
-:root {
-  color-scheme: dark;
-  --bg: #06070b;
-  --panel: #0b0d14;
-  --ink: #e9e8f2;
-  --ink-2: rgba(233, 232, 242, 0.72);
-  --ink-3: rgba(233, 232, 242, 0.58);
-  --line: rgba(233, 232, 242, 0.12);
-  --accent: #b9b3ff;
-  --muted: var(--ink-2);
-  --dim: var(--ink-3);
-  --mono: "Geist Mono", ui-monospace, monospace;
-  --prose: "Inter", system-ui, sans-serif;
-  --wordmark: "Space Grotesk", system-ui, sans-serif;
-  font-family: var(--mono);
-  font-weight: 400;
-  background: var(--bg);
-  color: var(--ink);
-  font-size: 13px;
-  line-height: 1.45;
-}
+/* Colour and type tokens: themes/tokens.css + themes/deep-field.css */
 
 * { box-sizing: border-box; }
 
@@ -97,17 +77,15 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   flex-direction: column;
   min-height: 0;
 }
+/* Main workspaces fill the window below the tab strip. */
 .app > .workspace,
-.app > /* Home is a workspace, not a different window: the top bar and its tabs stay
-   where they are while the start screen sits in the main area. */
-/* Home is a workspace, not a different window: the start screen sits inside this
-   pane, so the tab strip and the four chips stay overhead. The pane is the
-   containing block for `.start` (which is inset: 0); without this it would take
-   the whole window and hide the very bar that got you here. */
+.app > .home-pane,
+.app > .device {
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .home-pane {
   position: relative;
-  flex: 1;
-  min-height: 0;
   overflow: hidden;
 }
 
@@ -121,8 +99,13 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   width: 100%;
   height: 100%;
   min-height: 320px;
-  background: #06070b;
+  padding: 1.25rem 1rem 6.5rem;
+  box-sizing: border-box;
+  background: var(--bg);
   color: var(--ink-2);
+}
+.plate[data-preview="yes"] .viewport-mock {
+  padding: 1.25rem 1rem 6.75rem;
 }
 .viewport-mock-meta {
   margin: 0 0 0.6rem;
@@ -163,6 +146,17 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   display: flex;
   align-self: stretch;
   flex: 0 0 auto;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.titlebar-menus {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .titlebar-buttons button {
@@ -178,35 +172,11 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   cursor: default;
   padding: 0;
 }
-.titlebar-glyph {
+.titlebar-svg {
+  width: 10px;
+  height: 10px;
   display: block;
-  font-family: var(--mono);
-  font-size: 13px;
-  line-height: 1;
-  color: inherit;
-}
-.titlebar-glyph-minimize {
-  width: 10px;
-  height: 1px;
-  background: currentColor;
-}
-.titlebar-glyph-maximize {
-  width: 10px;
-  height: 10px;
-  box-sizing: border-box;
-  border: 1px solid currentColor;
-}
-.titlebar-glyph-restore {
-  width: 10px;
-  height: 10px;
-  box-sizing: border-box;
-  border: 1px solid currentColor;
-  box-shadow: inset 3px 3px 0 0 var(--bg), inset 4px 4px 0 0 currentColor;
-}
-.titlebar-glyph-close {
-  font-size: 15px;
-  font-weight: 400;
-  line-height: 1;
+  pointer-events: none;
 }
 .titlebar-buttons button:hover { background: #14161f; color: var(--ink); }
 .titlebar-buttons .titlebar-close:hover { background: #b4474a; color: #fff; }
@@ -238,8 +208,6 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   gap: 0.4rem;
   font-size: 13px;
 }
-.top-actions button::before { content: "[ "; color: var(--dim); }
-.top-actions button::after { content: " ]"; color: var(--dim); }
 .top-actions button.primary { color: var(--accent); }
 
 .banner {
@@ -271,20 +239,30 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 code { font-family: var(--mono); }
 
 .workspace {
+  flex: 1 1 auto;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(280px, 360px) 1fr;
+  grid-template-rows: minmax(0, 1fr);
   gap: 0.5rem;
   padding: 0.4rem 1rem 1rem;
 }
 
 .panel {
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0.2rem 0.4rem 1.5rem 0.2rem;
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
   background: var(--panel);
+  min-height: 0;
+  align-content: flex-start;
+}
+.panel > .frame {
+  flex: 0 0 auto;
+  width: 100%;
 }
 
 .frame {
@@ -297,6 +275,29 @@ code { font-family: var(--mono); }
   padding: 0.2rem 0.45rem;
 }
 .frame--closed .frame-bar { border-bottom-color: transparent; }
+.frame-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--duration-slow, 220ms) var(--ease-out, ease);
+}
+.frame-body[data-open="yes"] {
+  grid-template-rows: 1fr;
+}
+.frame-body > .frame-content {
+  overflow: hidden;
+  min-height: 0;
+}
+.frame--closed .frame-body > .frame-content {
+  visibility: hidden;
+}
+.frame--open .frame-body > .frame-content {
+  visibility: visible;
+}
+@media (prefers-reduced-motion: reduce) {
+  .frame-body {
+    transition: none;
+  }
+}
 .frame-toggle {
   display: inline-flex;
   align-items: center;
@@ -1549,10 +1550,10 @@ button.recent-row.dim { color: var(--ink-3); }
 .process-preset.on { border-color: var(--accent); color: var(--accent); }
 
 .process-tools { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0; }
-.process-search { flex: 1 1 12rem; min-width: 10rem; }
+.process-search { flex: 1 1 14rem; min-width: 12rem; }
 .process-search input {
   width: 100%;
-  min-width: 9rem;
+  min-width: 11rem;
   background: transparent;
   border: 1px solid var(--line);
   color: var(--ink);
@@ -2070,18 +2071,22 @@ button.recent-row.dim { color: var(--ink-3); }
 
 .job-card {
   position: absolute;
-  left: 1.1rem;
-  top: 1.1rem;
+  left: 1rem;
+  top: 1rem;
   z-index: 4;
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  min-width: 9.5rem;
-  padding: 0.7rem 0.9rem 0.8rem;
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  box-sizing: border-box;
+  width: 20rem;
+  min-width: 20rem;
+  max-width: 20rem;
+  padding: 0.7rem 0.85rem 0.8rem;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
   border: 1px solid var(--line);
   backdrop-filter: blur(6px);
-  pointer-events: none;
+  pointer-events: auto;
+  overflow: hidden;
 }
 
 .job-state {
@@ -2094,14 +2099,19 @@ button.recent-row.dim { color: var(--ink-3); }
 .job-state.quiet { color: var(--ink-3); letter-spacing: 0.18em; }
 
 .job-card dl {
-  display: grid;
-  grid-template-columns: auto auto;
-  gap: 0.15rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
   margin: 0;
+  width: 100%;
   font-variant-numeric: tabular-nums;
 }
 .job-card dl > div {
-  display: contents;
+  display: grid;
+  grid-template-columns: 6.75rem minmax(0, 1fr);
+  column-gap: 0.5rem;
+  align-items: baseline;
+  width: 100%;
 }
 .job-total dt,
 .job-total dd {
@@ -2111,9 +2121,11 @@ button.recent-row.dim { color: var(--ink-3); }
 .job-card dt {
   font-family: var(--prose);
   font-size: 10px;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--ink-3);
+  white-space: nowrap;
+  min-width: 0;
 }
 .job-card dd {
   margin: 0;
@@ -2121,6 +2133,23 @@ button.recent-row.dim { color: var(--ink-3); }
   color: var(--ink);
   text-align: right;
   white-space: nowrap;
+  min-width: 0;
+}
+.job-card--panel {
+  position: static;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  overflow: visible;
+  pointer-events: auto;
+}
+.panel .job-card--panel dl > div {
+  grid-template-columns: minmax(5.5rem, 6.75rem) minmax(0, 1fr);
 }
 
 /* ── the features in the toolpath ──────────────────────────────────────────
@@ -2130,14 +2159,19 @@ button.recent-row.dim { color: var(--ink-3); }
 
 .legend {
   position: absolute;
-  right: 1.1rem;
-  top: 1.1rem;
+  right: 1rem;
+  top: 1rem;
   z-index: 4;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
   min-width: 10.5rem;
+  max-width: min(12.5rem, calc(100% - 20rem));
+  max-height: min(16rem, calc(100% - 8rem));
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 0.5rem 0.35rem 0.45rem;
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
   border: 1px solid var(--line);
   backdrop-filter: blur(6px);
 }

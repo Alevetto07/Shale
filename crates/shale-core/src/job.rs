@@ -524,6 +524,7 @@ pub fn slice(
     if models.is_empty() {
         return Err(Error::message("import a model before slicing"));
     }
+    let output_path = crate::engine::absolutize_path(&output_path)?;
     on_progress(EngineProgress::new(0.02, "Resolving printer settings"));
     let request_for = |material: Option<String>| ResolveRequest {
         printer_id: printer_id.to_string(),

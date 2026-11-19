@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Shale",
   "mainBinaryName": "Shale",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "identifier": "dev.shale.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -31,6 +31,8 @@
     "shortDescription": "The last slicer you'll ever download.",
     "longDescription": "Shale is a desktop 3D-printing slicer for Bambu Lab printers — prepare, slice, preview and send from one window.",
     "copyright": "Copyright © Alessio",
+    "license": "AGPL-3.0-or-later",
+    "licenseFile": "../../../LICENSE",
     "active": true,
     "fileAssociations": [
       {
@@ -43,9 +45,12 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
+        "languages": ["English"],
+        "displayLanguageSelector": false,
         "installerHooks": "windows/installer-hooks.nsh",
         "headerImage": "windows/nsis/header.bmp",
         "sidebarImage": "windows/nsis/sidebar.bmp",
+        "uninstallerHeaderImage": "windows/nsis/header.bmp",
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
         "startMenuFolder": "Shale",
@@ -56,6 +61,7 @@
     },
     "targets": ["deb", "appimage", "nsis", "app", "dmg"],
     "resources": {
+      "../../../LICENSE": "LICENSE",
       "../../../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
     },
     "icon": [

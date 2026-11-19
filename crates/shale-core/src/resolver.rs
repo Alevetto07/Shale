@@ -181,11 +181,12 @@ impl Catalog {
             .clone()
             .or(preferred_variant)
             .unwrap_or_else(|| "0.4mm Nozzle".to_string());
-        let quality_type = request
-            .quality_type
-            .clone()
-            .or(preferred_quality)
-            .unwrap_or_else(|| "normal".to_string());
+        let quality_type = match request.quality_type.as_deref() {
+            Some(query) => {
+                self.resolve_quality_query(request.printer_id.as_str(), Some(&variant_name), query)?
+            }
+            None => preferred_quality.unwrap_or_else(|| "normal".to_string()),
+        };
         let mut warnings = Vec::new();
 
         apply_variants(

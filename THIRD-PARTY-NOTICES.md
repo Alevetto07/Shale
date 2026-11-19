@@ -1,12 +1,13 @@
 # Third-party notices
 
-Shale 0.1.0 is a Rust and TypeScript program that links the components below
+Shale 0.1.4 is a Rust and TypeScript program that links the components below
 into the binary the installer ships. This file is installed next to
 `Shale.exe`; it is the notice Apache-2.0 §4(d) asks for, and it is here so the
 licences travel with the program rather than with a web page.
 
-Shale's own source licence is undecided: see [LICENSING.md](LICENSING.md). That
-question is separate from the ones below, which are settled.
+Shale's own source is under AGPL-3.0-or-later; see [LICENSE](LICENSE) in the
+install directory. The table below covers **other** projects compiled or linked
+into the binary, not CuraEngine or Bambu profile data (see [LICENSING.md](LICENSING.md)).
 
 ## Non-planar slicing references
 
@@ -63,6 +64,19 @@ The full dependency graph, with each crate's declared licence, is reproducible
 from the repository with `cargo metadata --format-version 1` and
 `cargo license`. This table is the part that is compiled in and worth naming in
 a printed notice; it is not an abridged substitute for those files.
+
+## Home-screen ASCII plate images
+
+Shale's start screen maps public-domain or permissively licensed astronomy
+photographs to an ASCII glyph field. Bundled downscales live under
+`apps/desktop/src/field/`.
+
+| File | Subject | Source | Licence |
+| --- | --- | --- | --- |
+| `andromeda.jpg` | Andromeda Galaxy (M31), GALEX ultraviolet | [NASA PIA15416](https://images.nasa.gov/details/PIA15416) | Not subject to copyright in the United States (NASA) |
+| `saturn.jpg` | Saturn at equinox | [Wikimedia: Saturn during Equinox](https://commons.wikimedia.org/wiki/File:Saturn_during_Equinox.jpg) | Public domain (NASA/JPL/SSI) |
+| `nebula.jpg` | Crab Nebula (M1) | [Wikimedia: Crab Nebula](https://commons.wikimedia.org/wiki/File:Crab_Nebula.jpg) | Public domain (NASA/ESA) |
+| `lunar.jpg` | Moon (half-phase derivative) | [Wikimedia: Full Moon Luc Viatour](https://commons.wikimedia.org/wiki/File:Full_Moon_Luc_Viatour.jpg) | CC BY-SA 3.0 (Luc Viatour; derivative edit for Shale) |
 
 ## What is not in the installer
 

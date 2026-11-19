@@ -47,6 +47,10 @@ impl SlicingEngine for FakeEngine {
     }
 }
 
+fn ensure_test_cache() {
+    shale_core::set_catalog_cache_dir(shale_core::integration_test_cache_dir("shale-mcp"));
+}
+
 fn fixture_catalog() -> Catalog {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../shale-core/tests/fixtures");
     Catalog::open(ResourcePaths {
@@ -188,11 +192,14 @@ async fn slice_cube(
 
 #[tokio::test]
 async fn in_process_client_slices_the_20mm_cube() {
-    let destination =
-        std::env::temp_dir().join(format!("shale-mcp-cube-{}.gcode", std::process::id()));
-    let summary = slice_cube(fixture_catalog(), Box::new(FakeEngine), &destination).await;
+    ensure_test_cache();
+    let destination = tempfile::Builder::new()
+        .prefix("shale-mcp-cube-")
+        .suffix(".gcode")
+        .tempfile()
+        .expect("gcode temp");
+    let summary = slice_cube(fixture_catalog(), Box::new(FakeEngine), destination.path()).await;
     assert_eq!(summary["layer_count"], 100);
-    let _ = std::fs::remove_file(&destination);
 }
 
 #[tokio::test]
@@ -202,12 +209,15 @@ async fn real_engine_slices_the_20mm_cube_when_configured() {
     {
         return;
     }
-    let destination =
-        std::env::temp_dir().join(format!("shale-mcp-real-{}.gcode", std::process::id()));
+    ensure_test_cache();
+    let destination = tempfile::Builder::new()
+        .prefix("shale-mcp-real-")
+        .suffix(".gcode")
+        .tempfile()
+        .expect("gcode temp");
     let engine = CliEngine::from_env();
     assert!(engine.available(), "CuraEngine did not answer help");
     let catalog = Catalog::open(ResourcePaths::discover().expect("resources")).expect("catalog");
-    let summary = slice_cube(catalog, Box::new(engine), &destination).await;
+    let summary = slice_cube(catalog, Box::new(engine), destination.path()).await;
     assert_eq!(summary["layer_count"], 100, "{summary}");
-    let _ = std::fs::remove_file(&destination);
 }

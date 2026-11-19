@@ -4,6 +4,8 @@ import type { MaterialInfo, PrinterInfo, QualityInfo, VariantInfo } from "./api"
 import { variantOptionLabel } from "./profile-labels";
 import { ProcessSheet, type QuickFallbacks } from "./ProcessSheet";
 import type { ViewStyle } from "./Viewport";
+import { UiStylePicker } from "./UiStylePicker";
+import type { UiStyleId } from "./ui-styles";
 
 export interface MenuBarProps {
   screen: "start" | "slicer";
@@ -71,6 +73,8 @@ export interface MenuBarProps {
   onScope: (scope: string) => void;
   onResetOverrides: () => void;
   onSlice: () => void;
+  uiStyle: UiStyleId;
+  onUiStyle: (id: UiStyleId) => void;
 }
 
 type Menu = "file" | "edit" | "view" | "printer" | "settings";
@@ -103,7 +107,10 @@ export function MenuBar(props: MenuBarProps) {
       }
     };
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(null);
+      if (event.key !== "Escape") return;
+      setOpen(null);
+      const active = document.activeElement;
+      if (active instanceof HTMLElement) active.blur();
     };
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", escape);
@@ -288,6 +295,8 @@ export function MenuBar(props: MenuBarProps) {
               <span>Frame model</span>
               <kbd>F</kbd>
             </button>
+            <hr />
+            <UiStylePicker compact value={props.uiStyle} onChange={props.onUiStyle} />
           </div>
         )}
       </div>

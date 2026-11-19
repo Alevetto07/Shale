@@ -1,0 +1,6 @@
+{
+  "type": "process",
+  "name": "Standard",
+  "inherits": "base",
+  "sparse_infill_density": "15%"
+}
