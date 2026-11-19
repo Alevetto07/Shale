@@ -1,13 +1,34 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Line, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import type { Layer, SliceData } from "../../lib/demo-context";
 import { featureColor } from "../../lib/gcode-types";
+import {
+  boxSize,
+  fitToPoints,
+  layerPoints,
+  modelBounds,
+  modelPoints,
+  type Box,
+  type CameraFit,
+} from "../../lib/model-fit";
 import { FeatureLegend } from "./FeatureLegend";
 import { ExtrusionLayers } from "./ExtrusionMesh";
 
-type Bbox = { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number };
+type Bbox = Box;
+
+/** The handful of OrbitControls members the camera fit touches. Typing this
+ *  locally keeps the drei component out of the type position (which it does
+ *  not fit: `OrbitControls` is a value there). */
+type Controls = {
+  target: THREE.Vector3;
+  minDistance: number;
+  maxDistance: number;
+  autoRotate: boolean;
+  autoRotateSpeed: number;
+  update?: () => void;
+};
 
 function sceneBbox(data: SliceData): Bbox {
   return data.meta.bounds as Bbox;
@@ -44,8 +65,10 @@ function polylineLength(pts: THREE.Vector3[]) {
   return d;
 }
 
-function BedPlate({ footprint }: { footprint: number }) {
-  const show = footprint * 2.1;
+function BedPlate({ size }: { size: number }) {
+  // The plate is sized to run past the frame: the grid has to read as a surface
+  // that continues beyond the edge, not as a tile the part happens to sit on.
+  const show = size;
   return (
     <group>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} receiveShadow>
@@ -116,7 +139,7 @@ function LineLayers({
   center: { x: number; y: number };
   showTravel: boolean;
   buildProgress: number;
-  singleLayer: boolean;
+  singleLayer?: boolean;
   bbox: Bbox;
   footprint: number;
 }) {
@@ -204,40 +227,27 @@ function NozzleAlongLayer({
   );
 }
 
-function FitCamera({ bbox, fill = 0.46, hero }: { bbox: Bbox; fill?: number; hero?: boolean }) {
-  const { camera, size } = useThree();
-  const controls = useThree((s) => s.controls) as OrbitControls | null;
+function FitCamera({ fit, hero }: { fit: CameraFit; hero?: boolean }) {
+  const { camera } = useThree();
+  const controls = useThree((s) => s.controls) as Controls | null;
 
   useLayoutEffect(() => {
     const persp = camera as THREE.PerspectiveCamera;
-    const sx = bbox.maxX - bbox.minX;
-    const sy = bbox.maxY - bbox.minY;
-    const sz = bbox.maxZ - bbox.minZ;
-    const half = Math.max(sx, sy, sz, 6) * 0.5;
-    const targetY = sz * 0.38;
-
-    const aspect = size.width / size.height;
-    const vFov = (persp.fov * Math.PI) / 180;
-    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
-    const distV = half / Math.tan(vFov / 2) / fill;
-    const distH = half / Math.tan(hFov / 2) / fill;
-    const dist = Math.max(distV, distH) * (hero ? 1.0 : 1.06);
-
-    persp.position.set(dist * 0.85, targetY + dist * 0.52, dist * 0.92);
-    persp.near = Math.max(0.2, dist / 120);
-    persp.far = dist * 35;
-    persp.lookAt(0, targetY, 0);
+    persp.position.set(fit.position[0], fit.position[1], fit.position[2]);
+    persp.near = Math.max(0.1, fit.distance / 200);
+    persp.far = fit.distance * 40;
+    persp.lookAt(fit.target[0], fit.target[1], fit.target[2]);
     persp.updateProjectionMatrix();
 
     if (controls) {
-      controls.target.set(0, targetY, 0);
-      controls.minDistance = dist * 0.38;
-      controls.maxDistance = dist * 3.2;
+      controls.target.set(fit.target[0], fit.target[1], fit.target[2]);
+      controls.minDistance = fit.distance * 0.35;
+      controls.maxDistance = fit.distance * 3.4;
       controls.autoRotate = !!hero;
       controls.autoRotateSpeed = 0.35;
       controls.update?.();
     }
-  }, [bbox, camera, size, fill, hero, controls]);
+  }, [fit, camera, hero, controls]);
 
   return null;
 }
@@ -250,6 +260,7 @@ function SceneInner({
   hero,
   singleLayer,
   linesOnly,
+  fill = 0.66,
 }: {
   data: SliceData;
   layerIndex: number;
@@ -258,20 +269,85 @@ function SceneInner({
   hero?: boolean;
   singleLayer?: boolean;
   linesOnly?: boolean;
+  fill?: number;
 }) {
   const modelBbox = sceneBbox(data);
   const center = modelCenter(modelBbox);
   const maxLayer = Math.min(layerIndex, data.layers.length - 1);
-  const footprint = Math.max(modelBbox.maxX - modelBbox.minX, modelBbox.maxY - modelBbox.minY);
 
-  const centeredBbox: Bbox = {
-    minX: -footprint / 2,
-    maxX: footprint / 2,
-    minY: -((modelBbox.maxY - modelBbox.minY) / 2),
-    maxY: (modelBbox.maxY - modelBbox.minY) / 2,
-    minZ: modelBbox.minZ,
-    maxZ: modelBbox.maxZ,
-  };
+  // Frame the part, not the slicer's idea of it: modelBounds() drops the prime
+  // line and anything else the renderer would not draw, so the camera can sit
+  // close enough that the layer lines and the infill stay legible.
+  const partBox = useMemo(() => modelBounds(data.layers, modelBbox) ?? modelBbox, [data, modelBbox]);
+  const [partW, partD] = boxSize(partBox);
+  const footprint = Math.max(partW, partD);
+
+  const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
+  const gl = useThree((s) => s.gl);
+  const fov = camera.fov || 40;
+
+  // Measure the canvas here rather than trusting the size R3F reports: a panel
+  // that is laid out after the first frame (a tab that was hidden, a viewer
+  // that grew once its legend rendered) fits itself to the old height and the
+  // part ends up cropped on one axis.
+  const [aspect, setAspect] = useState(1);
+  useLayoutEffect(() => {
+    const el = gl.domElement;
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 1 && rect.height > 1) setAspect(rect.width / rect.height);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [gl]);
+
+  // ~32 degrees of elevation, a little off the axis: high enough to see the
+  // stack of layers, low enough that the walls still read as lines instead of
+  // merging into a solid top. The landing hero keeps the angle it had.
+  const direction = useMemo<[number, number, number]>(
+    () => (hero ? [0.627, 0.384, 0.679] : [0.424, 0.53, 0.734]),
+    [hero],
+  );
+
+  const partPoints = useMemo(
+    () => modelPoints(data.layers, center, modelBbox),
+    [data, center.x, center.y, modelBbox],
+  );
+
+  // A single-layer panel is showing one layer, so that layer is what gets
+  // framed — otherwise a 13 mm cross-section of the stem sits in a frame sized
+  // for the whole 40 mm wing. The floor keeps an almost empty layer from
+  // pulling the camera inside the part.
+  const framePoints = useMemo(
+    () => (singleLayer ? layerPoints(data.layers[maxLayer], center) : partPoints),
+    [singleLayer, data, maxLayer, center.x, center.y, partPoints],
+  );
+
+  const partFit = useMemo(
+    () => fitToPoints(partPoints, { fov, aspect, fill: 0.66, direction }),
+    [partPoints, fov, aspect, direction],
+  );
+
+  const fit = useMemo(
+    () =>
+      singleLayer
+        ? fitToPoints(framePoints, { fov, aspect, fill, direction, minExtent: 6 })
+        : partFit,
+    [singleLayer, framePoints, partFit, fov, aspect, fill, direction],
+  );
+
+  // Wide panels see a wide slice of the world, so a plate sized off the part
+  // alone floats in the middle of the canvas. Size it off the whole part's
+  // frame (not the current layer's) so it does not change size while the layer
+  // slider moves, and let the far edges fall outside.
+  const plateSize = hero
+    ? footprint * 2.1 // the landing hero keeps the plate it was composed with
+    : Math.max(
+        footprint * 2.4,
+        2 * partFit.distance * Math.tan((fov * Math.PI) / 360) * Math.max(1, aspect) * 1.15,
+      );
 
   return (
     <>
@@ -279,7 +355,7 @@ function SceneInner({
       <ambientLight intensity={0.55} />
       <directionalLight position={[50, 90, 35]} intensity={1.1} color="#f0f4ff" />
       <directionalLight position={[-40, 60, -50]} intensity={0.3} />
-      <BedPlate footprint={footprint} />
+      <BedPlate size={plateSize} />
       {linesOnly ? (
         <LineLayers
           layers={data.layers}
@@ -319,7 +395,7 @@ function SceneInner({
         center={center}
         buildProgress={buildProgress}
       />
-      <FitCamera bbox={centeredBbox} fill={0.48} hero={hero} />
+      <FitCamera fit={fit} hero={hero} />
       <OrbitControls
         makeDefault
         enablePan={!hero}
@@ -364,6 +440,7 @@ export function GcodeViewer({
   showLegend = true,
   singleLayer = false,
   linesOnly = false,
+  fill = 0.66,
 }: {
   data: SliceData | null;
   layerIndex: number;
@@ -372,6 +449,8 @@ export function GcodeViewer({
   className?: string;
   hero?: boolean;
   showLegend?: boolean;
+  /** Fraction of the tighter canvas axis the part should fill. */
+  fill?: number;
   /** When true, only the active layer is drawn (slicer-style hatch view). */
   singleLayer?: boolean;
   /** Line-only preview (more reliable in nested layouts). */
@@ -455,6 +534,7 @@ export function GcodeViewer({
               hero
               singleLayer={singleLayer}
               linesOnly={linesOnly}
+              fill={fill}
             />
           </ParallaxRig>
         ) : (
@@ -466,6 +546,7 @@ export function GcodeViewer({
             hero={false}
             singleLayer={singleLayer}
             linesOnly={linesOnly}
+            fill={fill}
           />
         )}
       </Canvas>

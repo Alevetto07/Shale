@@ -3,7 +3,9 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { coverageFromPng } from "./canvas-coverage.mjs";
 
-const out = "/opt/cursor/artifacts";
+// Overridable so the same check can run outside Cursor's Linux sandbox
+// (Windows here: ARTIFACTS_DIR=C:/Users/.../screens).
+const out = process.env.ARTIFACTS_DIR ?? "/opt/cursor/artifacts";
 const url = process.env.SITE_URL ?? "http://127.0.0.1:4321";
 
 await mkdir(out, { recursive: true });
