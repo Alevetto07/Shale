@@ -1,0 +1,127 @@
+---
+import "../styles/global.css";
+import "../styles/engineering.css";
+import "../styles/demos.css";
+import "../styles/workbench.css";
+import "@fontsource/space-grotesk/600.css";
+import { repoUrl, version } from "../config/site";
+import { primaryDownload, downloadUrl, launchComparisonSentence } from "../config/site";
+
+interface Props {
+  title?: string;
+  description?: string;
+  preloadImage?: string;
+}
+
+const {
+  title = "Shale — Bambu Lab slicer",
+  description = `Bambu Lab slicer built on unmodified CuraEngine. ${launchComparisonSentence()}`,
+  preloadImage,
+} = Astro.props;
+
+const dl = downloadUrl(primaryDownload.fileName);
+---
+
+<!doctype html>
+<html lang="en-GB" data-field="andromeda">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="dark" />
+    <title>{title}</title>
+    <link rel="icon" type="image/svg+xml" href="/media/shale-mark.svg" />
+    {
+      preloadImage && (
+        <link rel="preload" as="image" href={preloadImage} fetchpriority="high" />
+      )
+    }
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header" id="site-header">
+      <div class="wrap site-header-inner">
+        <a class="logo" href="/">
+          Shale<span>v{version}</span>
+        </a>
+        <nav class="nav-links nav-links-desktop" aria-label="Site">
+          <a href="#app-demo">App demo</a>
+          <a href="#activity">Timeline</a>
+          <a href="#demos">Software</a>
+          <a href="#downloads">Download</a>
+          <a href={repoUrl}>GitHub</a>
+        </nav>
+        <div class="header-actions">
+          <details class="nav-menu">
+            <summary class="nav-menu-trigger">Menu</summary>
+            <div class="nav-menu-panel" role="navigation" aria-label="Mobile">
+              <a href="#app-demo">App demo</a>
+              <a href="#activity">Timeline</a>
+              <a href="#demos">Software</a>
+              <a href="#downloads">Download</a>
+              <a href={repoUrl}>GitHub</a>
+            </div>
+          </details>
+          <a class="btn btn-primary btn-nav-dl" href={dl}>Download</a>
+        </div>
+      </div>
+    </header>
+    <main id="main">
+      <slot />
+    </main>
+    <slot name="footer" />
+    <script is:inline>
+      (function () {
+        const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const header = document.getElementById("site-header");
+        const onScroll = () => {
+          if (!header) return;
+          header.classList.toggle("is-scrolled", window.scrollY > 8);
+        };
+        onScroll();
+        window.addEventListener("scroll", onScroll, { passive: true });
+
+        const reveal = document.querySelectorAll("[data-reveal], .slogan-display");
+        if (!reduced) {
+          document.documentElement.classList.add("motion-reveal");
+        }
+
+        const io = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (entry.isIntersecting) {
+                entry.target.classList.add("is-visible");
+                io.unobserve(entry.target);
+              }
+            }
+          },
+          { rootMargin: "0px 0px -6% 0px", threshold: 0.14 },
+        );
+        reveal.forEach((el) => io.observe(el));
+
+        document.addEventListener("click", (e) => {
+          const btn = e.target.closest("[data-copy]");
+          if (!btn) return;
+          const value = btn.getAttribute("data-copy");
+          if (!value) return;
+          navigator.clipboard.writeText(value).then(() => {
+            const prior = btn.textContent;
+            btn.textContent = "Copied";
+            window.setTimeout(() => {
+              btn.textContent = prior;
+            }, 1600);
+          });
+        });
+
+        const menu = document.querySelector(".nav-menu");
+        if (menu) {
+          menu.querySelectorAll("a").forEach((link) => {
+            link.addEventListener("click", () => {
+              menu.removeAttribute("open");
+            });
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>

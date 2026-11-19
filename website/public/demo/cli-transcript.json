@@ -1,0 +1,9 @@
+{
+  "label": "Illustrative terminal replay — matches real CuraEngine slice stats (t-wing_972c.gcode).",
+  "lines": [
+    { "type": "prompt", "text": "$ shale-cli info" },
+    { "type": "out", "text": "Shale 0.1.3 · CuraEngine backend · 15 Bambu printers selectable" },
+    { "type": "prompt", "text": "$ shale-cli slice examples/t-wing.stl --printer bambu_lab_a1 --layer 0.2 --infill 20 -o t-wing.gcode" },
+    { "type": "out", "text": "Sliced 1 model · 120 layers · 0.95 m filament · ~863 s · wrote t-wing.gcode" }
+  ]
+}

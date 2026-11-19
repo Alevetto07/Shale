@@ -1,0 +1,35 @@
+;FLAVOR:Marlin
+;TIME:863
+;Filament used: 0.9508m
+;Layer height: 0.2
+;MINX:-20
+;MINY:-5
+;MINZ:0
+;MAXX:20
+;MAXY:5
+;MAXZ:24
+;TARGET_MACHINE.NAME:Bambu Lab A1
+
+;Generated with Cura_SteamEngine 5.13.0
+;===== machine: A1 =========================
+;===== date: 20260513 ==================
+G392 S0
+M9833.2
+;M400
+;M73 P1.717
+
+;===== start to heat heatbead&hotend==========
+M1002 gcode_claim_action : 2
+M1002 set_filament_type:PLA
+M104 S140
+M140 S65
+
+;=====start printer sound ===================
+M17
+M400 S1
+M1006 S1
+M1006 A0 B10 L100 C37 D10 M60 E37 F10 N60
+M1006 A0 B10 L100 C41 D10 M60 E41 F10 N60
+M1006 A0 B10 L100 C44 D10 M60 E44 F10 N60
+M1006 A0 B10 L100 C0 D10 M60 E0 F10 N60
+M1006 A43 B10 L100 C46 D10 M70 E39 F10 N80

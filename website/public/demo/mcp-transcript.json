@@ -1,0 +1,21 @@
+{
+  "label": "Illustrative agent exchange — scripted for the marketing site; not a recording of shale-mcp.",
+  "messages": [
+    {
+      "role": "user",
+      "text": "Slice examples/t-wing.stl for my A1 at 0.2 mm, 20% infill."
+    },
+    {
+      "role": "assistant",
+      "text": "I'll use the Bambu A1 profile and CuraEngine-backed pipeline from shale-core when resources are configured on the host."
+    },
+    {
+      "role": "tool",
+      "text": "slice → t-wing.gcode · illustrative · ~119 layers · demo preview uses demo-slice.json"
+    },
+    {
+      "role": "assistant",
+      "text": "G-code would land as t-wing.gcode. The browser demo shows a 2.5D slice of the same STL for visuals only."
+    }
+  ]
+}

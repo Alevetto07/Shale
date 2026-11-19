@@ -1,0 +1,154 @@
+---
+import Base from "../layouts/Base.astro";
+import Sha256Field from "../components/Sha256Field.astro";
+import "../components/Hero.css";
+import AppWorkflowDemo from "../components/app-demo/AppWorkflowDemo";
+import GcodeActivityTimeline from "../components/app-demo/GcodeActivityTimeline";
+import SoftwareSurfaceDemo from "../components/app-demo/SoftwareSurfaceDemo";
+import ArtifactSplitSection from "../components/app-demo/ArtifactSplitSection";
+import NonplanarTeaser from "../components/demos/NonplanarTeaser";
+import { StatCounter } from "../components/demos/StatCounter";
+import {
+  slogan,
+  repoUrl,
+  version,
+  shaleLicense,
+  downloads,
+  downloadUrl,
+  checksumsUrl,
+  releasePageUrl,
+  primaryDownload,
+  launchBenchmarks,
+  installCommand,
+} from "../config/site";
+---
+
+<Base>
+  <div class="page-bed" aria-hidden="true"></div>
+
+  <section class="hero-narrow" aria-labelledby="hero-title">
+    <div class="wrap--narrow">
+      <p class="version-sticker">v{version} · Bambu only</p>
+      <h1 id="hero-title">Shale</h1>
+      <p class="hero-line">{slogan}</p>
+      <ol class="hero-facts">
+        <li>
+          <strong>Bambu-only</strong> slicer on unmodified CuraEngine — sign in, slice with Studio presets, send when
+          ready.
+        </li>
+        <li>
+          <strong>Warm launch</strong>
+          <StatCounter client:load value={launchBenchmarks.shaleUsableWarmSeconds} decimals={1} /> s vs typical{" "}
+          {launchBenchmarks.competitorRangeLabel}.
+        </li>
+        <li>
+          <strong>Real toolpaths</strong> on this page from <code>t-wing_972c.gcode</code> (CuraEngine 5.13 via Shale).
+        </li>
+      </ol>
+      <div class="hero-cta-stack hero-cta-stack--spaced">
+        <div class="btn-row">
+          <a class="btn btn-primary" href={downloadUrl(primaryDownload.fileName)}>Download</a>
+          <a class="btn btn--ghost" href={repoUrl}>Source on GitHub</a>
+        </div>
+        <div class="install-cmd">
+          <code>{installCommand}</code>
+          <button type="button" data-copy={installCommand}>Copy</button>
+        </div>
+      </div>
+    </div>
+    <div class="app-workflow-bleed">
+      <AppWorkflowDemo client:visible />
+    </div>
+  </section>
+
+  <section class="section-tight" aria-labelledby="activity-heading">
+    <div class="wrap--narrow">
+      <p id="activity-heading" class="screen-reader-only">G-code activity</p>
+      <GcodeActivityTimeline client:visible />
+    </div>
+  </section>
+
+  <section id="demos" class="section-tight" aria-labelledby="demos-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="demos-title">The software</h2>
+        <p class="muted">
+          Interactive surfaces from the desktop app — real CuraEngine G-code in the preview pane; CLI/MCP replays are
+          illustrative.
+        </p>
+      </div>
+      <SoftwareSurfaceDemo client:visible />
+    </div>
+  </section>
+
+  <section class="section-tight" aria-labelledby="artifacts-heading">
+    <div class="wrap">
+      <ArtifactSplitSection client:visible />
+    </div>
+  </section>
+
+  <section class="section-coming" aria-labelledby="coming-title">
+    <div class="wrap">
+      <NonplanarTeaser client:visible />
+    </div>
+  </section>
+
+  <section id="downloads" class="section-downloads" aria-labelledby="downloads-title">
+    <div class="wrap">
+      <div class="section-head section-head--row">
+        <div class="section-head--lead">
+          <h2 id="downloads-title">Get Shale {version}</h2>
+        </div>
+        <p class="muted section-head-dek">
+          <a href={releasePageUrl}>GitHub Releases</a> · <a href={checksumsUrl}>SHA256SUMS.txt</a>
+        </p>
+      </div>
+      <div class="download-grid">
+        {
+          downloads.map((d, i) => (
+            <article class="panel download-card" data-reveal data-reveal-delay={(i % 3) + 1}>
+              <h3>{d.title}</h3>
+              <p class="muted">{d.description}</p>
+              <p class="mono dim file-name">{d.fileName}</p>
+              <dl class="checksums">
+                {
+                  d.sizeLabel && (
+                    <div>
+                      <dt>Size</dt>
+                      <dd>{d.sizeLabel}</dd>
+                    </div>
+                  )
+                }
+                <div>
+                  <dt>SHA-256</dt>
+                  <dd>
+                    <Sha256Field hash={d.sha256} checksumsUrl={checksumsUrl} />
+                  </dd>
+                </div>
+              </dl>
+              <a class="btn btn-primary" href={downloadUrl(d.fileName)}>
+                Download
+              </a>
+            </article>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <footer class="site-footer" slot="footer">
+    <div class="wrap">
+      <p>
+        <a href={repoUrl}>Shale on GitHub</a>
+      </p>
+      <ul>
+        <li>
+          <strong>CuraEngine</strong> — AGPL-3.0
+        </li>
+        <li>
+          <strong>Shale</strong> — {shaleLicense}
+        </li>
+      </ul>
+    </div>
+  </footer>
+</Base>
