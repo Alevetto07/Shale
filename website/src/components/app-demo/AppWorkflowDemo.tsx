@@ -276,7 +276,7 @@ function AppWorkflowDemoInner() {
 
 export default function AppWorkflowDemo() {
   return (
-    <DemoProvider eager>
+    <DemoProvider eager syncTimeline>
       <AppWorkflowDemoInner />
     </DemoProvider>
   );

@@ -54,6 +54,7 @@ export function HeroPrintScene() {
         buildProgress={buildProgress}
         hero
         showLegend={false}
+        fill={0.29}
         className="hero-print__canvas"
       />
       <div className="hero-print__chrome">

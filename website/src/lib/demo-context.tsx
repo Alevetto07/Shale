@@ -70,10 +70,15 @@ export function DemoProvider({
   children,
   eager = false,
   sliceUrl = DEFAULT_SLICE,
+  syncTimeline = false,
 }: {
   children: ReactNode;
   eager?: boolean;
   sliceUrl?: string;
+  /** When true, follow the activity timeline's window scrub events.
+   *  Only the app-window preview should opt in: the workbench and hero
+   *  keep their own layer, otherwise the timeline resets them to layer 0. */
+  syncTimeline?: boolean;
 }) {
   const [data, setData] = useState<SliceData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -107,6 +112,7 @@ export function DemoProvider({
   }, [eager, loadSlice, sliceUrl]);
 
   useEffect(() => {
+    if (!syncTimeline) return;
     const onScrub = (e: Event) => {
       const { layer } = (e as CustomEvent<{ layer: number }>).detail ?? {};
       if (typeof layer === "number" && data) {
@@ -115,7 +121,7 @@ export function DemoProvider({
     };
     window.addEventListener("shale-timeline-scrub", onScrub);
     return () => window.removeEventListener("shale-timeline-scrub", onScrub);
-  }, [data]);
+  }, [data, syncTimeline]);
 
   const baseMeta = data?.meta ?? {};
   const baseLayers = Number(baseMeta.layers ?? 120);

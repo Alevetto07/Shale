@@ -65,7 +65,23 @@ function ToolpathPanel() {
             }}
             aria-label="Layer"
           />
-          <button type="button" className="btn btn--ghost" onClick={() => setPlaying(!playing)}>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() => {
+              if (playing) {
+                setPlaying(false);
+                return;
+              }
+              // At rest the slider sits on the last layer so the still is the
+              // finished T-wing. Restart from the bed when the user hits Play.
+              if (layer >= max) {
+                setLayer(0);
+                setBuildProgress(0);
+              }
+              setPlaying(true);
+            }}
+          >
             {playing ? "Pause" : "Play layers"}
           </button>
         </div>
@@ -75,7 +91,6 @@ function ToolpathPanel() {
         layerIndex={layer}
         showTravel={showTravel}
         buildProgress={buildProgress}
-        singleLayer
         linesOnly
         className="demo-panel__viewer gcode-viewer--toolpath"
       />
