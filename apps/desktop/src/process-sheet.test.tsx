@@ -43,6 +43,7 @@ describe("ProcessSheet", () => {
     const tab = screen.getByRole("tab", { name: "Non-planar" });
     fireEvent.mouseDown(tab, { button: 0 });
     fireEvent.click(tab);
-    expect(await screen.findByText("Non-planar slicing will appear here.")).toBeTruthy();
+    expect(await screen.findByText(/coming in v0\.2/i)).toBeTruthy();
+    expect(screen.getByRole("slider", { name: "Max angle" })).toBeTruthy();
   });
 });

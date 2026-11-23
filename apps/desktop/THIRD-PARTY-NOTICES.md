@@ -14,6 +14,7 @@ Shale desktop is **AGPL-3.0-or-later**. Dependencies below are used in the UI re
 | [@radix-ui/react-popover](https://www.radix-ui.com) | MIT | Popovers |
 | [@radix-ui/react-scroll-area](https://www.radix-ui.com) | MIT | Scroll regions |
 | [sonner](https://github.com/emilkowalski/sonner) | MIT | Toasts |
+| [cmdk](https://github.com/pacocoursey/cmdk) | MIT | Command palette |
 | [lucide-react](https://lucide.dev) | ISC | Icons |
 | [clsx](https://github.com/lukeed/clsx) | MIT | className helper |
 | [@number-flow/react](https://number-flow.bar) | MIT | Animated values in sliders |
