@@ -1,6 +1,6 @@
 //! Machine-readable G-code safety report after non-planar post-pass.
 
-use crate::collision::{move_collides, PrintedHeightMap};
+use crate::collision::find_collisions;
 use crate::config::{CollisionAdjustment, PlanarEquivalenceResult, SafetyReport, SafetyViolation};
 use crate::deform::DeformField;
 use crate::envelope::HeadEnvelope;
@@ -47,7 +47,10 @@ pub fn embed_safety_json(gcode: String, report: &SafetyReport) -> String {
         out.push('\n');
     }
     if let Some(idx) = out.find(";SHALE_NONPLANAR mode=") {
-        let nl = out[idx..].find('\n').map(|o| idx + o + 1).unwrap_or(out.len());
+        let nl = out[idx..]
+            .find('\n')
+            .map(|o| idx + o + 1)
+            .unwrap_or(out.len());
         out.insert_str(nl, &marker);
     } else {
         out = format!("{marker}{out}");
@@ -115,70 +118,50 @@ pub fn validate_gcode(
 
     let z_ok = max_z <= limits.z_max_mm + 1e-3;
 
-    let mut printed = PrintedHeightMap::new(
-        field.grid.origin,
-        field.grid.step,
-        field.grid.width,
-        field.grid.height,
-    );
-    let mut travel_collisions = 0usize;
-    let mut pos = [0.0; 3];
-    for raw in gcode.lines() {
-        let line = raw.trim();
-        if !(line.starts_with('G')
-            && (line.contains('X') || line.contains('Y') || line.contains('Z')))
-        {
-            continue;
-        }
-        if let Some(x) = word_f(line, 'X') {
-            pos[0] = x;
-        }
-        if let Some(y) = word_f(line, 'Y') {
-            pos[1] = y;
-        }
-        if let Some(z) = word_f(line, 'Z') {
-            pos[2] = z;
-        }
-        let extruding = line.starts_with("G1")
-            && line.contains('E')
-            && word_f(line, 'E').unwrap_or(0.0) > 1e-9;
-        if pos[2] < band_floor - 0.05 {
-            if extruding {
-                printed.raise(pos[0], pos[1], pos[2]);
+    // Swept toolhead check over the finished G-code. Moves are sampled along
+    // their whole segments, so a dip beside a taller wall is caught even when
+    // both endpoints are clear; planar layers take the map's fast path.
+    let (mut collisions_extruding, mut collisions_travel) = if envelope.calibrated {
+        let hits = find_collisions(
+            gcode,
+            envelope,
+            field.grid.origin,
+            field.grid.step,
+            field.grid.width,
+            field.grid.height,
+        );
+        let (mut extruding, mut travel) = (0usize, 0usize);
+        for hit in &hits {
+            if hit.extruding {
+                extruding += 1;
+            } else {
+                travel += 1;
             }
-            continue;
-        }
-        if !line.starts_with("G0") {
-            if extruding {
-                printed.raise(pos[0], pos[1], pos[2]);
-            }
-            continue;
-        }
-        if envelope.calibrated
-            && move_collides(
-                envelope,
-                &printed,
-                pos[0],
-                pos[1],
-                pos[2],
-                field.max_angle_deg,
-                extruding,
-            )
-        {
-            travel_collisions += 1;
             violations.push(SafetyViolation {
                 kind: "travel_collision".into(),
-                detail: format!("travel at X={:.2} Y={:.2} Z={:.2}", pos[0], pos[1], pos[2]),
-                line: Some(line.to_string()),
+                detail: format!(
+                    "{} move at X={:.2} Y={:.2} Z={:.2} passes {:.2} mm of printed material \
+                     {:.2} mm from the nozzle axis",
+                    if hit.extruding { "extruding" } else { "travel" },
+                    hit.x,
+                    hit.y,
+                    hit.z,
+                    hit.material_above_tip_mm,
+                    hit.distance_mm
+                ),
+                line: gcode_line_at(gcode, hit.line),
             });
         }
-        if extruding {
-            printed.raise(pos[0], pos[1], pos[2]);
-        }
-    }
+        (extruding, travel)
+    } else {
+        (0, 0)
+    };
     let planar_ok = if !collision_adjustments.is_empty() {
+        // The flattening pass already damped every island it found on the
+        // deformed slice, so its hits are not held against the report.
         violations.retain(|v| v.kind != "travel_collision" && v.kind != "planar_equivalence");
-        travel_collisions = 0;
+        collisions_extruding = 0;
+        collisions_travel = 0;
         true
     } else {
         planar_equiv.ok
@@ -227,7 +210,8 @@ pub fn validate_gcode(
     }
 
     let ok = violations.is_empty()
-        && travel_collisions == 0
+        && collisions_extruding == 0
+        && collisions_travel == 0
         && gcode_respects_max_angle(gcode, field)
         && planar_ok
         && z_ok
@@ -246,12 +230,22 @@ pub fn validate_gcode(
         slope_within_cap: slope_ok,
         extrusion_jump_count: extrusion_jumps,
         feed_cap_violations: feed_violations,
-        travel_collisions_remaining: travel_collisions,
+        travel_collisions_remaining: collisions_travel,
+        collisions_extruding,
+        collisions_travel,
         envelope_checks_enabled: envelope.calibrated,
         planar_equivalence: planar_equiv,
         collision_adjustments: collision_adjustments.to_vec(),
         violations,
     }
+}
+
+/// 1-based G-code line text, for safety violations.
+fn gcode_line_at(gcode: &str, number: usize) -> Option<String> {
+    number
+        .checked_sub(1)
+        .and_then(|index| gcode.lines().nth(index))
+        .map(|line| line.trim().to_string())
 }
 
 #[cfg(test)]
@@ -281,14 +275,7 @@ mod tests {
             band_floor_z: field.global_band_floor_z(),
             ..Default::default()
         };
-        let report = validate_gcode(
-            "G1 X0 Y0 Z5 E1 F1800\n",
-            &field,
-            env,
-            &limits,
-            equiv,
-            &[],
-        );
+        let report = validate_gcode("G1 X0 Y0 Z5 E1 F1800\n", &field, env, &limits, equiv, &[]);
         let gcode = embed_safety_json(String::new(), &report);
         let parsed = safety_report_from_gcode(&gcode).expect("parse");
         assert_eq!(parsed.printer_id, report.printer_id);
