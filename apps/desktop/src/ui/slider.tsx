@@ -7,8 +7,8 @@ import {
   type ComponentPropsWithoutRef,
   type KeyboardEvent,
 } from "react";
-import NumberFlow from "@number-flow/react";
 import { cn } from "./cn";
+import { formatSliderLabel, sliderValueLabelPercent, sliderValueOnFill } from "./slider-placement";
 
 export interface SliderProps extends Omit<ComponentPropsWithoutRef<typeof SliderPrimitive.Root>, "onValueChange"> {
   label: string;
@@ -47,7 +47,11 @@ export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
 
   const current = Array.isArray(value) ? value[0] : Array.isArray(defaultValue) ? defaultValue[0] : min;
   const span = Number(max) - Number(min) || 1;
-  const valueLeft = ((current - Number(min)) / span) * 100;
+  const thumbPercent = ((current - Number(min)) / span) * 100;
+  const labelPercent = sliderValueLabelPercent(thumbPercent);
+  const onFill = sliderValueOnFill(thumbPercent, labelPercent);
+  const displayLabel = formatSliderLabel(current, inputDigits, unit, formatValue);
+
   const emit = useCallback(
     (next: number) => {
       const clamped = Math.min(max, Math.max(min, next));
@@ -91,8 +95,8 @@ export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
           <SliderPrimitive.Track className="ui-slider__track">
             <SliderPrimitive.Range className="ui-slider__range" />
             {marks?.map((mark, index) => {
-              const span = Number(max) - Number(min) || 1;
-              const pct = ((mark - Number(min)) / span) * 100;
+              const markSpan = Number(max) - Number(min) || 1;
+              const pct = ((mark - Number(min)) / markSpan) * 100;
               return (
                 <span
                   key={`${mark}-${index}`}
@@ -109,7 +113,8 @@ export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
           <button
             type="button"
             className="ui-slider__value"
-            style={{ left: `${Math.min(100, Math.max(0, valueLeft))}%` }}
+            style={{ left: `${labelPercent}%` }}
+            data-on-fill={onFill ? "1" : "0"}
             aria-label={`${label} exact value`}
             disabled={disabled}
             onClick={() => {
@@ -118,21 +123,23 @@ export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
               queueMicrotask(() => inputRef.current?.focus());
             }}
           >
-            {formatValue ? (
-              formatValue(current)
-            ) : (
-              <NumberFlow
-                value={current}
-                suffix={unit ? ` ${unit}` : undefined}
-                format={{ minimumFractionDigits: inputDigits, maximumFractionDigits: inputDigits }}
-              />
-            )}
+            {displayLabel}
           </button>
+        ) : allowInput === false ? (
+          <span
+            className="ui-slider__value ui-slider__value--readout"
+            style={{ left: `${labelPercent}%` }}
+            data-on-fill={onFill ? "1" : "0"}
+            aria-hidden
+          >
+            {displayLabel}
+          </span>
         ) : null}
         {allowInput && editing ? (
           <input
             ref={inputRef}
             className="ui-slider__value-input"
+            style={{ left: `${labelPercent}%` }}
             aria-label={`${label} exact value`}
             inputMode="decimal"
             disabled={disabled}

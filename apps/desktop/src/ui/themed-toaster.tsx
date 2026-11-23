@@ -8,8 +8,10 @@ export function ThemedToaster({ uiStyle }: { uiStyle: UiStyleId }) {
   return (
     <Toaster
       position="bottom-right"
-      closeButton
+      closeButton={false}
       theme={sonnerTheme}
+      offset={{ bottom: 88, right: 20 }}
+      mobileOffset={{ bottom: 72, right: 16 }}
       toastOptions={{
         unstyled: true,
         classNames: {

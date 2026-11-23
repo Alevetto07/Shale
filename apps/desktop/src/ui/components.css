@@ -209,6 +209,7 @@
   background: var(--ink);
   border: 0;
   box-shadow: none;
+  z-index: 1;
 }
 .ui-slider__thumb:focus-visible {
   outline: var(--focus-ring);
@@ -216,20 +217,30 @@
 }
 .ui-slider__value {
   position: absolute;
-  left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
   z-index: 2;
+  max-width: calc(100% - var(--space-6));
   padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
   font-family: var(--mono);
   font-size: 13px;
   font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
   color: var(--ink);
   cursor: text;
   pointer-events: auto;
+}
+.ui-slider__value[data-on-fill="1"] {
+  background: color-mix(in srgb, var(--panel-raised) 78%, transparent);
+  color: var(--ink);
+}
+.ui-slider__value--readout {
+  pointer-events: none;
+  cursor: default;
 }
 .ui-slider[data-disabled="1"] .ui-slider__root {
   cursor: not-allowed;
@@ -689,14 +700,17 @@
 /* Sonner — token-backed toasts (unstyled + shale-toast classes) */
 [data-sonner-toaster] {
   font-family: var(--prose);
-  --width: 380px;
+  --width: 26rem;
+  z-index: 500;
 }
 [data-sonner-toast].shale-toast {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-2) var(--space-3);
+  column-gap: var(--space-4);
+  row-gap: var(--space-1);
   width: var(--width);
+  max-width: min(26rem, calc(100vw - 40px));
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
@@ -705,8 +719,9 @@
   box-shadow: var(--shadow-float);
 }
 .shale-toast__title {
-  flex: 1 1 auto;
+  grid-column: 1;
   margin: 0;
+  min-width: 0;
   font-family: var(--prose);
   font-size: var(--text-base);
   font-weight: 500;
@@ -714,7 +729,7 @@
   color: var(--ink);
 }
 .shale-toast__description {
-  flex: 1 1 100%;
+  grid-column: 1 / -1;
   margin: 0;
   font-family: var(--prose);
   font-size: var(--text-sm);
@@ -722,14 +737,18 @@
   color: var(--ink-2);
 }
 .shale-toast__action {
-  margin-left: auto;
-  padding: var(--space-1) var(--space-3);
+  grid-column: 2;
+  grid-row: 1;
+  flex-shrink: 0;
+  min-width: 4.75rem;
+  padding: var(--space-2) var(--space-4);
   border: 1px solid var(--accent-muted);
   border-radius: var(--radius-md);
   background: var(--accent-soft);
   font-family: var(--prose);
   font-size: var(--text-sm);
   font-weight: 500;
+  white-space: nowrap;
   color: var(--accent);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
@@ -749,26 +768,6 @@
   font-size: var(--text-sm);
   color: var(--ink-2);
   cursor: pointer;
-}
-.shale-toast__close {
-  position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
-  width: 22px;
-  height: 22px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink-3);
-  cursor: pointer;
-}
-[data-sonner-toast].shale-toast [data-close-button] {
-  position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
-  border: 0;
-  background: var(--surface-inset);
-  color: var(--ink-2);
 }
 
 /* —— Stage 2: workspace, sheets, settings —— */
