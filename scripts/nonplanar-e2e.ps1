@@ -58,8 +58,10 @@ $env:SHALE_CURA_DIR = Join-Path $Repo 'vendor\Cura'
 $env:SHALE_MATERIALS_DIR = Join-Path $Repo 'vendor\fdm_materials'
 $env:SHALE_ORCA_DIR = Join-Path $Repo 'vendor\BambuStudio\resources\profiles'
 $env:SHALE_CURAENGINE = Join-Path $Repo 'vendor\curaengine\CuraEngine.exe'
+# The engine tests skip silently without all five variables (see COORD.md).
+$env:SHALE_CURAENGINE_LIB_DIR = Join-Path $Repo 'vendor\curaengine'
 $env:SHALE_BENCH_SUMMARY = '1'
-foreach ($v in 'SHALE_CURA_DIR', 'SHALE_MATERIALS_DIR', 'SHALE_ORCA_DIR', 'SHALE_CURAENGINE') {
+foreach ($v in 'SHALE_CURA_DIR', 'SHALE_MATERIALS_DIR', 'SHALE_ORCA_DIR', 'SHALE_CURAENGINE', 'SHALE_CURAENGINE_LIB_DIR') {
     $path = [Environment]::GetEnvironmentVariable($v)
     if (-not (Test-Path $path)) { throw "$v does not exist: $path" }
 }
