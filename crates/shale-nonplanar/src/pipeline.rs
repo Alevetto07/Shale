@@ -1,136 +1,168 @@
-//! Orchestration: pre-pass mesh deform and post-pass inverse G-code map.
+//! Orchestration: one field, built once, used both ways.
+//!
+//! The field is built from the merged MACHINE-space reference mesh before any
+//! model is deformed, slope-limited before slicing, and then reused verbatim by
+//! the post-pass for the inverse map. The post-pass only verifies: it never
+//! rebuilds the field, re-plans placement, or edits the field to hide a failure.
+//! When a check fails the job falls back to the planar baseline (or fails, in
+//! strict mode) instead of silently bending geometry.
 
-use serde::{Deserialize, Serialize};
-use crate::mesh::{merge_meshes as merge_meshes_internal, Mesh};
-
-use crate::auto::{
-    apply_plan_to_field, plan_auto_placement, PlannedSurfaceKind, SupportSpanInput,
-};
-use crate::collision::{flatten_on_collision, PrintedHeightMap};
+use crate::auto::{apply_plan_to_field, plan_auto_placement, PlannedSurfaceKind, SupportSpanInput};
+use crate::collision::PrintedHeightMap;
 use crate::config::{NonplanarMode, NonplanarOptions, NonplanarReport};
 use crate::deform::{build_deform_field, deform_mesh, subdivide_long_edges, DeformField};
-use crate::envelope::{head_envelope_for_printer, bambu_a1_envelope};
+use crate::envelope::{head_envelope_for_printer, missing_envelope_message};
 use crate::equivalence::{check_grafted_planar_equivalence, graft_planar_shell_below_band};
-use crate::validate::{embed_safety_json, validate_gcode, MachineLimits};
 use crate::height_field::{build_height_field, count_top_islands};
-use crate::safety::enforce_slope_safety;
+use crate::inverse::map_gcode_inverse;
+use crate::mesh::{merge_meshes as merge_meshes_internal, Mesh};
+use crate::slope_limit::{limit_field_slopes, SlopeLimitSummary};
+use crate::validate::{embed_safety_json, validate_gcode, MachineLimits};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Everything the post-pass needs, produced once by [`prepare_plate`].
+#[derive(Clone, Debug)]
 pub struct NonplanarContext {
-    pub field: DeformFieldSnapshot,
+    /// The whole deformation: height grid, auto plan and pre-slice slope safety.
+    pub field: DeformField,
+    pub options: NonplanarOptions,
+    pub printer_id: String,
     pub nominal_layer_height: f64,
-    pub max_angle_deg: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auto_placement: Option<crate::auto::AutoPlacementReport>,
-}
-
-/// Serializable subset for attaching to slice outcomes.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DeformFieldSnapshot {
-    pub band_thickness: f64,
-    pub ramp_thickness: f64,
-    pub deformed_top_z: f64,
-    pub nominal_layer: f64,
     pub top_islands: usize,
+    pub slope_limit: SlopeLimitSummary,
+    pub auto_placement: Option<crate::auto::AutoPlacementReport>,
+    /// Set when the pre-pass refused to deform, so the job must print planar.
+    pub preslice_failure: Option<String>,
+    pub notes: Vec<String>,
 }
 
-/// Pre-pass: build height field, deform mesh, return context for post-pass.
-pub fn prepare_pre_pass(
-    mesh: &Mesh,
+impl NonplanarContext {
+    /// Longest straight edge the deformation can follow without folding the mesh.
+    pub fn max_edge_mm(&self) -> f64 {
+        self.field.grid.step * 3.0
+    }
+}
+
+/// Build the plate's single deformation field.
+///
+/// The reference mesh must be the merged, MACHINE-space mesh of every model on
+/// the plate, so the auto plan, the spans and the height grid all describe the
+/// same geometry the models are deformed with and the G-code is inverse mapped
+/// from.
+pub fn prepare_plate(
+    reference_mesh: &Mesh,
     options: &NonplanarOptions,
     nominal_layer_height: f64,
+    printer_id: &str,
     support_spans: &[SupportSpanInput],
-) -> (Mesh, NonplanarContext) {
+) -> Result<NonplanarContext, String> {
+    if head_envelope_for_printer(printer_id).is_none() {
+        return Err(missing_envelope_message(printer_id));
+    }
     let band = options.effective_band_thickness(nominal_layer_height);
     let ramp = options.effective_ramp_thickness(nominal_layer_height);
-    let grid = build_height_field(mesh, options.grid_step_mm, options.max_angle_deg, band);
-    let mut field = build_deform_field(grid, band, ramp, nominal_layer_height, options.max_angle_deg);
+    let grid = build_height_field(
+        reference_mesh,
+        options.grid_step_mm,
+        options.max_angle_deg,
+        band,
+    );
+    let mut field = build_deform_field(
+        grid,
+        band,
+        ramp,
+        nominal_layer_height,
+        options.max_angle_deg,
+    );
+    let mut notes = Vec::new();
     let mut auto_placement = None;
     if options.mode == NonplanarMode::Auto {
-        let plan = plan_auto_placement(mesh, support_spans, options, nominal_layer_height);
+        let plan =
+            plan_auto_placement(reference_mesh, support_spans, options, nominal_layer_height);
         apply_plan_to_field(&mut field, &plan, nominal_layer_height);
+        notes.extend(plan.notes.iter().cloned());
+        if plan.fallback_to_planar {
+            notes.push("auto placement enabled no surface; the top stays flat".into());
+        }
         auto_placement = Some(plan);
     }
-    let islands = count_top_islands(&field.grid);
-    let subdivided = subdivide_long_edges(mesh, 1.0);
-    let deformed = deform_mesh(&subdivided, &field);
-    let ctx = NonplanarContext {
-        field: DeformFieldSnapshot {
-            band_thickness: band,
-            ramp_thickness: ramp,
-            deformed_top_z: field.deformed_top_z,
-            nominal_layer: nominal_layer_height,
-            top_islands: islands,
-        },
-        nominal_layer_height,
-        max_angle_deg: options.max_angle_deg,
-        auto_placement,
+    // Slope safety converges here, before CuraEngine slices the deformed mesh,
+    // so the geometry that gets sliced and the field used to invert it agree.
+    let slope_limit = limit_field_slopes(&mut field);
+    notes.push(slope_limit.note());
+    let preslice_failure = if slope_limit.converged {
+        None
+    } else {
+        Some(format!(
+            "slope limiting did not converge: worst {:.2} deg over a {:.2} deg cap with {} fixed band conflict(s)",
+            slope_limit.worst_after_deg, slope_limit.max_angle_deg, slope_limit.fixed_conflicts
+        ))
     };
-    (deformed, ctx)
+    Ok(NonplanarContext {
+        top_islands: count_top_islands(&field.grid),
+        field,
+        options: options.clone(),
+        printer_id: printer_id.to_ascii_lowercase(),
+        nominal_layer_height,
+        slope_limit,
+        auto_placement,
+        preslice_failure,
+        notes,
+    })
+}
+
+/// Deform one model in MACHINE space with the plate field.
+///
+/// The caller applies [`crate::mesh::to_engine_space`] afterwards; that is a
+/// pure XY shift, so the field, which is in machine space, stays valid.
+pub fn deform_model(mesh: &Mesh, ctx: &NonplanarContext) -> Mesh {
+    if ctx.preslice_failure.is_some() {
+        return mesh.clone();
+    }
+    let subdivided = subdivide_long_edges(mesh, ctx.max_edge_mm());
+    deform_mesh(&subdivided, &ctx.field)
 }
 
 pub fn merge_meshes(meshes: &[Mesh]) -> Mesh {
     merge_meshes_internal(meshes)
 }
 
-/// Rebuild an in-memory field from mesh + options (post-pass on same mesh before deform).
-pub fn rebuild_field(mesh: &Mesh, options: &NonplanarOptions, nominal_layer_height: f64) -> DeformField {
-    let band = options.effective_band_thickness(nominal_layer_height);
-    let ramp = options.effective_ramp_thickness(nominal_layer_height);
-    let grid = build_height_field(mesh, options.grid_step_mm, options.max_angle_deg, band);
-    build_deform_field(grid, band, ramp, nominal_layer_height, options.max_angle_deg)
-}
-
-/// Post-pass on deformed-mesh G-code from CuraEngine.
+/// Inverse map the curved slice, graft the planar shell, verify, and either
+/// accept the result or fall back to the planar baseline.
 ///
-/// `planar_baseline_gcode` must be a **planar** slice of the same job on the undeformed
-/// mesh (physical machine coordinates), used only for below-band equivalence.
-// Cura's G-code plus the field, the printer envelope and its limits: this is the
-// pipeline stage boundary, so the arguments stay explicit.
-#[allow(clippy::too_many_arguments)]
+/// # Errors
+/// Only in strict mode, or when the printer has no head envelope (which
+/// [`prepare_plate`] already refuses).
 pub fn apply_post_pass(
     deformed_slice_gcode: &str,
     planar_baseline_gcode: &str,
-    mesh: &Mesh,
-    options: &NonplanarOptions,
-    nominal_layer_height: f64,
-    support_spans: &[SupportSpanInput],
-    printer_id: &str,
+    ctx: &NonplanarContext,
     limits: MachineLimits,
-) -> (String, NonplanarReport) {
-    let envelope = head_envelope_for_printer(printer_id).unwrap_or(bambu_a1_envelope());
-    let mut field = rebuild_field(mesh, options, nominal_layer_height);
-    let mut auto_placement = None;
-    if options.mode == NonplanarMode::Auto {
-        let plan = plan_auto_placement(mesh, support_spans, options, nominal_layer_height);
-        apply_plan_to_field(&mut field, &plan, nominal_layer_height);
-        auto_placement = Some(plan);
-    }
-    let mut report = flatten_on_collision(
-        &mut field,
-        deformed_slice_gcode,
-        envelope,
-        options.max_angle_deg,
-    );
-    report.mode = options.mode.name().into();
-    if let Some(plan) = auto_placement {
+) -> Result<(String, NonplanarReport), String> {
+    let envelope = head_envelope_for_printer(&ctx.printer_id)
+        .ok_or_else(|| missing_envelope_message(&ctx.printer_id))?;
+    let mut report = NonplanarReport::default();
+    report.mode = ctx.options.mode.name().into();
+    report.max_angle_deg = ctx.field.max_angle_deg;
+    report.top_islands = ctx.top_islands;
+    report.notes.extend(ctx.notes.iter().cloned());
+    if let Some(plan) = &ctx.auto_placement {
         report.fallback_to_planar |= plan.fallback_to_planar;
-        report.auto_placement = Some(plan);
+        report.auto_placement = Some(plan.clone());
     }
-    report.notes.push("ironing disabled for curved-top pass".into());
-    report.top_islands = count_top_islands(&field.grid);
-    let mapped = enforce_slope_safety(
-        &mut field,
-        deformed_slice_gcode,
-        nominal_layer_height,
-        &mut report,
-    );
+    if let Some(reason) = &ctx.preslice_failure {
+        return fail_clean(ctx, report, planar_baseline_gcode, vec![reason.clone()]);
+    }
+
+    report
+        .notes
+        .push("ironing disabled for curved-top pass".into());
+    let mapped = map_gcode_inverse(&ctx.field, deformed_slice_gcode, ctx.nominal_layer_height);
     if let Some(plan) = &mut report.auto_placement {
         fill_measured_overhang_angles(&mapped, plan);
     }
-    let band_floor = field.global_band_floor_z();
+    let band_floor = ctx.field.global_band_floor_z();
     let grafted = graft_planar_shell_below_band(planar_baseline_gcode, &mapped, band_floor);
-    let equiv = check_grafted_planar_equivalence(planar_baseline_gcode, &grafted, &field);
+    let equiv = check_grafted_planar_equivalence(planar_baseline_gcode, &grafted, &ctx.field);
     report.planar_equivalence_ok = equiv.ok;
     if !equiv.ok {
         report.notes.push(format!(
@@ -155,27 +187,77 @@ pub fn apply_post_pass(
             ));
         }
     }
-    let safety = validate_gcode(
-        &grafted,
-        &field,
-        envelope,
-        &limits,
-        equiv,
-        &report.collision_adjustments,
-    );
+    let safety = validate_gcode(&grafted, &ctx.field, envelope, &limits, equiv);
+    report.notes.push(format!(
+        "slope verified: {} (worst {:.2} deg against a {:.2} deg cap)",
+        ctx.slope_limit.note(),
+        ctx.slope_limit.worst_after_deg,
+        ctx.slope_limit.max_angle_deg
+    ));
     if !safety.ok {
         report
             .notes
             .push(format!("safety report: {} violation(s)", safety.violations.len()));
     }
+
+    // Every failed check sends the job to the planar baseline. Nothing is
+    // repaired by editing geometry or the field after slicing.
+    let mut reasons: Vec<String> = Vec::new();
+    if !crate::safety::gcode_respects_max_angle(&grafted, &ctx.field) {
+        let worst = crate::safety::max_curved_band_extrusion_slope_deg(&grafted, &ctx.field)
+            .unwrap_or(f64::NAN);
+        reasons.push(format!(
+            "slope: curved band reaches {worst:.2} deg over a {:.2} deg cap",
+            ctx.field.max_angle_deg
+        ));
+    }
+    for violation in &safety.violations {
+        reasons.push(format!("{}: {}", violation.kind, violation.detail));
+    }
+    if !report.planar_equivalence_ok {
+        reasons.push("planar equivalence: below-band G-code differs from the planar slice".into());
+    }
+    if !reasons.is_empty() {
+        report.safety = Some(safety);
+        return fail_clean(ctx, report, planar_baseline_gcode, reasons);
+    }
     report.safety = Some(safety);
+
     let header = format_nonplanar_header(&report);
     let (mut out, report) = ok_attach_header(grafted, &header, report);
     if let Some(safety) = report.safety.as_ref() {
         out = embed_safety_json(out, safety);
     }
-    (out, report)
+    Ok((out, report))
 }
+
+/// Fall back to the planar baseline (or fail in strict mode), with the exact
+/// reasons in the notes and in the `;SHALE_NONPLANAR` header.
+fn fail_clean(
+    ctx: &NonplanarContext,
+    mut report: NonplanarReport,
+    planar_baseline: &str,
+    reasons: Vec<String>,
+) -> Result<(String, NonplanarReport), String> {
+    if ctx.options.strict {
+        return Err(format!(
+            "non-planar verification failed: {}",
+            reasons.join("; ")
+        ));
+    }
+    report.fallback_to_planar = true;
+    report.fallback_reasons = reasons.clone();
+    for reason in &reasons {
+        report.notes.push(format!("fell back to planar: {reason}"));
+    }
+    let header = format_nonplanar_header(&report);
+    let (mut out, report) = ok_attach_header(planar_baseline.to_string(), &header, report);
+    if let Some(safety) = report.safety.as_ref() {
+        out = embed_safety_json(out, safety);
+    }
+    Ok((out, report))
+}
+
 
 fn fill_measured_overhang_angles(gcode: &str, plan: &mut crate::auto::AutoPlacementReport) {
     for surface in &mut plan.surfaces {
@@ -207,8 +289,8 @@ fn fill_measured_overhang_angles(gcode: &str, plan: &mut crate::auto::AutoPlacem
 }
 
 fn format_nonplanar_header(report: &NonplanarReport) -> String {
-    format!(
-        ";SHALE_NONPLANAR mode={} max_angle={:.1} islands={} flattened={} fallback={} equiv={} safe={}\n",
+    let mut header = format!(
+        ";SHALE_NONPLANAR mode={} max_angle={:.1} islands={} flattened={} fallback={} equiv={} safe={}",
         report.mode,
         report.max_angle_deg,
         report.top_islands,
@@ -216,7 +298,16 @@ fn format_nonplanar_header(report: &NonplanarReport) -> String {
         report.fallback_to_planar,
         report.planar_equivalence_ok,
         report.safety.as_ref().is_some_and(|s| s.ok)
-    )
+    );
+    if !report.fallback_reasons.is_empty() {
+        let reason = report
+            .fallback_reasons
+            .join("; ")
+            .replace(['"', '\n', '\r'], " ");
+        header.push_str(&format!(" reason=\"{reason}\""));
+    }
+    header.push('\n');
+    header
 }
 
 fn ok_attach_header(mapped: String, header: &str, mut report: NonplanarReport) -> (String, NonplanarReport) {
@@ -226,18 +317,23 @@ fn ok_attach_header(mapped: String, header: &str, mut report: NonplanarReport) -
     (out, report)
 }
 
-/// Build a printed height map envelope self-test on finished G-code (no extrusion moves should violate).
-pub fn gcode_respects_envelope(gcode: &str, printer_id: &str, max_angle_deg: f64) -> bool {
-    let envelope = head_envelope_for_printer(printer_id).unwrap_or(bambu_a1_envelope());
-    let step = 2.0;
-    // Machine-coordinate G-code from Cura (front-left origin on a 256 mm bed).
-    let mut printed = PrintedHeightMap::new([0.0, 0.0], step, 130, 130);
+/// Envelope self-test on finished G-code: must find no collision on any move.
+///
+/// Returns `false` for a printer without an envelope, so an unsupported machine
+/// can never be reported as safe.
+pub fn gcode_respects_envelope(gcode: &str, printer_id: &str) -> bool {
+    let Some(envelope) = head_envelope_for_printer(printer_id) else {
+        return false;
+    };
+    let step = 1.0;
+    let mut printed = PrintedHeightMap::new([0.0, 0.0], step, 260, 260);
     let mut position = [0.0; 3];
+    let mut prev = [0.0; 3];
+    let mut have_prev = false;
     for raw in gcode.lines() {
         let line = raw.trim();
-        if !(line.starts_with('G') && (line.contains('X') || line.contains('Y'))) {
-            continue;
-        }
+        let motion = (line.starts_with("G0") || line.starts_with("G1"))
+            && (line.contains('X') || line.contains('Y') || line.contains('Z'));
         if let Some(x) = parse_word(line, 'X') {
             position[0] = x;
         }
@@ -247,25 +343,32 @@ pub fn gcode_respects_envelope(gcode: &str, printer_id: &str, max_angle_deg: f64
         if let Some(z) = parse_word(line, 'Z') {
             position[2] = z;
         }
+        if !motion {
+            continue;
+        }
         let e_pos = parse_word(line, 'E').unwrap_or(0.0);
         let extruding = line.starts_with("G1") && line.contains('E') && e_pos > 0.0;
-        if line.starts_with('G')
-            && (extruding || line.starts_with("G0"))
-            && crate::collision::move_collides(
-                envelope,
-                &printed,
-                position[0],
-                position[1],
-                position[2],
-                max_angle_deg,
-                extruding,
-            )
+        if !have_prev {
+            prev = position;
+            have_prev = true;
+            continue;
+        }
+        if crate::collision::segment_collides(
+            envelope,
+            &printed,
+            prev,
+            position,
+            step,
+            crate::collision::CONTACT_TOL_MM,
+        )
+        .is_some()
         {
             return false;
         }
         if extruding {
-            printed.raise(position[0], position[1], position[2]);
+            printed.raise_segment([prev[0], prev[1]], [position[0], position[1]], position[2], step);
         }
+        prev = position;
     }
     true
 }
@@ -718,21 +821,117 @@ mod post_pass_tests {
             ..NonplanarOptions::default()
         };
         let planar = "G1 X5 Y5 Z2 E0\nG1 X15 Y5 Z2 E1\nG0 X15 Y15 Z9\nG1 X15 Y15 Z9 E2\nG1 X5 Y15 Z9.2 E3\n";
+        let ctx = prepare_plate(&mesh, &opts, 0.2, "bambu_lab_a1", &[]).expect("context");
         let (out, report) = apply_post_pass(
             planar,
             planar,
-            &mesh,
-            &opts,
-            0.2,
-            &[],
-            "bambu_lab_a1",
+            &ctx,
             MachineLimits {
                 z_max_mm: 256.0,
                 max_feed_mm_per_min: 6000.0,
             },
-        );
+        )
+        .expect("post pass");
         assert!(report.planar_equivalence_ok, "{:?}", report.notes);
         assert!(report.safety.as_ref().is_some_and(|s| s.ok), "{out}");
         assert!(out.contains(";SHALE_NONPLANAR_SAFETY"));
+    }
+
+    /// The G-code handed to the post-pass is sliced at *deformed* Z. Mapping it
+    /// back with the same field must return the physical top surface, which is
+    /// the whole point of building the field once.
+    #[test]
+    fn inverse_map_round_trips_the_top_surface() {
+        let mesh = crate::test_meshes::tilted_top_slab(40.0, 40.0, 10.0, 6.0);
+        let opts = NonplanarOptions {
+            mode: NonplanarMode::CurvedTops,
+            max_angle_deg: 10.0,
+            grid_step_mm: 0.5,
+            ..NonplanarOptions::default()
+        };
+        let ctx = prepare_plate(&mesh, &opts, 0.2, "bambu_lab_a1", &[]).expect("context");
+        assert!(ctx.preslice_failure.is_none(), "{:?}", ctx.preslice_failure);
+        assert!(
+            ctx.field.deformed_top_z > 0.0,
+            "the field must bend the top, not leave it alone"
+        );
+
+        // Synthetic planar G-code: one move per column, written at the Z the
+        // deformed mesh has there.
+        // A travel move first, exactly as a slicer emits: the inverse map needs
+        // a known position before the first extrusion.
+        let mut gcode = String::from("G90\n");
+        if let Some(top) = ctx.field.grid.sample_top_smooth(6.0, 6.0) {
+            let z_def = ctx.field.forward_z(6.0, 6.0, top);
+            gcode.push_str(&format!("G0 X6.000 Y6.000 Z{z_def:.4}\n"));
+        }
+        let mut expected: std::collections::HashMap<(String, String), f64> =
+            std::collections::HashMap::new();
+        let mut x = -18.0;
+        while x <= 18.0 {
+            let mut y = -18.0;
+            while y <= 18.0 {
+                if let Some(top) = ctx.field.grid.sample_top_smooth(x, y) {
+                    let z_def = ctx.field.forward_z(x, y, top);
+                    gcode.push_str(&format!("G1 X{x:.3} Y{y:.3} Z{z_def:.4} E1\n"));
+                    expected.insert((format!("{x:.3}"), format!("{y:.3}")), top);
+                }
+                y += 1.0;
+            }
+            x += 1.0;
+        }
+
+        let mapped = map_gcode_inverse(&ctx.field, &gcode, ctx.nominal_layer_height);
+        let mut checked = 0usize;
+        let mut worst = 0.0f64;
+        for line in mapped.lines() {
+            let (Some(px), Some(py), Some(pz)) = (
+                word_after(line, 'X'),
+                word_after(line, 'Y'),
+                word_after(line, 'Z'),
+            ) else {
+                continue;
+            };
+            let key = (format!("{px:.3}"), format!("{py:.3}"));
+            let Some(physical) = expected.get(&key) else {
+                continue;
+            };
+            checked += 1;
+            worst = worst.max((pz - physical).abs());
+        }
+        assert!(checked > 200, "only {checked} points were inverse mapped");
+        assert!(
+            worst <= 0.02,
+            "inverse map misses the physical top by {worst:.4} mm over {checked} points"
+        );
+
+        // The sampled top is the mesh top: the field describes the geometry the
+        // engine sliced, not a smoothed stand-in.
+        let analytic = |x: f64| 10.0 + x * 6.0f64.to_radians().tan();
+        let mut worst_tie = 0.0f64;
+        let mut cell_x = -16.0;
+        while cell_x <= 16.0 {
+            let mut cell_y = -16.0;
+            while cell_y <= 16.0 {
+                if let Some(top) = ctx.field.grid.sample_top_smooth(cell_x, cell_y) {
+                    worst_tie = worst_tie.max((top - analytic(cell_x)).abs());
+                }
+                cell_y += 2.0;
+            }
+            cell_x += 2.0;
+        }
+        assert!(
+            worst_tie <= 0.02,
+            "sampled top drifts {worst_tie:.4} mm from the mesh"
+        );
+    }
+
+    fn word_after(line: &str, letter: char) -> Option<f64> {
+        let start = line.find(letter)? + 1;
+        let rest = &line[start..];
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')
+            .unwrap_or(rest.len());
+        rest[..end].parse().ok()
     }
 }

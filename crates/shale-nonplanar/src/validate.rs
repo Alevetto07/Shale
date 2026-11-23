@@ -1,7 +1,7 @@
 //! Machine-readable G-code safety report after non-planar post-pass.
 
-use crate::collision::{move_collides, PrintedHeightMap};
-use crate::config::{CollisionAdjustment, PlanarEquivalenceResult, SafetyReport, SafetyViolation};
+use crate::collision::PrintedHeightMap;
+use crate::config::{PlanarEquivalenceResult, SafetyReport, SafetyViolation};
 use crate::deform::DeformField;
 use crate::envelope::HeadEnvelope;
 use crate::safety::{
@@ -61,7 +61,6 @@ pub fn validate_gcode(
     envelope: &HeadEnvelope,
     limits: &MachineLimits,
     planar_equiv: PlanarEquivalenceResult,
-    collision_adjustments: &[CollisionAdjustment],
 ) -> SafetyReport {
     let band_floor = field.global_band_floor_z();
     let mut max_z = 0.0f64;
@@ -115,21 +114,24 @@ pub fn validate_gcode(
 
     let z_ok = max_z <= limits.z_max_mm + 1e-3;
 
+    // Sweep every move, extrusion and travel, sampling along the segment at the
+    // field grid step. The map is raised as the sweep advances, so a move is
+    // tested against what is actually below it at that point in the print.
     let mut printed = PrintedHeightMap::new(
         field.grid.origin,
         field.grid.step,
         field.grid.width,
         field.grid.height,
     );
-    let mut travel_collisions = 0usize;
-    let mut pos = [0.0; 3];
+    let sample_step = field.grid.step.max(0.2);
+    let mut collisions = 0usize;
+    let mut pos = [0.0f64; 3];
+    let mut prev = [0.0f64; 3];
+    let mut have_prev = false;
     for raw in gcode.lines() {
         let line = raw.trim();
-        if !(line.starts_with('G')
-            && (line.contains('X') || line.contains('Y') || line.contains('Z')))
-        {
-            continue;
-        }
+        let motion = (line.starts_with("G0") || line.starts_with("G1"))
+            && (line.contains('X') || line.contains('Y') || line.contains('Z'));
         if let Some(x) = word_f(line, 'X') {
             pos[0] = x;
         }
@@ -139,50 +141,57 @@ pub fn validate_gcode(
         if let Some(z) = word_f(line, 'Z') {
             pos[2] = z;
         }
+        if !motion {
+            continue;
+        }
         let extruding = line.starts_with("G1")
             && line.contains('E')
             && word_f(line, 'E').unwrap_or(0.0) > 1e-9;
-        if pos[2] < band_floor - 0.05 {
-            if extruding {
-                printed.raise(pos[0], pos[1], pos[2]);
+        if !have_prev {
+            prev = pos;
+            have_prev = true;
+        } else if prev != pos {
+            let moved = (pos[0] - prev[0]).abs() > 1e-9
+                || (pos[1] - prev[1]).abs() > 1e-9
+                || (pos[2] - prev[2]).abs() > 1e-9;
+            if moved && envelope.calibrated {
+                if let Some(hit) = crate::collision::segment_collides(
+                    envelope,
+                    &printed,
+                    prev,
+                    pos,
+                    sample_step,
+                    crate::collision::CONTACT_TOL_MM,
+                ) {
+                    collisions += 1;
+                    let kind = if extruding {
+                        "extrusion_collision"
+                    } else {
+                        "travel_collision"
+                    };
+                    violations.push(SafetyViolation {
+                        kind: kind.into(),
+                        detail: format!(
+                            "{} at X={:.2} Y={:.2} Z={:.2}: material {:.2} mm at {:.2} mm from the tip (reach {:.2} mm)",
+                            if extruding { "extrusion" } else { "travel" },
+                            hit.x,
+                            hit.y,
+                            hit.z,
+                            hit.material_z,
+                            hit.distance,
+                            hit.reach
+                        ),
+                        line: Some(line.to_string()),
+                    });
+                }
             }
-            continue;
-        }
-        if !line.starts_with("G0") {
             if extruding {
-                printed.raise(pos[0], pos[1], pos[2]);
+                printed.raise_segment([prev[0], prev[1]], [pos[0], pos[1]], pos[2], sample_step);
             }
-            continue;
-        }
-        if envelope.calibrated
-            && move_collides(
-                envelope,
-                &printed,
-                pos[0],
-                pos[1],
-                pos[2],
-                field.max_angle_deg,
-                extruding,
-            )
-        {
-            travel_collisions += 1;
-            violations.push(SafetyViolation {
-                kind: "travel_collision".into(),
-                detail: format!("travel at X={:.2} Y={:.2} Z={:.2}", pos[0], pos[1], pos[2]),
-                line: Some(line.to_string()),
-            });
-        }
-        if extruding {
-            printed.raise(pos[0], pos[1], pos[2]);
+            prev = pos;
         }
     }
-    let planar_ok = if !collision_adjustments.is_empty() {
-        violations.retain(|v| v.kind != "travel_collision" && v.kind != "planar_equivalence");
-        travel_collisions = 0;
-        true
-    } else {
-        planar_equiv.ok
-    };
+    let planar_ok = planar_equiv.ok;
 
     if !z_ok {
         violations.push(SafetyViolation {
@@ -227,7 +236,7 @@ pub fn validate_gcode(
     }
 
     let ok = violations.is_empty()
-        && travel_collisions == 0
+        && collisions == 0
         && gcode_respects_max_angle(gcode, field)
         && planar_ok
         && z_ok
@@ -246,10 +255,10 @@ pub fn validate_gcode(
         slope_within_cap: slope_ok,
         extrusion_jump_count: extrusion_jumps,
         feed_cap_violations: feed_violations,
-        travel_collisions_remaining: travel_collisions,
+        travel_collisions_remaining: collisions,
         envelope_checks_enabled: envelope.calibrated,
         planar_equivalence: planar_equiv,
-        collision_adjustments: collision_adjustments.to_vec(),
+        collision_adjustments: Vec::new(),
         violations,
     }
 }
@@ -287,7 +296,6 @@ mod tests {
             env,
             &limits,
             equiv,
-            &[],
         );
         let gcode = embed_safety_json(String::new(), &report);
         let parsed = safety_report_from_gcode(&gcode).expect("parse");

@@ -42,7 +42,9 @@ fn benchy_body_not_in_top_band() {
         grid_step_mm: 0.35,
         ..NonplanarOptions::default()
     };
-    let field = shale_nonplanar::pipeline::rebuild_field(&m, &opts, 0.2);
+    let field = shale_nonplanar::prepare_plate(&m, &opts, 0.2, "bambu_lab_a1", &[])
+        .expect("context")
+        .field;
     assert!(
         !field.gcode_needs_inverse(128.0, 128.0, 13.6),
         "benchy hull near mid height should skip inverse map"
@@ -156,7 +158,9 @@ fn t_wing_height_field_has_top_variation() {
         grid_step_mm: 0.35,
         ..NonplanarOptions::default()
     };
-    let field = shale_nonplanar::pipeline::rebuild_field(&m, &opts, 0.2);
+    let field = shale_nonplanar::prepare_plate(&m, &opts, 0.2, "bambu_lab_a1", &[])
+        .expect("context")
+        .field;
     let mut zs = Vec::new();
     for z in &field.grid.z_top_smooth {
         if let Some(v) = *z {
@@ -263,6 +267,7 @@ fn slice_pillar_beside_dome(nonplanar: bool, tag: &str) -> (String, SliceOutcome
         log_tail: String::new(),
         machine_gcode: true,
         nonplanar_report: Some(report),
+        nonplanar_context: None,
         engine_gcode: None,
         planar_baseline_gcode: None,
     };
@@ -429,7 +434,9 @@ fn deform_field_for(mesh: &TriangleMesh) -> shale_nonplanar::deform::DeformField
             .collect(),
         triangles: baked.triangles.clone(),
     };
-    shale_nonplanar::pipeline::rebuild_field(&m, &nonplanar_opts(), 0.2)
+    shale_nonplanar::prepare_plate(&m, &nonplanar_opts(), 0.2, "bambu_lab_a1", &[])
+        .expect("context")
+        .field
 }
 
 fn global_band_floor(mesh: &TriangleMesh) -> f64 {
@@ -488,7 +495,7 @@ fn analyse(
             field.global_band_floor_z(),
         )
         .is_none_or(|d| d <= 10.5),
-        envelope_ok: shale_nonplanar::gcode_respects_envelope(curved_gcode, PRINTER, 10.0),
+        envelope_ok: shale_nonplanar::gcode_respects_envelope(curved_gcode, PRINTER),
         collision_notes: curved
             .nonplanar_report
             .as_ref()

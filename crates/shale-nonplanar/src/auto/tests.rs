@@ -95,11 +95,12 @@ mod auto_placement {
 
     #[test]
     fn underside_band_tilts_bridge_bottom_in_mesh() {
-        use crate::pipeline::prepare_pre_pass;
+        use crate::pipeline::{deform_model, prepare_plate};
 
         let mesh = bridge_mesh();
-        let (deformed, ctx) =
-            prepare_pre_pass(&mesh, &opts(), 0.2, &[mock_bridge_span()]);
+        let ctx = prepare_plate(&mesh, &opts(), 0.2, "bambu_lab_a1", &[mock_bridge_span()])
+            .expect("context");
+        let deformed = deform_model(&mesh, &ctx);
         let auto = ctx.auto_placement.as_ref().expect("auto plan");
         assert!(auto.enabled_surface_count >= 1);
         let zs: Vec<f64> = deformed
@@ -125,10 +126,7 @@ mod auto_placement {
 
     #[test]
     fn enabled_underside_band_produces_measurable_gcode_tilt() {
-        use crate::auto::apply_plan_to_field;
         use crate::auto::PlannedSurfaceKind;
-        use crate::deform::build_deform_field;
-        use crate::height_field::build_height_field;
         use crate::pipeline::apply_post_pass;
         use crate::pipeline::max_underside_band_slope_deg;
 
@@ -142,14 +140,12 @@ mod auto_placement {
             .find(|s| s.kind == PlannedSurfaceKind::BridgeTiltBand && s.enabled)
             .expect("enabled bridge band");
         let layer_h = 0.2;
-        let band_t = opts.effective_band_thickness(layer_h);
-        let ramp_t = opts.effective_ramp_thickness(layer_h);
-        let grid = build_height_field(&mesh, opts.grid_step_mm, opts.max_angle_deg, band_t);
-        let mut field = build_deform_field(grid, band_t, ramp_t, layer_h, opts.max_angle_deg);
-        apply_plan_to_field(&mut field, &plan, layer_h);
+        // The G-code must be generated from the same field the post-pass uses.
+        let ctx = crate::pipeline::prepare_plate(&mesh, &opts, layer_h, "bambu_lab_a1", &spans)
+            .expect("context");
         let mut planar = String::from(";TYPE:SKIN\nG1 F3000 X10 Y0 Z21.0 E0\n");
         for (i, x) in [10.0, 14.0, 18.0, 22.0, 26.0, 30.0].iter().enumerate() {
-            let z_def = field.grid.sample_top_smooth(*x, 0.0).unwrap_or(21.0);
+            let z_def = ctx.field.grid.sample_top_smooth(*x, 0.0).unwrap_or(21.0);
             planar.push_str(&format!(
                 "G1 X{x:.1} Y0 Z{z_def:.3} E{}.{i}\n",
                 i + 1
@@ -158,16 +154,13 @@ mod auto_placement {
         let (mapped, report) = apply_post_pass(
             &planar,
             &planar,
-            &mesh,
-            &opts,
-            layer_h,
-            &spans,
-            "bambu_lab_a1",
+            &ctx,
             crate::MachineLimits {
                 z_max_mm: 256.0,
                 max_feed_mm_per_min: 6000.0,
             },
-        );
+        )
+        .expect("post pass");
         let extrusion_zs: Vec<f64> = mapped
             .lines()
             .filter(|l| l.starts_with("G1") && l.contains('E') && l.contains('Z'))
@@ -188,6 +181,7 @@ mod auto_placement {
             z_spread > 0.12,
             "mapped underside extrusions should vary in Z (spread {z_spread:.3} mm)\n{mapped}"
         );
+        println!("MINMAX {:?} {:?}\nMAPPED\n{mapped}", surface.min, surface.max);
         let auto = report.auto_placement.expect("report");
         let band = auto
             .surfaces
@@ -229,7 +223,7 @@ mod auto_placement {
             band.overhang_angle_before_deg.unwrap()
         );
         use crate::safety::max_curved_band_extrusion_slope_deg;
-        let global_cap = max_curved_band_extrusion_slope_deg(&mapped, &field)
+        let global_cap = max_curved_band_extrusion_slope_deg(&mapped, &ctx.field)
             .unwrap_or(0.0);
         assert!(
             global_cap <= opts.max_angle_deg + 0.6,

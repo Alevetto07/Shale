@@ -210,6 +210,7 @@ fn curved_top_safety_matrix() {
                     log_tail: String::new(),
                     machine_gcode: planar_out.machine_gcode,
                     nonplanar_report: Some(report),
+        nonplanar_context: None,
                     engine_gcode: None,
                     planar_baseline_gcode: None,
                 }

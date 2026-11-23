@@ -84,6 +84,56 @@ pub fn tilted_top_slab(w: f64, d: f64, t: f64, tilt_deg: f64) -> Mesh {
     mesh
 }
 
+/// Cylinder with a spherical-cap top: `radius` wide, `height` tall, cap rises
+/// `rise` above a `base` skirt. Smooth, single-island, and steeper than any
+/// sensible print cap at its rim, which is what the slope limiter must handle.
+#[cfg(test)]
+pub fn dome_mesh(radius: f64, rise: f64) -> Mesh {
+    let rings = 24usize;
+    let sides = 48usize;
+    let base = 20.0;
+    let mut vertices = Vec::new();
+    for ring in 0..=rings {
+        let r = radius * ring as f64 / rings as f64;
+        let z = base + rise * (0.5 * std::f64::consts::PI * (r / radius)).cos();
+        for side in 0..sides {
+            let angle = side as f64 / sides as f64 * std::f64::consts::TAU;
+            vertices.push([r * angle.cos(), r * angle.sin(), z]);
+        }
+    }
+    // Skirt down to the bed at the rim so the solid is closed.
+    let skirt = vertices.len() as u32;
+    for side in 0..sides {
+        let angle = side as f64 / sides as f64 * std::f64::consts::TAU;
+        vertices.push([radius * angle.cos(), radius * angle.sin(), 0.0]);
+    }
+    let mut triangles = Vec::new();
+    let ring_vertices = sides as u32;
+    for ring in 0..rings as u32 {
+        let lower = ring * ring_vertices;
+        let upper = lower + ring_vertices;
+        for side in 0..ring_vertices {
+            let next = (side + 1) % ring_vertices;
+            triangles.push([lower + side, lower + next, upper + next]);
+            triangles.push([lower + side, upper + next, upper + side]);
+        }
+    }
+    let last = rings as u32 * ring_vertices;
+    for side in 0..ring_vertices {
+        let next = (side + 1) % ring_vertices;
+        triangles.push([last + side, last + next, skirt + next]);
+        triangles.push([last + side, skirt + next, skirt + side]);
+    }
+    // Bottom cap.
+    let centre = vertices.len() as u32;
+    vertices.push([0.0, 0.0, 0.0]);
+    for side in 0..ring_vertices {
+        let next = (side + 1) % ring_vertices;
+        triangles.push([centre, skirt + next, skirt + side]);
+    }
+    Mesh { vertices, triangles }
+}
+
 /// Two pillars with a short horizontal slab between (bridge underside).
 #[cfg(test)]
 pub fn bridge_mesh() -> Mesh {

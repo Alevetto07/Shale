@@ -489,6 +489,10 @@ pub struct SliceOutcome {
     /// [`NonplanarOptions::defer_post_pass`]: undeformed-mesh baseline from the same job.
     #[serde(skip)]
     pub planar_baseline_gcode: Option<String>,
+    /// [`NonplanarOptions::defer_post_pass`]: the pre-pass context (field + plan)
+    /// the deferred caller must inverse map with.
+    #[serde(skip)]
+    pub nonplanar_context: Option<shale_nonplanar::NonplanarContext>,
 }
 
 /// Cura stores `machine_max_feedrate_*` in mm/s; F words use mm/min.
@@ -625,14 +629,19 @@ pub fn slice(
     }
 
     let layer_height = resolved.summary.layer_height.max(0.05);
-    let nonplanar_active = settings
-        .nonplanar
-        .active_for_printer(printer_id);
+    let nonplanar_active = settings.nonplanar.mode.active();
     if nonplanar_active {
+        // A curved top needs a head envelope. Refusing here is the only honest
+        // answer: silently slicing planar would hand back a flat model for a
+        // request the machine cannot satisfy.
+        if shale_nonplanar::envelope::head_envelope_for_printer(printer_id).is_none() {
+            return Err(Error::message(
+                shale_nonplanar::envelope::missing_envelope_message(printer_id),
+            ));
+        }
         force_setting(&mut resolved, "ironing_enabled", "false");
     }
     let mut pre_deform_meshes: Vec<TriangleMesh> = Vec::new();
-    let mut auto_support_spans: Vec<shale_nonplanar::SupportSpanInput> = Vec::new();
     let mut undeformed_paths = Vec::new();
     let mut estimated_layers = 1u32;
     let mut baked_paths = Vec::new();
@@ -642,39 +651,63 @@ pub fn slice(
     let mut scene_max = [f64::NEG_INFINITY; 3];
     let model_dir = output_path.with_extension("models");
     fs::create_dir_all(&model_dir)?;
-    for (index, model) in models.iter().enumerate() {
-        let mut baked = mesh::bake(&model.mesh, &model.transform);
-        let (_, max) = baked.bounds();
-        let (min, _) = baked.bounds();
-        let height = (max[2] - min[2]).max(0.0) as f64;
-        estimated_layers = estimated_layers.max((height / layer_height).ceil().max(1.0) as u32);
-        // Height is measured in machine space. The engine then wants bed-centre
-        // coordinates, which is a pure XY shift and does not change the height.
-        if nonplanar_active {
-            // Inverse G-code mapping runs in machine coordinates; the height field must
-            // match the coordinates CuraEngine writes after `MeshGroup::finalize`.
-            pre_deform_meshes.push(baked.clone());
-        }
+    // Bake every model in machine space first. The plate's single deformation
+    // field is built from the merged machine-space reference, so no model may be
+    // shifted into the engine's frame before the field has seen it.
+    let baked_machine: Vec<TriangleMesh> = models
+        .iter()
+        .map(|model| {
+            let baked = mesh::bake(&model.mesh, &model.transform);
+            let (min, max) = baked.bounds();
+            let height = (max[2] - min[2]).max(0.0) as f64;
+            estimated_layers = estimated_layers.max((height / layer_height).ceil().max(1.0) as u32);
+            baked
+        })
+        .collect();
+
+    // One field, built once, for the whole plate.
+    let mut nonplanar_ctx: Option<shale_nonplanar::NonplanarContext> = None;
+    if nonplanar_active {
+        let parts: Vec<shale_nonplanar::mesh::Mesh> = baked_machine
+            .iter()
+            .map(crate::nonplanar_bridge::to_nonplanar)
+            .collect();
+        let reference = shale_nonplanar::merge_meshes(&parts);
+        let spans = if settings.nonplanar.mode == shale_nonplanar::NonplanarMode::Auto {
+            // Auto placement is planned against the same merged machine-space
+            // mesh the field is built from.
+            let merged = crate::nonplanar_bridge::from_nonplanar(&reference);
+            let analysis = crate::auto_spans::analyse_for_nonplanar(&merged);
+            crate::auto_spans::spans_for_auto(&analysis.spans)
+        } else {
+            Vec::new()
+        };
+        nonplanar_ctx = Some(
+            shale_nonplanar::prepare_plate(
+                &reference,
+                &settings.nonplanar,
+                layer_height,
+                printer_id,
+                &spans,
+            )
+            .map_err(Error::message)?,
+        );
+        pre_deform_meshes = baked_machine.clone();
+    }
+
+    for (index, machine_mesh) in baked_machine.into_iter().enumerate() {
+        let model = &models[index];
+        let mut baked = machine_mesh.clone();
         mesh::to_engine_space(
             &mut baked,
             resolved.summary.machine_width,
             resolved.summary.machine_depth,
             resolved.summary.machine_center_is_zero,
         );
-        let spans_for_slice = if settings.nonplanar.mode == shale_nonplanar::NonplanarMode::Auto {
-            let analysis = crate::auto_spans::analyse_for_nonplanar(&baked);
-            crate::auto_spans::spans_for_auto(&analysis.spans)
-        } else {
-            Vec::new()
-        };
-        if settings.nonplanar.mode == shale_nonplanar::NonplanarMode::Auto {
-            let machine_mesh = pre_deform_meshes.last().cloned().expect("pre_deform mesh");
-            let machine_analysis = crate::auto_spans::analyse_for_nonplanar(&machine_mesh);
-            auto_support_spans.extend(crate::auto_spans::spans_for_auto(
-                &machine_analysis.spans,
-            ));
-        }
         if nonplanar_active {
+            // The undeformed baseline is the model exactly as the engine gets it
+            // today; `to_engine_space` is a pure XY shift, so this file is byte
+            // for byte what it always was.
             let und_path = model_dir.join(format!("model-{index}-undeformed.stl"));
             mesh::write_binary_stl(&und_path, &baked)?;
             undeformed_paths.push(EngineMesh {
@@ -682,14 +715,20 @@ pub fn slice(
                 settings: model.settings.clone(),
                 extruder: model.slot,
             });
-            let np_in = crate::nonplanar_bridge::to_nonplanar(&baked);
-            let (deformed, _ctx) = shale_nonplanar::prepare_pre_pass(
+            // Deform in machine space with the plate field, then shift into the
+            // engine's frame for the STL the engine slices.
+            let np_in = crate::nonplanar_bridge::to_nonplanar(&machine_mesh);
+            let deformed = shale_nonplanar::deform_model(
                 &np_in,
-                &settings.nonplanar,
-                layer_height,
-                &spans_for_slice,
+                nonplanar_ctx.as_ref().expect("non-planar context"),
             );
             baked = crate::nonplanar_bridge::from_nonplanar(&deformed);
+            mesh::to_engine_space(
+                &mut baked,
+                resolved.summary.machine_width,
+                resolved.summary.machine_depth,
+                resolved.summary.machine_center_is_zero,
+            );
         }
         let (engine_min, engine_max) = mesh::bounds(&baked);
         for axis in 0..3 {
@@ -824,32 +863,26 @@ pub fn slice(
     let defer_post_pass = nonplanar_active && settings.nonplanar.defer_post_pass;
     let deferred_engine_gcode = defer_post_pass.then(|| gcode.clone());
     let deferred_planar_baseline = defer_post_pass.then(|| planar_baseline_gcode.clone());
+    let mut deferred_context: Option<shale_nonplanar::NonplanarContext> = None;
     let mut nonplanar_report = None;
     if nonplanar_active && !pre_deform_meshes.is_empty() && !settings.nonplanar.defer_post_pass {
-        let reference = shale_nonplanar::merge_meshes(
-            &pre_deform_meshes
-                .iter()
-                .map(crate::nonplanar_bridge::to_nonplanar)
-                .collect::<Vec<_>>(),
-        );
-        let machine_height = resolved
-            .summary
-            .machine_height
-            .max(1.0);
+        let ctx = nonplanar_ctx
+            .as_ref()
+            .expect("non-planar context from the pre-pass");
+        let machine_height = resolved.summary.machine_height.max(1.0);
         let max_feed = machine_max_feedrate_mm_per_min(&resolved);
+        // Same field, same plan, no rebuild: the inverse map is the inverse of
+        // the deformation CuraEngine actually sliced.
         let (mapped, report) = shale_nonplanar::apply_post_pass(
             &gcode,
             &planar_baseline_gcode,
-            &reference,
-            &settings.nonplanar,
-            layer_height,
-            &auto_support_spans,
-            printer_id,
+            ctx,
             shale_nonplanar::MachineLimits {
                 z_max_mm: machine_height,
                 max_feed_mm_per_min: max_feed,
             },
-        );
+        )
+        .map_err(Error::message)?;
         gcode = mapped;
         let mut report = report;
         report
@@ -860,6 +893,9 @@ pub fn slice(
         && !pre_deform_meshes.is_empty()
         && settings.nonplanar.defer_post_pass
     {
+        // The caller runs the post-pass; it needs the pre-pass context, which
+        // carries the field the models were deformed with.
+        deferred_context = nonplanar_ctx.clone();
         nonplanar_report = None;
     }
     // CuraEngine does not always say the print time on stdout; it writes it
@@ -904,6 +940,7 @@ pub fn slice(
         nonplanar_report,
         engine_gcode: deferred_engine_gcode,
         planar_baseline_gcode: deferred_planar_baseline,
+        nonplanar_context: deferred_context,
     })
 }
 

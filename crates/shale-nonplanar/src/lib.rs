@@ -20,6 +20,7 @@ pub mod height_field;
 pub mod inverse;
 pub mod pipeline;
 pub mod safety;
+pub mod slope_limit;
 pub mod validate;
 
 pub use auto::{
@@ -36,8 +37,7 @@ pub use pipeline::{
     apply_post_pass, gcode_respects_envelope, in_layer_slope_histogram, max_top_layer_slope_deg,
     max_extrusion_slope_above_z, max_top_shell_slope_across_layers_deg, max_top_shell_slope_deg,
     max_underside_band_slope_deg,
-    prepare_pre_pass,
-    top_layer_z_variation, top_shell_z_variation, NonplanarContext,
+    deform_model, prepare_plate, top_layer_z_variation, top_shell_z_variation, NonplanarContext,
 };
 pub use equivalence::{
     audit_curved_suffix_below_global_floor, check_grafted_planar_equivalence,

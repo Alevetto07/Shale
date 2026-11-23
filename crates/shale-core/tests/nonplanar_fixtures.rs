@@ -215,17 +215,16 @@ pub fn slice_pillar_beside_dome_sequential(
         max_angle_deg: 10.0,
         ..NonplanarOptions::default()
     };
+    let ctx = shale_nonplanar::prepare_plate(&reference, &opts, layer_height, printer_id, &[])
+        .expect("non-planar context");
     shale_nonplanar::apply_post_pass(
         &deformed,
         &planar,
-        &reference,
-        &opts,
-        layer_height,
-        &[],
-        printer_id,
+        &ctx,
         shale_nonplanar::MachineLimits {
             z_max_mm: resolved.summary.machine_height.max(1.0),
             max_feed_mm_per_min: max_feed,
         },
     )
+    .expect("post pass")
 }

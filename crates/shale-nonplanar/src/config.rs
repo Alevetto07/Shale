@@ -51,6 +51,10 @@ pub struct NonplanarOptions {
     /// Integration tests only: leave CuraEngine output for an outer post-pass.
     #[serde(default)]
     pub defer_post_pass: bool,
+    /// Fail the job instead of falling back to the planar slice when the
+    /// non-planar result cannot be verified (`--nonplanar-strict`).
+    #[serde(default)]
+    pub strict: bool,
 }
 
 impl Default for NonplanarOptions {
@@ -62,6 +66,7 @@ impl Default for NonplanarOptions {
             band_thickness_mm: None,
             ramp_thickness_mm: None,
             defer_post_pass: false,
+            strict: false,
         }
     }
 }
@@ -76,17 +81,6 @@ impl NonplanarOptions {
         self.ramp_thickness_mm
             .unwrap_or((layer_height * 2.0).clamp(0.16, 0.8))
     }
-
-    /// Non-planar curved tops are enabled for Bambu printers that ship a head envelope.
-    pub fn allowed_for_printer(printer_id: &str) -> bool {
-        let id = printer_id.to_ascii_lowercase();
-        id.starts_with("bambu_lab_")
-            && crate::envelope::head_envelope_for_printer(&id).is_some()
-    }
-
-    pub fn active_for_printer(&self, printer_id: &str) -> bool {
-        self.mode.active() && Self::allowed_for_printer(printer_id)
-    }
 }
 
 #[cfg(test)]
@@ -94,11 +88,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bambu_catalogue_printers_allowed() {
+    fn catalogue_envelopes_cover_the_supported_printers() {
         for id in crate::envelope::envelope_catalogue() {
-            assert!(NonplanarOptions::allowed_for_printer(id), "{id}");
+            assert!(
+                crate::envelope::head_envelope_for_printer(id).is_some(),
+                "{id}"
+            );
         }
-        assert!(!NonplanarOptions::allowed_for_printer("demo_ender"));
+        // Unsupported printers have no envelope; the job refuses non-planar on
+        // them rather than silently slicing planar (see job::slice).
+        assert!(crate::envelope::head_envelope_for_printer("demo_ender").is_none());
+        assert!(crate::envelope::missing_envelope_message("demo_ender")
+            .contains("demo_ender has none"));
+    }
+
+    #[test]
+    fn strict_defaults_off_and_round_trips() {
+        assert!(!NonplanarOptions::default().strict);
+        let json = r#"{"mode":"auto","max_angle_deg":10.0,"grid_step_mm":0.35,
+            "band_thickness_mm":null,"ramp_thickness_mm":null,"strict":true}"#;
+        let opts: NonplanarOptions = serde_json::from_str(json).expect("parse");
+        assert!(opts.strict);
+        let back: NonplanarOptions =
+            serde_json::from_str(&serde_json::to_string(&opts).unwrap()).expect("round trip");
+        assert_eq!(back, opts);
     }
 }
 
@@ -192,4 +205,7 @@ pub struct NonplanarReport {
     pub planar_equivalence_ok: bool,
     #[serde(default)]
     pub safety: Option<SafetyReport>,
+    /// Exact reasons the job fell back to the planar baseline, empty otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback_reasons: Vec<String>,
 }
