@@ -240,10 +240,20 @@ fn slice_command(args: &[String]) -> Result<(), String> {
         .ok_or_else(|| "slice needs a model path. Try `shale help`.".to_string())?
         .clone();
     let model_path = PathBuf::from(&model);
+
+    // Refuse a non-planar request on a printer with no toolhead envelope before
+    // doing any work: an explicit `--printer` is checked here, the catalogue
+    // default right after resolution.
+    let nonplanar = nonplanar_options(args);
+    if let Some(printer) = flag(args, "--printer") {
+        nonplanar.check_printer(&printer)?;
+    }
+
     let mesh = load_mesh(&model_path).map_err(|err| err.to_string())?;
 
     let catalog = catalog()?;
     let printer = flag(args, "--printer").unwrap_or(default_printer(&catalog)?);
+    nonplanar.check_printer(&printer)?;
     let request = resolve_request(args, &printer);
     let resolved = catalog.resolve(&request).map_err(|err| err.to_string())?;
     let width = resolved
