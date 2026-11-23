@@ -28,7 +28,9 @@ import {
   type VariantInfo,
 } from "./api";
 import { worldCentre, translationForCentre } from "./coords";
-import { StartScreen } from "./StartScreen";
+import { StartScreen, type StartPanel } from "./StartScreen";
+import { AppSidebar, readSidebarCollapsed, writeSidebarCollapsed } from "./AppSidebar";
+import { TitleBarNav } from "./TitleBarNav";
 import { DevicePane, TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
 import { FeatureLegend } from "./Legend";
 import { thumbnailJpeg } from "./thumbnail";
@@ -45,6 +47,7 @@ import {
 import type { QuickFallbacks } from "./ProcessSheet";
 import { pickQualityType } from "./profile-pick";
 import { TitleBar } from "./TitleBar";
+import { TooltipProvider } from "./ui/tooltip-provider";
 import { SetupWizard } from "./SetupWizard";
 import { shouldShowSetupWizard } from "./setup-wizard";
 import { useRecents } from "./recents";
@@ -288,6 +291,15 @@ export function App() {
   // The recent-projects list is data, not drawing: the Home panel is restyled
   // elsewhere and only asks this for what to show.
   const recents = useRecents();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+  const [startPanel, setStartPanel] = useState<StartPanel>("home");
+  const toggleSidebar = () => {
+    setSidebarCollapsed((value) => {
+      const next = !value;
+      writeSidebarCollapsed(next);
+      return next;
+    });
+  };
   const [notice, setNotice] = useState<string | null>(null);
   const restore = useRef<Restore | null>(null);
   const catalogLoadingRef = useRef(false);
@@ -2602,8 +2614,29 @@ export function App() {
   const marksHere = instructions.filter((item) => markOf(item, layerZ, layerHeight) === layer);
 
   return (
+    <TooltipProvider>
     <div className="app">
-      <TitleBar projectName={projectPath ? projectName : ""}>
+      <TitleBar
+        projectName={projectPath ? projectName : ""}
+        leading={
+          <TitleBarNav
+            sidebarCollapsed={sidebarCollapsed}
+            onToggleSidebar={toggleSidebar}
+            canBack={pane === "home" ? startPanel !== "home" || workspace : false}
+            canForward={false}
+            onBack={() => {
+              if (pane === "home") {
+                if (startPanel !== "home") setStartPanel("home");
+                else if (workspace) {
+                  setScreen("slicer");
+                  setPane("prepare");
+                }
+              }
+            }}
+            onForward={() => undefined}
+          />
+        }
+      >
         <MenuBar
           screen={screen}
           projectName={projectName}
@@ -2758,12 +2791,63 @@ export function App() {
         sliced={layerCount > 0}
       />
 
+      <div className="app-shell">
+        <AppSidebar
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={toggleSidebar}
+          recents={recents.all}
+          recentsRead={recents.read}
+          onNew={() => void newProject()}
+          onOpen={() => void openProject()}
+          onImport={() => void importModel()}
+          onOpenRecent={(path) => void openProject(path)}
+          onForgetRecent={(path) => recents.remove(path)}
+          plates={plates}
+          activePlate={plates.find((plate) => plate.active)?.index}
+          onShowPlate={(index) => void showPlate(index)}
+          workspaceOpen={screen === "slicer" && pane !== "home"}
+          printer={printers.find((entry) => entry.id === printerId) ?? null}
+          printerLabel={variant ?? undefined}
+          onPrinters={() => {
+            setPane("home");
+            setScreen("start");
+            setStartPanel("printers");
+          }}
+          onSettings={() => {
+            setPane("home");
+            setScreen("start");
+            setStartPanel("settings");
+          }}
+          onAbout={() => {
+            setPane("home");
+            setScreen("start");
+            setStartPanel("about");
+          }}
+          onQuit={() => void quit()}
+          onDeviceQueue={
+            pane !== "device"
+              ? () => {
+                  setPane("device");
+                  setScreen("slicer");
+                }
+              : undefined
+          }
+          uiStyle={uiStyle}
+          onUiStyle={chooseUiStyle}
+          doneSlices={history.slice(-6).reverse().map((record) => ({
+            id: String(record.n),
+            title: `Slice ${record.n}`,
+            subtitle: `${record.layers} layers${record.seconds != null ? ` · ${clockTime(record.seconds)}` : ""}`,
+          }))}
+        />
+        <div className="app-main">
       {pane === "home" ? (
         <div className="home-pane">
           <StartScreen
             live={!busy && !importing}
+            panel={startPanel}
+            onPanel={setStartPanel}
             canReturn={workspace}
-            recents={recents.shown} recentsRead={recents.read}
             printers={printers}
             printerId={printerId}
             enginePath={enginePath}
@@ -2777,10 +2861,6 @@ export function App() {
             onNew={() => void newProject()}
             onOpen={() => void openProject()}
             onImport={() => void importModel()}
-            onOpenRecent={(path) => void openProject(path)}
-            onForgetRecent={(path) => {
-              recents.remove(path);
-            }}
             onChoosePrinter={setPrinterId}
             onEnginePath={setEnginePath}
             onLibDir={setLibDir}
@@ -3997,6 +4077,8 @@ export function App() {
         </main>
       </div>
       )}
+        </div>
+      </div>
       <SetupWizard
         open={setupWizardOpen}
         printers={printers}
@@ -4007,6 +4089,7 @@ export function App() {
         onClose={() => setSetupWizardOpen(false)}
       />
     </div>
+    </TooltipProvider>
   );
 }
 

@@ -32,7 +32,7 @@
   --shadow-sheet: 0 16px 40px rgba(20, 24, 32, 0.12);
   --shadow-float: 0 28px 72px rgba(20, 24, 32, 0.16);
 
-  font-family: var(--mono);
+  font-family: var(--prose);
   font-weight: 400;
   background: var(--bg);
   color: var(--ink);

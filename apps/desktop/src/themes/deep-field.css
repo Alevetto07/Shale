@@ -35,7 +35,7 @@
   --prose: "Inter", system-ui, sans-serif;
   --wordmark: "Space Grotesk", system-ui, sans-serif;
 
-  font-family: var(--mono);
+  font-family: var(--prose);
   font-weight: 400;
   background: var(--bg);
   color: var(--ink);

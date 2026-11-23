@@ -43,9 +43,12 @@ function TitleBarIcon({ kind }: { kind: "minimize" | "maximize" | "restore" | "c
  */
 export function TitleBar({
   projectName,
+  leading,
   children,
 }: {
   projectName: string;
+  /// Pills to the left of the menus (sidebar toggle, back / forward).
+  leading?: ReactNode;
   /// The menu bar, dropped between the wordmark and the window buttons.
   children: ReactNode;
 }) {
@@ -87,6 +90,7 @@ export function TitleBar({
           </p>
         )}
       </div>
+      {leading ? <div className="titlebar-leading">{leading}</div> : null}
       <div className="titlebar-menus" data-tauri-drag-region onDoubleClick={onCaptionDoubleClick}>
         {children}
       </div>

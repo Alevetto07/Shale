@@ -77,10 +77,10 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   flex-direction: column;
   min-height: 0;
 }
-/* Main workspaces fill the window below the tab strip. */
-.app > .workspace,
-.app > .home-pane,
-.app > .device {
+/* Main workspaces fill the shell below the tab strip. */
+.app-main > .workspace,
+.app-main > .home-pane,
+.app-main > .device {
   flex: 1 1 auto;
   min-height: 0;
 }
