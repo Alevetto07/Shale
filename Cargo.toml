@@ -23,12 +23,24 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+# The non-planar pass is O(cells x triangles) ray casting plus per-vertex mesh
+# deformation; at opt-level 1 the fixtures in `cargo test` take minutes because
+# that inner loop stays unoptimised. Dependencies are already at 3, only the
+# crate's own code was left at 1.
+[profile.dev.package.shale-nonplanar]
+opt-level = 3
+
 # Tests and benchmarks run the same code paths as the app, so they use the same
 # settings instead of the slower unoptimised default.
 [profile.test]
 opt-level = 1
 
 [profile.test.package."*"]
+opt-level = 3
+
+# Same reason as the dev override: `cargo test -p shale-nonplanar` spends its
+# time in this crate, so the test profile has to optimise it too.
+[profile.test.package.shale-nonplanar]
 opt-level = 3
 
 [profile.release]
