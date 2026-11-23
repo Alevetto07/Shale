@@ -48,6 +48,7 @@ import type { QuickFallbacks } from "./ProcessSheet";
 import { pickQualityType } from "./profile-pick";
 import { TitleBar } from "./TitleBar";
 import { TooltipProvider } from "./ui/tooltip-provider";
+import { UiShowcase } from "./UiShowcase";
 import { SetupWizard } from "./SetupWizard";
 import { shouldShowSetupWizard } from "./setup-wizard";
 import { useRecents } from "./recents";
@@ -2613,6 +2614,21 @@ export function App() {
   const marks = instructionMarks(instructions, layerZ, layerHeight);
   const marksHere = instructions.filter((item) => markOf(item, layerZ, layerHeight) === layer);
 
+  const qualityName =
+    qualities.find((item) => item.quality_type === quality)?.name ?? quality ?? "Quality preset";
+  const activeVariant = variants.find((item) => item.name === variant);
+  const profileVariantLabel = activeVariant ? variantOptionLabel(activeVariant) : variant;
+
+  if (import.meta.env.VITE_SHALE_MOCK === "1" && new URLSearchParams(window.location.search).get("showcase") === "ui") {
+    return (
+      <TooltipProvider>
+        <div className="app app--showcase">
+          <UiShowcase />
+        </div>
+      </TooltipProvider>
+    );
+  }
+
   return (
     <TooltipProvider>
     <div className="app">
@@ -2805,7 +2821,14 @@ export function App() {
           plates={plates}
           activePlate={plates.find((plate) => plate.active)?.index}
           onShowPlate={(index) => void showPlate(index)}
-          workspaceOpen={screen === "slicer" && pane !== "home"}
+          profileQuality={qualityName}
+          profileMaterial={materialName() || "Material not set"}
+          profileVariant={profileVariantLabel}
+          onProfiles={() => {
+            setPane("home");
+            setScreen("start");
+            setStartPanel("settings");
+          }}
           printer={printers.find((entry) => entry.id === printerId) ?? null}
           printerLabel={variant ?? undefined}
           onPrinters={() => {

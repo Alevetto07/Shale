@@ -4,11 +4,13 @@ import {
   Clock,
   Globe,
   Inbox,
+  Layers,
   MoreHorizontal,
   PanelLeftClose,
   Plus,
   Printer,
   Settings,
+  SlidersHorizontal,
 } from "lucide-react";
 import { useState } from "react";
 import type { PlateView, PrinterInfo, RecentProject } from "./api";
@@ -45,7 +47,6 @@ export interface AppSidebarProps {
   plates: PlateView[];
   activePlate?: number;
   onShowPlate?: (index: number) => void;
-  workspaceOpen: boolean;
   printer?: PrinterInfo | null;
   printerLabel?: string;
   onPrinters: () => void;
@@ -58,6 +59,10 @@ export interface AppSidebarProps {
   onUiStyle: (id: UiStyleId) => void;
   doneSlices: DoneSliceRow[];
   onTogglePrepare?: () => void;
+  profileQuality?: string | null;
+  profileMaterial?: string | null;
+  profileVariant?: string | null;
+  onProfiles?: () => void;
 }
 
 function recentSubtitle(entry: RecentProject): string {
@@ -83,7 +88,7 @@ export function AppSidebar(props: AppSidebarProps) {
                 </IconButton>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content className="ui-dropdown" align="end" sideOffset={6}>
+                <DropdownMenu.Content className="ui-dropdown" side="bottom" align="end" sideOffset={6} collisionPadding={8}>
                   <DropdownMenu.Item className="ui-dropdown__item" onSelect={props.onNew}>
                     New project
                   </DropdownMenu.Item>
@@ -133,13 +138,9 @@ export function AppSidebar(props: AppSidebarProps) {
 
       <SidebarSection label="Recent" icon={<Clock size={14} strokeWidth={1.5} />}>
         {!props.recentsRead ? (
-          <p className="ui-sidebar__row-sub" style={{ padding: "0 var(--space-2)" }}>
-            Loading…
-          </p>
+          <p className="ui-sidebar__empty">Loading…</p>
         ) : props.recents.length === 0 ? (
-          <p className="ui-sidebar__row-sub" style={{ padding: "0 var(--space-2)" }}>
-            No recent projects yet.
-          </p>
+          <p className="ui-sidebar__empty">No recent projects yet.</p>
         ) : (
           props.recents.map((entry) => (
             <SidebarRow
@@ -161,9 +162,11 @@ export function AppSidebar(props: AppSidebarProps) {
         )}
       </SidebarSection>
 
-      {props.workspaceOpen && props.plates.length > 0 ? (
-        <SidebarSection label="Plates" count={props.plates.length}>
-          {props.plates.map((plate) => (
+      <SidebarSection label="Plates" icon={<Layers size={14} strokeWidth={1.5} />} count={props.plates.length || undefined}>
+        {props.plates.length === 0 ? (
+          <p className="ui-sidebar__empty">Open a project to see plates.</p>
+        ) : (
+          props.plates.map((plate) => (
             <SidebarRow
               key={plate.index}
               title={plate.name || `Plate ${plate.index + 1}`}
@@ -177,9 +180,20 @@ export function AppSidebar(props: AppSidebarProps) {
               selected={props.activePlate === plate.index}
               onClick={() => props.onShowPlate?.(plate.index)}
             />
-          ))}
-        </SidebarSection>
-      ) : null}
+          ))
+        )}
+      </SidebarSection>
+
+      <SidebarSection label="Profiles" icon={<SlidersHorizontal size={14} strokeWidth={1.5} />}>
+        <SidebarRow
+          title={props.profileQuality?.trim() || "Quality preset"}
+          subtitle={props.profileMaterial?.trim() || "Material not set"}
+          onClick={props.onProfiles ?? props.onSettings}
+        />
+        {props.profileVariant ? (
+          <SidebarRow title="Nozzle variant" subtitle={props.profileVariant} onClick={props.onProfiles ?? props.onSettings} />
+        ) : null}
+      </SidebarSection>
 
       <SidebarSection label="Printers" icon={<Printer size={14} strokeWidth={1.5} />}>
         <SidebarRow
@@ -195,9 +209,7 @@ export function AppSidebar(props: AppSidebarProps) {
 
       <SidebarSection label="Done" icon={<CheckCircle2 size={14} strokeWidth={1.5} />}>
         {props.doneSlices.length === 0 ? (
-          <p className="ui-sidebar__row-sub" style={{ padding: "0 var(--space-2)" }}>
-            No slices yet
-          </p>
+          <p className="ui-sidebar__empty">No slices yet</p>
         ) : (
           props.doneSlices.map((row) => (
             <SidebarRow key={row.id} title={row.title} subtitle={row.subtitle} />

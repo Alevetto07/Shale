@@ -23,8 +23,8 @@ describe("Slider", () => {
         onValueChange={onValueChange}
       />,
     );
-    const control = screen.getByRole("slider", { name: "Layer height" });
-    expect(control).toBeTruthy();
+    expect(screen.getByRole("slider", { name: "Layer height" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Layer height exact value" }));
     const input = screen.getByLabelText("Layer height exact value");
     fireEvent.change(input, { target: { value: "0.25" } });
     expect(onValueChange).toHaveBeenCalledWith(0.25);

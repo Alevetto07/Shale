@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { springPanel } from "./ui/springs";
 import type { PrinterInfo } from "./api";
 import { PlateField } from "./field/PlateField";
 import { SettingsView } from "./SettingsView";
@@ -111,44 +113,61 @@ export function StartScreen({
       />
       {panel !== "home" ? (
         <div className="start-panel-overlay">
-          {panel === "printers" ? (
-            <PrintersPanel
-              printers={filteredPrinters}
-              printerId={printerId}
-              query={printerQuery}
-              onQuery={setPrinterQuery}
-              onBack={() => onPanel("home")}
-              onChoose={(id) => {
-                onChoosePrinter(id);
-                onPanel("home");
-              }}
-            />
-          ) : null}
-          {panel === "settings" ? (
-            <SettingsOverlay
-              version={version}
-              printers={printers}
-              printerId={printerId}
-              enginePath={enginePath}
-              libDir={libDir}
-              backend={backend}
-              uiStyle={uiStyle}
-              onUiStyle={onUiStyle}
-              onChoosePrinter={onChoosePrinter}
-              onEnginePath={onEnginePath}
-              onLibDir={onLibDir}
-              onBackend={onBackend}
-              onApplyEngine={onApplyEngine}
-              onRerunSetup={onRerunSetup}
-              onBack={() => onPanel("home")}
-            />
-          ) : null}
-          {panel === "about" ? (
-            <AboutPanel plate={plate} version={version} onBack={() => onPanel("home")} />
-          ) : null}
+          <StartPanelShell key={panel}>
+            {panel === "printers" ? (
+              <PrintersPanel
+                printers={filteredPrinters}
+                printerId={printerId}
+                query={printerQuery}
+                onQuery={setPrinterQuery}
+                onBack={() => onPanel("home")}
+                onChoose={(id) => {
+                  onChoosePrinter(id);
+                  onPanel("home");
+                }}
+              />
+            ) : null}
+            {panel === "settings" ? (
+              <SettingsOverlay
+                version={version}
+                printers={printers}
+                printerId={printerId}
+                enginePath={enginePath}
+                libDir={libDir}
+                backend={backend}
+                uiStyle={uiStyle}
+                onUiStyle={onUiStyle}
+                onChoosePrinter={onChoosePrinter}
+                onEnginePath={onEnginePath}
+                onLibDir={onLibDir}
+                onBackend={onBackend}
+                onApplyEngine={onApplyEngine}
+                onRerunSetup={onRerunSetup}
+                onBack={() => onPanel("home")}
+              />
+            ) : null}
+            {panel === "about" ? (
+              <AboutPanel plate={plate} version={version} onBack={() => onPanel("home")} />
+            ) : null}
+          </StartPanelShell>
         </div>
       ) : null}
     </div>
+  );
+}
+
+function StartPanelShell({ children }: { children: ReactNode }) {
+  const reduce = useReducedMotion();
+  return (
+    <motion.div
+      className="start-panel-sheet"
+      initial={reduce ? false : { opacity: 0, y: 10, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={reduce ? undefined : { opacity: 0, y: 6, scale: 0.99 }}
+      transition={reduce ? { duration: 0 } : springPanel}
+    >
+      {children}
+    </motion.div>
   );
 }
 

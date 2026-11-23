@@ -1,15 +1,29 @@
-import type { KeyboardEventHandler, ReactNode, ButtonHTMLAttributes } from "react";
+import { motion, useReducedMotion } from "motion/react";
+import type { KeyboardEventHandler, ReactNode } from "react";
 import { cn } from "./cn";
+import { springPanel, springTab } from "./springs";
 
-export function Sidebar({ className, children, collapsed }: { className?: string; children: ReactNode; collapsed?: boolean }) {
+export function Sidebar({
+  className,
+  children,
+  collapsed,
+}: {
+  className?: string;
+  children: ReactNode;
+  collapsed?: boolean;
+}) {
+  const reduce = useReducedMotion();
   return (
-    <aside
+    <motion.aside
       className={cn("ui-sidebar", className)}
       data-collapsed={collapsed ? "1" : "0"}
       aria-label="Projects"
+      initial={false}
+      animate={{ width: collapsed ? 52 : 268 }}
+      transition={reduce ? { duration: 0 } : springPanel}
     >
       {children}
-    </aside>
+    </motion.aside>
   );
 }
 
@@ -40,13 +54,9 @@ export function SidebarSection({
         <span>{label}</span>
         {count != null ? <span className="ui-sidebar__section-count">{count}</span> : null}
       </h3>
-      <SnapshotScrollArea>{children}</SnapshotScrollArea>
+      <div className="ui-sidebar__scroll">{children}</div>
     </section>
   );
-}
-
-function SnapshotScrollArea({ children }: { children: ReactNode }) {
-  return <div className="ui-sidebar__scroll">{children}</div>;
 }
 
 export function SidebarRow({
@@ -58,7 +68,9 @@ export function SidebarRow({
   trailing,
   onClick,
   onKeyDown,
-  ...rest
+  className,
+  disabled,
+  hint,
 }: {
   title: string;
   subtitle?: string;
@@ -68,24 +80,38 @@ export function SidebarRow({
   trailing?: ReactNode;
   onClick?: () => void;
   onKeyDown?: KeyboardEventHandler<HTMLButtonElement>;
-} & Omit<ButtonHTMLAttributes<HTMLButtonElement>, "onClick">) {
+  className?: string;
+  disabled?: boolean;
+  hint?: string;
+}) {
+  const reduce = useReducedMotion();
   return (
-    <button
+    <motion.button
       type="button"
-      className="ui-sidebar__row"
+      className={cn("ui-sidebar__row", className)}
+      disabled={disabled}
+      title={hint}
       data-selected={selected ? "1" : "0"}
       data-dimmed={dimmed ? "1" : "0"}
       onClick={onClick}
       onKeyDown={onKeyDown}
-      {...rest}
+      whileTap={reduce ? undefined : { scale: 0.98 }}
+      transition={reduce ? undefined : springTab}
     >
+      {selected ? (
+        <motion.span
+          className="ui-sidebar__active-bar"
+          layoutId="sidebar-active-indicator"
+          transition={reduce ? { duration: 0 } : springTab}
+        />
+      ) : null}
       {leading ? <span className="ui-sidebar__row-leading">{leading}</span> : <span className="ui-sidebar__bullet" />}
       <span className="ui-sidebar__row-text">
         <span className="ui-sidebar__row-title">{title}</span>
         {subtitle ? <span className="ui-sidebar__row-sub">{subtitle}</span> : null}
       </span>
       {trailing ? <span className="ui-sidebar__row-trail">{trailing}</span> : null}
-    </button>
+    </motion.button>
   );
 }
 

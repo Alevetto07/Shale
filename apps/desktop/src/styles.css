@@ -87,6 +87,10 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .home-pane {
   position: relative;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .device { flex: 1 1 auto; }
