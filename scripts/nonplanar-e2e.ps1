@@ -70,13 +70,22 @@ function Invoke-Cargo {
     param([string[]]$CargoArgs)
     # Note: never let cargo's stdout escape this function — a PowerShell function
     # returns everything it writes, and callers rely on a single value back.
-    if (Test-Path $Wrapper) {
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Wrapper @CargoArgs 2>&1 |
-            ForEach-Object { Write-Host $_ }
-    } else {
-        & cargo @CargoArgs 2>&1 | ForEach-Object { Write-Host $_ }
+    # cargo paints "Compiling ..." on stderr, and under ErrorActionPreference=Stop
+    # a native stderr line becomes a terminating NativeCommandError, so relax the
+    # preference for the call and send every record straight to the host.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        if (Test-Path $Wrapper) {
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Wrapper @CargoArgs 2>&1 | Out-Host
+        } else {
+            & cargo @CargoArgs 2>&1 | Out-Host
+        }
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prev
     }
-    if ($LASTEXITCODE -ne 0) { throw "cargo $($CargoArgs -join ' ') failed with $LASTEXITCODE" }
+    if ($code -ne 0) { throw "cargo $($CargoArgs -join ' ') failed with $code" }
 }
 
 function Get-InputStl {
