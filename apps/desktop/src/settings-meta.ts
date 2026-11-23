@@ -7,9 +7,10 @@
 // docs/SETTINGS-MAP.md and in bambu-presets.ts, generated from Bambu's own
 // profiles.
 
-export type Section = "Quality" | "Strength" | "Speed" | "Support" | "Others";
+export type Section = "Quality" | "Strength" | "Speed" | "Support" | "Others" | "Non-planar";
 
-export const SECTIONS: Section[] = ["Quality", "Strength", "Speed", "Support", "Others"];
+/// Non-planar is a reserved empty tab. It has no settings keys and no engine flags.
+export const SECTIONS: Section[] = ["Quality", "Strength", "Speed", "Support", "Others", "Non-planar"];
 
 /// Which tab a settings group belongs to. Groups stay the unit of the panel
 /// because they carry the subheadings Bambu shows inside a tab.

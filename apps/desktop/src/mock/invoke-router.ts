@@ -128,7 +128,12 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
       sliceSummary = mockSlice(models.map((m) => m.id));
       return sliceSummary as T;
     case "slice_tools":
-      return { cutters: true, booleans: true } as T;
+      return {
+        tools: [0],
+        changes: 0,
+        file: "C:\\mock\\plate.gcode",
+        usage: [{ tool: 0, metres: 4.2 }],
+      } as T;
     case "export_gcode":
       return String(args.destination ?? "C:\\mock\\plate.gcode") as T;
     case "host_defaults":

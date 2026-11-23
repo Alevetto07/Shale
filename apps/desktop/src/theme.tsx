@@ -1,3 +1,4 @@
+import { ChevronDown } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
 
 export { UI_THEME_ID } from "./ui-styles";
@@ -104,8 +105,8 @@ export function Frame({ title, children }: { title: string; children: ReactNode 
           title={open ? `fold ${title}` : `unfold ${title}`}
           onClick={toggle}
         >
-          <span className="frame-caret" aria-hidden="true">
-            {open ? "▾" : "▸"}
+          <span className="frame-caret" data-open={open ? "1" : "0"} aria-hidden="true">
+            <ChevronDown size={14} strokeWidth={1.5} />
           </span>
           <span className="frame-title">{title}</span>
         </button>

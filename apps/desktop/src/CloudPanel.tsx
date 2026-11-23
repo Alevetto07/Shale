@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import * as api from "./api";
+import { Button, Input } from "./ui";
 
 /// The Bambu account, in the Device pane.
 ///
@@ -110,6 +112,7 @@ export function CloudPanel({ taskName }: { taskName: string }) {
     try {
       const id = await api.cloudSend(devId, taskName);
       setSent(`task ${id} created`);
+      toast.success(`Task ${id} created`);
       await loadDevices();
     } catch (err) {
       setNote(String(err));
@@ -119,8 +122,8 @@ export function CloudPanel({ taskName }: { taskName: string }) {
   }
 
   return (
-    <section className="box cloud-panel">
-      <p className="box-label">bambu cloud</p>
+    <section className="cloud-panel">
+      <p className="cloud-kicker">Bambu cloud</p>
       {!session ? (
         <p className="cloud-line dim">reading the account…</p>
       ) : session.signedIn ? (
@@ -133,7 +136,7 @@ export function CloudPanel({ taskName }: { taskName: string }) {
           {rows === null ? (
             <p className="cloud-line dim">asking the cloud for the printers…</p>
           ) : rows.length === 0 ? (
-            <pre className="cloud-empty">{`  +------------------+\n  |  no printers     |\n  |  on this account |\n  +------------------+`}</pre>
+            <p className="cloud-empty">No printers on this account.</p>
           ) : (
             <ul className="cloud-devices">
               {rows.map((row) => (
@@ -141,26 +144,21 @@ export function CloudPanel({ taskName }: { taskName: string }) {
                   <span className="cloud-name">{row.label}</span>
                   <span className="cloud-model">{row.model || "—"}</span>
                   <span className="cloud-state">{row.state}</span>
-                  <button
-                    type="button"
-                    className="chip"
-                    disabled={!row.mayPrint || busy}
-                    onClick={() => send(row.devId)}
-                  >
-                    send plate
-                  </button>
+                  <Button type="button" size="sm" variant="secondary" disabled={!row.mayPrint || busy} onClick={() => send(row.devId)}>
+                    Send plate
+                  </Button>
                 </li>
               ))}
             </ul>
           )}
 
           <div className="cloud-actions">
-            <button type="button" className="chip" disabled={busy} onClick={() => void loadDevices()}>
-              refresh
-            </button>
-            <button type="button" className="chip" disabled={busy} onClick={() => void signOut()}>
-              sign out
-            </button>
+            <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void loadDevices()}>
+              Refresh
+            </Button>
+            <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void signOut()}>
+              Sign out
+            </Button>
           </div>
         </>
       ) : (
@@ -173,8 +171,9 @@ export function CloudPanel({ taskName }: { taskName: string }) {
             <div className="cloud-form">
               <label>
                 <span>email</span>
-                <input
+                <Input
                   type="email"
+                  aria-label="email"
                   value={email}
                   autoComplete="username"
                   onChange={(event) => setEmail(event.target.value)}
@@ -182,8 +181,9 @@ export function CloudPanel({ taskName }: { taskName: string }) {
               </label>
               <label>
                 <span>password</span>
-                <input
+                <Input
                   type="password"
+                  aria-label="password"
                   value={password}
                   autoComplete="current-password"
                   onChange={(event) => setPassword(event.target.value)}
@@ -192,21 +192,17 @@ export function CloudPanel({ taskName }: { taskName: string }) {
                   }}
                 />
               </label>
-              <button
-                type="button"
-                className="chip"
-                disabled={busy || !email.trim() || !password}
-                onClick={() => void signIn()}
-              >
-                sign in
-              </button>
+              <Button type="button" variant="primary" disabled={busy || !email.trim() || !password} onClick={() => void signIn()}>
+                Sign in
+              </Button>
             </div>
           ) : (
             <div className="cloud-form">
               <label>
                 <span>code</span>
-                <input
+                <Input
                   inputMode="numeric"
+                  aria-label="code"
                   value={code}
                   autoComplete="one-time-code"
                   onChange={(event) => setCode(event.target.value)}
@@ -215,17 +211,12 @@ export function CloudPanel({ taskName }: { taskName: string }) {
                   }}
                 />
               </label>
-              <button
+              <Button type="button" variant="primary" disabled={busy || code.trim().length < 4} onClick={() => void verify()}>
+                Verify
+              </Button>
+              <Button
                 type="button"
-                className="chip"
-                disabled={busy || code.trim().length < 4}
-                onClick={() => void verify()}
-              >
-                verify
-              </button>
-              <button
-                type="button"
-                className="chip quiet"
+                variant="ghost"
                 disabled={busy}
                 onClick={() => {
                   setStage("form");
@@ -233,8 +224,8 @@ export function CloudPanel({ taskName }: { taskName: string }) {
                   setNote(null);
                 }}
               >
-                back
-              </button>
+                Back
+              </Button>
             </div>
           )}
         </>

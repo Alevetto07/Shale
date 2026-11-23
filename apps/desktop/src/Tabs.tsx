@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { CloudPanel } from "./CloudPanel";
 import * as api from "./api";
+import { Button, Dialog, Input, Select, Tabs, TabsList, TabsTrigger, Tooltip } from "./ui";
 
 /// Where the window is pointed. Home is the start screen; the other three are
 /// the three things a slicer does with a plate: set it up, look at the result,
@@ -59,75 +60,66 @@ export function TabBar({
 }: TabBarProps) {
   return (
     <div className="tabs">
-      <div className="doc-tabs" role="tablist" aria-label="Open projects">
-        {tabs.map((tab) => (
-          <span key={tab.id} className={tab.id === activeTab ? "doc-tab active" : "doc-tab"}>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab.id === activeTab}
-              className="doc-name"
-              title={tab.path ?? "not saved yet"}
-              onClick={() => onTab(tab.id)}
-            >
-              {tab.name}
-            </button>
-            {tab.dirty && <span className="doc-dirty" aria-label="unsaved changes">•</span>}
-            {tabs.length > 1 && (
-              <button
-                type="button"
-                className="doc-close"
-                aria-label={`close ${tab.name}`}
-                title="close this tab. the file stays where it is"
-                onClick={() => onCloseTab(tab.id)}
-              >
-                ×
-              </button>
-            )}
-          </span>
-        ))}
+      <div className="doc-tabs">
+        <Tabs value={String(activeTab)} onValueChange={(id) => onTab(Number(id))}>
+          <TabsList aria-label="Open projects" className="doc-tabs-list">
+            {tabs.map((tab) => (
+              <span key={tab.id} className={tab.id === activeTab ? "doc-tab active" : "doc-tab"}>
+                <Tooltip label={tab.path ?? "not saved yet"}>
+                  <TabsTrigger value={String(tab.id)} className="doc-name">
+                    {tab.name}
+                  </TabsTrigger>
+                </Tooltip>
+                {tab.dirty && <span className="doc-dirty" aria-label="unsaved changes">•</span>}
+                {tabs.length > 1 && (
+                  <button
+                    type="button"
+                    className="doc-close"
+                    aria-label={`close ${tab.name}`}
+                    onClick={() => onCloseTab(tab.id)}
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            ))}
+          </TabsList>
+        </Tabs>
         <span className="doc-rule" aria-hidden="true" />
-        <button
-          type="button"
-          className="doc-add"
-          aria-label="new project"
-          title="a new empty plate in its own tab"
-          onClick={onNewTab}
-        >
-          +
-        </button>
-        <button type="button" className="doc-open" title="open a project into a new tab" onClick={onOpenTab}>
-          Open…
-        </button>
+        <Tooltip label="A new empty plate in its own tab">
+          <button type="button" className="doc-add" aria-label="new project" onClick={onNewTab}>
+            +
+          </button>
+        </Tooltip>
+        <Tooltip label="Open a project into a new tab">
+          <button type="button" className="doc-open" onClick={onOpenTab}>
+            Open…
+          </button>
+        </Tooltip>
       </div>
 
       <div className="mode-bar">
-        <div className="mode-chips" role="tablist" aria-label={`Workspace — ${printer}`}>
-          {PANES.map((item) => {
-            // Dimmed, not disabled: a disabled chip swallows the click, so the
-            // one place a user needs an explanation is the one place that
-            // cannot give one.
-            const waiting = item.id === "preview" && !sliced;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                role="tab"
-                aria-selected={pane === item.id}
-                aria-disabled={waiting || undefined}
-                className={
-                  pane === item.id ? "mode-chip active" : waiting ? "mode-chip waiting" : "mode-chip"
-                }
-                title={waiting ? "slice the plate first — there is no toolpath to show" : item.note}
-                onClick={() => onPane(item.id)}
-              >
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-        {/* The menu bar names the machine 34 px above this row; printing it
-            twice made the strip look like it was repeating itself. */}
+        <Tabs value={pane} onValueChange={(next) => onPane(next as Pane)}>
+          <TabsList className="mode-chips" aria-label={`Workspace — ${printer}`}>
+            {PANES.map((item) => {
+              // Dimmed, not disabled: a disabled chip swallows the click, so the
+              // one place a user needs an explanation is the one place that
+              // cannot give one.
+              const waiting = item.id === "preview" && !sliced;
+              return (
+                <TabsTrigger
+                  key={item.id}
+                  value={item.id}
+                  aria-disabled={waiting || undefined}
+                  className={waiting ? "mode-chip waiting" : "mode-chip"}
+                  title={waiting ? "slice the plate first — there is no toolpath to show" : item.note}
+                >
+                  {item.label}
+                </TabsTrigger>
+              );
+            })}
+          </TabsList>
+        </Tabs>
       </div>
     </div>
   );
@@ -552,9 +544,9 @@ export function DevicePane({
               factory reset, or had its board replaced, does this; anything else answering in its
               place does too. Trust the new one only if you know why it changed.
             </p>
-            <button type="button" onClick={trustPin}>
-              trust the new certificate
-            </button>
+            <Button type="button" variant="secondary" size="sm" onClick={trustPin}>
+              Trust the new certificate
+            </Button>
           </div>
         ) : null}
       </section>
@@ -581,71 +573,50 @@ export function DevicePane({
         </div>
 
         <div className="device-controls">
-          {asking ? (
-            <div className="device-confirm">
-              <p>
-                print <b>{job.layers > 0 ? `${job.layers} layers` : "the plate"}</b> for{" "}
-                <b>{clock(job.seconds)}</b> on the {bedType.replace(/_/g, " ")}?
+          <Dialog
+            open={asking}
+            onOpenChange={setAsking}
+            title="Print this plate?"
+            description={`Print ${job.layers > 0 ? `${job.layers} layers` : "the plate"} for ${clock(job.seconds)} on the ${bedType.replace(/_/g, " ")}.`}
+          >
+            {tools && (tools.tools?.length ?? 0) > 1 ? (
+              <p className="device-warn">
+                this slice uses {tools.tools.length} spools ({tools.changes} tool changes)
+                {(tools.usage?.length ?? 0) > 0
+                  ? ` — ${tools.usage
+                      .map((used) => `T${used.tool + 1}:\u00a0${used.metres.toFixed(2)}\u00a0m`)
+                      .join(", ")}`
+                  : ""}
+                . Bambu takes a sliced 3MF with an AMS mapping for a multi-colour plate, and Shale sends
+                plain G-code, so the machine will print this in one colour.
               </p>
-              {tools && tools.tools.length > 1 ? (
-                <p className="device-warn">
-                  this slice uses {tools.tools.length} spools ({tools.changes} tool changes)
-                  {tools.usage.length
-                    ? ` — ${tools.usage
-                        // Bay N is extruder N-1, so the file's `T2` is the bay this
-                        // window calls T3 — and the row of bays below is what the
-                        // figure has to line up with. A tool and its figure also
-                        // belong on one line: "T3:" alone at the end reads as a
-                        // stray token.
-                        .map((used) => `T${used.tool + 1}:\u00a0${used.metres.toFixed(2)}\u00a0m`)
-                        .join(", ")}`
-                    : ""}
-                  . Bambu takes a sliced 3MF with an AMS mapping for a multi-colour plate, and Shale sends
-                  plain G-code, so the machine will print this in one colour.
-                </p>
-              ) : null}
-              <div>
-                <button type="button" className="device-go" onClick={send}>
-                  print it
-                </button>
-                <button type="button" onClick={() => setAsking(false)}>
-                  cancel
-                </button>
-              </div>
+            ) : null}
+            <div className="device-controls">
+              <Button type="button" variant="primary" onClick={send}>
+                Print it
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setAsking(false)}>
+                Cancel
+              </Button>
             </div>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="device-go"
-                disabled={!connected || !gcodeReady || sending || printing}
-                onClick={ask}
-              >
-                {sending ? "sending…" : "send & print"}
-              </button>
-              <button
-                type="button"
-                disabled={!connected || state !== "RUNNING"}
-                onClick={() => control("pause")}
-              >
-                pause
-              </button>
-              <button
-                type="button"
-                disabled={!connected || state !== "PAUSE"}
-                onClick={() => control("resume")}
-              >
-                resume
-              </button>
-              <button
-                type="button"
-                disabled={!connected || !printing}
-                onClick={() => control("stop")}
-              >
-                stop
-              </button>
-            </>
-          )}
+          </Dialog>
+          <Button
+            type="button"
+            variant="primary"
+            disabled={!connected || !gcodeReady || sending || printing}
+            onClick={ask}
+          >
+            {sending ? "Sending…" : "Send and print"}
+          </Button>
+          <Button type="button" variant="secondary" size="sm" disabled={!connected || state !== "RUNNING"} onClick={() => control("pause")}>
+            Pause
+          </Button>
+          <Button type="button" variant="secondary" size="sm" disabled={!connected || state !== "PAUSE"} onClick={() => control("resume")}>
+            Resume
+          </Button>
+          <Button type="button" variant="destructive" size="sm" disabled={!connected || !printing} onClick={() => control("stop")}>
+            Stop
+          </Button>
         </div>
         {note ? <p className="device-note">{note}</p> : null}
       </section>
@@ -653,9 +624,9 @@ export function DevicePane({
       <section className="device-panel">
         <p className="device-label">connection</p>
         <div className="device-form">
-          <label>
-            host
-            <input
+          <label className="ui-field">
+            <span className="ui-field__label">host</span>
+            <Input
               type="text"
               aria-label="printer host"
               placeholder="printer address"
@@ -663,9 +634,9 @@ export function DevicePane({
               onChange={(event) => setHost(event.target.value)}
             />
           </label>
-          <label>
-            serial
-            <input
+          <label className="ui-field">
+            <span className="ui-field__label">serial</span>
+            <Input
               type="text"
               aria-label="printer serial"
               placeholder="serial number"
@@ -673,9 +644,9 @@ export function DevicePane({
               onChange={(event) => setSerial(event.target.value)}
             />
           </label>
-          <label>
-            access code
-            <input
+          <label className="ui-field">
+            <span className="ui-field__label">access code</span>
+            <Input
               type="password"
               className="access-code"
               aria-label="printer access code"
@@ -684,35 +655,33 @@ export function DevicePane({
               onChange={(event) => setCode(event.target.value)}
             />
           </label>
-          <label>
-            plate
-            <select
-              aria-label="build plate"
+          <label className="ui-field">
+            <span className="ui-field__label">plate</span>
+            <Select
+              label="build plate"
               value={bedType}
-              onChange={(event) => setBedType(event.target.value)}
-            >
-              <option value="textured_plate">textured PEI</option>
-              <option value="smooth_plate">smooth PEI</option>
-              <option value="engineering_plate">engineering</option>
-              <option value="cool_plate">cool plate</option>
-            </select>
+              options={[
+                { value: "textured_plate", label: "textured PEI" },
+                { value: "smooth_plate", label: "smooth PEI" },
+                { value: "engineering_plate", label: "engineering" },
+                { value: "cool_plate", label: "cool plate" },
+              ]}
+              onChange={setBedType}
+            />
           </label>
         </div>
         <div className="device-controls">
-          <button type="button" disabled={connected} onClick={connect}>
-            connect
-          </button>
-          <button type="button" disabled={!connected} onClick={disconnect}>
-            disconnect
-          </button>
-          <button
-            type="button"
-            disabled={!host && !serial}
-            onClick={forget}
-            title="forget this printer: clear the address, serial, access code and pin"
-          >
-            forget
-          </button>
+          <Button type="button" variant="secondary" size="sm" disabled={connected} onClick={connect}>
+            Connect
+          </Button>
+          <Button type="button" variant="secondary" size="sm" disabled={!connected} onClick={disconnect}>
+            Disconnect
+          </Button>
+          <Tooltip label="Forget this printer: clear the address, serial, access code and pin">
+            <Button type="button" variant="ghost" size="sm" disabled={!host && !serial} onClick={forget}>
+              Forget
+            </Button>
+          </Tooltip>
           <span className="device-note">
             {connected
               ? `${statusOf?.reports ?? 0} reports received`
@@ -751,61 +720,57 @@ export function DevicePane({
           </ol>
         )}
 
-        {queueAsking ? (
-          <div className="device-confirm">
-            <p>
-              print{" "}
-              <b>
-                {queue.length} {queue.length === 1 ? "job" : "jobs"}
-              </b>
-              {queue.length === 1 ? " now" : " one after another"} —{" "}
-              {queue.map((row) => row.name).join(", ")}?
-              {queue.length === 1
-                ? " it starts on the machine as soon as you press."
-                : " the first starts now; after each print you will be asked to confirm the plate is clear before the next one goes."}
-            </p>
-            <p className="device-warn">
-              this press authorises the first job. Nothing else starts on its own: a finished print
-              stays on the bed until you say it is off.
-            </p>
-            <div>
-              <button type="button" className="device-go" onClick={beginQueue}>
-                start the queue
-              </button>
-              <button type="button" onClick={() => setQueueAsking(false)}>
-                cancel
-              </button>
-            </div>
-          </div>
-        ) : (
+        <Dialog
+          open={queueAsking}
+          onOpenChange={setQueueAsking}
+          title="Start the queue?"
+          description={
+            queue.length === 1
+              ? `Print ${queue.map((row) => row.name).join(", ")} now. It starts on the machine as soon as you press.`
+              : `Print ${queue.length} jobs one after another — ${queue.map((row) => row.name).join(", ")}. The first starts now; after each print you will be asked to confirm the plate is clear before the next one goes.`
+          }
+        >
+          <p className="device-warn">
+            This press authorises the first job. Nothing else starts on its own: a finished print
+            stays on the bed until you say it is off.
+          </p>
           <div className="device-controls">
-            <button type="button" disabled={!gcodeReady} onClick={queueThis}>
-              queue this slice
-            </button>
-            {queueRun === "waiting_for_plate" ? (
-              <button type="button" className="device-go" onClick={plateCleared}>
-                the plate is clear — start the next
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="device-go"
-                disabled={
-                  !connected ||
-                  queue.length === 0 ||
-                  queueRun === "armed" ||
-                  queueRun === "printing"
-                }
-                onClick={() => setQueueAsking(true)}
-              >
-                {queueRun === "armed" || queueRun === "printing" ? "queue running" : "start queue"}
-              </button>
-            )}
-            <button type="button" disabled={queue.length === 0} onClick={clearQueue}>
-              clear
-            </button>
+            <Button type="button" variant="primary" onClick={beginQueue}>
+              Start the queue
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setQueueAsking(false)}>
+              Cancel
+            </Button>
           </div>
-        )}
+        </Dialog>
+        <div className="device-controls">
+          <Button type="button" variant="secondary" size="sm" disabled={!gcodeReady} onClick={queueThis}>
+            Queue this slice
+          </Button>
+          {queueRun === "waiting_for_plate" ? (
+            <Button type="button" variant="primary" size="sm" onClick={plateCleared}>
+              The plate is clear — start the next
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              disabled={
+                !connected ||
+                queue.length === 0 ||
+                queueRun === "armed" ||
+                queueRun === "printing"
+              }
+              onClick={() => setQueueAsking(true)}
+            >
+              {queueRun === "armed" || queueRun === "printing" ? "Queue running" : "Start queue"}
+            </Button>
+          )}
+          <Button type="button" variant="ghost" size="sm" disabled={queue.length === 0} onClick={clearQueue}>
+            Clear
+          </Button>
+        </div>
       </section>
 
       <section className="device-grid">

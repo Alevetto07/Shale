@@ -17,6 +17,8 @@ export interface SliderProps extends Omit<ComponentPropsWithoutRef<typeof Slider
   onValueChange?: (value: number) => void;
   allowInput?: boolean;
   inputDigits?: number;
+  /** Absolute positions along the same scale as `value`, drawn as ticks. */
+  marks?: number[];
 }
 
 export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
@@ -33,6 +35,7 @@ export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
     onValueChange,
     allowInput = true,
     inputDigits = 2,
+    marks,
     disabled,
     ...props
   },
@@ -81,6 +84,18 @@ export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
         >
           <SliderPrimitive.Track className="ui-slider__track">
             <SliderPrimitive.Range className="ui-slider__range" />
+            {marks?.map((mark, index) => {
+              const span = Number(max) - Number(min) || 1;
+              const pct = ((mark - Number(min)) / span) * 100;
+              return (
+                <span
+                  key={`${mark}-${index}`}
+                  className="ui-slider__mark"
+                  style={{ left: `${Math.min(100, Math.max(0, pct))}%` }}
+                  aria-hidden
+                />
+              );
+            })}
           </SliderPrimitive.Track>
           <SliderPrimitive.Thumb className="ui-slider__thumb" aria-label={label} />
         </SliderPrimitive.Root>
