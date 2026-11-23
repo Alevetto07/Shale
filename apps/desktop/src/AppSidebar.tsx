@@ -9,6 +9,7 @@ import {
   PanelLeftClose,
   Plus,
   Printer,
+  Search,
   Settings,
   SlidersHorizontal,
 } from "lucide-react";
@@ -63,6 +64,7 @@ export interface AppSidebarProps {
   profileMaterial?: string | null;
   profileVariant?: string | null;
   onProfiles?: () => void;
+  onOpenCommandPalette?: () => void;
 }
 
 function recentSubtitle(entry: RecentProject): string {
@@ -81,6 +83,11 @@ export function AppSidebar(props: AppSidebarProps) {
         title="Projects"
         actions={
           <>
+            {props.onOpenCommandPalette ? (
+              <IconButton label="Command palette" shortcut="Ctrl K" onClick={props.onOpenCommandPalette}>
+                <Search size={16} strokeWidth={1.5} />
+              </IconButton>
+            ) : null}
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <IconButton label="More actions">

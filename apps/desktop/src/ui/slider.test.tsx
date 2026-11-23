@@ -29,4 +29,25 @@ describe("Slider", () => {
     fireEvent.change(input, { target: { value: "0.25" } });
     expect(onValueChange).toHaveBeenCalledWith(0.25);
   });
+
+  it("shows a single value+unit label away from the thumb", () => {
+    const { rerender } = render(
+      <Slider label="Max angle" value={[45]} min={0} max={90} step={1} unit="°" inputDigits={0} onValueChange={() => undefined} />,
+    );
+    expect(screen.getByRole("button", { name: "Max angle exact value" }).textContent).toBe("45°");
+
+    rerender(
+      <Slider
+        label="Layer height"
+        value={[0.2]}
+        min={0.08}
+        max={0.4}
+        step={0.01}
+        unit="mm"
+        inputDigits={2}
+        onValueChange={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Layer height exact value" }).textContent).toBe("0.20 mm");
+  });
 });

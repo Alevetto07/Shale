@@ -13,6 +13,7 @@ import {
   type Section,
 } from "./settings-meta";
 import { Button, Input, NumericControl, Select, SwitchRow, Tabs, TabsContent, TabsList, TabsTrigger, Tooltip } from "./ui";
+import { NonPlanarPlaceholder } from "./ui/non-planar-placeholder";
 import { springSnappy } from "./ui/springs";
 import { useReducedMotion } from "./ui/use-reduced-motion";
 
@@ -249,11 +250,8 @@ export function ProcessSheet(props: Props) {
 
   const nonPlanar = section === "Non-planar";
   const body = nonPlanar ? (
-    // SLOT: future non-planar controls. Empty on purpose — no settings keys, no engine flags.
-    <div className="nonplanar-slot" data-slot="non-planar">
-      <p className="nonplanar-slot__title">Non-planar</p>
-      <p>Non-planar slicing will appear here.</p>
-    </div>
+    // SLOT: future non-planar controls — no settings keys, no engine flags, no invoke.
+    <NonPlanarPlaceholder />
   ) : search ? (
     <div className="settings-body">
       <p className="hint">

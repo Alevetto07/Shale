@@ -17,6 +17,8 @@ export interface RecentsApi {
   setHidden: (value: boolean) => void;
   toggle: () => void;
   remove: (path: string) => void;
+  /** Put a row back after an undo toast (client list only until the file is opened again). */
+  restore: (entry: RecentProject) => void;
   refresh: () => void;
 }
 
@@ -64,6 +66,10 @@ export function useRecents(): RecentsApi {
       .catch(() => refresh());
   }, [refresh]);
 
+  const restore = useCallback((entry: RecentProject) => {
+    setAll((list) => (list.some((row) => row.path === entry.path) ? list : [entry, ...list]));
+  }, []);
+
   return {
     shown: hidden ? [] : all,
     all,
@@ -72,6 +78,7 @@ export function useRecents(): RecentsApi {
     setHidden,
     toggle: () => setHidden(!hidden),
     remove,
+    restore,
     refresh,
   };
 }

@@ -48,7 +48,19 @@ import {
 import type { QuickFallbacks } from "./ProcessSheet";
 import { pickQualityType } from "./profile-pick";
 import { TitleBar } from "./TitleBar";
-import { Meter, NumericControl, Select, Slider, SwitchRow, TextField, TooltipProvider } from "./ui";
+import {
+  CommandPalette,
+  Meter,
+  NumericControl,
+  Select,
+  Slider,
+  SwitchRow,
+  TextField,
+  ThemedToaster,
+  TooltipProvider,
+  toastUndo,
+} from "./ui";
+import { buildCommandPaletteItems, nextUiStyle } from "./command-palette-items";
 import { UiShowcase } from "./UiShowcase";
 import { SetupWizard } from "./SetupWizard";
 import { shouldShowSetupWizard } from "./setup-wizard";
@@ -271,6 +283,7 @@ export function App() {
     writeUiStyle(id);
     applyUiStyle(id);
   };
+  const toggleUiStyle = () => chooseUiStyle(nextUiStyle(uiStyle));
   /// What the toolpath is coloured by, as Bambu's preview lets you choose.
   const [colourMode, setColourMode] = useState<ColourMode>("type");
   const [busy, setBusy] = useState(false);
@@ -293,6 +306,8 @@ export function App() {
   // elsewhere and only asks this for what to show.
   const recents = useRecents();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const plateUndoRef = useRef<{ plates: PlateView[]; models: ModelView[]; selected: number | null } | null>(null);
   const [startPanel, setStartPanel] = useState<StartPanel>("home");
   const toggleSidebar = () => {
     setSidebarCollapsed((value) => {
@@ -1021,6 +1036,9 @@ export function App() {
       } else if (key === "y") {
         event.preventDefault();
         void actions.current.redo();
+      } else if (key === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen((open) => !open);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1549,6 +1567,7 @@ export function App() {
       await api.removeModel(selected.id);
       setModels((current) => current.filter((model) => model.id !== selected.id));
       setSelectedId(null);
+      toastUndo("Part removed", () => void undo(), { id: "remove-part" });
     } catch (err) {
       setError(messageOf(err));
     }
@@ -1562,6 +1581,7 @@ export function App() {
       await api.removeModel(id);
       setModels((current) => current.filter((model) => model.id !== id));
       if (selectedId === id) setSelectedId(null);
+      toastUndo("Part removed", () => void undo(), { id: "remove-part" });
     } catch (err) {
       setError(messageOf(err));
     }
@@ -1739,6 +1759,34 @@ export function App() {
       setError(messageOf(err));
     }
   }
+
+  type ProfileSnap = { printerId: string; variant: string | null; quality: string | null; material: string | null };
+  const snapProfile = (): ProfileSnap => ({ printerId, variant, quality, material });
+  const restoreProfile = (snap: ProfileSnap) => {
+    setPrinterId(snap.printerId);
+    setVariant(snap.variant);
+    setQuality(snap.quality);
+    setMaterial(snap.material);
+  };
+  const setPrinterWithUndo = (next: string) => {
+    if (next === printerId) return;
+    const before = snapProfile();
+    setPrinterId(next);
+    toastUndo("Printer profile changed", () => restoreProfile(before), { id: "profile-undo" });
+  };
+  const setQualityWithUndo = (next: string | null) => {
+    if (next === quality) return;
+    const before = snapProfile();
+    setQuality(next);
+    void resetScopedOverrides();
+    toastUndo("Quality preset changed", () => restoreProfile(before), { id: "profile-undo" });
+  };
+  const setMaterialWithUndo = (next: string | null) => {
+    if (next === material) return;
+    const before = snapProfile();
+    setMaterial(next);
+    toastUndo("Material changed", () => restoreProfile(before), { id: "profile-undo" });
+  };
 
   // A part that gets deleted while its settings are on screen hands the sheet
   // back to the whole plate.
@@ -2030,6 +2078,7 @@ export function App() {
   }
 
   async function dropPlate(index: number) {
+    plateUndoRef.current = { plates: [...plates], models: [...modelsRef.current], selected: selectedId };
     try {
       const left = await api.deletePlate(index);
       const turned = left.find((plate) => plate.active);
@@ -2050,9 +2099,23 @@ export function App() {
       forgetSlice();
       setTower(null);
       setCalibration(null);
+      const snap = plateUndoRef.current;
+      if (snap) {
+        toastUndo("Plate deleted", () => {
+          setPlates(snap.plates);
+          void restoreSnapshot({ models: snap.models, selected: snap.selected });
+        }, { id: "drop-plate" });
+      }
     } catch (failure) {
       setError(String(failure));
     }
+  }
+
+  async function clearWorkplate() {
+    if (models.length === 0) return;
+    remember();
+    await emptyPlate();
+    toastUndo("Plate cleared", () => void undo(), { id: "clear-plate" });
   }
 
   /** Put one of the three calibration prints on the plate. */
@@ -2626,6 +2689,82 @@ export function App() {
   const marks = instructionMarks(instructions, layerZ, layerHeight);
   const marksHere = instructions.filter((item) => markOf(item, layerZ, layerHeight) === layer);
 
+  function forgetRecentWithUndo(path: string) {
+    const entry = recents.all.find((row) => row.path === path);
+    recents.remove(path);
+    if (!entry) return;
+    toastUndo("Removed from recents", () => recents.restore(entry), { id: `recent-${path}` });
+  }
+
+  function selectPane(next: Pane) {
+    if (next === "home") {
+      setPane("home");
+      setScreen("start");
+      return;
+    }
+    if (next === "preview" && layerCount === 0) {
+      setNotice("nothing to preview yet — press slice first");
+      return;
+    }
+    setNotice(null);
+    setScreen("slicer");
+    setPane(next);
+    if (next === "preview") {
+      setPreview(true);
+      setShowModel(false);
+      setFrameToken((token) => token + 1);
+    }
+    if (next === "prepare") {
+      setPreview(false);
+      setShowModel(true);
+    }
+  }
+
+  const commandItems = useMemo(
+    () =>
+      buildCommandPaletteItems({
+        pane,
+        sliced: layerCount > 0,
+        recents: recents.all,
+        printers,
+        printerId: printerId || null,
+        qualities,
+        quality,
+        materials,
+        material,
+        uiStyle,
+        hasModels: models.length > 0,
+        onNewProject: () => void newProject(),
+        onOpenProject: () => void openProject(),
+        onSlice: () => void slice(),
+        onClearPlate: () => void clearWorkplate(),
+        onPane: selectPane,
+        onPrinter: setPrinterWithUndo,
+        onQuality: setQualityWithUndo,
+        onMaterial: setMaterialWithUndo,
+        onToggleTheme: toggleUiStyle,
+        onOpenSettings: () => {
+          setPane("home");
+          setScreen("start");
+          setStartPanel("settings");
+        },
+        onOpenRecent: (path) => void openProject(path),
+      }),
+    [
+      pane,
+      layerCount,
+      recents.all,
+      printers,
+      printerId,
+      qualities,
+      quality,
+      materials,
+      material,
+      uiStyle,
+      models.length,
+    ],
+  );
+
   const qualityName =
     qualities.find((item) => item.quality_type === quality)?.name ?? quality ?? "Quality preset";
   const activeVariant = variants.find((item) => item.name === variant);
@@ -2715,19 +2854,18 @@ export function App() {
           onFrame={() => setFrameToken((token) => token + 1)}
           printers={printers}
           printerId={printerId}
-          onPrinter={setPrinterId}
+          onPrinter={setPrinterWithUndo}
           variants={variants}
           variant={variant}
           onVariant={setVariant}
           qualities={qualities}
           quality={quality}
           onQuality={(next) => {
-            setQuality(next);
-            void resetScopedOverrides();
+            setQualityWithUndo(next);
           }}
           materials={materials}
           material={material}
-          onMaterial={setMaterial}
+          onMaterial={setMaterialWithUndo}
           quickFallbacks={quickFallbacks}
           demo={status?.demo ?? null}
           overrides={scopedOverrides}
@@ -2788,31 +2926,7 @@ export function App() {
 
       <TabBar
         pane={pane}
-        onPane={(next) => {
-          if (next === "home") {
-            setPane("home");
-            setScreen("start");
-            return;
-          }
-          if (next === "preview" && layerCount === 0) {
-            setNotice("nothing to preview yet — press slice first");
-            return;
-          }
-          // A notice belongs to the workspace that raised it; carrying it into
-          // the next one is how a stale sentence ends up under a different page.
-          setNotice(null);
-          setScreen("slicer");
-          setPane(next);
-          if (next === "preview") {
-            setPreview(true);
-            setShowModel(false);
-            setFrameToken((token) => token + 1);
-          }
-          if (next === "prepare") {
-            setPreview(false);
-            setShowModel(true);
-          }
-        }}
+        onPane={selectPane}
         tabs={docTabs}
         activeTab={activeTab}
         onTab={(id) => void selectTab(id)}
@@ -2833,7 +2947,8 @@ export function App() {
           onOpen={() => void openProject()}
           onImport={() => void importModel()}
           onOpenRecent={(path) => void openProject(path)}
-          onForgetRecent={(path) => recents.remove(path)}
+          onForgetRecent={forgetRecentWithUndo}
+          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
           plates={plates}
           activePlate={plates.find((plate) => plate.active)?.index}
           onShowPlate={(index) => void showPlate(index)}
@@ -4106,6 +4221,8 @@ export function App() {
       )}
         </div>
       </div>
+      <ThemedToaster uiStyle={uiStyle} />
+      <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} items={commandItems} />
       <SetupWizard
         open={setupWizardOpen}
         printers={printers}
