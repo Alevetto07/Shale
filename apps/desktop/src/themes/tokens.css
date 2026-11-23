@@ -40,11 +40,20 @@
   --duration-fast: 120ms;
   --duration-mid: 160ms;
   --duration-slow: 220ms;
+  --duration-press: 140ms;
+  --duration-tooltip: 160ms;
+  --duration-menu: 200ms;
+  --duration-sheet: 280ms;
+  --press-scale: 0.96;
   --transition-interactive: color var(--duration-fast) var(--ease-out),
     background-color var(--duration-fast) var(--ease-out),
     border-color var(--duration-fast) var(--ease-out),
     box-shadow var(--duration-fast) var(--ease-out),
     opacity var(--duration-fast) var(--ease-out);
+
+  /* Layout */
+  --sidebar-width: 268px;
+  --sidebar-rail: 52px;
 
   /* Focus */
   --focus-ring: 1px solid var(--accent);
@@ -59,6 +68,11 @@
     --duration-fast: 0ms;
     --duration-mid: 0ms;
     --duration-slow: 0ms;
+    --duration-press: 0ms;
+    --duration-tooltip: 0ms;
+    --duration-menu: 0ms;
+    --duration-sheet: 0ms;
+    --press-scale: 1;
     --transition-interactive: none;
   }
 }
