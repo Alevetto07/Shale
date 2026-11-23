@@ -84,30 +84,45 @@ export function CommandPalette({
                 <Search size={16} strokeWidth={1.5} aria-hidden />
                 <Command.Input placeholder={placeholder} autoFocus />
               </motion.div>
-              <Command.List className="ui-command-palette__list">
-                <Command.Empty className="ui-command-palette__empty">No matching commands.</Command.Empty>
-                {groups.map((group) => (
-                  <Command.Group key={group.name} heading={group.name} className="ui-command-palette__group">
-                    {group.items.map((item) => (
-                      <Command.Item
-                        key={item.id}
-                        value={itemValue(item)}
-                        disabled={item.disabled}
-                        className={cn("ui-command-palette__item")}
-                        onSelect={() => {
-                          if (item.disabled) return;
-                          item.onSelect();
-                          onOpenChange(false);
-                        }}
-                      >
-                        {item.icon ? <span className="ui-command-palette__icon">{item.icon}</span> : null}
-                        <span className="ui-command-palette__label">{item.label}</span>
-                        {item.shortcut ? <kbd className="ui-command-palette__kbd">{item.shortcut}</kbd> : null}
-                      </Command.Item>
-                    ))}
-                  </Command.Group>
-                ))}
-              </Command.List>
+              <div className="ui-command-palette__scroll">
+                <Command.List className="ui-command-palette__list">
+                  <Command.Empty className="ui-command-palette__empty">No matching commands.</Command.Empty>
+                  {groups.map((group) => (
+                    <Command.Group key={group.name} heading={group.name} className="ui-command-palette__group">
+                      {group.items.map((item) => (
+                        <Command.Item
+                          key={item.id}
+                          value={itemValue(item)}
+                          disabled={item.disabled}
+                          className={cn("ui-command-palette__item")}
+                          onSelect={() => {
+                            if (item.disabled) return;
+                            item.onSelect();
+                            onOpenChange(false);
+                          }}
+                        >
+                          {item.icon ? <span className="ui-command-palette__icon">{item.icon}</span> : null}
+                          <span className="ui-command-palette__label">{item.label}</span>
+                          {item.shortcut ? <kbd className="ui-command-palette__kbd">{item.shortcut}</kbd> : null}
+                        </Command.Item>
+                      ))}
+                    </Command.Group>
+                  ))}
+                </Command.List>
+                <div className="ui-command-palette__scroll-fade" aria-hidden />
+              </div>
+              <footer className="ui-command-palette__footer">
+                <span>
+                  <kbd className="ui-command-palette__hint-kbd">↑</kbd>
+                  <kbd className="ui-command-palette__hint-kbd">↓</kbd> navigate
+                </span>
+                <span>
+                  <kbd className="ui-command-palette__hint-kbd">Enter</kbd> run
+                </span>
+                <span>
+                  <kbd className="ui-command-palette__hint-kbd">Esc</kbd> close
+                </span>
+              </footer>
             </Command>
           </motion.div>
         </Dialog.Content>

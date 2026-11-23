@@ -9,6 +9,7 @@ export function Stepper({
   digits = 2,
   onChange,
   label,
+  disabled,
 }: {
   value: number;
   min?: number;
@@ -17,6 +18,7 @@ export function Stepper({
   digits?: number;
   onChange: (value: number) => void;
   label: string;
+  disabled?: boolean;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const clamp = (next: number) => {
@@ -32,6 +34,7 @@ export function Stepper({
     <span className="ui-stepper" data-ui-stepper="">
       <button
         type="button"
+        disabled={disabled}
         aria-label={`Decrease ${label}`}
         onClick={() => {
           setDraft(null);
@@ -51,8 +54,9 @@ export function Stepper({
           const next = Number(event.target.value);
           if (Number.isFinite(next)) onChange(clamp(next));
         }}
+        disabled={disabled}
       />
-      <button type="button" aria-label={`Increase ${label}`} onClick={() => onChange(clamp(value + step))}>
+      <button type="button" disabled={disabled} aria-label={`Increase ${label}`} onClick={() => onChange(clamp(value + step))}>
         <ChevronRight size={16} strokeWidth={2} aria-hidden />
       </button>
     </span>

@@ -46,6 +46,8 @@ export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
   const inputRef = useRef<HTMLInputElement>(null);
 
   const current = Array.isArray(value) ? value[0] : Array.isArray(defaultValue) ? defaultValue[0] : min;
+  const span = Number(max) - Number(min) || 1;
+  const valueLeft = ((current - Number(min)) / span) * 100;
   const emit = useCallback(
     (next: number) => {
       const clamped = Math.min(max, Math.max(min, next));
@@ -67,7 +69,11 @@ export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
   };
 
   return (
-    <div className={cn("ui-slider", className)} data-editing={editing ? "1" : "0"}>
+    <div
+      className={cn("ui-slider", className)}
+      data-editing={editing ? "1" : "0"}
+      data-disabled={disabled ? "1" : "0"}
+    >
       <div className="ui-slider__shell">
         <SliderPrimitive.Root
           ref={ref}
@@ -103,6 +109,7 @@ export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
           <button
             type="button"
             className="ui-slider__value"
+            style={{ left: `${Math.min(100, Math.max(0, valueLeft))}%` }}
             aria-label={`${label} exact value`}
             disabled={disabled}
             onClick={() => {

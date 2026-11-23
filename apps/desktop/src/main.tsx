@@ -1,7 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { MotionConfig } from "motion/react";
-import { Toaster } from "sonner";
 import { App } from "./App";
 import "./themes/tokens.css";
 import "./themes/deep-field.css";
@@ -19,7 +18,6 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <MotionConfig transition={springPanel} reducedMotion="user">
       <App />
-      <Toaster position="bottom-right" closeButton richColors />
     </MotionConfig>
   </StrictMode>,
 );

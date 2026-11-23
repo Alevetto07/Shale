@@ -14,6 +14,7 @@ export function NumericControl({
   onChange,
   label,
   unit,
+  disabled,
 }: {
   value: number;
   min?: number;
@@ -23,6 +24,7 @@ export function NumericControl({
   onChange: (value: number) => void;
   label: string;
   unit?: string;
+  disabled?: boolean;
 }) {
   if (min != null && max != null) {
     return (
@@ -34,6 +36,7 @@ export function NumericControl({
         step={step}
         unit={unit}
         inputDigits={digits}
+        disabled={disabled}
         onValueChange={onChange}
       />
     );
@@ -46,6 +49,7 @@ export function NumericControl({
       max={max}
       step={step}
       digits={digits}
+      disabled={disabled}
       onChange={onChange}
     />
   );

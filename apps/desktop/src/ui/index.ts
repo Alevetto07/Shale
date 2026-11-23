@@ -22,3 +22,4 @@ export { formatRelativeTime } from "./format-time";
 export { CommandPalette, type CommandPaletteItem, type CommandPaletteProps } from "./command-palette";
 export { toastUndo, type UndoToastOptions } from "./toast-undo";
 export { NonPlanarPlaceholder } from "./non-planar-placeholder";
+export { ThemedToaster } from "./themed-toaster";

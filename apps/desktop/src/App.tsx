@@ -48,7 +48,18 @@ import {
 import type { QuickFallbacks } from "./ProcessSheet";
 import { pickQualityType } from "./profile-pick";
 import { TitleBar } from "./TitleBar";
-import { CommandPalette, Meter, NumericControl, Select, Slider, SwitchRow, TextField, TooltipProvider, toastUndo } from "./ui";
+import {
+  CommandPalette,
+  Meter,
+  NumericControl,
+  Select,
+  Slider,
+  SwitchRow,
+  TextField,
+  ThemedToaster,
+  TooltipProvider,
+  toastUndo,
+} from "./ui";
 import { buildCommandPaletteItems, nextUiStyle } from "./command-palette-items";
 import { UiShowcase } from "./UiShowcase";
 import { SetupWizard } from "./SetupWizard";
@@ -4210,6 +4221,7 @@ export function App() {
       )}
         </div>
       </div>
+      <ThemedToaster uiStyle={uiStyle} />
       <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} items={commandItems} />
       <SetupWizard
         open={setupWizardOpen}
