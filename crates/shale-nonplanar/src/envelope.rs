@@ -24,7 +24,12 @@ use std::sync::OnceLock;
 /// at 10 deg; with 0.1 mm the same bands are clean up to 12 deg. Raise this
 /// constant if curved bands must stay out of the planar fallback at the full
 /// slope cap.
-pub const COLLISION_TOLERANCE_MM: f64 = 0.05;
+///
+/// Decision (Shale Builder, 24 Nov 2026): 0.1 mm, i.e. half of a 0.2 mm layer.
+/// Contact closer than that is the nozzle land riding over the neighbouring
+/// bead of the same curved band (an ironing-like squish), not a head strike;
+/// it keeps 10 deg bands, the default cap, clear of false collisions.
+pub const COLLISION_TOLERANCE_MM: f64 = 0.1;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct HeadEnvelope {
@@ -250,10 +255,10 @@ mod tests {
             env.max_material_height_at(env.tip_land_radius_mm),
             COLLISION_TOLERANCE_MM
         );
-        assert!(!env.material_collides(0.04, 0.0));
+        assert!(!env.material_collides(COLLISION_TOLERANCE_MM - 0.01, 0.0));
         assert_eq!(env.max_material_height_at(0.04), COLLISION_TOLERANCE_MM);
-        assert!(env.material_collides(0.06, 0.0));
-        assert!(env.material_collides(0.06, env.tip_land_radius_mm * 0.5));
+        assert!(env.material_collides(COLLISION_TOLERANCE_MM + 0.01, 0.0));
+        assert!(env.material_collides(COLLISION_TOLERANCE_MM + 0.01, env.tip_land_radius_mm * 0.5));
     }
 
     #[test]
