@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { motion } from "motion/react";
 import type { PrinterInfo } from "./api";
 import { CloudPanel } from "./CloudPanel";
 import { SlicerImportPanel } from "./SlicerImportPanel";
@@ -6,7 +7,9 @@ import { filterSections, SETTINGS_SECTIONS, type SettingsSectionId } from "./set
 import { resetSetupWizard } from "./setup-wizard";
 import { UiStylePicker } from "./UiStylePicker";
 import type { UiStyleId } from "./ui-styles";
-import { AsciiField, AsciiSelect } from "./widgets";
+import { Button, Input, Select, Tabs, TabsContent, TabsList, TabsTrigger, TextField } from "./ui";
+import { springSnappy } from "./ui/springs";
+import { useReducedMotion } from "./ui/use-reduced-motion";
 
 export function SettingsView({
   compact,
@@ -44,6 +47,7 @@ export function SettingsView({
   const [section, setSection] = useState<SettingsSectionId>("general");
   const [query, setQuery] = useState("");
   const [printerQuery, setPrinterQuery] = useState("");
+  const reduce = useReducedMotion();
 
   const sections = useMemo(() => filterSections(query), [query]);
 
@@ -67,139 +71,151 @@ export function SettingsView({
   return (
     <div className={compact ? "settings-shell settings-shell--compact" : "settings-shell"}>
       <div className="settings-toolbar">
-        <AsciiField
-          label="Search settings"
+        <Input
+          aria-label="Search settings"
           value={query}
           placeholder="Search settings…"
-          onChange={setQuery}
+          onChange={(event) => setQuery(event.target.value)}
         />
       </div>
-      <nav className="settings-nav" aria-label="Settings sections">
-        {sections.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={item.id === active.id ? "selected" : undefined}
-            onClick={() => setSection(item.id)}
+      <Tabs
+        className="settings-tabs"
+        value={active.id}
+        onValueChange={(value) => setSection(value as SettingsSectionId)}
+        orientation={compact ? "horizontal" : "vertical"}
+      >
+        <TabsList className="settings-nav" aria-label="Settings sections">
+          {sections.map((item) => (
+            <TabsTrigger key={item.id} value={item.id}>
+              {item.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value={active.id} className="settings-body">
+          <motion.div
+            key={active.id}
+            initial={reduce ? false : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={reduce ? { duration: 0 } : springSnappy}
           >
-            {item.label}
-          </button>
-        ))}
-      </nav>
-      <div className="settings-body">
-        <header className="settings-heading">
-          <h2>{active.label}</h2>
-          <p>{active.description}</p>
-        </header>
+            <header className="settings-heading">
+              <h2>{active.label}</h2>
+              <p>{active.description}</p>
+            </header>
 
-        {section === "general" && (
-          <div className="settings-group">
-            <label>
-              backend
-              <AsciiSelect
-                label="backend"
-                value={backend}
-                options={[
-                  { value: "cli", label: "cli" },
-                  { value: "arcus", label: "arcus" },
-                ]}
-                onChange={onBackend}
-              />
-            </label>
-            <label>
-              binary
-              <AsciiField label="binary" value={enginePath} onChange={onEnginePath} />
-            </label>
-            <label>
-              libs
-              <AsciiField label="libs" value={libDir} onChange={onLibDir} />
-            </label>
-            <button type="button" onClick={onApplyEngine}>
-              Check engine
-            </button>
-          </div>
-        )}
+            {active.id === "general" && (
+              <div className="settings-group">
+                <label className="ui-field">
+                  <span className="ui-field__label">backend</span>
+                  <Select
+                    label="backend"
+                    value={backend}
+                    options={[
+                      { value: "cli", label: "cli" },
+                      { value: "arcus", label: "arcus" },
+                    ]}
+                    onChange={onBackend}
+                  />
+                </label>
+                <label className="ui-field">
+                  <span className="ui-field__label">binary</span>
+                  <TextField label="binary" value={enginePath} onChange={onEnginePath} />
+                </label>
+                <label className="ui-field">
+                  <span className="ui-field__label">libs</span>
+                  <TextField label="libs" value={libDir} onChange={onLibDir} />
+                </label>
+                <Button type="button" variant="secondary" onClick={onApplyEngine}>
+                  Check engine
+                </Button>
+              </div>
+            )}
 
-        {section === "appearance" && (
-          <div className="settings-group">
-            <UiStylePicker value={uiStyle} onChange={onUiStyle} />
-          </div>
-        )}
+            {active.id === "appearance" && (
+              <div className="settings-group">
+                <UiStylePicker value={uiStyle} onChange={onUiStyle} />
+              </div>
+            )}
 
-        {section === "printers" && (
-          <div className="settings-group">
-            <AsciiField
-              label="filter printers"
-              value={printerQuery}
-              placeholder="Filter catalogue…"
-              onChange={setPrinterQuery}
-            />
-            <RuntimeScroll className="settings-scroll">
-              {filteredPrinters.map((printer) => (
-                <button
-                  key={printer.id}
+            {active.id === "printers" && (
+              <div className="settings-group">
+                <TextField
+                  label="filter printers"
+                  value={printerQuery}
+                  placeholder="Filter catalogue…"
+                  onChange={setPrinterQuery}
+                />
+                <RuntimeScroll className="settings-scroll">
+                  {filteredPrinters.map((printer) => (
+                    <Button
+                      key={printer.id}
+                      type="button"
+                      variant={printer.id === printerId ? "primary" : "ghost"}
+                      size="sm"
+                      className="ui-btn--block"
+                      onClick={() => onChoosePrinter(printer.id)}
+                    >
+                      {printer.manufacturer ? `${printer.manufacturer} ` : ""}
+                      {printer.name}
+                      {printer.source === "bambu" ? " · Bambu" : ""}
+                    </Button>
+                  ))}
+                </RuntimeScroll>
+              </div>
+            )}
+
+            {active.id === "profiles" && (
+              <div className="settings-group">
+                <p className="hint">
+                  Machine, nozzle, process, and filament defaults live in the menu bar under{" "}
+                  <strong>Printer</strong> and <strong>Slice settings</strong> while a project is open.
+                </p>
+              </div>
+            )}
+
+            {active.id === "slicing" && (
+              <div className="settings-group">
+                <p className="hint">
+                  Cost and energy fields are on the Preview sidebar after a slice. Process overrides
+                  are under <strong>Slice settings</strong> in the menu bar.
+                </p>
+              </div>
+            )}
+
+            {active.id === "accounts" && <CloudPanel taskName="settings" />}
+
+            {active.id === "import" && (
+              <div className="settings-group">
+                <SlicerImportPanel compact onImported={() => undefined} />
+              </div>
+            )}
+
+            {active.id === "advanced" && (
+              <div className="settings-group">
+                <Button
                   type="button"
-                  className={printer.id === printerId ? "selected" : undefined}
-                  onClick={() => onChoosePrinter(printer.id)}
+                  variant="secondary"
+                  onClick={() => {
+                    resetSetupWizard();
+                    onRerunSetup?.();
+                  }}
                 >
-                  {printer.manufacturer ? `${printer.manufacturer} ` : ""}
-                  {printer.name}
-                  {printer.source === "bambu" ? " · Bambu" : ""}
-                </button>
-              ))}
-            </RuntimeScroll>
-          </div>
-        )}
+                  Re-run first-run setup
+                </Button>
+              </div>
+            )}
 
-        {section === "profiles" && (
-          <div className="settings-group">
-            <p className="hint">
-              Machine, nozzle, process, and filament defaults live in the menu bar under{" "}
-              <strong>Printer</strong> and <strong>Slice settings</strong> while a project is open.
-            </p>
-          </div>
-        )}
-
-        {section === "slicing" && (
-          <div className="settings-group">
-            <p className="hint">
-              Cost and energy fields are on the Preview sidebar after a slice. Process overrides
-              are under <strong>Slice settings</strong> in the menu bar.
-            </p>
-          </div>
-        )}
-
-        {section === "accounts" && <CloudPanel taskName="settings" />}
-
-        {section === "import" && (
-          <div className="settings-group">
-            <SlicerImportPanel compact onImported={() => undefined} />
-          </div>
-        )}
-
-        {section === "advanced" && (
-          <div className="settings-group">
-            <button
-              type="button"
-              onClick={() => {
-                resetSetupWizard();
-                onRerunSetup?.();
-              }}
-            >
-              Re-run first-run setup
-            </button>
-          </div>
-        )}
-
-        {section === "about" && (
-          <div className="settings-group about-block">
-            <p className="credit">
-              Shale {version} — AGPL-3.0-or-later desktop slicer for Bambu Lab printers. CuraEngine
-              runs as a separate process; profiles may come from Bambu Studio or Cura resources.
-            </p>
-          </div>
-        )}
-      </div>
+            {active.id === "about" && (
+              <div className="settings-group about-block">
+                <p className="credit">
+                  Shale {version} — AGPL-3.0-or-later desktop slicer for Bambu Lab printers. CuraEngine
+                  runs as a separate process; profiles may come from Bambu Studio or Cura resources.
+                </p>
+              </div>
+            )}
+          </motion.div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

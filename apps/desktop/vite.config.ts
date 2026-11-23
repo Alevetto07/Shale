@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: "jsdom",
+    setupFiles: ["./src/test-setup.ts"],
     env: { VITE_SHALE_MOCK: "1" },
     css: true,
   },

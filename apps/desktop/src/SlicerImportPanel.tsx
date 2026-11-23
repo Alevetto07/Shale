@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Button, Select } from "./ui";
 import {
   detectSlicerInstalls,
   importSlicerPresets,
@@ -93,29 +94,31 @@ export function SlicerImportPanel({
 
   return (
     <div className={compact ? "slicer-import slicer-import--compact" : "slicer-import"}>
-      <label>
-        Source slicer
-        <select value={slicerId} onChange={(event) => setSlicerId(event.target.value)}>
-          {(installs ?? []).map((row) => (
-            <option key={row.id} value={row.id}>
-              {row.label}
-              {row.found ? "" : " (not found)"}
-            </option>
-          ))}
-        </select>
+      <label className="ui-field">
+        <span className="ui-field__label">Source slicer</span>
+        <Select
+          label="Source slicer"
+          value={slicerId}
+          options={(installs ?? []).map((row) => ({
+            value: row.id,
+            label: `${row.label}${row.found ? "" : " (not found)"}`,
+          }))}
+          onChange={setSlicerId}
+        />
       </label>
       <div className="slicer-import-actions">
-        <button type="button" disabled={busy} onClick={() => void loadOffers()}>
+        <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={() => void loadOffers()}>
           Refresh list
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className="primary"
+          variant="primary"
+          size="sm"
           disabled={busy || selected.size === 0}
           onClick={() => void runImport()}
         >
           Import selected ({selected.size})
-        </button>
+        </Button>
       </div>
       {error ? <p className="hint error">{error}</p> : null}
       {offers && (

@@ -35,7 +35,8 @@ import { DevicePane, TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
 import { FeatureLegend } from "./Legend";
 import { thumbnailJpeg } from "./thumbnail";
 import { variantOptionLabel } from "./profile-labels";
-import { Frame, meter, track } from "./theme";
+import { toast } from "sonner";
+import { Frame } from "./theme";
 import { MenuBar } from "./MenuBar";
 import { applyUiStyle, readUiStyle, writeUiStyle, type UiStyleId } from "./ui-styles";
 import {
@@ -47,7 +48,7 @@ import {
 import type { QuickFallbacks } from "./ProcessSheet";
 import { pickQualityType } from "./profile-pick";
 import { TitleBar } from "./TitleBar";
-import { TooltipProvider } from "./ui/tooltip-provider";
+import { Meter, NumericControl, Select, Slider, SwitchRow, TextField, TooltipProvider } from "./ui";
 import { UiShowcase } from "./UiShowcase";
 import { SetupWizard } from "./SetupWizard";
 import { shouldShowSetupWizard } from "./setup-wizard";
@@ -57,7 +58,6 @@ import type { TransformMode, ViewStyle, ColourMode } from "./Viewport";
 const Viewport = lazy(() =>
   import("./Viewport").then((module) => ({ default: module.Viewport })),
 );
-import { AsciiCheck, AsciiField, AsciiSelect, AsciiStepper } from "./widgets";
 
 interface Progress {
   fraction: number;
@@ -780,6 +780,8 @@ export function App() {
   // The sheet's numbers as they are right now, for a snapshot taken inside a
   // handler that would otherwise capture an older render's copy.
   const overridesRef = useRef<Record<string, string>>({});
+  const partSettingsTimer = useRef<number | null>(null);
+  const partSettingsPending = useRef<{ id: number; settings: Record<string, string> } | null>(null);
   const modelsRef = useRef<ModelView[]>(models);
   const lastEdit = useRef<{ key: string; at: number } | null>(null);
   const [historyDepth, setHistoryDepth] = useState({ past: 0, future: 0 });
@@ -1030,7 +1032,7 @@ export function App() {
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
-      if (target?.closest(".ascii-select, .ascii-menu, .ascii-step, .start")) return;
+      if (target?.closest(".ui-select, .ui-stepper, .ui-dropdown, [role='menu'], .start")) return;
       if (screen !== "slicer") return;
       if (event.key === "f") {
         event.preventDefault();
@@ -1703,12 +1705,22 @@ export function App() {
     setModels((current) =>
       current.map((model) => (model.id === scopedPart.id ? { ...model, settings: next } : model)),
     );
-    try {
-      const updated = await api.setModelSettings(scopedPart.id, next);
-      setModels((current) => current.map((model) => (model.id === updated.id ? updated : model)));
-    } catch (err) {
-      setError(messageOf(err));
-    }
+    // Sliders report every pointer move. Keep the plate state immediate and
+    // send the part settings once the drag settles, still as set_model_settings.
+    partSettingsPending.current = { id: scopedPart.id, settings: next };
+    if (partSettingsTimer.current != null) window.clearTimeout(partSettingsTimer.current);
+    partSettingsTimer.current = window.setTimeout(() => {
+      partSettingsTimer.current = null;
+      const pending = partSettingsPending.current;
+      partSettingsPending.current = null;
+      if (!pending) return;
+      void api
+        .setModelSettings(pending.id, pending.settings)
+        .then((updated) => {
+          setModels((current) => current.map((model) => (model.id === updated.id ? updated : model)));
+        })
+        .catch((err: unknown) => setError(messageOf(err)));
+    }, 160);
   }
 
   async function resetScopedOverrides() {
@@ -2619,6 +2631,15 @@ export function App() {
   const activeVariant = variants.find((item) => item.name === variant);
   const profileVariantLabel = activeVariant ? variantOptionLabel(activeVariant) : variant;
 
+  useEffect(() => {
+    if (!notice) return;
+    const [title, ...rest] = notice.split("\n");
+    toast(title, {
+      id: "shale-notice",
+      description: rest.length > 0 ? rest.join("\n") : undefined,
+    });
+  }, [notice]);
+
   if (import.meta.env.VITE_SHALE_MOCK === "1" && new URLSearchParams(window.location.search).get("showcase") === "ui") {
     return (
       <TooltipProvider>
@@ -2762,11 +2783,6 @@ export function App() {
               retry
             </button>
           )}
-        </p>
-      )}
-      {notice && (
-        <p className="banner" role="status">
-          {notice}
         </p>
       )}
 
@@ -3049,18 +3065,18 @@ export function App() {
                   >
                     brush
                   </button>
-                  <label className="paint-radius">
-                    <span>reach</span>
-                    <input
-                      aria-label="Brush reach in millimetres"
-                      type="number"
+                  <label className="paint-radius ui-field">
+                    <span className="ui-field__label">reach</span>
+                    <Slider
+                      label="Brush reach in millimetres"
+                      value={[Math.max(1, Math.min(40, Number(paintRadius) || 1))]}
                       min={1}
                       max={40}
                       step={1}
-                      value={paintRadius}
-                      onChange={(event) => setPaintRadius(event.target.value)}
+                      unit="mm"
+                      inputDigits={0}
+                      onValueChange={(value) => setPaintRadius(String(Math.round(value)))}
                     />
-                    <span>mm</span>
                   </label>
                 </div>
                 {(paintArmed || patches.length > 0 || painted > 0 || blocked > 0) && (
@@ -3110,11 +3126,11 @@ export function App() {
           <Frame title="printer">
             <label>
               filter
-              <AsciiField label="filter" value={printerQuery} placeholder="name…" onChange={setPrinterQuery} />
+              <TextField label="filter" value={printerQuery} placeholder="name…" onChange={setPrinterQuery} />
             </label>
             <label>
               machine
-              <AsciiSelect
+              <Select
                 label="machine"
                 value={printerId}
                 options={filteredPrinters.map((printer) => ({
@@ -3126,7 +3142,7 @@ export function App() {
             </label>
             <label>
               nozzle
-              <AsciiSelect
+              <Select
                 label="nozzle"
                 value={variant ?? ""}
                 options={variants.map((item) => ({
@@ -3138,7 +3154,7 @@ export function App() {
             </label>
             <label>
               quality
-              <AsciiSelect
+              <Select
                 label="quality"
                 value={quality ?? ""}
                 options={qualities.map((item) => ({ value: item.quality_type, label: item.name }))}
@@ -3150,7 +3166,7 @@ export function App() {
             </label>
             <label>
               material
-              <AsciiSelect
+              <Select
                 label="material"
                 value={material ?? ""}
                 options={spools.map((item) => ({ value: item.id, label: item.label }))}
@@ -3174,7 +3190,7 @@ export function App() {
             {[0, 1, 2].map((index) => (
               <label key={index}>
                 spool {index + 2}
-                <AsciiSelect
+                <Select
                   label={`spool ${index + 2}`}
                   value={ams[index] ?? ""}
                   options={[
@@ -3233,7 +3249,7 @@ export function App() {
           <Frame title="slice">
             <label>
               layer mm
-              <AsciiStepper
+              <NumericControl
                 label="layer mm"
                 value={layerHeight}
                 min={0.05}
@@ -3245,7 +3261,7 @@ export function App() {
             </label>
             <label>
               infill %
-              <AsciiStepper
+              <NumericControl
                 label="infill %"
                 value={infill}
                 min={0}
@@ -3257,15 +3273,15 @@ export function App() {
                 }
               />
             </label>
-            <AsciiCheck
+            <SwitchRow
               checked={supports}
               onChange={(value) => void setScopedOverride(QUICK_SETTING_KEYS.supports, value ? "1" : "0")}
             >
               supports
-            </AsciiCheck>
+            </SwitchRow>
             <label>
               hotend C
-              <AsciiStepper
+              <NumericControl
                 label="hotend C"
                 value={nozzle}
                 min={0}
@@ -3279,7 +3295,7 @@ export function App() {
             </label>
             <label>
               bed C
-              <AsciiStepper
+              <NumericControl
                 label="bed C"
                 value={bedTemp}
                 min={0}
@@ -3294,7 +3310,7 @@ export function App() {
             <p className="hint">layer height also sets the first layer. changing quality reloads these values.</p>
             <label>
               chord mm
-              <AsciiStepper
+              <NumericControl
                 label="chord mm"
                 value={chord}
                 min={0.02}
@@ -3309,7 +3325,7 @@ export function App() {
             </label>
             <label>
               turn °
-              <AsciiStepper
+              <NumericControl
                 label="turn"
                 value={turn}
                 min={2}
@@ -3331,11 +3347,11 @@ export function App() {
           <Frame title="supports">
             <label>
               angle
-              <AsciiStepper label="angle" value={supportAngle} min={0} max={90} step={1} digits={0} onChange={setSupportAngle} />
+              <NumericControl label="angle" value={supportAngle} min={0} max={90} step={1} digits={0} onChange={setSupportAngle} />
             </label>
             <label>
               bridge mm
-              <AsciiStepper label="bridge mm" value={bridgeMm} min={0} max={80} step={1} digits={0} onChange={setBridgeMm} />
+              <NumericControl label="bridge mm" value={bridgeMm} min={0} max={80} step={1} digits={0} onChange={setBridgeMm} />
             </label>
             <div className="row">
               <button type="button" disabled={selectedId == null || supportBusy} onClick={() => void proposeSupports()}>
@@ -3352,9 +3368,9 @@ export function App() {
             <ul className="instructions">
               {support?.plan.regions.map((region) => (
                 <li key={region.id}>
-                  <AsciiCheck checked={region.enabled} onChange={() => void toggleSupport(region.id)}>
+                  <SwitchRow checked={region.enabled} onChange={() => void toggleSupport(region.id)}>
                     {`${region.role === "block" ? "block" : "support"}  ${region.summary}`}
-                  </AsciiCheck>
+                  </SwitchRow>
                 </li>
               ))}
             </ul>
@@ -3366,7 +3382,7 @@ export function App() {
           <Frame title="instructions">
             <label>
               kind
-              <AsciiSelect
+              <Select
                 label="kind"
                 value={kind}
                 options={[
@@ -3383,7 +3399,7 @@ export function App() {
             {kind === "pause" && (
               <label>
                 by
-                <AsciiSelect
+                <Select
                   label="by"
                   value={anchor}
                   options={[
@@ -3396,7 +3412,7 @@ export function App() {
             )}
             <label>
               {kind === "fan" || (kind === "pause" && anchor === "height") ? "height" : "layer"}
-              <AsciiStepper
+              <NumericControl
                 label={kind === "fan" || (kind === "pause" && anchor === "height") ? "height" : "layer"}
                 value={at}
                 min={0}
@@ -3408,33 +3424,33 @@ export function App() {
             {kind === "fan" && (
               <label>
                 percent
-                <AsciiStepper label="percent" value={fanPercent} min={0} max={100} step={1} digits={0} onChange={setFanPercent} />
+                <NumericControl label="percent" value={fanPercent} min={0} max={100} step={1} digits={0} onChange={setFanPercent} />
               </label>
             )}
             {kind === "temperature" && (
               <>
                 <label>
                   hotend C
-                  <AsciiStepper label="hotend C" value={tempNozzle} min={0} max={400} step={1} digits={0} onChange={setTempNozzle} />
+                  <NumericControl label="hotend C" value={tempNozzle} min={0} max={400} step={1} digits={0} onChange={setTempNozzle} />
                 </label>
                 <label>
                   bed C
-                  <AsciiStepper label="bed C" value={tempBed} min={0} max={150} step={1} digits={0} onChange={setTempBed} />
+                  <NumericControl label="bed C" value={tempBed} min={0} max={150} step={1} digits={0} onChange={setTempBed} />
                 </label>
-                <AsciiCheck checked={tempWait} onChange={setTempWait}>
+                <SwitchRow checked={tempWait} onChange={setTempWait}>
                   wait until reached
-                </AsciiCheck>
+                </SwitchRow>
               </>
             )}
             {kind === "pause" && (
-              <AsciiCheck checked={filament} onChange={setFilament}>
+              <SwitchRow checked={filament} onChange={setFilament}>
                 filament change
-              </AsciiCheck>
+              </SwitchRow>
             )}
             {(kind === "pause" || kind === "message" || kind === "park_and_wait") && (
               <label>
                 note
-                <AsciiField label="note" value={note} onChange={setNote} />
+                <TextField label="note" value={note} onChange={setNote} />
               </label>
             )}
             <button type="button" onClick={() => void addInstruction()}>
@@ -3474,7 +3490,7 @@ export function App() {
               <>
                 <label>
                   spool
-                  <AsciiSelect
+                  <Select
                     label="spool"
                     value={String(selected.slot ?? 0)}
                     options={[
@@ -3512,7 +3528,7 @@ export function App() {
                     return (
                       <label key={axis}>
                         {mode === "rotate" ? `${axis}°` : axis}
-                        <AsciiStepper
+                        <NumericControl
                           label={axis}
                           value={shown}
                           step={mode === "scale" ? 0.01 : mode === "translate" ? 1 : 1}
@@ -3817,7 +3833,7 @@ export function App() {
           <Frame title="cost">
             <label>
               currency
-              <AsciiField
+              <TextField
                 label="currency"
                 value={cost.currency}
                 onChange={(value) => changeCost({ currency: value })}
@@ -3825,7 +3841,7 @@ export function App() {
             </label>
             <label>
               price / kg
-              <AsciiField
+              <TextField
                 label="price per kg"
                 value={String(cost.price_per_kg)}
                 onChange={(value) => {
@@ -3836,7 +3852,7 @@ export function App() {
             </label>
             <label>
               power, W
-              <AsciiField
+              <TextField
                 label="printer power"
                 value={String(cost.watts)}
                 onChange={(value) => {
@@ -3847,7 +3863,7 @@ export function App() {
             </label>
             <label>
               energy / kWh
-              <AsciiField
+              <TextField
                 label="electricity price"
                 value={String(cost.electricity_per_kwh)}
                 onChange={(value) => {
@@ -3868,7 +3884,7 @@ export function App() {
           <Frame title="engine">
             <label>
               backend
-              <AsciiSelect
+              <Select
                 label="backend"
                 value={backend}
                 options={[
@@ -3887,11 +3903,11 @@ export function App() {
             </label>
             <label>
               binary
-              <AsciiField label="binary" value={enginePath} onChange={setEnginePath} />
+              <TextField label="binary" value={enginePath} onChange={setEnginePath} />
             </label>
             <label>
               libs
-              <AsciiField
+              <TextField
                 label="libs"
                 value={libDir}
                 placeholder="bundled libs, if needed"
@@ -4056,46 +4072,34 @@ export function App() {
                 <button type="button" onClick={() => void addMarkAt(layer, true)}>
                   swap here
                 </button>
-                <AsciiCheck checked={showModel} onChange={setShowModel}>
+                <SwitchRow checked={showModel} onChange={setShowModel}>
                   ghost
-                </AsciiCheck>
+                </SwitchRow>
                 </div>
-                <div className="ascii-slider">
+                <div className="layer-slider">
                   <div className="readout">
-                    layer <span className="active">{String(layer + 1).padStart(3, " ")}</span> / {layerCount}
-                    {layerZ[layer] != null ? `   z ${layerZ[layer].toFixed(2)}` : ""}
-                    {minutes == null ? "" : `   ~${minutes} min`}
-                    {marksHere.length > 0 ? `   + ${marksHere.map((item) => item.summary).join(" / ")}` : ""}
+                    {layerZ[layer] != null ? `z ${layerZ[layer].toFixed(2)}` : `layer ${layer + 1}`}
+                    {` / ${layerCount}`}
+                    {minutes == null ? "" : ` · ~${minutes} min`}
+                    {marksHere.length > 0 ? ` · ${marksHere.map((item) => item.summary).join(" / ")}` : ""}
                   </div>
-                  <div className="glyphs" aria-hidden="true">
-                    {Array.from(track(layer, Math.max(0, layerCount - 1), 28, marks)).map((glyph, index) =>
-                      glyph === "●" ? (
-                        <span key={index} className="active">
-                          {glyph}
-                        </span>
-                      ) : (
-                        glyph
-                      ),
-                    )}
-                  </div>
-                  <input
-                    type="range"
+                  <Slider
+                    label="Layer"
+                    value={[layer]}
                     min={0}
                     max={Math.max(0, layerCount - 1)}
-                    value={layer}
-                    aria-label="Layer"
-                    onChange={(event) => setLayer(Number(event.target.value))}
+                    step={1}
+                    inputDigits={0}
+                    marks={marks}
+                    formatValue={(value) => `layer ${value + 1}`}
+                    onValueChange={setLayer}
                   />
                 </div>
               </>
             ) : (
               <p className="hint">drag to orbit. scroll to zoom. z is up.  1 move  2 rotate  3 scale  f frame</p>
             )}
-            {progress && (
-              <p className="meter" aria-live="polite">
-                {meter(progress.fraction)} {String(Math.round(progress.fraction * 100)).padStart(3, " ")}%  {progress.message}
-              </p>
-            )}
+            {progress && <Meter fraction={progress.fraction} message={progress.message} />}
           </footer>
         </main>
       </div>
