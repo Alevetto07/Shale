@@ -44,6 +44,18 @@ pub fn apply_surface_to_grid(grid: &mut HeightGrid, surface: &PlannedSurface, la
                 | PlannedSurfaceKind::OverhangTiltBand => {
                     let underside_z = surface.min[2] + 0.5;
                     let tilted = underside_z + along * tan_tilt;
+                    // Only tilt where the column top sits inside this band, i.e. a thin
+                    // skin over air (a bridge deck). Where the column reaches far above
+                    // the band — a curved flank — writing the underside height as the
+                    // column's top squashes the model, and the deform then flattens the
+                    // part to repair the head envelope: measured on examples/dome.stl an
+                    // enabled 61.3° band rewrote 1771 column tops and turned the dome into
+                    // a plateau (+81 % filament, planar-equivalence audit failed).
+                    let top = grid.z_top_smooth[i].unwrap_or(footprint_z);
+                    let margin = layer_h * 6.0;
+                    if top > surface.max[2].max(footprint_z) + margin {
+                        continue;
+                    }
                     grid.z_top_smooth[i] = Some(tilted);
                     grid.z_band_start[i] = Some((underside_z - layer_h * 6.0).max(0.0));
                     grid.z_deform_cap[i] = Some(surface.max[2]);
