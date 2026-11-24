@@ -254,17 +254,51 @@ answers in a few kilobytes.
 
 ## M1 end-to-end results
 
-Part × printer × mode, filled in as M1 runs complete. Print time is the CLI's
-own estimate; worst slope is measured on the curved G-code; collisions are the
-swept counts after the pass; fallback is whether the planar baseline was
-written.
+Measured on integration commit `ce02df9` (24 November 2026) with the release CLI,
+`--max-angle 10`, the default 0.20 mm process per printer and the vendored, unmodified
+CuraEngine 5.13. Print time is the CLI's own estimate; worst slope and collisions come
+from the CLI's safety report (`nonplanar_safety`, swept at the 0.1 mm tolerance) and
+were cross-checked with an independent G-code validator (bounds, slope histogram,
+stepped toolhead profile at 0.1 mm). "Fallback" means the planar baseline was written
+and the reason was named in the `;SHALE_NONPLANAR` header.
 
-| Part | Printer | Mode | Planar time | Curved time | Worst slope | Collisions (extruding / travel) | Fallback |
+| Part | A1 mini | A1 | P1S | X1C | Planar → auto time | Worst curved slope | Collisions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `examples/nonplanar-demo.stl` (80 × 50 × 16.1 mm) | `bambu_lab_a1` | `off` | 1 h 11 m | — | — | — | no (planar) |
-| `examples/nonplanar-demo.stl` | `bambu_lab_a1` | `curved-tops` | 1 h 11 m | 1 h 11 m (planar baseline) | 5.99° | 6 / 2534 | yes |
-| `examples/nonplanar-demo.stl` | `bambu_lab_a1` | `auto` | 1 h 11 m | 1 h 11 m (planar baseline) | 5.99° | 6 / 2534 | yes |
-| _to be filled_ | | | | | | | |
+| `t-wing` | curved | curved | curved | fallback: a curved move leaves the head envelope | 858–863 s → unchanged | 6.34° | 0 / 0 |
+| `dome` (24 mm ball) | fallback: 1 move over the 0.02 mm clamp budget | curved | curved | fallback: a curved move leaves the head envelope | 917–920 s → +0–1 s | 7.61° | 0 / 0 |
+| `bridge-overhang` | fallback: no printable surface | fallback | fallback | fallback | 1670–1680 s → unchanged | — | — |
+| `pillar-beside-dome` | fallback: collisions | fallback: collisions | fallback: collisions | fallback: collisions | 2347–2359 s → unchanged | — | — |
+| `nonplanar-demo` lid | fallback: limiter left a 12.7° level surface | fallback | fallback | fallback | 4234–4263 s → unchanged | — | — |
+
+All 40 files pass the independent validator (no out-of-bounds body moves, no
+collisions at 0.1 mm, no Z inversions). Curved output costs no measurable time or
+filament (at most 1 s and 0.0001 m). The curved region itself is small: on the dome
+only the cap where the sphere is flatter than about 9° is lifted, so most of the
+part prints exactly as planar. The demo lid currently falls back on every printer;
+making it print curved is open work (see below).
+
+Extrusion: `E` is rescaled per move by the local layer-thickness ratio of the
+deformation (clamped to 0.5–2×). Measured median `E` per millimetre of 3D path is
+0.0331 on curved moves against 0.0333 on planar ones, the largest curved value is
+0.0484 (1.45× nominal, on the dome's thinnest band layer), and no move exceeds
+0.2 mm of filament per millimetre.
+
+Known limitations at this commit:
+
+* **The 0.06 mm seam.** The band floor is anchored between two planar layers, so the
+  first band layer can sit up to 0.06 mm into the last planar one at the footprint
+  edge. This is an overlap rather than a gap and stays inside the 0.1 mm contact
+  tolerance; very short moves (0.1–0.2 mm) at that seam can show apparent slopes of
+  up to 26° that are a squish of a few hundredths of a millimetre, not a tilt.
+* **P1S, P1P, X1C and H2D head geometry is still unmeasured.** Their envelopes declare
+  a 0.35 mm flat tip land against the 0.42 mm line spacing of a 0.4 mm nozzle; the
+  values are conservative estimates listed under `needs_measurement` (the A1 and
+  A1 mini envelopes are conservative estimates too), and the X1C fallbacks above
+  come from its larger envelope.
+* **Horizontal bridges and cantilevers print planar** in auto mode: a ±10° tilt of a
+  90° underside round-trips to a planar toolpath, so the planner disables those
+  surfaces and says why (see above). Underside bands remain available, unverified,
+  behind `--nonplanar-underside`.
 
 ## What it is not
 
@@ -274,3 +308,9 @@ written.
 * Not calibrated beyond `conservative` on this hardware yet: the envelopes list
   the fields still to be measured, and the 10° cap has margin precisely because
   those measurements are pending.
+
+## Licence
+
+Shale, including the non-planar pipeline and this document, is licensed under the
+GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`). CuraEngine is
+used as an unmodified external binary under its own licence.
