@@ -90,10 +90,29 @@ impl DeformField {
             return false;
         }
         let z_phys = self.inverse_z(x, y, z_def);
-        z_phys > z_band + 1e-9 && (z_phys - z_def).abs() > 5e-3
+        // The ramp below the band is mapped too, just at a fraction of the lift.
+        let ramp_start = z_band - self.ramp_thickness.max(1e-6);
+        z_phys > ramp_start + 1e-9 && (z_phys - z_def).abs() > 5e-3
     }
 
-    /// Forward map: physical Z → deformed Z. Linear and monotone within the top band.
+    /// Forward map: physical Z → deformed Z.
+    ///
+    /// Above the band floor the map is a pure vertical **shear**: the whole
+    /// cross-section rises by the column's lift `strength * (flat - h_top)`, so
+    /// the deformed top is flat while every level surface inside the band keeps
+    /// the model's own slope. Below it, a ramp of `ramp_thickness` blends the
+    /// lift to zero, so the part under the band is untouched and the map stays
+    /// monotone in Z.
+    ///
+    /// The band used to be *rescaled* instead: `[z_band, h_top]` was stretched
+    /// onto `[z_band, flat]`, so a lid whose top sat 8.4 mm below the island's
+    /// highest point got a 10 mm deformed band out of a 1.6 mm physical one. The
+    /// slicer then laid ~50 layers into 1.6 mm of plastic, 0.033 mm apart, and
+    /// every travel move in the band ploughed through the bead it had just laid
+    /// (examples/nonplanar-demo.stl: 2835 travel collisions 0.11 mm above the
+    /// tip, tolerance 0.1 mm). A shear keeps the layer spacing physical, so the
+    /// band prints like any other slab and the inverse map still restores the
+    /// model's own surface.
     pub fn forward_z(&self, x: f64, y: f64, z: f64) -> f64 {
         let Some((z_band, h_top, strength, flat_top)) = self.column_limits(x, y) else {
             return z;
@@ -105,16 +124,20 @@ impl DeformField {
         {
             return z;
         }
-        if strength <= 0.0 || z <= z_band {
+        let lift = strength * (flat_top - h_top);
+        if lift.abs() < 1e-12 {
             return z;
         }
-        let wall_shift = (flat_top - h_top) * strength;
-        if z >= h_top {
-            return z + wall_shift;
+        let ramp = self.ramp_thickness.max(1e-6);
+        let ramp_start = z_band - ramp;
+        if z <= ramp_start {
+            return z;
         }
-        let span = (h_top - z_band).max(1e-6);
-        let target = z_band + (z - z_band) / span * (flat_top - z_band);
-        z + strength * (target - z)
+        if z >= z_band {
+            return z + lift;
+        }
+        let w = (z - ramp_start) / ramp;
+        z + w * lift
     }
 
     /// Effective layer thickness ratio for extrusion correction.
@@ -133,46 +156,54 @@ impl DeformField {
         if self.island_strength.len() == 1 {
             return self.island_strength[0];
         }
-        let fx = (x - self.grid.origin[0]) / self.grid.step;
-        let fy = (y - self.grid.origin[1]) / self.grid.step;
-        let ix = fx.floor().clamp(0.0, self.grid.width as f64 - 1.0) as usize;
-        let iy = fy.floor().clamp(0.0, self.grid.height as f64 - 1.0) as usize;
-        self.island_strength
-            .get(iy * self.grid.width + ix)
-            .copied()
-            .unwrap_or(1.0)
+        // Same weights as the height samples: the strength is part of the same
+        // column, and reading it with a bare `floor` made the inverse map judge a
+        // point with one column's heights and its neighbour's strength. The lift is
+        // `strength * (flat - h_top)`, so a one-cell index slip moved the mapped Z
+        // by the whole local lift and the slope limiter then damped the entire
+        // footprint chasing phantom level surfaces.
+        let Some((ix, iy, tx, ty)) = self.grid.cell_weights(x, y) else {
+            return self
+                .island_strength
+                .last()
+                .copied()
+                .unwrap_or(1.0)
+                .min(1.0);
+        };
+        let w = self.grid.width;
+        let s = &self.island_strength;
+        let value = s[iy * w + ix] * (1.0 - tx) * (1.0 - ty)
+            + s[iy * w + ix + 1] * tx * (1.0 - ty)
+            + s[(iy + 1) * w + ix] * (1.0 - tx) * ty
+            + s[(iy + 1) * w + ix + 1] * tx * ty;
+        value.clamp(0.0, 1.0)
     }
 
-    /// Inverse Z: algebraic inverse of the linear `forward_z`.
+    /// Inverse Z: algebraic inverse of the shear in [`Self::forward_z`].
     pub fn inverse_z(&self, x: f64, y: f64, z_deformed: f64) -> f64 {
         let Some((z_band, h_top, strength, flat_top)) = self.column_limits(x, y) else {
             return z_deformed;
         };
-        if strength <= 0.0 || z_deformed <= z_band + 1e-12 {
+        let lift = strength * (flat_top - h_top);
+        if lift.abs() < 1e-12 {
             return z_deformed;
         }
         if let Some(cap) = self.grid.sample_deform_cap(x, y) {
-            let phys_est = if z_deformed <= h_top + 1e-9 {
-                z_deformed
-            } else {
-                z_deformed - (flat_top - h_top) * strength
-            };
+            let phys_est = z_deformed - lift;
             if phys_est > cap + 1e-9 {
                 return z_deformed;
             }
         }
-        let wall_shift = (flat_top - h_top) * strength;
-        let f_top = h_top + wall_shift;
-        if z_deformed >= f_top - 1e-12 {
-            return z_deformed - wall_shift;
-        }
-        let span = (h_top - z_band).max(1e-6);
-        let a = 1.0 - strength + strength * (flat_top - z_band) / span;
-        let b = strength * (z_band - (flat_top - z_band) / span * z_band);
-        if a.abs() < 1e-12 {
+        let ramp = self.ramp_thickness.max(1e-6);
+        let ramp_start = z_band - ramp;
+        if z_deformed <= ramp_start + 1e-12 {
             return z_deformed;
         }
-        (z_deformed - b) / a
+        if z_deformed >= z_band + lift {
+            return z_deformed - lift;
+        }
+        // Inside the ramp, `z_def = z + (z - ramp_start) / ramp * lift`.
+        (z_deformed + ramp_start * lift / ramp) / (1.0 + lift / ramp)
     }
 
     /// Worst |round-trip Z error| on a grid inside the deformation band (millimetres).

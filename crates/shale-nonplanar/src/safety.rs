@@ -276,6 +276,16 @@ impl Column {
     fn f_top(&self) -> f64 {
         self.h_top + (self.flat - self.h_top) * self.strength
     }
+
+    /// Deformed-space Z where this column's band starts.
+    ///
+    /// The forward map is a shear, so the lift `strength * (flat - h_top)` raises
+    /// the whole band: no level surface of this column exists below its band
+    /// floor plus that lift, and sampling there would read the identity and
+    /// report a slope the toolhead never follows.
+    fn f_band(&self) -> f64 {
+        self.z_band + (self.flat - self.h_top) * self.strength
+    }
 }
 
 fn column(field: &DeformField, i: usize) -> Option<Column> {
@@ -357,7 +367,7 @@ pub fn level_slope_violations(field: &DeformField, layer_h: f64) -> (f64, Vec<us
                 let (xb, yb) = node_xy(field, neighbour);
                 // Layers only exist where both columns carry material, so only the
                 // overlap of the two bands can hold a level curve crossing both.
-                let lo = (a.z_band.max(b.z_band) / layer).ceil();
+                let lo = (a.f_band().max(b.f_band()) / layer).ceil();
                 let hi = (a.f_top().min(b.f_top()) / layer).floor();
                 if hi < lo {
                     continue;
