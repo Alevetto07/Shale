@@ -12,6 +12,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Demo part is reproducible
+        run: |
+          python3 scripts/make_nonplanar_demo.py
+          git diff --exit-code -- examples/nonplanar-demo.stl
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
