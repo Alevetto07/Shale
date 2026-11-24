@@ -56,9 +56,9 @@ flowchart TD
    change below the band floor — fails the check and produces the planar
    baseline instead.
 
-Only the deformed region changes. Moves below the band floor must be
-byte-identical to the planar slice, and that is what the equivalence check
-enforces.
+Only the deformed region changes. Moves below the band floor must be identical
+to the planar slice in position and extrusion, and that is what the equivalence
+check enforces.
 
 ## Modes
 
@@ -107,13 +107,16 @@ printing flat would hide the request.
 
 `default_max_clearance_angle_deg` is 10.0 in every shipped envelope, and
 `--max-angle` cannot exceed it (Shale refuses the request with the limit and the
-reason). The number is not a style choice; it is where the envelope runs out.
-For the A1, with a 26 mm horizontal reach and the duct 6 mm above the tip, a
-surface climbing at *a* degrees leaves material `reach * tan(a)` above the tip
-in the ring the duct occupies. Past roughly 10° that material is inside the
-envelope and the duct fouls the part it is printing; the published
-Alpaca Engineering measurements on the shared A1 toolhead show ~11.6° each way,
-so 10° keeps a margin until the number is measured on this machine.
+reason). The number is a geometry result, not a preference. For the A1 the
+part-cooling duct hangs 6.0 mm above the tip and reaches 26 mm out, so a surface
+climbing at `a` degrees is at `d * tan(a)` above the tip at horizontal distance
+`d`: it touches the duct's underside exactly where `26 * tan(a) = 6.0`, i.e. at
+**13.0°**. Every shipped envelope is set to 10° so that the duct, the sock
+column and the discretisation error all stay inside the sweep, and so that
+nothing is claimed for the fields still listed under `needs_measurement`.
+Multiplication is the whole reason one cap covers all six printers: every
+shipped envelope works out between 12.3° (P1P/P1S) and 13.0° (A1/A1 mini) by the
+same calculation, so 10° is inside all of them and tightest on the A1.
 
 The effective slope cap is `max_angle + SLOPE_CAP_TOLERANCE_DEG` (0.5°), so the
 default job verifies against 10.5°: 10° of design slope plus half a degree for
