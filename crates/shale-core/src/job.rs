@@ -620,8 +620,15 @@ pub fn slice(
     }
 
     let layer_height = resolved.summary.layer_height.max(0.05);
-    let nonplanar_active = settings.nonplanar.active_for_printer(printer_id);
+    let nonplanar_active = settings.nonplanar.mode.active();
     if nonplanar_active {
+        // Refuse before the engine runs: without a measured head envelope nothing
+        // downstream can verify the curved pass, and a silent planar print would
+        // hide the request.
+        settings
+            .nonplanar
+            .check_printer(printer_id)
+            .map_err(Error::message)?;
         force_setting(&mut resolved, "ironing_enabled", "false");
     }
     let mut undeformed_paths = Vec::new();
