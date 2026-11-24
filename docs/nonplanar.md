@@ -271,7 +271,8 @@ and the reason was named in the `;SHALE_NONPLANAR` header.
 | `nonplanar-demo` lid | fallback: limiter left a 12.7° level surface | fallback | fallback | fallback | 4234–4263 s → unchanged | — | — |
 
 All 40 files pass the independent validator (no out-of-bounds body moves, no
-collisions at 0.1 mm, no Z inversions). Curved output costs no measurable time or
+collisions at 0.1 mm), and the CLI's safety report found no Z inversions on the
+curved runs. Curved output costs no measurable time or
 filament (at most 1 s and 0.0001 m). The curved region itself is small: on the dome
 only the cap where the sphere is flatter than about 9° is lifted, so most of the
 part prints exactly as planar. The demo lid currently falls back on every printer;
