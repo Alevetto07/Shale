@@ -25,6 +25,18 @@ pub struct DeformField {
     pub top_islands: usize,
 }
 
+/// The band geometry and the lift [`DeformField`] applies at one XY.
+///
+/// `lift` is interpolated from the per-node values (see
+/// [`DeformField::lift_at`]); `h_top`, `flat` and `strength` are the bilinear
+/// samples callers judge the column by.
+pub(crate) struct ColumnLimits {
+    pub z_band: f64,
+    pub h_top: f64,
+    pub strength: f64,
+    pub lift: f64,
+}
+
 impl DeformField {
     /// Lowest Z at which any column's deformation band starts.
     ///
@@ -54,18 +66,75 @@ impl DeformField {
         max_top - self.band_thickness - self.ramp_thickness
     }
 
-    pub(crate) fn column_limits(&self, x: f64, y: f64) -> Option<(f64, f64, f64, f64)> {
+    pub(crate) fn column_limits(&self, x: f64, y: f64) -> Option<ColumnLimits> {
         let z_band = self.grid.sample_band_start(x, y)?;
         let h_top = self
             .grid
             .sample_top_smooth(x, y)
             .unwrap_or(self.deformed_top_z);
         let strength = self.island_strength_at(x, y);
-        let flat_top = self
+        Some(ColumnLimits {
+            z_band,
+            h_top,
+            strength,
+            lift: self.lift_at(x, y),
+        })
+    }
+
+    /// Lift applied at one grid node: `strength * (flat - h_top)`.
+    ///
+    /// Nodes with no printable top, or whose band never starts, lift nothing.
+    pub fn node_lift(&self, i: usize) -> f64 {
+        let Some(h_top) = self.grid.z_top_smooth.get(i).copied().flatten() else {
+            return 0.0;
+        };
+        if self.grid.z_band_start.get(i).copied().flatten().is_none() {
+            return 0.0;
+        }
+        let flat = self
             .grid
-            .sample_deform_flat(x, y)
+            .z_deform_flat
+            .get(i)
+            .copied()
+            .flatten()
             .unwrap_or(self.deformed_top_z);
-        Some((z_band, h_top, strength, flat_top))
+        let strength = self.island_strength.get(i).copied().unwrap_or(0.0);
+        strength * (flat - h_top)
+    }
+
+    /// The lift the map applies at an XY, interpolated from the per-node lifts.
+    ///
+    /// The old map formed `strength(x,y) * (flat(x,y) - h_top(x,y))`, a product
+    /// of two bilinear samples. That product is *not* the bilinear blend of the
+    /// per-node lifts, so the slope limiter — which bounds node values — could
+    /// not bound the interior of a cell. On a 0.5 mm grid a G-code move 0.061 mm
+    /// long then crossed a 0.030 mm Z step (26°) on a field whose nodes all
+    /// passed at ≤10°. Interpolating the lift itself makes the cell interior a
+    /// convex blend of values the limiter has already capped, so a node check
+    /// bounds every interior move, and `forward_z`/`inverse_z` stay exact
+    /// inverses because both read this one number.
+    pub fn lift_at(&self, x: f64, y: f64) -> f64 {
+        let Some((ix, iy, tx, ty)) = self.grid.cell_weights(x, y) else {
+            return self.edge_lift(x, y);
+        };
+        let w = self.grid.width;
+        self.node_lift(iy * w + ix) * (1.0 - tx) * (1.0 - ty)
+            + self.node_lift(iy * w + ix + 1) * tx * (1.0 - ty)
+            + self.node_lift((iy + 1) * w + ix) * (1.0 - tx) * ty
+            + self.node_lift((iy + 1) * w + ix + 1) * tx * ty
+    }
+
+    /// Nearest-node lift for points on the grid's last row/column or outside it,
+    /// the same way the height samples fall back to their edge value.
+    fn edge_lift(&self, x: f64, y: f64) -> f64 {
+        let fx = (x - self.grid.origin[0]) / self.grid.step;
+        let fy = (y - self.grid.origin[1]) / self.grid.step;
+        if fx < 0.0 || fy < 0.0 {
+            return self.node_lift(0);
+        }
+        let ix = (fx.round() as isize).clamp(0, self.grid.width as isize - 1) as usize;
+        let iy = (fy.round() as isize).clamp(0, self.grid.height as isize - 1) as usize;
+        self.node_lift(iy * self.grid.width + ix)
     }
 
     /// Lowest deformed Z at this XY: below it the map is the identity.
@@ -78,20 +147,20 @@ impl DeformField {
     /// has to be local to the column it is judged in.
     pub fn local_band_floor_z(&self, x: f64, y: f64) -> Option<f64> {
         self.column_limits(x, y)
-            .and_then(|(z_band, _, strength, _)| (strength > 0.0).then_some(z_band))
+            .and_then(|col| (col.strength > 0.0).then_some(col.z_band))
     }
 
     /// True when this G-code point lies in the curved-top shell (deformed coordinates).
     pub fn gcode_needs_inverse(&self, x: f64, y: f64, z_def: f64) -> bool {
-        let Some((z_band, _, strength, _)) = self.column_limits(x, y) else {
+        let Some(col) = self.column_limits(x, y) else {
             return false;
         };
-        if strength <= 0.0 {
+        if col.strength <= 0.0 {
             return false;
         }
         let z_phys = self.inverse_z(x, y, z_def);
         // The ramp below the band is mapped too, just at a fraction of the lift.
-        let ramp_start = z_band - self.ramp_thickness.max(1e-6);
+        let ramp_start = col.z_band - self.ramp_thickness.max(1e-6);
         z_phys > ramp_start + 1e-9 && (z_phys - z_def).abs() > 5e-3
     }
 
@@ -114,7 +183,7 @@ impl DeformField {
     /// band prints like any other slab and the inverse map still restores the
     /// model's own surface.
     pub fn forward_z(&self, x: f64, y: f64, z: f64) -> f64 {
-        let Some((z_band, h_top, strength, flat_top)) = self.column_limits(x, y) else {
+        let Some(col) = self.column_limits(x, y) else {
             return z;
         };
         if self
@@ -124,16 +193,16 @@ impl DeformField {
         {
             return z;
         }
-        let lift = strength * (flat_top - h_top);
+        let lift = col.lift;
         if lift.abs() < 1e-12 {
             return z;
         }
         let ramp = self.ramp_thickness.max(1e-6);
-        let ramp_start = z_band - ramp;
+        let ramp_start = col.z_band - ramp;
         if z <= ramp_start {
             return z;
         }
-        if z >= z_band {
+        if z >= col.z_band {
             return z + lift;
         }
         let w = (z - ramp_start) / ramp;
@@ -163,12 +232,7 @@ impl DeformField {
         // by the whole local lift and the slope limiter then damped the entire
         // footprint chasing phantom level surfaces.
         let Some((ix, iy, tx, ty)) = self.grid.cell_weights(x, y) else {
-            return self
-                .island_strength
-                .last()
-                .copied()
-                .unwrap_or(1.0)
-                .min(1.0);
+            return self.island_strength.last().copied().unwrap_or(1.0).min(1.0);
         };
         let w = self.grid.width;
         let s = &self.island_strength;
@@ -181,10 +245,10 @@ impl DeformField {
 
     /// Inverse Z: algebraic inverse of the shear in [`Self::forward_z`].
     pub fn inverse_z(&self, x: f64, y: f64, z_deformed: f64) -> f64 {
-        let Some((z_band, h_top, strength, flat_top)) = self.column_limits(x, y) else {
+        let Some(col) = self.column_limits(x, y) else {
             return z_deformed;
         };
-        let lift = strength * (flat_top - h_top);
+        let lift = col.lift;
         if lift.abs() < 1e-12 {
             return z_deformed;
         }
@@ -195,11 +259,11 @@ impl DeformField {
             }
         }
         let ramp = self.ramp_thickness.max(1e-6);
-        let ramp_start = z_band - ramp;
+        let ramp_start = col.z_band - ramp;
         if z_deformed <= ramp_start + 1e-12 {
             return z_deformed;
         }
-        if z_deformed >= z_band + lift {
+        if z_deformed >= col.z_band + lift {
             return z_deformed - lift;
         }
         // Inside the ramp, `z_def = z + (z - ramp_start) / ramp * lift`.

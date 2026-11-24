@@ -27,9 +27,7 @@ fn segment_in_curved_band(field: &DeformField, a: [f64; 3], b: [f64; 3]) -> bool
 /// model's own surface, so the band runs from `z_band` to `h_top` at that XY.
 fn point_in_curved_band_geom(field: &DeformField, p: [f64; 3]) -> bool {
     match field.column_limits(p[0], p[1]) {
-        Some((z_band, h_top, strength, _flat)) => {
-            strength > 0.0 && p[2] >= z_band - 0.05 && p[2] <= h_top + 0.05
-        }
+        Some(col) => col.strength > 0.0 && p[2] >= col.z_band - 0.05 && p[2] <= col.h_top + 0.05,
         None => false,
     }
 }
@@ -276,7 +274,6 @@ impl Column {
     fn f_top(&self) -> f64 {
         self.h_top + (self.flat - self.h_top) * self.strength
     }
-
 }
 
 fn column(field: &DeformField, i: usize) -> Option<Column> {
