@@ -410,6 +410,124 @@ pub fn field_respects_max_angle(field: &DeformField) -> bool {
         .is_empty()
 }
 
+/// Physical layer thickness the map deposits, worst case, and how many samples
+/// leave the slicer's window.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LayerThicknessScan {
+    /// Band samples taken (zero when nothing lifts).
+    pub samples: usize,
+    /// Thinnest physical layer found, in millimetres.
+    pub min_mm: f64,
+    /// Thickest physical layer found, in millimetres.
+    pub max_mm: f64,
+    /// Samples outside `[min_layer - tolerance, max_layer + tolerance]`.
+    pub violations: usize,
+    /// The worst offending thickness, for the report.
+    pub worst_mm: Option<f64>,
+}
+
+/// Tolerance on the physical layer window, in millimetres.
+///
+/// The scan measures a Jacobian, not a bead: a sample can straddle the band
+/// floor, where one deformed layer is part sheared and part ramped. Anything
+/// below the slicer's own layer quantisation would reject that boundary.
+pub const LAYER_THICKNESS_TOLERANCE_MM: f64 = 0.005;
+
+/// Worst physical layer thickness the field implies, column by column.
+///
+/// One deformed layer is `nominal_layer` tall, and the inverse map sends it to
+/// `nominal_layer * r` of physical Z with `r = dz_phys / dz_def`, so the bead the
+/// nozzle actually has to lay is thinner wherever the map compresses Z. The
+/// transition below each band is where that bites: the old fixed ramp put
+/// `lift + ramp` of deformed Z into `ramp` of plastic (0.018 mm layers under the
+/// demo lid's 8.4 mm lift) and nothing rejected the file.
+///
+/// Samples the transition at quarter points and the band at three heights, using
+/// a finite difference of [`DeformField::forward_z`] so the per-column ramp and
+/// the strength attenuation both enter the number.
+pub fn physical_layer_thickness(field: &DeformField) -> LayerThicknessScan {
+    let nominal = field.nominal_layer.max(1e-6);
+    let (r_min, r_max) = field.jacobian_bounds();
+    let min_layer = r_min * nominal;
+    let max_layer = r_max * nominal;
+    let mut scan = LayerThicknessScan {
+        samples: 0,
+        min_mm: nominal,
+        max_mm: nominal,
+        violations: 0,
+        worst_mm: None,
+    };
+    let mut lowest = f64::INFINITY;
+    let mut highest = f64::NEG_INFINITY;
+    let mut worst_gap = 0.0_f64;
+    for i in 0..field.island_strength.len() {
+        if field.grid.z_top[i].is_none() {
+            continue;
+        }
+        let Some((z_band, h_top, _, _)) = field.column_limits(node_xy(field, i).0, node_xy(field, i).1)
+        else {
+            continue;
+        };
+        let (x, y) = node_xy(field, i);
+        let Some(t) = field.column_transition(x, y) else {
+            continue;
+        };
+        if t.lift.abs() <= 1e-12 || field.grid.z_deform_cap[i].is_some() {
+            continue;
+        }
+        let ramp_start = t.z_band - t.ramp;
+        // Stay inside the column's own material: the band runs to `h_top`, and a
+        // sample one deformed layer below it is still inside the shear.
+        let samples = [
+            ramp_start + 0.25 * t.ramp,
+            ramp_start + 0.50 * t.ramp,
+            ramp_start + 0.75 * t.ramp,
+            z_band + 0.5 * nominal,
+            0.5 * (z_band + h_top.max(z_band + nominal)),
+            (h_top - 0.5 * nominal).max(z_band + 0.5 * nominal),
+        ];
+        let dz = nominal.min(t.ramp / 8.0).max(1e-4);
+        for z in samples {
+            let z = z.max(0.0);
+            let dz_def = field.forward_z(x, y, z + dz) - field.forward_z(x, y, z);
+            scan.samples += 1;
+            if dz_def <= 1e-9 {
+                // A non-monotone map crushes the layer to nothing: report it here
+                // as well as in the inversion check.
+                scan.violations += 1;
+                lowest = lowest.min(0.0);
+                if worst_gap < min_layer {
+                    worst_gap = min_layer;
+                    scan.worst_mm = Some(0.0);
+                }
+                continue;
+            }
+            let thickness = nominal * dz / dz_def;
+            lowest = lowest.min(thickness);
+            highest = highest.max(thickness);
+            let gap = if thickness < min_layer {
+                min_layer - thickness
+            } else if thickness > max_layer {
+                thickness - max_layer
+            } else {
+                0.0
+            };
+            if gap > LAYER_THICKNESS_TOLERANCE_MM {
+                scan.violations += 1;
+                if gap > worst_gap {
+                    worst_gap = gap;
+                    scan.worst_mm = Some(thickness);
+                }
+            }
+        }
+    }
+    if scan.samples > 0 && lowest.is_finite() {
+        scan.min_mm = lowest;
+        scan.max_mm = highest;
+    }
+    scan
+}
+
 /// Make the field printable before anything is sliced.
 ///
 /// Repeatedly halves the flattening strength of the cells that own an over-cap
@@ -422,6 +540,11 @@ pub fn field_respects_max_angle(field: &DeformField) -> bool {
 /// passes, and the smallest remaining strength so the post-pass can decide
 /// whether the result is still worth printing.
 pub fn limit_field_slopes(field: &mut DeformField, layer_h: f64) -> SlopeLimitingReport {
+    // Transition thickness first: the ramp each column needs follows from its own
+    // lift, and a column too short for its ramp has to give up strength before
+    // the slope passes read the field. Both steps only lower strength, so this
+    // cannot invent a level surface the limiter would then have to chase.
+    let attenuated = field.attenuate_transitions();
     let layer = if layer_h.is_finite() && layer_h > 0.0 {
         layer_h
     } else {
@@ -439,6 +562,7 @@ pub fn limit_field_slopes(field: &mut DeformField, layer_h: f64) -> SlopeLimitin
         min_strength: field.min_strength(),
         max_strength: field.max_strength(),
         footprint_columns: field.engaged_columns(),
+        thickness_attenuated_columns: attenuated,
     };
     let mut reduced: Vec<u32> = vec![0; field.island_strength.len()];
     let mut passes = 0usize;

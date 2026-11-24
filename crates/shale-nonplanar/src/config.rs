@@ -189,6 +189,14 @@ pub struct SlopeLimitingReport {
     /// Columns still in the deforming footprint after the cap cut.
     #[serde(default)]
     pub footprint_columns: usize,
+    /// Columns whose strength had to drop so their transition fit above the bed.
+    ///
+    /// The ramp is sized from the column's own lift (see
+    /// [`crate::deform::DeformField::transition_thickness_for_lift`]); where the
+    /// part below the band is too short for it, the lift itself is attenuated
+    /// instead of the layer thickness being crushed.
+    #[serde(default)]
+    pub thickness_attenuated_columns: usize,
 }
 
 /// Corrections the inverse map had to make to keep a move inside the slope cap.
@@ -243,6 +251,10 @@ pub struct SafetyViolation {
     pub line: Option<String>,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct SafetyReport {
     pub ok: bool,
@@ -273,6 +285,22 @@ pub struct SafetyReport {
     #[serde(default)]
     pub below_band_collisions_ignored: usize,
     pub envelope_checks_enabled: bool,
+    /// Thinnest physical layer the map deposits anywhere (millimetres).
+    ///
+    /// A deformed layer is `nominal_layer` tall; the inverse map can send it to
+    /// less than that, and below `min_layer` the bead has nowhere to go. `None`
+    /// for planar jobs, where the slicer's own layer height stands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_physical_layer_mm: Option<f64>,
+    /// Thickest physical layer the map deposits anywhere (millimetres).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_physical_layer_mm: Option<f64>,
+    /// Every band sample lands inside `[min_layer, max_layer]` (+ tolerance).
+    #[serde(default = "default_true")]
+    pub layer_thickness_within_bounds: bool,
+    /// Band samples the thickness scan took.
+    #[serde(default)]
+    pub layer_thickness_samples: usize,
     pub planar_equivalence: PlanarEquivalenceResult,
     pub collision_adjustments: Vec<CollisionAdjustment>,
     pub violations: Vec<SafetyViolation>,

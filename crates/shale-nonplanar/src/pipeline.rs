@@ -341,6 +341,16 @@ pub fn apply_post_pass(args: PostPassArgs<'_>) -> Result<(String, NonplanarRepor
     if !gcode_respects_envelope(&grafted, printer_id, options.max_angle_deg) {
         reasons.push("a curved move leaves the head envelope".to_string());
     }
+    if !safety.layer_thickness_within_bounds {
+        reasons.push(format!(
+            "layer thickness {:.3} mm outside [{:.3}, {:.3}] mm",
+            safety
+                .min_physical_layer_mm
+                .unwrap_or(field.nominal_layer),
+            field.min_layer,
+            field.max_layer
+        ));
+    }
     if !safety.ok && safety.violations.is_empty() {
         reasons.push("safety report failed".to_string());
     }
