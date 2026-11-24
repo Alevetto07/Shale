@@ -4,9 +4,7 @@ mod nonplanar_fixtures;
 
 use std::path::PathBuf;
 
-use nonplanar_fixtures::{
-    pillar_beside_dome, slice_pillar_beside_dome_sequential,
-};
+use nonplanar_fixtures::{pillar_beside_dome, slice_pillar_beside_dome_sequential};
 
 use shale_core::job::{self, PlacedModel, SliceOutcome};
 use shale_core::mesh::{self, Transform, TriangleMesh};
@@ -66,8 +64,10 @@ fn test_models() -> Vec<(&'static str, TriangleMesh)> {
         ("chevron", chevron_ramp()),
         (
             "t-wing",
-            mesh::load_mesh(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/t-wing.stl"))
-                .expect("t-wing stl"),
+            mesh::load_mesh(
+                &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/t-wing.stl"),
+            )
+            .expect("t-wing stl"),
         ),
         (
             "pillar-beside-dome",
@@ -109,16 +109,10 @@ fn safety_summary(safety: &shale_nonplanar::config::SafetyReport) -> String {
     if safety.ok {
         format!(
             "ok; travel_collisions={}; feed_violations={}; slope_cap_ok={}",
-            safety.travel_collisions_remaining,
-            safety.feed_cap_violations,
-            safety.slope_within_cap
+            safety.travel_collisions_remaining, safety.feed_cap_violations, safety.slope_within_cap
         )
     } else {
-        let kinds: Vec<_> = safety
-            .violations
-            .iter()
-            .map(|v| v.kind.as_str())
-            .collect();
+        let kinds: Vec<_> = safety.violations.iter().map(|v| v.kind.as_str()).collect();
         format!("FAIL: {:?}", kinds)
     }
 }

@@ -1,4 +1,18 @@
 //! Apply planned tilts to the height grid (before deform).
+//!
+//! Top bands are deliberately a no-op here. The deform already flattens the
+//! model's own top in deformed space and the inverse map restores physical Z,
+//! and that round trip is what makes the slicer cut in-layer sloped toolpaths.
+//! Adding a slope on top of the flat target (the old `z_top_smooth += dz`
+//! behaviour) replaced the target with a tilting plane: on examples/t-wing.stl
+//! the deck lost a layer, 1.5 mm of geometry came out above a 24.0 mm part
+//! (Z 25.48, a head-envelope violation) and the toolpath stayed planar — the
+//! "auto changes nothing" symptom. The plan still decides *whether* a top
+//! island is worth flattening; the field itself keeps the default deform.
+//!
+//! Underside bands are untouched: they still write the tilted column. Whether a
+//! real underside tilt can survive the inverse map is the field rework's
+//! business (see M1-C-REPORT.md, "Requests to other agents").
 
 use crate::height_field::HeightGrid;
 
@@ -20,12 +34,10 @@ pub fn apply_surface_to_grid(grid: &mut HeightGrid, surface: &PlannedSurface, la
             }
             let i = iy * grid.width + ix;
             let along = (x - surface.min[0]) * ux + (y - surface.min[1]) * uy;
-            let dz = along * tan_tilt;
             match surface.kind {
                 PlannedSurfaceKind::CurvedTopBand | PlannedSurfaceKind::SlopedTopBand => {
-                    if let Some(z) = grid.z_top_smooth[i] {
-                        grid.z_top_smooth[i] = Some(z + dz);
-                    }
+                    // No slope injection: the deform's flatten + inverse map already
+                    // turns this into an in-layer sloped toolpath (see module doc).
                 }
                 PlannedSurfaceKind::BridgeTiltBand
                 | PlannedSurfaceKind::CantileverTiltBand
@@ -41,7 +53,11 @@ pub fn apply_surface_to_grid(grid: &mut HeightGrid, surface: &PlannedSurface, la
         }
     }
     let band = footprint_z - layer_h * 6.0;
-    for (top, start) in grid.z_top_smooth.iter_mut().zip(grid.z_band_start.iter_mut()) {
+    for (top, start) in grid
+        .z_top_smooth
+        .iter_mut()
+        .zip(grid.z_band_start.iter_mut())
+    {
         if let Some(z) = *top {
             if start.is_none() {
                 *start = Some(z - layer_h * 6.0);
@@ -52,10 +68,7 @@ pub fn apply_surface_to_grid(grid: &mut HeightGrid, surface: &PlannedSurface, la
 }
 
 fn point_in_box(x: f64, y: f64, min: [f64; 3], max: [f64; 3]) -> bool {
-    x >= min[0] - 1e-6
-        && x <= max[0] + 1e-6
-        && y >= min[1] - 1e-6
-        && y <= max[1] + 1e-6
+    x >= min[0] - 1e-6 && x <= max[0] + 1e-6 && y >= min[1] - 1e-6 && y <= max[1] + 1e-6
 }
 
 fn bearing_unit(deg: f64) -> (f64, f64) {
@@ -64,7 +77,7 @@ fn bearing_unit(deg: f64) -> (f64, f64) {
 }
 
 fn surface_max_along_bearing(surface: &PlannedSurface, ux: f64, uy: f64) -> f64 {
-  let corners = [
+    let corners = [
         [surface.min[0], surface.min[1]],
         [surface.max[0], surface.min[1]],
         [surface.max[0], surface.max[1]],

@@ -333,9 +333,8 @@ impl Session {
             self.settings.material_bed_temperature = Some(value);
         }
         if let Some(mode) = patch.nonplanar_mode {
-            self.settings.nonplanar.mode =
-                shale_nonplanar::NonplanarMode::from_cli_name(&mode)
-                    .unwrap_or(shale_nonplanar::NonplanarMode::Off);
+            self.settings.nonplanar.mode = shale_nonplanar::NonplanarMode::from_cli_name(&mode)
+                .unwrap_or(shale_nonplanar::NonplanarMode::Off);
         }
         if let Some(angle) = patch.nonplanar_max_angle_deg {
             self.settings.nonplanar.max_angle_deg = angle;
@@ -402,7 +401,10 @@ impl Session {
         let analysis = crate::auto_spans::analyse_for_nonplanar(&baked);
         let spans = crate::auto_spans::spans_for_auto(&analysis.spans);
         Ok(shale_nonplanar::plan_auto_placement(
-            &np, &spans, &options, layer_height,
+            &np,
+            &spans,
+            &options,
+            layer_height,
         ))
     }
 
@@ -460,9 +462,11 @@ impl Session {
             .map(|(_, instruction)| instruction.clone())
             .collect();
         let stamp = SLICE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let output = std::env::temp_dir()
-            .join("shale")
-            .join(format!("mcp-{}-{}.gcode", std::process::id(), stamp));
+        let output = std::env::temp_dir().join("shale").join(format!(
+            "mcp-{}-{}.gcode",
+            std::process::id(),
+            stamp
+        ));
         let outcome = job::slice(
             &self.catalog,
             self.engine.as_ref(),

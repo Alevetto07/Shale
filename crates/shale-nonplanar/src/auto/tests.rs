@@ -4,7 +4,9 @@ mod auto_placement {
     use crate::auto::types::SupportSpanInput;
     use crate::config::{NonplanarMode, NonplanarOptions};
     use crate::height_field::build_height_field;
-    use crate::test_meshes::{box_mesh, bridge_mesh, cantilever_mesh, sphere_mesh, tilted_top_slab};
+    use crate::test_meshes::{
+        box_mesh, bridge_mesh, cantilever_mesh, sphere_mesh, tilted_top_slab,
+    };
 
     fn opts() -> NonplanarOptions {
         NonplanarOptions {
@@ -76,7 +78,10 @@ mod auto_placement {
                 .iter()
                 .flatten()
                 .fold(f64::INFINITY, |a, &z| a.min(z));
-        assert!(spread > 1.0, "expected height variation on ramp ({spread:.2} mm)");
+        assert!(
+            spread > 1.0,
+            "expected height variation on ramp ({spread:.2} mm)"
+        );
     }
 
     #[test]
@@ -98,22 +103,22 @@ mod auto_placement {
         use crate::pipeline::prepare_pre_pass;
 
         let mesh = bridge_mesh();
-        let (deformed, ctx) =
-            prepare_pre_pass(&mesh, &opts(), 0.2, &[mock_bridge_span()]);
+        let (deformed, ctx) = prepare_pre_pass(&mesh, &opts(), 0.2, &[mock_bridge_span()]);
         let auto = ctx.auto_placement.as_ref().expect("auto plan");
         assert!(auto.enabled_surface_count >= 1);
         let zs: Vec<f64> = deformed
             .vertices
             .iter()
             .filter(|v| {
-                v[0] >= 9.0
-                    && v[0] <= 31.0
-                    && v[1].abs() <= 4.5
-                    && (v[2] - 21.0).abs() < 1.5
+                v[0] >= 9.0 && v[0] <= 31.0 && v[1].abs() <= 4.5 && (v[2] - 21.0).abs() < 1.5
             })
             .map(|v| v[2])
             .collect();
-        assert!(zs.len() >= 8, "expected bridge slab verts, got {}", zs.len());
+        assert!(
+            zs.len() >= 8,
+            "expected bridge slab verts, got {}",
+            zs.len()
+        );
         let spread = zs.iter().copied().fold(f64::NEG_INFINITY, f64::max)
             - zs.iter().copied().fold(f64::INFINITY, f64::min);
         assert!(
@@ -240,25 +245,54 @@ mod auto_placement {
             .into_iter()
             .find(|s| s.id == surface.id)
             .expect("surface in report");
-        // The measured-angle report samples the plan's own box, which still uses the
-        // pre-deformation height; keep the check conditional and enforce the relation
-        // whenever the sampler does find the band.
-        if let (Some(vert), Some(slope)) = (
-            band.overhang_angle_measured_after_deg,
-            band.overhang_slope_measured_from_horizontal_deg,
-        ) {
-            assert!(
-                (90.0 - slope - vert).abs() < 0.05,
-                "vertical {vert:.1} deg must equal 90 - slope {slope:.1} deg"
-            );
-            assert!(
-                (slope - tilt).abs() < 0.5,
-                "sampled {slope:.2} deg should match the field's {tilt:.2} deg"
-            );
-        }
+        let measured_vert = band
+            .overhang_angle_measured_after_deg
+            .expect("measured angle from vertical");
+        let measured_slope = band
+            .overhang_slope_measured_from_horizontal_deg
+            .expect("measured slope from horizontal");
+        use crate::pipeline::max_extrusion_slope_in_box;
+        use crate::pipeline::max_underside_band_slope_deg;
+        let slope =
+            max_underside_band_slope_deg(&mapped, surface.min, surface.max, surface.bearing_deg, 8)
+                .or_else(|| max_extrusion_slope_in_box(&mapped, surface.min, surface.max))
+                .unwrap_or(0.0);
+        // What the plan promises, in deformed space: the reported angle is the
+        // planned tilt.
         assert!(
-            band.overhang_angle_before_deg.unwrap_or(0.0) > 60.0,
-            "the report must keep the pre-deformation overhang"
+            (measured_slope - surface.tilt_deg).abs() < 0.2,
+            "reported slope {measured_slope:.2}° should be the planned tilt {:.2}°",
+            surface.tilt_deg
+        );
+        assert!(
+            measured_vert.is_finite() && measured_vert > 0.0 && measured_vert < 90.0,
+            "reported overhang {measured_vert:.2}° must be a real angle from vertical"
+        );
+        // What the printed path may be. The inverse map restores the model's own
+        // underside, so on a near-horizontal span the tilt survives only as
+        // deformed-space path geometry; the physical scan shows the model's
+        // slope (measured 1.58° here). This assertion used to read
+        // `scanner ≈ reported` because auto/field.rs injected the top band's dz
+        // into the same columns — the bug that also printed 1.5 mm above the
+        // model (see the field.rs module doc). Making an underside tilt survive
+        // the inverse map is the field rework's job; here we only pin that the
+        // mapped path stays inside the clearance cap.
+        assert!(
+            slope <= opts.max_angle_deg + 0.6,
+            "mapped gcode slope must stay inside the {:.1}° cap (saw {slope:.2}°)",
+            opts.max_angle_deg + 0.6
+        );
+        assert!(
+            measured_vert < band.overhang_angle_before_deg.unwrap() - 3.0,
+            "measured overhang {measured_vert:.1}° should be below before {:.1}°",
+            band.overhang_angle_before_deg.unwrap()
+        );
+        use crate::safety::max_curved_band_extrusion_slope_deg;
+        let global_cap = max_curved_band_extrusion_slope_deg(&mapped, &field).unwrap_or(0.0);
+        assert!(
+            global_cap <= opts.max_angle_deg + 0.6,
+            "curved-band safety scanner should match PR #18 cap ({global_cap:.2}° > {:.1}°)",
+            opts.max_angle_deg + 0.6
         );
     }
 
@@ -292,7 +326,8 @@ mod auto_placement {
         } else {
             assert!(
                 limiting.converged
-                    && limiting.worst_after_deg <= limiting.cap_deg + crate::SLOPE_CAP_TOLERANCE_DEG,
+                    && limiting.worst_after_deg
+                        <= limiting.cap_deg + crate::SLOPE_CAP_TOLERANCE_DEG,
                 "either the cap is met or the job falls back: {limiting:?}"
             );
             assert!(!report.fallback_to_planar, "{:?}", report.fallback_reasons);
@@ -314,10 +349,9 @@ mod auto_placement {
             sample_max: [40.0, 4.0, 16.5],
         };
         let plan = plan_auto_placement(&mesh, &[span], &opts(), 0.2);
-        assert!(
-            plan.surfaces
-                .iter()
-                .any(|s| s.kind == crate::auto::PlannedSurfaceKind::CantileverTiltBand && s.enabled)
-        );
+        assert!(plan
+            .surfaces
+            .iter()
+            .any(|s| s.kind == crate::auto::PlannedSurfaceKind::CantileverTiltBand && s.enabled));
     }
 }

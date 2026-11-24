@@ -6,8 +6,8 @@ use crate::config::NonplanarOptions;
 use crate::deform::DeformField;
 use crate::mesh::Mesh;
 
-use super::detect::{DetectedFeature, DetectedFeatureKind, DetectionReport};
 use super::detect;
+use super::detect::{DetectedFeature, DetectedFeatureKind, DetectionReport};
 use super::field;
 
 const DEFAULT_OVERHANG_TARGET: f64 = 45.0;
@@ -69,7 +69,13 @@ pub fn plan_auto_placement(
     nominal_layer_height: f64,
 ) -> AutoPlacementReport {
     let band = options.effective_band_thickness(nominal_layer_height);
-    let detection = detect::detect(mesh, spans, options.grid_step_mm, options.max_angle_deg, band);
+    let detection = detect::detect(
+        mesh,
+        spans,
+        options.grid_step_mm,
+        options.max_angle_deg,
+        band,
+    );
     let (surfaces, notes) = plan_surfaces(&detection, options.max_angle_deg);
     let enabled_surface_count = surfaces.iter().filter(|s| s.enabled).count();
     let fallback_to_planar = enabled_surface_count == 0;
@@ -86,7 +92,10 @@ pub fn plan_auto_placement(
     }
 }
 
-fn plan_surfaces(detection: &DetectionReport, max_angle_deg: f64) -> (Vec<PlannedSurface>, Vec<String>) {
+fn plan_surfaces(
+    detection: &DetectionReport,
+    max_angle_deg: f64,
+) -> (Vec<PlannedSurface>, Vec<String>) {
     let mut surfaces = Vec::new();
     let mut notes = Vec::new();
     let mut next_surface = 1u32;
@@ -94,12 +103,7 @@ fn plan_surfaces(detection: &DetectionReport, max_angle_deg: f64) -> (Vec<Planne
     for feature in &detection.features {
         match feature.kind {
             DetectedFeatureKind::CurvedTop | DetectedFeatureKind::SlopedTop => {
-                push_top_band(
-                    &mut surfaces,
-                    &mut next_surface,
-                    feature,
-                    max_angle_deg,
-                );
+                push_top_band(&mut surfaces, &mut next_surface, feature, max_angle_deg);
             }
             DetectedFeatureKind::FlatTop => {
                 notes.push(format!("feature {} flat top — skipped", feature.id));
@@ -164,8 +168,8 @@ fn push_top_band(
     } else {
         PlannedSurfaceKind::SlopedTopBand
     };
-    let unsafe_slope = feature.max_slope_deg > max_angle_deg + clamp_margin
-        && feature.height_spread_mm < 2.0;
+    let unsafe_slope =
+        feature.max_slope_deg > max_angle_deg + clamp_margin && feature.height_spread_mm < 2.0;
     let tilt = feature.max_slope_deg.min(max_angle_deg);
     let (enabled, reason) = if unsafe_slope {
         (
@@ -237,8 +241,41 @@ fn plan_underside(
             overhang_angle_after_deg: Some(before),
             overhang_angle_measured_after_deg: None,
             overhang_slope_measured_from_horizontal_deg: None,
+            reason: format!("shallow underside {before:.1}° — planar fallback"),
+        });
+        *next_surface += 1;
+        return;
+    }
+    // A horizontal underside gains nothing from a tilt this pipeline can
+    // deliver. The band lifts the underside in deformed space and the inverse
+    // map restores it in physical Z, so the printed solid and its toolpath stay
+    // planar; measured on examples/bridge-overhang.stl, `--nonplanar auto` with
+    // both overhang bands enabled produced the same 3.645059 m of filament and
+    // the same 1680 s estimate as `--nonplanar off` (0 flattened islands), while
+    // the band's own z_band bookkeeping failed the below-band equivalence audit.
+    // Claiming a tilt here is a promise the mode cannot keep, so report the
+    // limit instead: a flat bridge/cantilever is spanned by the slicer's bridge
+    // path, not by non-planar nozzle motion.
+    if before >= 89.0 {
+        surfaces.push(PlannedSurface {
+            id: *next_surface,
+            feature_id: feature.id,
+            kind,
+            enabled: false,
+            min: feature.min,
+            max: feature.max,
+            tilt_deg: 0.0,
+            bearing_deg: span_bearing(feature),
+            extent_mm: [
+                feature.max[0] - feature.min[0],
+                feature.max[1] - feature.min[1],
+            ],
+            overhang_angle_before_deg: Some(before),
+            overhang_angle_after_deg: Some(before),
+            overhang_angle_measured_after_deg: None,
+            overhang_slope_measured_from_horizontal_deg: None,
             reason: format!(
-                "shallow underside {before:.1}° — planar fallback"
+                "horizontal underside {before:.1}° — a ±{max_angle_deg:.1}° tilt round-trips to a planar toolpath; bridge printing already spans it"
             ),
         });
         *next_surface += 1;
@@ -332,11 +369,7 @@ fn preview_mesh(surfaces: &[PlannedSurface]) -> SurfacePreview {
     SurfacePreview { positions }
 }
 
-pub fn apply_plan_to_field(
-    field: &mut DeformField,
-    plan: &AutoPlacementReport,
-    layer_h: f64,
-) {
+pub fn apply_plan_to_field(field: &mut DeformField, plan: &AutoPlacementReport, layer_h: f64) {
     if plan.enabled_surface_count == 0 {
         field.island_strength.fill(0.0);
         return;

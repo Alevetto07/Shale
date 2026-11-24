@@ -68,7 +68,10 @@ fn auto_plan_flat_cube_no_surfaces() {
         ..NonplanarOptions::default()
     };
     let plan = shale_nonplanar::plan_auto_placement(&m, &[], &opts, 0.2);
-    assert_eq!(plan.enabled_surface_count, 0, "flat cube should stay planar");
+    assert_eq!(
+        plan.enabled_surface_count, 0,
+        "flat cube should stay planar"
+    );
     assert!(plan.fallback_to_planar);
 }
 
@@ -123,10 +126,8 @@ fn chevron_height_field_detects_ramp() {
             zs.push(v);
         }
     }
-    let spread = zs.iter().copied().fold(0.0f64, |acc, z| acc.max(z)) - zs
-        .iter()
-        .copied()
-        .fold(f64::INFINITY, f64::min);
+    let spread = zs.iter().copied().fold(0.0f64, |acc, z| acc.max(z))
+        - zs.iter().copied().fold(f64::INFINITY, f64::min);
     assert!(
         spread > 0.08,
         "chevron ramp height spread too small ({spread:.3} mm, {} samples)",
@@ -249,7 +250,12 @@ fn benchy_like() -> TriangleMesh {
 
 fn slice_pillar_beside_dome(nonplanar: bool, tag: &str) -> (String, SliceOutcome) {
     if !nonplanar {
-        return slice_part("pillar-beside-dome", pillar_beside_dome(), NonplanarMode::Off, tag);
+        return slice_part(
+            "pillar-beside-dome",
+            pillar_beside_dome(),
+            NonplanarMode::Off,
+            tag,
+        );
     }
     let catalog = Catalog::open(ResourcePaths::discover().expect("resources")).expect("catalog");
     let engine = CliEngine::from_env();
@@ -257,8 +263,7 @@ fn slice_pillar_beside_dome(nonplanar: bool, tag: &str) -> (String, SliceOutcome
     let path = std::env::temp_dir()
         .join("shale")
         .join(format!("nonplanar-{tag}-{}.gcode", std::process::id()));
-    let (gcode, report) =
-        slice_pillar_beside_dome_sequential(&catalog, &engine, PRINTER, tag);
+    let (gcode, report) = slice_pillar_beside_dome_sequential(&catalog, &engine, PRINTER, tag);
     std::fs::write(artifact_dir().join(format!("{tag}.gcode")), &gcode).expect("artifact");
     std::fs::write(&path, &gcode).expect("gcode");
     let toolpath = shale_core::gcode::parse_toolpaths(&gcode);
@@ -349,7 +354,9 @@ fn slice_part(
 }
 
 fn run_python(script: &str, args: &[&str]) {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts").join(script);
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../scripts")
+        .join(script);
     if path.is_file() {
         let _ = std::process::Command::new("python3")
             .arg(&path)
@@ -564,8 +571,10 @@ fn nonplanar_end_to_end_benchmarks() {
         ("chevron", chevron_ramp()),
         (
             "t-wing",
-            mesh::load_mesh(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/t-wing.stl"))
-                .expect("t-wing stl"),
+            mesh::load_mesh(
+                &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/t-wing.stl"),
+            )
+            .expect("t-wing stl"),
         ),
         ("benchy", benchy_like()),
         (
@@ -587,10 +596,18 @@ fn nonplanar_end_to_end_benchmarks() {
             let (cg, co) = slice_pillar_beside_dome(true, &format!("{name}-curved"));
             (pg, po, cg, co)
         } else {
-            let (pg, po) =
-                slice_part(name, mesh.clone(), NonplanarMode::Off, &format!("{name}-planar"));
-            let (cg, co) =
-                slice_part(name, mesh, NonplanarMode::CurvedTops, &format!("{name}-curved"));
+            let (pg, po) = slice_part(
+                name,
+                mesh.clone(),
+                NonplanarMode::Off,
+                &format!("{name}-planar"),
+            );
+            let (cg, co) = slice_part(
+                name,
+                mesh,
+                NonplanarMode::CurvedTops,
+                &format!("{name}-curved"),
+            );
             (pg, po, cg, co)
         };
         assert!(curved_out.nonplanar_report.is_some());
@@ -611,8 +628,8 @@ fn nonplanar_end_to_end_benchmarks() {
             shale_nonplanar::max_top_shell_slope_across_layers_deg(&curved_gcode, SHELL_LAYERS)
                 .unwrap_or(0.0);
         let band_z = global_band_floor(&mesh_for_field);
-        let band_max = shale_nonplanar::max_extrusion_slope_above_z(&curved_gcode, band_z)
-            .unwrap_or(0.0);
+        let band_max =
+            shale_nonplanar::max_extrusion_slope_above_z(&curved_gcode, band_z).unwrap_or(0.0);
         let (pz0, pz1) =
             shale_nonplanar::top_shell_z_variation(&planar_gcode, SHELL_LAYERS).unwrap();
         let (cz0, cz1) =
@@ -687,7 +704,10 @@ fn nonplanar_end_to_end_benchmarks() {
                     assert!(cslope > pslope + 2.0);
                 }
                 "chevron" => {
-                    assert!(pslope < 1.0, "planar chevron should be stepped ({pslope:.2}°)");
+                    assert!(
+                        pslope < 1.0,
+                        "planar chevron should be stepped ({pslope:.2}°)"
+                    );
                     let cspread = cz1 - cz0;
                     assert!(
                         cspread > 0.05,
@@ -702,7 +722,10 @@ fn nonplanar_end_to_end_benchmarks() {
                         cslope_layers <= slope_cap,
                         "chevron shell slope {cslope_layers:.2}° must be ≤{slope_cap:.1}°"
                     );
-                    assert!(band_max > pslope + 0.5, "chevron should beat planar staircase");
+                    assert!(
+                        band_max > pslope + 0.5,
+                        "chevron should beat planar staircase"
+                    );
                 }
                 "t-wing" => {
                     assert!(

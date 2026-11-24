@@ -1,8 +1,52 @@
-//! Swept toolhead envelope check against already-printed material.
+//! Swept toolhead envelope checks against already-printed material.
+//!
+//! A move is sampled along its whole segment (not just its endpoints). At each
+//! sample, the cells printed by earlier moves within the head's horizontal reach
+//! are compared against [`HeadEnvelope::max_material_height_at`]: material taller
+//! than the envelope allows at that distance is a strike. Material at or below
+//! the nozzle tip plus [`COLLISION_TOLERANCE_MM`] is the bead being laid and is
+//! never an obstacle.
+//!
+//! Planar layers take a fast path: when the nozzle tip is at or above the
+//! highest material printed so far (minus the tolerance) nothing can be in the
+//! way, so the window scan is skipped entirely.
+
+use serde::{Deserialize, Serialize};
 
 use crate::config::{CollisionAdjustment, NonplanarReport};
 use crate::deform::DeformField;
-use crate::envelope::HeadEnvelope;
+use crate::envelope::{HeadEnvelope, COLLISION_TOLERANCE_MM};
+
+/// Cells per side of the coarse max-Z tiles used to skip empty regions.
+const TILE: usize = 8;
+
+/// One toolhead strike found on a move.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CollisionHit {
+    /// 1-based line in the G-code where the strike was first detected.
+    pub line: usize,
+    /// Nozzle position at that sample (machine coordinates).
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    /// Height of the offending material above the nozzle tip.
+    pub material_above_tip_mm: f64,
+    /// Horizontal distance from the nozzle axis to that material.
+    pub distance_mm: f64,
+    /// `true` for G1 moves that extrude, `false` for travel moves.
+    pub extruding: bool,
+}
+
+/// Counters gathered while sweeping G-code.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollisionScanStats {
+    /// G2/G3 moves, which this check samples by endpoint only.
+    pub arc_moves: usize,
+    /// Extruding moves swept (their path is printed afterwards).
+    pub extruding_moves: usize,
+    /// Travel moves swept.
+    pub travel_moves: usize,
+}
 
 /// Coarse printed-height field built while sweeping moves in layer order.
 #[derive(Clone, Debug, Default)]
@@ -11,7 +55,13 @@ pub struct PrintedHeightMap {
     pub step: f64,
     pub width: usize,
     pub height: usize,
+    /// Per-cell material top. Raise cells through [`Self::raise`] so the coarse
+    /// max-Z tiles stay valid.
     pub z: Vec<f64>,
+    tile_cols: usize,
+    tile_rows: usize,
+    tile_max: Vec<f64>,
+    max_z: f64,
 }
 
 impl PrintedHeightMap {
@@ -22,58 +72,328 @@ impl PrintedHeightMap {
             width,
             height,
             z: vec![0.0; width * height],
+            tile_cols: width.div_ceil(TILE),
+            tile_rows: height.div_ceil(TILE),
+            tile_max: vec![0.0; width.div_ceil(TILE) * height.div_ceil(TILE)],
+            max_z: 0.0,
         }
     }
 
-    fn index(&self, x: f64, y: f64) -> Option<usize> {
-        let ix = ((x - self.origin[0]) / self.step).round() as isize;
-        let iy = ((y - self.origin[1]) / self.step).round() as isize;
-        if ix < 0 || iy < 0 {
+    fn cell(&self, x: f64, y: f64) -> Option<(usize, usize)> {
+        if self.step <= 0.0 || self.width == 0 || self.height == 0 {
             return None;
         }
-        let ix = ix as usize;
-        let iy = iy as usize;
-        if ix >= self.width || iy >= self.height {
+        let ix = ((x - self.origin[0]) / self.step).round();
+        let iy = ((y - self.origin[1]) / self.step).round();
+        if !ix.is_finite() || !iy.is_finite() || ix < 0.0 || iy < 0.0 {
             return None;
         }
-        Some(iy * self.width + ix)
+        let (ix, iy) = (ix as usize, iy as usize);
+        (ix < self.width && iy < self.height).then_some((ix, iy))
     }
 
     pub fn raise(&mut self, x: f64, y: f64, z: f64) {
-        if let Some(i) = self.index(x, y) {
-            self.z[i] = self.z[i].max(z);
+        let Some((ix, iy)) = self.cell(x, y) else {
+            return;
+        };
+        let index = iy * self.width + ix;
+        if z > self.z[index] {
+            self.z[index] = z;
+            let tile = (iy / TILE) * self.tile_cols + ix / TILE;
+            self.tile_max[tile] = self.tile_max[tile].max(z);
+            self.max_z = self.max_z.max(z);
         }
     }
 
+    /// Highest material anywhere in the map (0 for an empty map).
+    pub fn max_printed_z(&self) -> f64 {
+        self.max_z
+    }
+
+    /// Highest printed material within `radius` of `(x, y)` (cell centres).
     pub fn sample_max_in_radius(&self, x: f64, y: f64, radius: f64) -> f64 {
-        let ri = (radius / self.step).ceil() as isize;
-        let fx = ((x - self.origin[0]) / self.step).round() as isize;
-        let fy = ((y - self.origin[1]) / self.step).round() as isize;
-        let mut max_z = 0.0f64;
-        for dy in -ri..=ri {
-            for dx in -ri..=ri {
-                let ix = fx + dx;
-                let iy = fy + dy;
-                if ix < 0 || iy < 0 {
+        self.max_in_disk(x, y, radius.max(0.0))
+    }
+
+    /// Upper bound of the material height inside the disk, read through the
+    /// coarse tiles so empty regions cost a handful of comparisons.
+    fn max_in_disk(&self, x: f64, y: f64, radius: f64) -> f64 {
+        if self.step <= 0.0 || self.tile_max.is_empty() {
+            return 0.0;
+        }
+        let tile_size = self.step * TILE as f64;
+        let half = 0.5 * self.step;
+        let span = radius + half;
+        let tx0 = (((x - span) - self.origin[0]) / tile_size).floor() as isize;
+        let tx1 = (((x + span) - self.origin[0]) / tile_size).ceil() as isize;
+        let ty0 = (((y - span) - self.origin[1]) / tile_size).floor() as isize;
+        let ty1 = (((y + span) - self.origin[1]) / tile_size).ceil() as isize;
+        let bound = (radius + self.step).powi(2);
+        let mut max = 0.0f64;
+        for ty in ty0.max(0)..=ty1.min(self.tile_rows as isize - 1) {
+            let y0 = self.origin[1] + ty as f64 * tile_size - half;
+            let ny = y.clamp(y0, y0 + tile_size);
+            let dy = y - ny;
+            for tx in tx0.max(0)..=tx1.min(self.tile_cols as isize - 1) {
+                let x0 = self.origin[0] + tx as f64 * tile_size - half;
+                let nx = x.clamp(x0, x0 + tile_size);
+                let dx = x - nx;
+                if dx * dx + dy * dy > bound {
                     continue;
                 }
-                let ix = ix as usize;
-                let iy = iy as usize;
-                if ix >= self.width || iy >= self.height {
+                max = max.max(self.tile_max[ty as usize * self.tile_cols + tx as usize]);
+            }
+        }
+        max
+    }
+
+    /// Worst strike at one nozzle position, as `(material above tip, distance)`.
+    fn scan_point(
+        &self,
+        envelope: &HeadEnvelope,
+        x: f64,
+        y: f64,
+        z_tip: f64,
+    ) -> Option<(f64, f64)> {
+        if self.step <= 0.0 || self.width == 0 || self.height == 0 {
+            return None;
+        }
+        // Fast path for planar layers: everything printed is at or below the tip.
+        let floor = z_tip + COLLISION_TOLERANCE_MM;
+        if self.max_z <= floor {
+            return None;
+        }
+        let reach = envelope.horizontal_reach_mm();
+        if !reach.is_finite() || reach <= 0.0 {
+            return None;
+        }
+        if self.max_in_disk(x, y, reach) <= floor {
+            return None;
+        }
+        let tile_size = self.step * TILE as f64;
+        let half = 0.5 * self.step;
+        // Material is stored as the bead centreline quantised to cell centres,
+        // so the cell centre is the material position; anything farther than
+        // the head's reach cannot touch it.
+        let outer = reach;
+        let outer_sq = outer * outer;
+        let tx0 = (((x - outer) - self.origin[0]) / tile_size).floor() as isize;
+        let tx1 = (((x + outer) - self.origin[0]) / tile_size).ceil() as isize;
+        let ty0 = (((y - outer) - self.origin[1]) / tile_size).floor() as isize;
+        let ty1 = (((y + outer) - self.origin[1]) / tile_size).ceil() as isize;
+        // (excess over the envelope, height above tip, distance)
+        let mut best: Option<(f64, f64, f64)> = None;
+        for ty in ty0.max(0)..=ty1.min(self.tile_rows as isize - 1) {
+            let y0 = self.origin[1] + ty as f64 * tile_size - half;
+            let ny = y.clamp(y0, y0 + tile_size);
+            let dy = y - ny;
+            for tx in tx0.max(0)..=tx1.min(self.tile_cols as isize - 1) {
+                let tile = ty as usize * self.tile_cols + tx as usize;
+                if self.tile_max[tile] <= floor {
                     continue;
                 }
-                let dist = ((dx as f64 * self.step).powi(2) + (dy as f64 * self.step).powi(2)).sqrt();
-                if dist <= radius + self.step {
-                    max_z = max_z.max(self.z[iy * self.width + ix]);
+                let x0 = self.origin[0] + tx as f64 * tile_size - half;
+                let nx = x.clamp(x0, x0 + tile_size);
+                let dx = x - nx;
+                if dx * dx + dy * dy > outer_sq {
+                    continue;
+                }
+                let cy0 = (ty as usize) * TILE;
+                let cy1 = (cy0 + TILE).min(self.height);
+                let cx0 = (tx as usize) * TILE;
+                let cx1 = (cx0 + TILE).min(self.width);
+                for cy in cy0..cy1 {
+                    let row = cy * self.width;
+                    let ddy = y - (self.origin[1] + cy as f64 * self.step);
+                    for cx in cx0..cx1 {
+                        if self.z[row + cx] <= floor {
+                            continue;
+                        }
+                        let ddx = x - (self.origin[0] + cx as f64 * self.step);
+                        let d = (ddx * ddx + ddy * ddy).sqrt();
+                        if d > outer {
+                            continue;
+                        }
+                        let height = self.z[row + cx] - z_tip;
+                        let limit = envelope.max_material_height_at(d);
+                        if height > limit {
+                            let excess = height - limit;
+                            if best.is_none_or(|b| excess > b.0) {
+                                best = Some((excess, height, d));
+                            }
+                        }
+                    }
                 }
             }
         }
-        max_z
+        best.map(|(_, height, d)| (height, d))
     }
 }
 
-/// Returns `true` if the sock / body above the nozzle tip would strike **earlier**
-/// printed material. The nozzle tip may contact the layer currently being deposited.
+/// Move classification while sweeping G-code.
+struct Sweep {
+    position: [f64; 3],
+    /// Last absolute E word seen (M82 mode).
+    last_e: Option<f64>,
+    absolute_e: bool,
+    line_no: usize,
+}
+
+impl Sweep {
+    fn new() -> Self {
+        Self {
+            position: [0.0; 3],
+            last_e: None,
+            absolute_e: true,
+            line_no: 0,
+        }
+    }
+}
+
+/// Find every move whose swept toolhead would strike already-printed material.
+///
+/// `grid_origin`/`grid_step`/`width`/`height` describe the printed-height grid;
+/// pass the deform field grid when checking a non-planar post-pass. At most one
+/// hit is reported per move: the first sample along the move that strikes
+/// something (the worst cell at that sample).
+pub fn find_collisions(
+    gcode: &str,
+    envelope: &HeadEnvelope,
+    grid_origin: [f64; 2],
+    grid_step: f64,
+    width: usize,
+    height: usize,
+) -> Vec<CollisionHit> {
+    find_collisions_with_stats(gcode, envelope, grid_origin, grid_step, width, height).0
+}
+
+/// [`find_collisions`] plus the counters needed to describe the sweep in notes.
+pub fn find_collisions_with_stats(
+    gcode: &str,
+    envelope: &HeadEnvelope,
+    grid_origin: [f64; 2],
+    grid_step: f64,
+    width: usize,
+    height: usize,
+) -> (Vec<CollisionHit>, CollisionScanStats) {
+    let mut hits = Vec::new();
+    let mut stats = CollisionScanStats::default();
+    if grid_step <= 0.0 || width == 0 || height == 0 {
+        return (hits, stats);
+    }
+    let mut map = PrintedHeightMap::new(grid_origin, grid_step, width, height);
+    let sample_step = (0.5 * grid_step).max(1e-3);
+    let mut sweep = Sweep::new();
+    for (index, raw) in gcode.lines().enumerate() {
+        sweep.line_no = index + 1;
+        let line = raw.split(';').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some(cmd) = line.split_whitespace().next() else {
+            continue;
+        };
+        match cmd {
+            "M82" => {
+                sweep.absolute_e = true;
+                continue;
+            }
+            "M83" => {
+                sweep.absolute_e = false;
+                continue;
+            }
+            "G92" => {
+                if let Some(e) = word(line, 'E') {
+                    sweep.last_e = Some(e);
+                }
+                continue;
+            }
+            _ => {}
+        }
+        let is_arc = matches!(cmd, "G2" | "G02" | "G3" | "G03");
+        if !is_arc && !matches!(cmd, "G0" | "G00" | "G1" | "G01") {
+            continue;
+        }
+        let e_word = word(line, 'E');
+        let extruding = match (e_word, sweep.last_e, sweep.absolute_e) {
+            (Some(e), Some(previous), true) => e - previous > 1e-9,
+            (Some(e), _, _) => e > 1e-9,
+            (None, _, _) => false,
+        };
+        if let Some(e) = e_word {
+            if sweep.absolute_e {
+                sweep.last_e = Some(e);
+            }
+        }
+        let mut target = sweep.position;
+        let mut moved = false;
+        for (axis, letter) in ['X', 'Y', 'Z'].into_iter().enumerate() {
+            if let Some(value) = word(line, letter) {
+                target[axis] = value;
+                moved = true;
+            }
+        }
+        if !moved && !extruding {
+            continue;
+        }
+        let delta = [
+            target[0] - sweep.position[0],
+            target[1] - sweep.position[1],
+            target[2] - sweep.position[2],
+        ];
+        let distance = (delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]).sqrt();
+        let samples = if is_arc {
+            stats.arc_moves += 1;
+            1
+        } else {
+            ((distance / sample_step).ceil() as usize).clamp(1, 200_000)
+        };
+        let mut hit = None;
+        for step in 0..=samples {
+            let t = step as f64 / samples as f64;
+            let x = sweep.position[0] + delta[0] * t;
+            let y = sweep.position[1] + delta[1] * t;
+            let z = sweep.position[2] + delta[2] * t;
+            if let Some((material_above_tip_mm, distance_mm)) = map.scan_point(envelope, x, y, z) {
+                hit = Some(CollisionHit {
+                    line: sweep.line_no,
+                    x,
+                    y,
+                    z,
+                    material_above_tip_mm,
+                    distance_mm,
+                    extruding,
+                });
+                break;
+            }
+        }
+        if let Some(hit) = hit {
+            hits.push(hit);
+        }
+        if extruding {
+            for step in 0..=samples {
+                let t = step as f64 / samples as f64;
+                map.raise(
+                    sweep.position[0] + delta[0] * t,
+                    sweep.position[1] + delta[1] * t,
+                    sweep.position[2] + delta[2] * t,
+                );
+            }
+            stats.extruding_moves += 1;
+        } else {
+            stats.travel_moves += 1;
+        }
+        sweep.position = target;
+    }
+    (hits, stats)
+}
+
+/// Single-point legacy check kept for [`crate::pipeline::gcode_respects_envelope`].
+///
+/// The authoritative check is [`find_collisions`], which sweeps whole segments;
+/// this one only tests the given position. `max_angle_deg` and `extruding` are
+/// accepted for API compatibility and no longer gate the result: extrusion is
+/// handled by the bead tolerance, not by skipping the check.
 pub fn move_collides(
     envelope: &HeadEnvelope,
     printed: &PrintedHeightMap,
@@ -83,28 +403,8 @@ pub fn move_collides(
     max_angle_deg: f64,
     extruding: bool,
 ) -> bool {
-    if extruding {
-        return false;
-    }
-    let body_r = envelope
-        .sock_outer_radius_mm
-        .max(envelope.body_radius_mm);
-    let material_z = printed.sample_max_in_radius(x, y, body_r);
-    if material_z <= 0.0 {
-        return false;
-    }
-    // Material at or below the tip is the layer being laid — not an envelope strike.
-    if material_z <= z_nozzle + 0.05 {
-        return false;
-    }
-    let sock_top_z = z_nozzle + envelope.sock_top_z_mm;
-    if material_z <= sock_top_z {
-        return false;
-    }
-    let _ = max_angle_deg;
-    let max_slope = max_angle_deg.to_radians().tan().max(1e-6);
-    let dz = material_z - sock_top_z;
-    dz < body_r / max_slope
+    let _ = (max_angle_deg, extruding);
+    printed.scan_point(envelope, x, y, z_nozzle).is_some()
 }
 
 /// Reduce `field.island_strength` where moves collide; update report counters.
@@ -122,9 +422,9 @@ pub fn flatten_on_collision(
 
     report.envelope_id = envelope.printer_id.clone();
     if !envelope.calibrated {
-        report.notes.push(
-            "collision flattening skipped (uncalibrated head envelope)".into(),
-        );
+        report
+            .notes
+            .push("collision flattening skipped (uncalibrated head envelope)".into());
         return report;
     }
     if envelope.calibration_tier.as_deref() == Some("conservative") {
@@ -133,63 +433,47 @@ pub fn flatten_on_collision(
         );
     }
 
-    let step = field.grid.step;
-    let origin = field.grid.origin;
-    let width = field.grid.width;
-    let height = field.grid.height;
-    let mut printed = PrintedHeightMap::new(origin, step, width, height);
-
-    let mut position = [0.0; 3];
-    let mut collisions = 0usize;
-    for raw in gcode.lines() {
-        let line = raw.trim();
-        if !(line.starts_with('G')
-            && (line.contains('X') || line.contains('Y') || line.contains('Z')))
-        {
-            continue;
+    let (hits, stats) = find_collisions_with_stats(
+        gcode,
+        envelope,
+        field.grid.origin,
+        field.grid.step,
+        field.grid.width,
+        field.grid.height,
+    );
+    let mut extruding_hits = 0usize;
+    for hit in &hits {
+        if hit.extruding {
+            extruding_hits += 1;
         }
-        if let Some(x) = word(line, 'X') {
-            position[0] = x;
-        }
-        if let Some(y) = word(line, 'Y') {
-            position[1] = y;
-        }
-        if let Some(z) = word(line, 'Z') {
-            position[2] = z;
-        }
-        let extrude = line.starts_with("G1") && line.contains('E');
-        let e_pos = word(line, 'E').unwrap_or(0.0);
-        let extruding = extrude && e_pos > 0.0;
-        if move_collides(
-            envelope,
-            &printed,
-            position[0],
-            position[1],
-            position[2],
-            max_angle_deg,
-            extruding,
-        ) {
-            collisions += 1;
-            report.collision_adjustments.push(CollisionAdjustment {
-                x: position[0],
-                y: position[1],
-                z: position[2],
-                action: "dampen_island".into(),
-            });
-            dampen_island(field, position[0], position[1], 0.35);
-        }
-        if extruding {
-            printed.raise(position[0], position[1], position[2]);
-        }
+        report.collision_adjustments.push(CollisionAdjustment {
+            x: hit.x,
+            y: hit.y,
+            z: hit.z,
+            action: "dampen_island".into(),
+        });
+        dampen_island(field, hit.x, hit.y, 0.35);
     }
-
-    if collisions > 0 {
-        report.islands_flattened = collisions.min(report.top_islands);
-        report.notes.push(format!("{collisions} travel moves failed envelope clearance"));
+    if stats.arc_moves > 0 {
+        report.notes.push(format!(
+            "{} arc move(s) (G2/G3) checked by endpoint only",
+            stats.arc_moves
+        ));
+    }
+    if !hits.is_empty() {
+        report.notes.push(format!(
+            "{} move(s) failed envelope clearance ({} extruding, {} travel)",
+            hits.len(),
+            extruding_hits,
+            hits.len() - extruding_hits
+        ));
+        report.islands_flattened = hits.len().min(report.top_islands);
     }
     if field.island_strength.iter().all(|&s| s < 0.05) {
         report.fallback_to_planar = true;
-        report.notes.push("all islands flattened; output approaches planar".into());
+        report
+            .notes
+            .push("all islands flattened; output approaches planar".into());
     }
     report
 }
@@ -228,29 +512,17 @@ mod tests {
         let mut printed = PrintedHeightMap::new([0.0, 0.0], 1.0, 64, 64);
         printed.raise(10.0, 10.0, 25.0);
         assert!(move_collides(
-            envelope,
-            &printed,
-            12.0,
-            10.0,
-            5.0,
-            10.0,
-            false
+            envelope, &printed, 12.0, 10.0, 5.0, 10.0, false
         ));
     }
 
     #[test]
-    fn deposition_extrusion_never_collides() {
+    fn deposition_extrusion_never_collides_with_its_own_bead() {
         let envelope = bambu_a1_envelope();
         let mut printed = PrintedHeightMap::new([0.0, 0.0], 1.0, 32, 32);
         printed.raise(10.0, 10.0, 5.0);
         assert!(!move_collides(
-            envelope,
-            &printed,
-            10.0,
-            10.0,
-            5.0,
-            10.0,
-            true
+            envelope, &printed, 10.0, 10.0, 5.0, 10.0, true
         ));
     }
 
@@ -260,13 +532,7 @@ mod tests {
         let mut printed = PrintedHeightMap::new([0.0, 0.0], 1.0, 64, 64);
         printed.raise(10.0, 10.0, 23.8);
         assert!(!move_collides(
-            envelope,
-            &printed,
-            10.0,
-            10.0,
-            24.0,
-            10.0,
-            false
+            envelope, &printed, 10.0, 10.0, 24.0, 10.0, false
         ));
     }
 
@@ -289,77 +555,26 @@ mod tests {
     }
 
     #[test]
-    fn concat_pillar_gcode_produces_collisions_when_present() {
-        let path = std::path::Path::new("/tmp/shale-pillar-concat.gcode");
-        if !path.is_file() {
-            return;
-        }
-        let gcode = std::fs::read_to_string(path).expect("concat gcode");
-        let envelope = bambu_a1_envelope();
-        let mut printed = PrintedHeightMap::new([99.8, 104.8], 0.35, 163, 134);
-        let mut position = [0.0; 3];
-        let mut collisions = 0usize;
-        let mut extrusions = 0usize;
-        let mut max_printed = 0.0f64;
-        for raw in gcode.lines() {
-            let line = raw.trim();
-            if !(line.starts_with('G')
-                && (line.contains('X') || line.contains('Y') || line.contains('Z')))
-            {
-                continue;
-            }
-            if let Some(x) = word(line, 'X') {
-                position[0] = x;
-            }
-            if let Some(y) = word(line, 'Y') {
-                position[1] = y;
-            }
-            if let Some(z) = word(line, 'Z') {
-                position[2] = z;
-            }
-            let extrude = line.starts_with("G1") && line.contains('E');
-            let e_pos = word(line, 'E').unwrap_or(0.0);
-            let extruding = extrude && e_pos > 0.0;
-            if move_collides(
-                envelope,
-                &printed,
-                position[0],
-                position[1],
-                position[2],
-                10.0,
-                extruding,
-            ) {
-                collisions += 1;
-            }
-            if extruding {
-                printed.raise(position[0], position[1], position[2]);
-                extrusions += 1;
-                max_printed = max_printed.max(position[2]);
-            }
-        }
-        assert!(
-            extrusions > 1000 && max_printed > 40.0,
-            "raises={extrusions} max_z={max_printed:.2}"
-        );
-        assert!(
-            collisions > 100,
-            "expected pillar→dome travels to strike tall pillar, got {collisions} (max_z={max_printed:.2})"
-        );
-    }
-
-    #[test]
     fn pillar_scene_produces_collision_on_travel() {
         let envelope = bambu_a1_envelope();
         let mut printed = PrintedHeightMap::new([0.0, 0.0], 1.0, 64, 64);
         printed.raise(20.0, 0.0, 28.0);
         assert!(move_collides(
-            envelope,
-            &printed,
-            18.0,
-            0.0,
-            2.5,
-            10.0,
-            false
+            envelope, &printed, 18.0, 0.0, 2.5, 10.0, false
         ));
+    }
+
+    #[test]
+    fn flat_print_takes_the_fast_path() {
+        let envelope = bambu_a1_envelope();
+        let mut printed = PrintedHeightMap::new([0.0, 0.0], 0.35, 300, 300);
+        for step in 0..200 {
+            let z = 0.2 * (step / 40 + 1) as f64;
+            printed.raise(40.0, 40.0, z);
+            assert!(!move_collides(
+                envelope, &printed, 40.0, 40.0, z, 10.0, true
+            ));
+        }
+        assert!((printed.max_printed_z() - 1.0).abs() < 1e-9);
     }
 }

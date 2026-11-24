@@ -83,14 +83,27 @@ impl NonplanarOptions {
             .unwrap_or((layer_height * 2.0).clamp(0.16, 0.8))
     }
 
-    /// Non-planar curved tops are enabled for Bambu printers that ship a head envelope.
+    /// Non-planar curved tops are enabled for printers that ship a head envelope.
     pub fn allowed_for_printer(printer_id: &str) -> bool {
-        let id = printer_id.to_ascii_lowercase();
-        id.starts_with("bambu_lab_") && crate::envelope::head_envelope_for_printer(&id).is_some()
+        crate::envelope::head_envelope_for_printer(printer_id).is_some()
     }
 
     pub fn active_for_printer(&self, printer_id: &str) -> bool {
         self.mode.active() && Self::allowed_for_printer(printer_id)
+    }
+
+    /// Refuse a non-planar request on a printer without a toolhead envelope.
+    ///
+    /// Slicing planar is always fine, so `Off` never fails. Anything else needs
+    /// the envelope: without it the collision pass cannot tell whether the head
+    /// clears the part, and silently slicing planar would hide the request.
+    pub fn check_printer(&self, printer_id: &str) -> Result<(), String> {
+        if !self.mode.active() {
+            return Ok(());
+        }
+        crate::envelope::require_head_envelope(printer_id)
+            .map(|_| ())
+            .map_err(|err| err.to_string())
     }
 }
 
@@ -104,6 +117,31 @@ mod tests {
             assert!(NonplanarOptions::allowed_for_printer(id), "{id}");
         }
         assert!(!NonplanarOptions::allowed_for_printer("demo_ender"));
+    }
+
+    #[test]
+    fn check_printer_refuses_only_active_modes_on_unsupported_printers() {
+        let active = NonplanarOptions {
+            mode: NonplanarMode::Auto,
+            ..NonplanarOptions::default()
+        };
+        for id in crate::envelope::envelope_catalogue() {
+            assert!(active.check_printer(id).is_ok(), "{id}");
+        }
+        let err = active
+            .check_printer("creality_k1")
+            .expect_err("unsupported");
+        assert_eq!(
+            err,
+            "non-planar needs a toolhead envelope; printer 'creality_k1' has none \
+             (supported: bambu_lab_a1, bambu_lab_a1_mini, bambu_lab_p1s, bambu_lab_p1p, \
+             bambu_lab_x1_carbon, bambu_lab_h2d)"
+        );
+        // Planar slicing on the same printer stays allowed.
+        assert!(NonplanarOptions::default()
+            .check_printer("creality_k1")
+            .is_ok());
+        assert!(!active.active_for_printer("creality_k1"));
     }
 }
 
@@ -197,6 +235,14 @@ pub struct SafetyReport {
     pub slope_within_cap: bool,
     pub extrusion_jump_count: usize,
     pub feed_cap_violations: usize,
+    /// Collision hits left after the flattening pass, split by move kind.
+    ///
+    /// Swept moves that would strike printed material while extruding...
+    #[serde(default)]
+    pub collisions_extruding: usize,
+    /// ...and travel moves that would strike printed material.
+    #[serde(default)]
+    pub collisions_travel: usize,
     pub travel_collisions_remaining: usize,
     pub envelope_checks_enabled: bool,
     pub planar_equivalence: PlanarEquivalenceResult,

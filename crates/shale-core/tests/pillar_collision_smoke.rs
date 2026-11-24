@@ -30,13 +30,10 @@ fn sliced_pillar_beside_dome_is_clean_or_falls_back_with_a_collision_reason() {
     );
     if report.fallback_to_planar {
         assert!(
-            report
-                .fallback_reasons
-                .iter()
-                .any(|r| {
-                    let r = r.to_lowercase();
-                    r.contains("collision") || r.contains("slope")
-                }),
+            report.fallback_reasons.iter().any(|r| {
+                let r = r.to_lowercase();
+                r.contains("collision") || r.contains("slope")
+            }),
             "a fallback must name its cause (collision or slope): {:?}",
             report.fallback_reasons
         );
