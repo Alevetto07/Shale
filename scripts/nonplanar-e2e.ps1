@@ -38,6 +38,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# summary.csv is parsed by tools, not by people: fixed decimal points and UTF-8,
+# whatever the Windows display language happens to be.
+[Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::InvariantCulture
 Set-StrictMode -Version Latest
 
 $Repo = Split-Path -Parent $PSScriptRoot
@@ -156,8 +160,6 @@ foreach ($part in $Parts) {
             $tag = "$part-$printer-$mode"
             $gcode = Join-Path $OutDir "$tag.gcode"
             $log = Join-Path $Logs "$tag.log"
-            $stdout = Join-Path $Logs "$tag.out.txt"
-            $stderr = Join-Path $Logs "$tag.err.txt"
             $sw = [Diagnostics.Stopwatch]::StartNew()
             # The CLI writes its progress on stderr; PowerShell 5.1 turns native
             # stderr into a terminating error under ErrorActionPreference=Stop, so
@@ -170,6 +172,8 @@ foreach ($part in $Parts) {
                     '--nonplanar', $mode, '-o', "`"$gcode`"") -join ' ')
             $psi.RedirectStandardOutput = $true
             $psi.RedirectStandardError = $true
+            $psi.StandardOutputEncoding = [Text.Encoding]::UTF8
+            $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
             $psi.UseShellExecute = $false
             $proc = [System.Diagnostics.Process]::Start($psi)
             $tOut = $proc.StandardOutput.ReadToEndAsync()
@@ -185,7 +189,7 @@ foreach ($part in $Parts) {
             }
             $sw.Stop()
             $output = [string]::Concat($tOut.Result, $tErr.Result)
-            Set-Content -Path $log -Value $output
+            Set-Content -Path $log -Value $output -Encoding UTF8
             Write-Host ("[e2e] {0} exit={1} {2:N1}s" -f $tag, $exit, $sw.Elapsed.TotalSeconds)
 
             $summary = $null
