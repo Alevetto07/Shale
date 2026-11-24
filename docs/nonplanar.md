@@ -56,9 +56,9 @@ flowchart TD
    change below the band floor — fails the check and produces the planar
    baseline instead.
 
-Only the deformed region changes. Moves below the band floor must be
-byte-identical to the planar slice, and that is what the equivalence check
-enforces.
+Only the deformed region changes. Moves below the band floor must be identical
+to the planar slice in position and extrusion, and that is what the equivalence
+check enforces.
 
 ## Modes
 
@@ -105,15 +105,20 @@ printing flat would hide the request.
 
 ## The 10 degree cap
 
-`default_max_clearance_angle_deg` is 10.0 in every shipped envelope, and
-`--max-angle` cannot exceed it (Shale refuses the request with the limit and the
-reason). The number is not a style choice; it is where the envelope runs out.
-For the A1, with a 26 mm horizontal reach and the duct 6 mm above the tip, a
-surface climbing at *a* degrees leaves material `reach * tan(a)` above the tip
-in the ring the duct occupies. Past roughly 10° that material is inside the
-envelope and the duct fouls the part it is printing; the published
-Alpaca Engineering measurements on the shared A1 toolhead show ~11.6° each way,
-so 10° keeps a margin until the number is measured on this machine.
+`default_max_clearance_angle_deg` is 10.0 in every shipped envelope. The MCP
+tools refuse a larger angle; the CLI takes `--max-angle` as given, so
+`--max-angle 12` produces a job verified against 12.5° — a limit the envelopes
+were not measured for. Prefer the default. The number is a geometry result, not
+a preference. For the A1 the
+part-cooling duct hangs 6.0 mm above the tip and reaches 26 mm out, so a surface
+climbing at `a` degrees is at `d * tan(a)` above the tip at horizontal distance
+`d`: it touches the duct's underside exactly where `26 * tan(a) = 6.0`, i.e. at
+**13.0°**. Every shipped envelope is set to 10° so that the duct, the sock
+column and the discretisation error all stay inside the sweep, and so that
+nothing is claimed for the fields still listed under `needs_measurement`.
+Multiplication is the whole reason one cap covers all six printers: every
+shipped envelope works out between 12.3° (P1P/P1S) and 13.0° (A1/A1 mini) by the
+same calculation, so 10° is inside all of them and tightest on the A1.
 
 The effective slope cap is `max_angle + SLOPE_CAP_TOLERANCE_DEG` (0.5°), so the
 default job verifies against 10.5°: 10° of design slope plus half a degree for
@@ -166,12 +171,20 @@ The job still prints, at planar quality, and the report says so. With
 ## Why horizontal bridges and cantilevers fall back
 
 Non-planar slicing here tilts *tops*. It cannot make an unsupported horizontal
-underside printable: a bridge needs the previous layer to bridge onto, and
+underside printable: a bridge needs the previous layer to span the gap, and
 tilting a band does not create support where there is none. So when `auto`
-finds a horizontal underside (90° from vertical) or a cantilever whose angle no
-tilt inside the cap can improve, it disables that surface and says why —
-`horizontal underside 90.0 deg`, or the measured angle before and after the
-tilt. What remains is printed planar, with supports if the profile has them.
+finds a horizontal underside, it disables that surface and says why in the
+planner's own words:
+
+```text
+horizontal underside 90.0° — a ±10.0° tilt round-trips to a planar toolpath; bridge printing already spans it
+```
+
+The reasoning is arithmetic: a ±`max_angle` tilt applied to a 90° face is undone
+by the layer quantisation, so the toolpath comes back planar anyway, while the
+bridge already spans the gap. The same test disables a cantilever whose angle no
+tilt inside the cap can improve, reporting the measured angle before and after.
+What remains is printed planar, with supports if the profile has them.
 
 This is the honest outcome, not a limitation to hide: a fallback that prints is
 better than a curved band that drags the nozzle through the part, and the report
@@ -188,7 +201,9 @@ shale slice examples/nonplanar-demo.stl \
 ```
 
 * `--nonplanar <mode>` — `off` (default), `curved-tops`, `auto`.
-* `--max-angle <deg>` — default 10, must be greater than 0 and at most 10.
+* `--max-angle <deg>` — default 10, the value the envelopes are calibrated for.
+  The CLI parses it as given; the MCP tools refuse anything outside
+  `0 < angle <= 10`.
 * `--nonplanar-strict` — fail instead of falling back to planar.
 * `--printer <id>` — omitted, the catalogue's default printer is used.
 * The usual job flags apply: `--layer`, `--infill`, `--supports`, `--material`,
