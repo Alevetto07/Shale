@@ -160,27 +160,32 @@ foreach ($part in $Parts) {
             $stderr = Join-Path $Logs "$tag.err.txt"
             $sw = [Diagnostics.Stopwatch]::StartNew()
             # The CLI writes its progress on stderr; PowerShell 5.1 turns native
-            # stderr into a terminating error under ErrorActionPreference=Stop,
-            # so capture both streams through the process API instead.
-            $proc = Start-Process -FilePath $Cli -NoNewWindow -PassThru `
-                -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
-                -ArgumentList @('slice', $stl, '--printer', $printer, '--max-angle', "$MaxAngleDeg",
-                    '--nonplanar', $mode, '-o', $gcode)
-            $timedOut = $false
-            try {
-                Wait-Process -Id $proc.Id -Timeout $SliceTimeoutSec -ErrorAction Stop
-            } catch {
-                $timedOut = $true
+            # stderr into a terminating error under ErrorActionPreference=Stop, so
+            # drive the child through the process API: both pipes are drained
+            # asynchronously (no buffer deadlock), WaitForExit(ms) gives a real
+            # per-slice budget, and ExitCode is reliable once it returns true.
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $Cli
+            $psi.Arguments = (@('slice', "`"$stl`"", '--printer', $printer, '--max-angle', "$MaxAngleDeg",
+                    '--nonplanar', $mode, '-o', "`"$gcode`"") -join ' ')
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.UseShellExecute = $false
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $tOut = $proc.StandardOutput.ReadToEndAsync()
+            $tErr = $proc.StandardError.ReadToEndAsync()
+            if ($proc.WaitForExit($SliceTimeoutSec * 1000)) {
+                $exit = $proc.ExitCode
+            } else {
                 # Kill only the tree we started (shale-cli -> CuraEngine); never
                 # anything else on the machine.
                 & taskkill /T /F /PID $proc.Id 2>&1 | Out-Null
-                Wait-Process -Id $proc.Id -Timeout 30 -ErrorAction SilentlyContinue
+                $proc.WaitForExit(30000) | Out-Null
+                $exit = 'timeout'
             }
             $sw.Stop()
-            $exit = if ($timedOut) { 'timeout' } else { $proc.ExitCode }
-            $output = [string]::Concat((Get-Content $stdout -Raw), (Get-Content $stderr -Raw))
+            $output = [string]::Concat($tOut.Result, $tErr.Result)
             Set-Content -Path $log -Value $output
-            Remove-Item $stdout, $stderr -Force -ErrorAction SilentlyContinue
             Write-Host ("[e2e] {0} exit={1} {2:N1}s" -f $tag, $exit, $sw.Elapsed.TotalSeconds)
 
             $summary = $null
