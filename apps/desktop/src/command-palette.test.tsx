@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CommandPalette, type CommandPaletteItem } from "./ui";
 
 const fixture: CommandPaletteItem[] = [
@@ -27,6 +27,10 @@ const fixture: CommandPaletteItem[] = [
 ];
 
 describe("CommandPalette", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   it("filters commands with fuzzy search", () => {
     render(<CommandPalette open items={fixture} onOpenChange={() => undefined} />);
     const input = screen.getByPlaceholderText("Search commands…");
@@ -34,6 +38,13 @@ describe("CommandPalette", () => {
     expect(screen.getByText("Open project")).toBeTruthy();
     expect(screen.queryByText("New project")).toBeNull();
     expect(screen.queryByText("Go to Home")).toBeNull();
+  });
+
+  it("closes on Ctrl+K", () => {
+    const onOpenChange = vi.fn();
+    render(<CommandPalette open items={fixture} onOpenChange={onOpenChange} />);
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("shows grouped sections in the fixture", () => {

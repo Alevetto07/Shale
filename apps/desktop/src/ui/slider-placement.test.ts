@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatSliderLabel,
+  sliderFlowParts,
   sliderValueLabelPercent,
   sliderValueOnFill,
 } from "./slider-placement";
@@ -20,6 +21,8 @@ describe("sliderValueLabelPercent", () => {
   it("formats value and unit as one label", () => {
     expect(formatSliderLabel(45, 0, "°")).toBe("45°");
     expect(formatSliderLabel(0.2, 2, "mm")).toBe("0.20 mm");
+    expect(sliderFlowParts("0.20 mm")).toEqual({ prefix: "", value: 0.2, suffix: " mm", digits: 2 });
+    expect(sliderFlowParts("layer 42")).toEqual({ prefix: "layer ", value: 42, suffix: "", digits: 0 });
   });
 });
 

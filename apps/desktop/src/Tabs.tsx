@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { CloudPanel } from "./CloudPanel";
 import * as api from "./api";
+import { ActiveIndicator } from "./ui/active-indicator";
 import { Button, Dialog, Input, Select, Tabs, TabsList, TabsTrigger, Tooltip } from "./ui";
 
 /// Where the window is pointed. Home is the start screen; the other three are
@@ -114,7 +115,8 @@ export function TabBar({
                   className={waiting ? "mode-chip waiting" : "mode-chip"}
                   title={waiting ? "slice the plate first — there is no toolpath to show" : item.note}
                 >
-                  {item.label}
+                  {pane === item.id ? <ActiveIndicator layoutId="pane-tabs" tone="pane" /> : null}
+                  <span className="mode-chip__label">{item.label}</span>
                 </TabsTrigger>
               );
             })}

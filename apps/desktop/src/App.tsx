@@ -61,6 +61,9 @@ import {
   toastUndo,
 } from "./ui";
 import { buildCommandPaletteItems, nextUiStyle } from "./command-palette-items";
+import { isPaletteShortcut } from "./ui/motion";
+import { ShellFrame } from "./ui/shell-frame";
+import { ViewSwap } from "./ui/view-swap";
 import { UiShowcase } from "./UiShowcase";
 import { SetupWizard } from "./SetupWizard";
 import { shouldShowSetupWizard } from "./setup-wizard";
@@ -1036,7 +1039,7 @@ export function App() {
       } else if (key === "y") {
         event.preventDefault();
         void actions.current.redo();
-      } else if (key === "k") {
+      } else if (isPaletteShortcut(event)) {
         event.preventDefault();
         setCommandPaletteOpen((open) => !open);
       }
@@ -2937,10 +2940,11 @@ export function App() {
         sliced={layerCount > 0}
       />
 
-      <div className="app-shell">
+      <ShellFrame
+        collapsed={sidebarCollapsed}
+        sidebar={
         <AppSidebar
           collapsed={sidebarCollapsed}
-          onToggleCollapsed={toggleSidebar}
           recents={recents.all}
           recentsRead={recents.read}
           onNew={() => void newProject()}
@@ -2994,7 +2998,9 @@ export function App() {
             subtitle: `${record.layers} layers${record.seconds != null ? ` · ${clockTime(record.seconds)}` : ""}`,
           }))}
         />
-        <div className="app-main">
+        }
+      >
+        <ViewSwap view={pane === "home" ? "home" : "work"}>
       {pane === "home" ? (
         <div className="home-pane">
           <StartScreen
@@ -4219,8 +4225,8 @@ export function App() {
         </main>
       </div>
       )}
-        </div>
-      </div>
+        </ViewSwap>
+      </ShellFrame>
       <ThemedToaster uiStyle={uiStyle} />
       <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} items={commandItems} />
       <SetupWizard

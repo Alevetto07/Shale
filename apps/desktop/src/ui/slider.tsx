@@ -7,8 +7,12 @@ import {
   type ComponentPropsWithoutRef,
   type KeyboardEvent,
 } from "react";
+import NumberFlow from "@number-flow/react";
 import { cn } from "./cn";
-import { formatSliderLabel, sliderValueLabelPercent, sliderValueOnFill } from "./slider-placement";
+import { EASE_OUT } from "./motion";
+import { formatSliderLabel, sliderFlowParts, sliderValueLabelPercent, sliderValueOnFill } from "./slider-placement";
+
+const FLOW_EASE = `cubic-bezier(${EASE_OUT.join(", ")})`;
 
 export interface SliderProps extends Omit<ComponentPropsWithoutRef<typeof SliderPrimitive.Root>, "onValueChange"> {
   label: string;
@@ -51,6 +55,7 @@ export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
   const labelPercent = sliderValueLabelPercent(thumbPercent);
   const onFill = sliderValueOnFill(thumbPercent, labelPercent);
   const displayLabel = formatSliderLabel(current, inputDigits, unit, formatValue);
+  const flow = sliderFlowParts(displayLabel);
 
   const emit = useCallback(
     (next: number) => {
@@ -117,13 +122,14 @@ export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
             data-on-fill={onFill ? "1" : "0"}
             aria-label={`${label} exact value`}
             disabled={disabled}
+            data-value={displayLabel}
             onClick={() => {
               setEditing(true);
               setDraft(Number.isFinite(current) ? current.toFixed(inputDigits) : "");
               queueMicrotask(() => inputRef.current?.focus());
             }}
           >
-            {displayLabel}
+            <SliderDigits label={displayLabel} flow={flow} />
           </button>
         ) : allowInput === false ? (
           <span
@@ -131,8 +137,9 @@ export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
             style={{ left: `${labelPercent}%` }}
             data-on-fill={onFill ? "1" : "0"}
             aria-hidden
+            data-value={displayLabel}
           >
-            {displayLabel}
+            <SliderDigits label={displayLabel} flow={flow} />
           </span>
         ) : null}
         {allowInput && editing ? (
@@ -167,3 +174,32 @@ export const Slider = forwardRef<HTMLSpanElement, SliderProps>(function Slider(
     </div>
   );
 });
+
+function SliderDigits({
+  label,
+  flow,
+}: {
+  label: string;
+  flow: ReturnType<typeof sliderFlowParts>;
+}) {
+  if (!flow) return <span className="ui-slider__digits">{label}</span>;
+  return (
+    <NumberFlow
+      className="ui-slider__digits"
+      value={flow.value}
+      prefix={flow.prefix}
+      suffix={flow.suffix}
+      locales="en-GB"
+      isolate
+      respectMotionPreference
+      format={{
+        minimumFractionDigits: flow.digits,
+        maximumFractionDigits: flow.digits,
+        useGrouping: false,
+      }}
+      transformTiming={{ duration: 180, easing: FLOW_EASE }}
+      spinTiming={{ duration: 180, easing: FLOW_EASE }}
+      opacityTiming={{ duration: 120, easing: "ease-out" }}
+    />
+  );
+}

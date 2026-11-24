@@ -1,6 +1,6 @@
 import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { springPanel } from "./ui/springs";
+import { EASE_OUT } from "./ui/motion";
 import type { PrinterInfo } from "./api";
 import { PlateField } from "./field/PlateField";
 import { SettingsView } from "./SettingsView";
@@ -84,6 +84,7 @@ export function StartScreen({
         s: () => onPanel("settings"),
         a: () => onPanel("about"),
         q: onQuit,
+        r: () => document.querySelector<HTMLElement>("[data-recent='1']")?.focus(),
       };
       const run = shortcut[key];
       if (!run) return;
@@ -161,10 +162,10 @@ function StartPanelShell({ children }: { children: ReactNode }) {
   return (
     <motion.div
       className="start-panel-sheet"
-      initial={reduce ? false : { opacity: 0, y: 10, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={reduce ? undefined : { opacity: 0, y: 6, scale: 0.99 }}
-      transition={reduce ? { duration: 0 } : springPanel}
+      initial={reduce ? { opacity: 0 } : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={reduce ? { opacity: 0 } : { opacity: 0, y: 4 }}
+      transition={reduce ? { duration: 0 } : { duration: 0.2, ease: [...EASE_OUT] }}
     >
       {children}
     </motion.div>
@@ -283,8 +284,8 @@ function AboutPanel({
         <a href={plate.plateCredit.page}>{plate.plateCredit.page}</a>
       </p>
       <p className="credit">
-        Space Grotesk, Geist Mono, and Inter are used under the SIL Open Font License 1.1. Motion, Radix UI, Sonner,
-        and Lucide are used under their respective open-source licences.
+        Space Grotesk, Geist Mono, and Inter are used under the SIL Open Font License 1.1. Motion, Radix UI,
+        Sonner, cmdk, Number Flow, and clsx are MIT. Lucide is ISC.
       </p>
     </>
   );

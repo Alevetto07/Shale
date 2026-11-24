@@ -15,7 +15,8 @@
   line-height: 1.2;
   color: var(--ink);
   background: var(--panel-raised);
-  transition: var(--transition-interactive);
+  transition: transform var(--duration-press) var(--ease-out), var(--transition-interactive);
+  -webkit-tap-highlight-color: transparent;
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
@@ -35,7 +36,7 @@
 }
 .ui-btn[data-variant="primary"] {
   background: var(--accent);
-  color: var(--bg);
+  color: var(--accent-ink);
   border-color: transparent;
 }
 .ui-btn[data-variant="secondary"] {
@@ -57,7 +58,7 @@
   background: var(--surface-inset);
   border-color: var(--line);
 }
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   .ui-btn:not(:disabled):hover {
     background: var(--surface-hover);
   }
@@ -102,11 +103,12 @@
   border-radius: var(--radius-pill);
   color: var(--ink-2);
   background: var(--surface-inset);
-  transition: var(--transition-interactive);
+  transition: transform var(--duration-press) var(--ease-out), var(--transition-interactive);
+  -webkit-tap-highlight-color: transparent;
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   .ui-icon-btn:not(:disabled):hover {
     color: var(--ink);
     background: var(--surface-hover);
@@ -114,6 +116,7 @@
 }
 .ui-icon-btn:not(:disabled):active {
   transform: scale(var(--press-scale));
+  transition: transform 100ms var(--ease-out), var(--transition-interactive);
 }
 .ui-icon-btn__dot {
   position: absolute;
@@ -210,10 +213,19 @@
   border: 0;
   box-shadow: none;
   z-index: 1;
+  transition: transform var(--duration-press) var(--ease-out);
+}
+.ui-slider__root:active .ui-slider__thumb {
+  transform: scale(var(--press-scale));
+  transition-duration: 100ms;
 }
 .ui-slider__thumb:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
+}
+.ui-slider__digits {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--mono);
 }
 .ui-slider__value {
   position: absolute;
@@ -302,27 +314,42 @@
 }
 
 /* —— App sidebar —— */
+.ui-sidebar-clip {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
 .ui-sidebar {
-  flex: 0 0 auto;
-  min-width: var(--sidebar-rail);
-  max-width: var(--sidebar-width);
+  width: var(--sidebar-width);
+  height: 100%;
   min-height: 0;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-4) var(--space-3) var(--space-3);
-  background: var(--panel);
-  border-right: 1px solid var(--line);
+  background: transparent;
   overflow: hidden;
 }
-.ui-sidebar[data-collapsed="1"] {
+.ui-sidebar__fade {
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.ui-sidebar[data-collapsed="1"] .ui-sidebar__fade {
+  opacity: 0;
+}
+.ui-sidebar[data-collapsed="1"][data-settled="1"] {
   padding-left: var(--space-2);
   padding-right: var(--space-2);
 }
-.ui-sidebar[data-collapsed="1"] .ui-sidebar__title,
-.ui-sidebar[data-collapsed="1"] .ui-sidebar__section,
-.ui-sidebar[data-collapsed="1"] .ui-sidebar__primary,
-.ui-sidebar[data-collapsed="1"] .ui-sidebar__footer-label {
+.ui-sidebar[data-collapsed="1"][data-settled="1"] .ui-sidebar__section,
+.ui-sidebar[data-collapsed="1"][data-settled="1"] .ui-sidebar__primary,
+.ui-sidebar[data-collapsed="1"][data-settled="1"] .ui-sidebar__header-actions,
+.ui-sidebar[data-collapsed="1"][data-settled="1"] .ui-sidebar__title {
   display: none;
 }
 .ui-sidebar[data-collapsed="1"] .ui-sidebar__footer {
@@ -503,22 +530,38 @@
 }
 
 .app-shell {
+  position: relative;
+  overflow: hidden;
   flex: 1 1 auto;
   min-height: 0;
-  display: flex;
-  flex-direction: row;
-  align-items: stretch;
 }
 .app-main {
-  flex: 1 1 auto;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-.app-main > .workspace,
-.app-main > .home-pane,
-.app-main > .device {
+.app-main__shift {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+.app-surface {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+.app-surface > .workspace,
+.app-surface > .home-pane,
+.app-surface > .device {
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -686,6 +729,12 @@
   color: var(--ink-2);
   cursor: default;
   outline: none;
+}
+.ui-dropdown__item {
+  transition: transform 100ms var(--ease-out), background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.ui-dropdown__item:active {
+  transform: scale(var(--press-scale));
 }
 .ui-dropdown__item[data-highlighted] {
   background: var(--surface-hover);
@@ -1145,7 +1194,7 @@ button.model.selected {
   font-family: var(--prose);
   letter-spacing: 0;
   text-transform: none;
-  color: var(--bg);
+  color: var(--accent-ink);
   background: var(--accent);
   border-color: transparent;
 }
@@ -1161,10 +1210,31 @@ button.model.selected {
   font-size: var(--text-sm);
   font-weight: 500;
 }
+.mode-chip {
+  position: relative;
+}
+.mode-chip__label,
+.ui-tabs__label {
+  position: relative;
+  z-index: 1;
+}
+.ui-active-indicator {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.ui-active-indicator[data-tone="pane"] {
+  background: color-mix(in srgb, var(--accent) 24%, var(--panel));
+}
+.ui-active-indicator[data-tone="settings"] {
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+}
 .mode-chip[data-state="active"] {
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 24%, var(--panel));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+  background: transparent;
 }
 .doc-tabs-list {
   display: flex;
@@ -1185,6 +1255,7 @@ button.model.selected {
   display: contents;
 }
 .settings-nav .ui-tabs__trigger {
+  position: relative;
   text-align: left;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
@@ -1192,8 +1263,8 @@ button.model.selected {
   width: 100%;
 }
 .settings-nav .ui-tabs__trigger[data-state="active"] {
-  border-color: var(--line);
-  background: var(--panel-raised);
+  border-color: transparent;
+  background: transparent;
   color: var(--ink);
 }
 .settings-shell--compact .settings-nav .ui-tabs__trigger {
