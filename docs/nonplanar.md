@@ -247,8 +247,8 @@ written.
 | Part | Printer | Mode | Planar time | Curved time | Worst slope | Collisions (extruding / travel) | Fallback |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `examples/nonplanar-demo.stl` (80 × 50 × 16.1 mm) | `bambu_lab_a1` | `off` | 1 h 11 m | — | — | — | no (planar) |
-| `examples/nonplanar-demo.stl` | `bambu_lab_a1` | `curved-tops` | 1 h 11 m | — | — | — | — |
-| `examples/nonplanar-demo.stl` | `bambu_lab_a1` | `auto` | 1 h 11 m | 1 h 11 m | 5.99° | 6 / 2534 | yes |
+| `examples/nonplanar-demo.stl` | `bambu_lab_a1` | `curved-tops` | 1 h 11 m | 1 h 11 m (planar baseline) | 5.99° | 6 / 2534 | yes |
+| `examples/nonplanar-demo.stl` | `bambu_lab_a1` | `auto` | 1 h 11 m | 1 h 11 m (planar baseline) | 5.99° | 6 / 2534 | yes |
 | _to be filled_ | | | | | | | |
 
 ## What it is not
