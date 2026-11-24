@@ -531,6 +531,16 @@ type ShellExtrusionChain = Vec<Option<[f64; 3]>>;
 /// Same-XY layer hops are not nozzle tilt in XY (see curved-band slope safety).
 const VERTICAL_STEP_HORIZ_MM: f64 = 0.05;
 
+/// Shortest horizontal run a measured bead slope may span.
+///
+/// Below one line width the ratio `dz/horiz` is a polygon vertex, not a direction:
+/// a pole ring on a sphere, the last segment before a contour closes, or the
+/// quarter-layer step where a row of beads passes from the mapped shell to the
+/// planar one. The toolhead never travels that way for longer than a bead is wide,
+/// and the swept head check (0.1 mm clearance) owns clearance there. Counting them
+/// read 25.8 deg at the 24 mm ball's pole while every real bead sat at 7.6.
+const BEAD_SLOPE_MIN_RUN_MM: f64 = 0.4;
+
 fn max_slope_on_moves(moves: &[ShellExtrusionChain], across_layers: bool) -> f64 {
     let mut max_deg = 0.0f64;
     let mut prev: Option<[f64; 3]> = None;
@@ -552,7 +562,7 @@ fn max_slope_on_moves(moves: &[ShellExtrusionChain], across_layers: bool) -> f64
                     prev = Some(point);
                     continue;
                 }
-                if horiz > VERTICAL_STEP_HORIZ_MM {
+                if horiz > BEAD_SLOPE_MIN_RUN_MM {
                     let deg = dz.atan2(horiz).abs().to_degrees();
                     max_deg = max_deg.max(deg);
                 }
@@ -683,7 +693,7 @@ pub fn max_extrusion_slope_in_box(gcode: &str, min: [f64; 3], max: [f64; 3]) -> 
             let dy = point[1] - prev[1];
             let dz = point[2] - prev[2];
             let horiz = (dx * dx + dy * dy).sqrt();
-            if horiz > VERTICAL_STEP_HORIZ_MM {
+            if horiz > BEAD_SLOPE_MIN_RUN_MM {
                 any = true;
                 max_deg = max_deg.max(dz.atan2(horiz).abs().to_degrees());
             }
@@ -700,8 +710,9 @@ pub fn max_extrusion_slope_above_z(gcode: &str, z_min: f64) -> Option<f64> {
     let mut any = false;
     for raw in gcode.lines() {
         let line = raw.trim();
-        if line.starts_with("G0") && (line.contains('X') || line.contains('Y')) {
-            prev_extrusion = None;
+        let positional = line.starts_with("G0") || line.starts_with("G1");
+        if !positional && !line.contains('X') && !line.contains('Y') && !line.contains('Z') {
+            continue;
         }
         if let Some(x) = parse_word(line, 'X') {
             position[0] = x;
@@ -716,6 +727,13 @@ pub fn max_extrusion_slope_above_z(gcode: &str, z_min: f64) -> Option<f64> {
             && line.contains('E')
             && parse_word(line, 'E').unwrap_or(0.0) > 1e-9;
         if !extruding {
+            // A slope is only defined along a path. A move that carries the nozzle
+            // somewhere else without extruding — a travel, a retract, a layer change
+            // — ends the path; measuring across it compares the end of one contour
+            // with the start of the next and reads the layer step as a slope. That
+            // artefact reported 25.8 deg on the 24 mm ball while every printed bead
+            // sat at 7.6.
+            prev_extrusion = None;
             continue;
         }
         let point = position;
@@ -729,7 +747,7 @@ pub fn max_extrusion_slope_above_z(gcode: &str, z_min: f64) -> Option<f64> {
                 let dy = point[1] - prev[1];
                 let dz = point[2] - prev[2];
                 let horiz = (dx * dx + dy * dy).sqrt();
-                if horiz > VERTICAL_STEP_HORIZ_MM {
+                if horiz > BEAD_SLOPE_MIN_RUN_MM {
                     any = true;
                     max_deg = max_deg.max(dz.atan2(horiz).abs().to_degrees());
                 }

@@ -326,7 +326,7 @@ mod auto_placement {
             band.overhang_angle_before_deg.unwrap()
         );
         use crate::safety::max_curved_band_extrusion_slope_deg;
-        let global_cap = max_curved_band_extrusion_slope_deg(&mapped, &field).unwrap_or(0.0);
+        let global_cap = max_curved_band_extrusion_slope_deg(&mapped, field).unwrap_or(0.0);
         assert!(
             global_cap <= opts.max_angle_deg + 0.6,
             "curved-band safety scanner should match PR #18 cap ({global_cap:.2}° > {:.1}°)",
