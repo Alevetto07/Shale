@@ -19,7 +19,16 @@ use shale_core::resolver::UserSettings;
 use shale_core::{Catalog, NonplanarMode, NonplanarOptions, ResourcePaths};
 
 const VARIANT: &str = "0.4 mm";
-const QUALITY: &str = "0_20mm_standard_bbl_a1";
+/// Quality process id per printer: Bambu's catalogue names them after the
+/// machine, so the X1 Carbon's 0.20 mm standard is not the A1's.
+fn quality_for(printer: &str) -> String {
+    match printer {
+        "bambu_lab_x1_carbon" => "0_20mm_standard_bbl_x1c".into(),
+        "bambu_lab_a1_mini" => "0_20mm_standard_bbl_a1m".into(),
+        "bambu_lab_p1s" => "0_20mm_standard_bbl_p1s".into(),
+        _ => "0_20mm_standard_bbl_a1".into(),
+    }
+}
 const MATERIAL: &str = "bambu_lab_pla_basic";
 
 fn configured() -> bool {
@@ -35,7 +44,7 @@ fn demo_lid() -> PathBuf {
 
 fn slice_lid(printer: &str, tag: &str) -> (String, SliceOutcome) {
     let mesh: TriangleMesh =
-        mesh::load_mesh(&demo_lid(), 1.0).expect("load examples/nonplanar-demo.stl");
+        mesh::load_mesh(&demo_lid()).expect("load examples/nonplanar-demo.stl");
     let transform = mesh::place_on_bed(&mesh, 256.0, 256.0, false);
     let placed = vec![PlacedModel {
         name: "nonplanar-demo".into(),
@@ -64,7 +73,7 @@ fn slice_lid(printer: &str, tag: &str) -> (String, SliceOutcome) {
         &engine,
         printer,
         Some(VARIANT.into()),
-        Some(QUALITY.into()),
+        Some(quality_for(printer)),
         &[Some(MATERIAL.into())],
         settings,
         &placed,
@@ -114,39 +123,48 @@ fn curved_extruding_moves(gcode: &str) -> usize {
     count
 }
 
-/// Z decreases along the toolpath inside one layer: the head would dig back into
-/// material it has just laid on the same level surface.
+/// Extruding into XY where the file already put material more than
+/// [`INVERSION_DROP_MM`] higher: the nozzle digs back into the part it is
+/// building. This is the repo's own definition (see
+/// `nonplanar_z_inversions.rs`); counting descending Z along a tilted level
+/// surface would flag every legitimate contour, because a sheared layer rises
+/// and falls as it goes round the part.
 fn z_inversions(gcode: &str) -> usize {
-    let mut pos_z = 0.0f64;
-    let mut high_water = 0.0f64;
-    let mut layer_started = false;
-    let mut inversions = 0usize;
-    for line in gcode.lines() {
-        let line = line.trim();
-        if line.starts_with(";LAYER:") {
-            layer_started = true;
-            high_water = 0.0;
-            continue;
-        }
-        if !layer_started || !line.starts_with("G1") || !line.contains('E') {
-            continue;
-        }
-        if let Some(idx) = line.find('Z') {
-            let rest = &line[idx + 1..];
-            let end = rest
-                .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')
-                .unwrap_or(rest.len());
-            if let Ok(z) = rest[..end].parse::<f64>() {
-                pos_z = z;
+    use std::collections::HashMap;
+    const CELL_MM: f32 = 0.4;
+    const SAMPLE_MM: f32 = 0.25;
+    const INVERSION_DROP_MM: f32 = 0.1;
+    let toolpath = shale_core::gcode::parse_toolpaths(gcode);
+    let mut printed: HashMap<(i32, i32), f32> = HashMap::new();
+    let mut hits = 0usize;
+    let cell = |x: f32, y: f32| ((x / CELL_MM).floor() as i32, (y / CELL_MM).floor() as i32);
+    for layer in &toolpath.layers {
+        for poly in &layer.polylines {
+            if poly.kind == "travel" || poly.points.len() < 2 {
+                continue;
+            }
+            for pair in poly.points.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                let dx = b[0] - a[0];
+                let dy = b[1] - a[1];
+                let len = (dx * dx + dy * dy).sqrt();
+                let steps = ((len / SAMPLE_MM).ceil() as usize).max(1);
+                for s in 0..=steps {
+                    let t = s as f32 / steps as f32;
+                    let x = a[0] + dx * t;
+                    let y = a[1] + dy * t;
+                    let z = a[2] + (b[2] - a[2]) * t;
+                    let seen = printed.entry(cell(x, y)).or_insert(f32::NEG_INFINITY);
+                    if z < *seen - INVERSION_DROP_MM {
+                        hits += 1;
+                    } else if z > *seen {
+                        *seen = z;
+                    }
+                }
             }
         }
-        if pos_z > high_water + 0.002 {
-            high_water = pos_z;
-        } else if pos_z < high_water - 0.05 {
-            inversions += 1;
-        }
     }
-    inversions
+    hits
 }
 
 fn assert_curved_lid(printer: &str, tag: &str) {
