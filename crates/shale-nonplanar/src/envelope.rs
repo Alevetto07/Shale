@@ -365,6 +365,28 @@ mod tests {
     }
 
     #[test]
+    fn envelope_limit_is_non_decreasing() {
+        // `collision`'s block pruning assumes the allowed material height never
+        // drops as the distance grows: it rejects a whole tile from the height at
+        // the tile's nearest edge. A head whose duct is shorter than its nozzle,
+        // or whose body steps inside the duct, would break that.
+        for id in envelope_catalogue() {
+            let env = require_head_envelope(id).expect(id);
+            let mut previous = env.max_material_height_at(0.0);
+            let mut d = 0.0;
+            while d <= 60.0 {
+                d += 0.01;
+                let limit = env.max_material_height_at(d);
+                assert!(
+                    limit >= previous - 1e-9,
+                    "{id}: limit dropped from {previous} to {limit} at d = {d}"
+                );
+                previous = limit;
+            }
+        }
+    }
+
+    #[test]
     fn require_head_envelope_reports_unsupported_printers() {
         let err = require_head_envelope("creality_k1").expect_err("unsupported printer");
         let text = err.to_string();
