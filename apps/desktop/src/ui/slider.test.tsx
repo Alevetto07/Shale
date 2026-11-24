@@ -34,7 +34,7 @@ describe("Slider", () => {
     const { rerender } = render(
       <Slider label="Max angle" value={[45]} min={0} max={90} step={1} unit="°" inputDigits={0} onValueChange={() => undefined} />,
     );
-    expect(screen.getByRole("button", { name: "Max angle exact value" }).textContent).toBe("45°");
+    expect(screen.getByRole("button", { name: "Max angle exact value" }).getAttribute("data-value")).toBe("45°");
 
     rerender(
       <Slider
@@ -48,6 +48,6 @@ describe("Slider", () => {
         onValueChange={() => undefined}
       />,
     );
-    expect(screen.getByRole("button", { name: "Layer height exact value" }).textContent).toBe("0.20 mm");
+    expect(screen.getByRole("button", { name: "Layer height exact value" }).getAttribute("data-value")).toBe("0.20 mm");
   });
 });

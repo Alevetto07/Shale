@@ -1,9 +1,8 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
-import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, type ReactNode } from "react";
 import { Search } from "lucide-react";
-import { springPanel } from "./springs";
+import { isPaletteShortcut } from "./motion";
 import { cn } from "./cn";
 
 export interface CommandPaletteItem {
@@ -35,7 +34,6 @@ export function CommandPalette({
   items,
   placeholder = "Search commands…",
 }: CommandPaletteProps) {
-  const reduce = useReducedMotion();
   const groups = useMemo(() => {
     const order: string[] = [];
     const map = new Map<string, CommandPaletteItem[]>();
@@ -52,7 +50,7 @@ export function CommandPalette({
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "k" && (event.metaKey || event.ctrlKey)) {
+      if (isPaletteShortcut(event)) {
         event.preventDefault();
         onOpenChange(false);
       }
@@ -67,23 +65,12 @@ export function CommandPalette({
         <Dialog.Overlay className="ui-command-palette__overlay" />
         <Dialog.Content className="ui-command-palette__dialog" aria-describedby={undefined}>
           <Dialog.Title className="visually-hidden">Command palette</Dialog.Title>
-          <motion.div
-            className="ui-command-palette__motion"
-            initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.98, y: -6 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.98, y: -4 }}
-            transition={reduce ? { duration: 0 } : springPanel}
-          >
+          <div className="ui-command-palette__motion">
             <Command className="ui-command-palette" label="Command palette" loop>
-              <motion.div
-                className="ui-command-palette__search"
-                initial={false}
-                animate={{ opacity: 1 }}
-                transition={reduce ? { duration: 0 } : springPanel}
-              >
+              <div className="ui-command-palette__search">
                 <Search size={16} strokeWidth={1.5} aria-hidden />
                 <Command.Input placeholder={placeholder} autoFocus />
-              </motion.div>
+              </div>
               <div className="ui-command-palette__scroll">
                 <Command.List className="ui-command-palette__list">
                   <Command.Empty className="ui-command-palette__empty">No matching commands.</Command.Empty>
@@ -124,7 +111,7 @@ export function CommandPalette({
                 </span>
               </footer>
             </Command>
-          </motion.div>
+          </div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

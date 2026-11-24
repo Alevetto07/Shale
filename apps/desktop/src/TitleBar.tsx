@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "./platform/window";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import mark from "./brand/shale-mark-dark.svg";
+import markDark from "./brand/shale-mark-dark.svg";
+import markLight from "./brand/shale-mark-light.svg";
 
 function TitleBarIcon({ kind }: { kind: "minimize" | "maximize" | "restore" | "close" }) {
   if (kind === "close") {
@@ -80,7 +81,8 @@ export function TitleBar({
   return (
     <header className="titlebar" data-tauri-drag-region>
       <div className="brand" data-tauri-drag-region onDoubleClick={onCaptionDoubleClick}>
-        <img className="brand-mark" src={mark} alt="" data-tauri-drag-region draggable={false} />
+        <img className="brand-mark brand-mark--dark" src={markDark} alt="" data-tauri-drag-region draggable={false} />
+        <img className="brand-mark brand-mark--light" src={markLight} alt="" data-tauri-drag-region draggable={false} />
         <p className="wordmark" data-tauri-drag-region>
           Shale
         </p>

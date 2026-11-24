@@ -1,7 +1,9 @@
-import { motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import type { KeyboardEventHandler, ReactNode } from "react";
 import { cn } from "./cn";
-import { springPanel, springTab } from "./springs";
+import { EASE_OUT, springTab } from "./motion";
+import { useSidebarChrome } from "./shell-frame";
+import { useReducedMotion } from "./use-reduced-motion";
 
 export function Sidebar({
   className,
@@ -12,26 +14,35 @@ export function Sidebar({
   children: ReactNode;
   collapsed?: boolean;
 }) {
-  const reduce = useReducedMotion();
+  const chrome = useSidebarChrome();
+  const isCollapsed = chrome?.collapsed ?? collapsed ?? false;
+  const settled = chrome?.settled ?? true;
   return (
-    <motion.aside
+    <aside
       className={cn("ui-sidebar", className)}
-      data-collapsed={collapsed ? "1" : "0"}
+      data-collapsed={isCollapsed ? "1" : "0"}
+      data-settled={settled ? "1" : "0"}
       aria-label="Projects"
-      initial={false}
-      animate={{ width: collapsed ? 52 : 268 }}
-      transition={reduce ? { duration: 0 } : springPanel}
     >
       {children}
-    </motion.aside>
+    </aside>
   );
 }
 
-export function SidebarHeader({ title, actions }: { title: string; actions?: ReactNode }) {
+export function SidebarHeader({
+  title,
+  leading,
+  actions,
+}: {
+  title: string;
+  leading?: ReactNode;
+  actions?: ReactNode;
+}) {
   return (
     <div className="ui-sidebar__header">
-      <h2 className="ui-sidebar__title">{title}</h2>
-      {actions ? <div className="ui-sidebar__header-actions">{actions}</div> : null}
+      {leading}
+      <h2 className="ui-sidebar__title ui-sidebar__fade">{title}</h2>
+      {actions ? <div className="ui-sidebar__header-actions ui-sidebar__fade">{actions}</div> : null}
     </div>
   );
 }
@@ -51,11 +62,20 @@ export function SidebarSection({
     <section className="ui-sidebar__section">
       <h3 className="ui-sidebar__section-label">
         {icon ? <span className="ui-sidebar__section-icon">{icon}</span> : null}
-        <span>{label}</span>
-        {count != null ? <span className="ui-sidebar__section-count">{count}</span> : null}
+        <span className="ui-sidebar__fade">{label}</span>
+        {count != null ? <span className="ui-sidebar__section-count ui-sidebar__fade">{count}</span> : null}
       </h3>
       <div className="ui-sidebar__scroll">{children}</div>
     </section>
+  );
+}
+
+/** List wrapper so additions and removals ease their siblings instead of jumping. */
+export function SidebarRows({ children }: { children: ReactNode }) {
+  return (
+    <AnimatePresence initial={false} mode="popLayout">
+      {children}
+    </AnimatePresence>
   );
 }
 
@@ -71,6 +91,8 @@ export function SidebarRow({
   className,
   disabled,
   hint,
+  indicatorId,
+  recent,
 }: {
   title: string;
   subtitle?: string;
@@ -83,6 +105,9 @@ export function SidebarRow({
   className?: string;
   disabled?: boolean;
   hint?: string;
+  /** Shared layout id for a travelling selection bar. One id per list. */
+  indicatorId?: string;
+  recent?: boolean;
 }) {
   const reduce = useReducedMotion();
   return (
@@ -93,20 +118,26 @@ export function SidebarRow({
       title={hint}
       data-selected={selected ? "1" : "0"}
       data-dimmed={dimmed ? "1" : "0"}
+      data-recent={recent ? "1" : undefined}
       onClick={onClick}
       onKeyDown={onKeyDown}
-      whileTap={reduce ? undefined : { scale: 0.98 }}
-      transition={reduce ? undefined : springTab}
+      layout={reduce ? false : "position"}
+      initial={false}
+      exit={reduce ? { opacity: 1 } : { opacity: 0, transition: { duration: 0.15, ease: [...EASE_OUT] } }}
     >
       {selected ? (
-        <motion.span
-          className="ui-sidebar__active-bar"
-          layoutId="sidebar-active-indicator"
-          transition={reduce ? { duration: 0 } : springTab}
-        />
+        reduce || !indicatorId ? (
+          <span className="ui-sidebar__active-bar" />
+        ) : (
+          <motion.span
+            className="ui-sidebar__active-bar"
+            layoutId={indicatorId}
+            transition={springTab}
+          />
+        )
       ) : null}
       {leading ? <span className="ui-sidebar__row-leading">{leading}</span> : <span className="ui-sidebar__bullet" />}
-      <span className="ui-sidebar__row-text">
+      <span className="ui-sidebar__row-text ui-sidebar__fade">
         <span className="ui-sidebar__row-title">{title}</span>
         {subtitle ? <span className="ui-sidebar__row-sub">{subtitle}</span> : null}
       </span>

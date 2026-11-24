@@ -14,6 +14,7 @@
   --line: rgba(20, 24, 32, 0.14);
   --line-strong: rgba(20, 24, 32, 0.28);
   --accent: #1d5fd6;
+  --accent-ink: #ffffff;
   --accent-soft: rgba(29, 95, 214, 0.12);
   --accent-muted: rgba(29, 95, 214, 0.55);
   --danger: #b42318;
@@ -42,6 +43,13 @@
 
 [data-ui-theme="lunar"] .titlebar-buttons .titlebar-close:hover {
   color: #fff;
+}
+
+[data-ui-theme="lunar"] .brand-mark--dark {
+  display: none;
+}
+[data-ui-theme="lunar"] .brand-mark--light {
+  display: block;
 }
 
 [data-ui-theme="lunar"] .plate-field {

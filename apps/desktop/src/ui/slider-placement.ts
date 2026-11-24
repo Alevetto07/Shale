@@ -18,6 +18,27 @@ export function sliderValueOnFill(thumbPercent: number, labelPercent: number): b
   return labelPercent < thumbPercent - 0.5;
 }
 
+/** Split a readout so NumberFlow can spin the digits and leave the unit still. */
+export function sliderFlowParts(label: string): {
+  prefix: string;
+  value: number;
+  suffix: string;
+  digits: number;
+} | null {
+  const match = label.match(/^(.*?)(-?\d+(?:\.\d+)?)(.*)$/);
+  if (!match) return null;
+  const raw = match[2];
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return null;
+  const fraction = raw.split(".")[1];
+  return {
+    prefix: match[1],
+    value,
+    suffix: match[3],
+    digits: fraction ? fraction.length : 0,
+  };
+}
+
 export function formatSliderLabel(
   value: number,
   inputDigits: number,

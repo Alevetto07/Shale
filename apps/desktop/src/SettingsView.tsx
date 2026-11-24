@@ -8,7 +8,8 @@ import { resetSetupWizard } from "./setup-wizard";
 import { UiStylePicker } from "./UiStylePicker";
 import type { UiStyleId } from "./ui-styles";
 import { Button, Input, Select, Tabs, TabsContent, TabsList, TabsTrigger, TextField } from "./ui";
-import { springSnappy } from "./ui/springs";
+import { ActiveIndicator } from "./ui/active-indicator";
+import { EASE_OUT } from "./ui/motion";
 import { useReducedMotion } from "./ui/use-reduced-motion";
 
 export function SettingsView({
@@ -87,16 +88,17 @@ export function SettingsView({
         <TabsList className="settings-nav" aria-label="Settings sections">
           {sections.map((item) => (
             <TabsTrigger key={item.id} value={item.id}>
-              {item.label}
+              {active.id === item.id ? <ActiveIndicator layoutId="settings-nav" tone="settings" /> : null}
+              <span className="ui-tabs__label">{item.label}</span>
             </TabsTrigger>
           ))}
         </TabsList>
         <TabsContent value={active.id} className="settings-body">
           <motion.div
             key={active.id}
-            initial={reduce ? false : { opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={reduce ? { duration: 0 } : springSnappy}
+            initial={reduce ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={reduce ? { duration: 0 } : { duration: 0.12, ease: [...EASE_OUT] }}
           >
             <header className="settings-heading">
               <h2>{active.label}</h2>
@@ -209,7 +211,9 @@ export function SettingsView({
               <div className="settings-group about-block">
                 <p className="credit">
                   Shale {version} — AGPL-3.0-or-later desktop slicer for Bambu Lab printers. CuraEngine
-                  runs as a separate process; profiles may come from Bambu Studio or Cura resources.
+                  runs unmodified as a separate process; profiles may come from Bambu Studio or Cura resources.
+                  Space Grotesk, Geist Mono, and Inter are SIL Open Font License 1.1. Motion, Radix UI, Sonner,
+                  cmdk, Number Flow, and clsx are MIT. Lucide is ISC.
                 </p>
               </div>
             )}

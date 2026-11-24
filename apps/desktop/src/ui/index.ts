@@ -14,7 +14,7 @@ export { Sheet } from "./sheet";
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "./tabs";
 export { Meter } from "./meter";
 export { TooltipProvider } from "./tooltip-provider";
-export { Sidebar, SidebarHeader, SidebarSection, SidebarRow, SidebarFooter } from "./sidebar";
+export { Sidebar, SidebarHeader, SidebarSection, SidebarRow, SidebarRows, SidebarFooter } from "./sidebar";
 export { cn } from "./cn";
 export { springSnappy, springTab, springPanel } from "./springs";
 export { useReducedMotion } from "./use-reduced-motion";

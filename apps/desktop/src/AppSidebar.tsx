@@ -22,6 +22,7 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarRow,
+  SidebarRows,
   SidebarSection,
 } from "./ui";
 import { formatRelativeTime } from "./ui/format-time";
@@ -36,7 +37,6 @@ export interface DoneSliceRow {
 
 export interface AppSidebarProps {
   collapsed: boolean;
-  onToggleCollapsed: () => void;
   recents: RecentProject[];
   recentsRead: boolean;
   selectedRecentPath?: string | null;
@@ -122,16 +122,6 @@ export function AppSidebar(props: AppSidebarProps) {
                 <PanelLeftClose size={16} strokeWidth={1.5} />
               </IconButton>
             ) : null}
-            <IconButton
-              label={props.collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              onClick={props.onToggleCollapsed}
-            >
-              <PanelLeftClose
-                size={16}
-                strokeWidth={1.5}
-                style={{ transform: props.collapsed ? "scaleX(-1)" : undefined }}
-              />
-            </IconButton>
           </>
         }
       />
@@ -139,7 +129,7 @@ export function AppSidebar(props: AppSidebarProps) {
       <div className="ui-sidebar__primary">
         <Button variant="pill" size="md" className="ui-btn--block" onClick={props.onNew}>
           <Plus size={16} strokeWidth={1.5} />
-          New project
+          <span className="ui-sidebar__fade">New project</span>
         </Button>
       </div>
 
@@ -149,23 +139,27 @@ export function AppSidebar(props: AppSidebarProps) {
         ) : props.recents.length === 0 ? (
           <p className="ui-sidebar__empty">No recent projects yet.</p>
         ) : (
-          props.recents.map((entry) => (
-            <SidebarRow
-              key={entry.path}
-              title={entry.name}
-              subtitle={recentSubtitle(entry)}
-              dimmed={entry.missing}
-              selected={props.selectedRecentPath === entry.path}
-              leading={entry.path.includes("://") ? <Globe size={14} strokeWidth={1.5} /> : undefined}
-              onClick={() => props.onOpenRecent(entry.path)}
-              onKeyDown={(event) => {
-                if (event.key === "Delete" || event.key === "Backspace") {
-                  event.preventDefault();
-                  props.onForgetRecent(entry.path);
-                }
-              }}
-            />
-          ))
+          <SidebarRows>
+            {props.recents.map((entry) => (
+              <SidebarRow
+                key={entry.path}
+                recent
+                title={entry.name}
+                subtitle={recentSubtitle(entry)}
+                dimmed={entry.missing}
+                selected={props.selectedRecentPath === entry.path}
+                indicatorId="sidebar-recent"
+                leading={entry.path.includes("://") ? <Globe size={14} strokeWidth={1.5} /> : undefined}
+                onClick={() => props.onOpenRecent(entry.path)}
+                onKeyDown={(event) => {
+                  if (event.key === "Delete" || event.key === "Backspace") {
+                    event.preventDefault();
+                    props.onForgetRecent(entry.path);
+                  }
+                }}
+              />
+            ))}
+          </SidebarRows>
         )}
       </SidebarSection>
 
@@ -173,21 +167,24 @@ export function AppSidebar(props: AppSidebarProps) {
         {props.plates.length === 0 ? (
           <p className="ui-sidebar__empty">Open a project to see plates.</p>
         ) : (
-          props.plates.map((plate) => (
-            <SidebarRow
-              key={plate.index}
-              title={plate.name || `Plate ${plate.index + 1}`}
-              subtitle={
-                plate.models === 0
-                  ? "empty"
-                  : plate.models === 1
-                    ? "1 part"
-                    : `${plate.models} parts`
-              }
-              selected={props.activePlate === plate.index}
-              onClick={() => props.onShowPlate?.(plate.index)}
-            />
-          ))
+          <SidebarRows>
+            {props.plates.map((plate) => (
+              <SidebarRow
+                key={plate.index}
+                title={plate.name || `Plate ${plate.index + 1}`}
+                subtitle={
+                  plate.models === 0
+                    ? "empty"
+                    : plate.models === 1
+                      ? "1 part"
+                      : `${plate.models} parts`
+                }
+                selected={props.activePlate === plate.index}
+                indicatorId="sidebar-plate"
+                onClick={() => props.onShowPlate?.(plate.index)}
+              />
+            ))}
+          </SidebarRows>
         )}
       </SidebarSection>
 
@@ -227,13 +224,13 @@ export function AppSidebar(props: AppSidebarProps) {
       <SidebarFooter>
         <Button variant="ghost" size="sm" onClick={props.onSettings}>
           <Settings size={16} strokeWidth={1.5} />
-          <span className="ui-sidebar__footer-label">Settings</span>
+          <span className="ui-sidebar__footer-label ui-sidebar__fade">Settings</span>
         </Button>
         <Button variant="ghost" size="sm" onClick={() => setStyleOpen((value) => !value)}>
-          <span className="ui-sidebar__footer-label">{uiStyleLabel(props.uiStyle)}</span>
+          <span className="ui-sidebar__footer-label ui-sidebar__fade">{uiStyleLabel(props.uiStyle)}</span>
         </Button>
         <Button variant="ghost" size="sm" onClick={props.onAbout}>
-          <span className="ui-sidebar__footer-label">About</span>
+          <span className="ui-sidebar__footer-label ui-sidebar__fade">About</span>
         </Button>
       </SidebarFooter>
 
