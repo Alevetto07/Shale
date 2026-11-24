@@ -244,6 +244,41 @@ fn plan_underside(
         *next_surface += 1;
         return;
     }
+    // A horizontal underside gains nothing from a tilt this pipeline can
+    // deliver. The band lifts the underside in deformed space and the inverse
+    // map restores it in physical Z, so the printed solid and its toolpath stay
+    // planar; measured on examples/bridge-overhang.stl, `--nonplanar auto` with
+    // both overhang bands enabled produced the same 3.645059 m of filament and
+    // the same 1680 s estimate as `--nonplanar off` (0 flattened islands), while
+    // the band's own z_band bookkeeping failed the below-band equivalence audit.
+    // Claiming a tilt here is a promise the mode cannot keep, so report the
+    // limit instead: a flat bridge/cantilever is spanned by the slicer's bridge
+    // path, not by non-planar nozzle motion.
+    if before >= 89.0 {
+        surfaces.push(PlannedSurface {
+            id: *next_surface,
+            feature_id: feature.id,
+            kind,
+            enabled: false,
+            min: feature.min,
+            max: feature.max,
+            tilt_deg: 0.0,
+            bearing_deg: span_bearing(feature),
+            extent_mm: [
+                feature.max[0] - feature.min[0],
+                feature.max[1] - feature.min[1],
+            ],
+            overhang_angle_before_deg: Some(before),
+            overhang_angle_after_deg: Some(before),
+            overhang_angle_measured_after_deg: None,
+            overhang_slope_measured_from_horizontal_deg: None,
+            reason: format!(
+                "horizontal underside {before:.1}° — a ±{max_angle_deg:.1}° tilt round-trips to a planar toolpath; bridge printing already spans it"
+            ),
+        });
+        *next_surface += 1;
+        return;
+    }
     let headroom = (before - DEFAULT_OVERHANG_TARGET).max(0.0);
     let tilt = headroom.min(max_angle_deg);
     let enabled = tilt >= 1.0 && max_angle_deg >= 1.0;

@@ -1,4 +1,18 @@
 //! Apply planned tilts to the height grid (before deform).
+//!
+//! Top bands are deliberately a no-op here. The deform already flattens the
+//! model's own top in deformed space and the inverse map restores physical Z,
+//! and that round trip is what makes the slicer cut in-layer sloped toolpaths.
+//! Adding a slope on top of the flat target (the old `z_top_smooth += dz`
+//! behaviour) replaced the target with a tilting plane: on examples/t-wing.stl
+//! the deck lost a layer, 1.5 mm of geometry came out above a 24.0 mm part
+//! (Z 25.48, a head-envelope violation) and the toolpath stayed planar — the
+//! "auto changes nothing" symptom. The plan still decides *whether* a top
+//! island is worth flattening; the field itself keeps the default deform.
+//!
+//! Underside bands are untouched: they still write the tilted column. Whether a
+//! real underside tilt can survive the inverse map is the field rework's
+//! business (see M1-C-REPORT.md, "Requests to other agents").
 
 use crate::height_field::HeightGrid;
 
@@ -20,12 +34,10 @@ pub fn apply_surface_to_grid(grid: &mut HeightGrid, surface: &PlannedSurface, la
             }
             let i = iy * grid.width + ix;
             let along = (x - surface.min[0]) * ux + (y - surface.min[1]) * uy;
-            let dz = along * tan_tilt;
             match surface.kind {
                 PlannedSurfaceKind::CurvedTopBand | PlannedSurfaceKind::SlopedTopBand => {
-                    if let Some(z) = grid.z_top_smooth[i] {
-                        grid.z_top_smooth[i] = Some(z + dz);
-                    }
+                    // No slope injection: the deform's flatten + inverse map already
+                    // turns this into an in-layer sloped toolpath (see module doc).
                 }
                 PlannedSurfaceKind::BridgeTiltBand
                 | PlannedSurfaceKind::CantileverTiltBand
