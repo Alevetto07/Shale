@@ -114,10 +114,25 @@ pub fn slice_pillar_beside_dome_sequential(
     printer_id: &str,
     tag: &str,
 ) -> (String, shale_nonplanar::NonplanarReport) {
+    slice_pillar_beside_dome_with_mode(catalog, engine, printer_id, tag, NonplanarMode::CurvedTops)
+}
+
+/// Same two-object deferred slice, in a chosen mode.
+///
+/// `Auto` here is the mode the CLI and the app use, so the time-bound and
+/// collision tests have to be able to ask for it instead of the blanket
+/// `CurvedTops`.
+pub fn slice_pillar_beside_dome_with_mode(
+    catalog: &Catalog,
+    engine: &dyn SlicingEngine,
+    printer_id: &str,
+    tag: &str,
+    mode: NonplanarMode,
+) -> (String, shale_nonplanar::NonplanarReport) {
     let (dome_mesh, dome_tf, pillar_mesh, pillar_tf) = pillar_beside_dome_parts();
     let pid = std::process::id();
     let options = NonplanarOptions {
-        mode: NonplanarMode::CurvedTops,
+        mode,
         max_angle_deg: 10.0,
         defer_post_pass: true,
         ..NonplanarOptions::default()
