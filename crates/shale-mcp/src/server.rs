@@ -16,9 +16,14 @@ use shale_core::{
     CustomInstruction, EngineProgress, Session, SettingsPatch, SupportParams, SupportPlan,
 };
 
+use crate::nonplanar::{self, NonplanarSettings};
+
 #[derive(Clone)]
 pub struct ShaleMcp {
     session: Arc<Mutex<Session>>,
+    /// Non-planar options last set through `set_settings`. `shale_core` has no
+    /// getter for them, and a tool must be able to report what the job will do.
+    nonplanar: Arc<Mutex<NonplanarSettings>>,
     // The handler macros read these. Derived Clone hides that from dead-code analysis.
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
@@ -30,6 +35,7 @@ impl ShaleMcp {
     pub fn new(session: Session) -> Self {
         Self {
             session: Arc::new(Mutex::new(session)),
+            nonplanar: Arc::new(Mutex::new(NonplanarSettings::default())),
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
         }
@@ -39,6 +45,13 @@ impl ShaleMcp {
         self.session
             .lock()
             .map_err(|_| McpError::internal_error("Shale session lock was poisoned", None))
+    }
+
+    fn nonplanar(&self) -> Result<NonplanarSettings, McpError> {
+        self.nonplanar
+            .lock()
+            .map(|guard| *guard)
+            .map_err(|_| McpError::internal_error("non-planar settings lock was poisoned", None))
     }
 }
 
@@ -50,6 +63,27 @@ fn ok_json(value: impl serde::Serialize) -> Result<CallToolResult, McpError> {
 
 fn fail(err: impl std::fmt::Display) -> McpError {
     McpError::internal_error(err.to_string(), None)
+}
+
+/// Slice summary plus the non-planar digest, `null` for a purely planar slice.
+///
+/// The raw `nonplanar_report` (and its preview float arrays, and the full
+/// violation list) is dropped: `nonplanar` carries the same decisions in a
+/// shape a model can read, and a fallback job otherwise answers with hundreds
+/// of kilobytes of collision hits.
+fn slice_summary_json(
+    summary: &shale_core::JobSliceSummary,
+) -> Result<serde_json::Value, McpError> {
+    let mut value = serde_json::to_value(summary).map_err(fail)?;
+    let digest = match &summary.nonplanar_report {
+        Some(report) => nonplanar::report_digest(report),
+        None => serde_json::Value::Null,
+    };
+    if let Some(object) = value.as_object_mut() {
+        object.remove("nonplanar_report");
+        object.insert("nonplanar".into(), digest);
+    }
+    Ok(value)
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -106,9 +140,13 @@ struct SettingsArgs {
     support_enable: Option<bool>,
     material_print_temperature: Option<f64>,
     material_bed_temperature: Option<f64>,
-    /// `off`, `curved-tops`, or `auto` (Bambu A1 only, experimental).
+    /// `off`, `curved-tops`, or `auto`. Non-planar needs one of the toolhead
+    /// envelopes (Bambu A1, A1 mini, P1P, P1S, X1C, H2D); other printers are
+    /// refused with the list, and an unknown mode is an error rather than a
+    /// silent planar slice.
     nonplanar_mode: Option<String>,
-    /// Maximum surface angle in degrees (default 10).
+    /// Maximum surface slope in degrees: greater than 0 and at most 10, the
+    /// clearance cap the shipped toolhead envelopes are calibrated for.
     nonplanar_max_angle_deg: Option<f64>,
     /// Error out instead of falling back to a planar slice when the curved
     /// pass cannot be verified.
@@ -306,26 +344,62 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Resolved setting values for the current job, with Cura's label and description where the definition has them."
+        description = "Resolved setting values for the current job, with Cura's label and description where the definition has them. The `nonplanar` block repeats the job's non-planar mode, angle and strict flag, and whether this printer has a toolhead envelope."
     )]
     fn get_settings(
         &self,
         Parameters(ExplainArgs { keys }): Parameters<ExplainArgs>,
     ) -> Result<CallToolResult, McpError> {
         let session = self.lock()?;
-        ok_json(session.get_settings(&keys).map_err(fail)?)
+        let nonplanar = self.nonplanar()?;
+        let view = session.get_settings(&keys).map_err(fail)?;
+        let mut value = serde_json::to_value(&view).map_err(fail)?;
+        value["nonplanar"] = nonplanar.to_json(&view.printer_id);
+        ok_json(value)
     }
 
     #[tool(
-        description = "Change the printer, profile, or the key slice settings (layer height, infill, supports, temperatures). Only fields you send are updated."
+        description = "Change the printer, profile, or the key slice settings (layer height, infill, supports, temperatures). Only fields you send are updated. Non-planar values are checked first: an unknown mode, an angle outside 0 < angle <= 10 degrees, or a curved mode on a printer without a toolhead envelope is an error, not a silent planar slice."
     )]
     fn set_settings(
         &self,
         Parameters(patch): Parameters<SettingsArgs>,
     ) -> Result<CallToolResult, McpError> {
         let mut session = self.lock()?;
+        let mut nonplanar = self.nonplanar()?;
+        if let Some(mode) = patch.nonplanar_mode.as_deref() {
+            nonplanar.mode = nonplanar::parse_mode(mode).map_err(fail)?;
+        }
+        if let Some(angle) = patch.nonplanar_max_angle_deg {
+            nonplanar::check_max_angle(angle).map_err(fail)?;
+            nonplanar.max_angle_deg = angle;
+        }
+        if let Some(strict) = patch.nonplanar_strict {
+            nonplanar.strict = strict;
+        }
+        // The envelope check needs the printer the job will end up on, and the
+        // patch may be changing it in this same call.
+        let printer_id = match patch.printer_id.as_deref() {
+            Some(id) => Some(id.to_string()),
+            None => session
+                .get_settings(&[])
+                .ok()
+                .map(|view| view.printer_id.clone()),
+        };
+        if let Some(printer_id) = printer_id {
+            nonplanar::check_printer(nonplanar, &printer_id).map_err(fail)?;
+        }
         session.set_settings(patch.into()).map_err(fail)?;
-        ok_json(session.get_settings(&[]).map_err(fail)?)
+        {
+            let mut stored = self.nonplanar.lock().map_err(|_| {
+                McpError::internal_error("non-planar settings lock was poisoned", None)
+            })?;
+            *stored = nonplanar;
+        }
+        let view = session.get_settings(&[]).map_err(fail)?;
+        let mut value = serde_json::to_value(&view).map_err(fail)?;
+        value["nonplanar"] = nonplanar.to_json(&view.printer_id);
+        ok_json(value)
     }
 
     #[tool(
@@ -366,7 +440,7 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Plan automatic non-planar curved-top bands for one model (no slice). Returns detected features, chosen surfaces with reasons, and preview overlay positions. Use nonplanar_mode=auto before slicing to apply the plan."
+        description = "Plan automatic non-planar curved-top bands for one model (no slice). Returns detected features, the chosen surfaces split into enabled and disabled with the reason for each, and a count of preview overlay triangles. Use nonplanar_mode=auto before slicing to apply the plan."
     )]
     fn plan_nonplanar(
         &self,
@@ -374,7 +448,7 @@ impl ShaleMcp {
     ) -> Result<CallToolResult, McpError> {
         let session = self.lock()?;
         let plan = session.plan_nonplanar_auto(query.id).map_err(fail)?;
-        ok_json(plan)
+        ok_json(nonplanar::plan_digest(&plan))
     }
 
     #[tool(
@@ -434,7 +508,7 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Slice the loaded models with CuraEngine, then compile custom instructions into the G-code. Returns time, filament, layer count, and warnings."
+        description = "Slice the loaded models with CuraEngine, then compile custom instructions into the G-code. Returns time, filament, layer count, and warnings, plus a `nonplanar` block: mode, planar fallback and its reasons, the safety report (slope, Z range, swept collisions, planar equivalence) and the auto plan's enabled and disabled surfaces."
     )]
     async fn slice(&self) -> Result<CallToolResult, McpError> {
         let session = Arc::clone(&self.session);
@@ -450,17 +524,16 @@ impl ShaleMcp {
         })
         .await
         .map_err(fail)??;
-        ok_json(summary)
+        ok_json(slice_summary_json(&summary)?)
     }
 
     #[tool(description = "Return the summary of the latest slice without slicing again.")]
     fn slice_summary(&self) -> Result<CallToolResult, McpError> {
         let session = self.lock()?;
-        ok_json(
-            session
-                .summary()
-                .ok_or_else(|| fail("nothing has been sliced yet"))?,
-        )
+        let summary = session
+            .summary()
+            .ok_or_else(|| fail("nothing has been sliced yet"))?;
+        ok_json(slice_summary_json(&summary)?)
     }
 
     #[tool(description = "Copy the latest G-code to a filesystem path.")]
