@@ -21,6 +21,7 @@ truck-stepio = "0.3"
 truck-topology = "0.6"
 zip = "2.2"
 rayon = "1.10"
+shale-nonplanar = { path = "../shale-nonplanar" }
 
 [dev-dependencies]
 tempfile = "3"

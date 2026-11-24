@@ -78,6 +78,10 @@ pub use supports::{
     SupportOverlay, SupportParams, SupportPlan, SupportRegion,
 };
 pub use value::Value;
+pub use shale_nonplanar::{
+    plan_auto_placement, safety_report_from_gcode, AutoPlacementReport, DetectionReport,
+    NonplanarMode, NonplanarOptions, NonplanarReport, PlannedSurface, SafetyReport, SurfacePreview,
+};
 
 /// Removes the pre-v0.1.2 per-install cache under `%LOCALAPPDATA%\\Shale\\cache`.
 pub fn remove_legacy_catalog_cache() {
@@ -101,3 +105,5 @@ pub fn integration_test_cache_dir(component: &str) -> std::path::PathBuf {
 }
 
 mod error;
+pub mod auto_spans;
+pub mod nonplanar_bridge;

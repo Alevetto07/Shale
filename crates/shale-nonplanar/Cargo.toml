@@ -1,0 +1,11 @@
+[package]
+name = "shale-nonplanar"
+version = "0.2.0"
+edition = "2021"
+description = "Curved-top non-planar slicing prep and post-pass for Shale (Bambu A1)"
+license.workspace = true
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

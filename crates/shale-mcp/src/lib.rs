@@ -5,6 +5,7 @@
 //! `--http` serves streamable HTTP and refuses any address that is not a
 //! loopback interface.
 
+mod nonplanar;
 mod server;
 
 use std::net::SocketAddr;

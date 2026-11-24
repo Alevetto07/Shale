@@ -3764,6 +3764,7 @@ fn preload_demo(
                 } else {
                     Vec::new()
                 },
+                ..UserSettings::default()
             },
             &placed,
             &[pause],

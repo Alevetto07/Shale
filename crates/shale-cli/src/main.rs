@@ -21,6 +21,7 @@ use shale_core::engine::{CliEngine, EngineProgress};
 use shale_core::job::{slice, PlacedModel};
 use shale_core::mesh::{load_mesh, place_on_bed};
 use shale_core::resolver::{ResolveRequest, UserSettings};
+use shale_core::{NonplanarMode, NonplanarOptions};
 
 const USAGE: &str = "\
 shale — slice a model without the window
@@ -39,6 +40,10 @@ slice options
   --infill PERCENT    sparse infill density
   --supports          enable support
   --set KEY=VALUE     any Cura setting, repeatable
+  --nonplanar MODE    experimental: off, curved-tops, or auto (Bambu printers with head envelope)
+  --nonplanar-strict  fail instead of falling back to a planar print when the curved pass cannot be verified
+  --nonplanar-underside  let auto plan underside tilt bands too (unverified: the part is above them)
+  --max-angle DEG     clearance limit for curved tops (default 10)
   -o, --output PATH   where to write the G-code
 
 environment
@@ -185,7 +190,24 @@ fn resolve_request(args: &[String], printer: &str) -> ResolveRequest {
             material_print_temperature: None,
             material_bed_temperature: None,
             extra,
+            nonplanar: nonplanar_options(args),
         },
+    }
+}
+
+fn nonplanar_options(args: &[String]) -> NonplanarOptions {
+    let mode = flag(args, "--nonplanar")
+        .and_then(|name| NonplanarMode::from_cli_name(&name))
+        .unwrap_or(NonplanarMode::Off);
+    let max_angle_deg = flag(args, "--max-angle")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10.0);
+    NonplanarOptions {
+        mode,
+        max_angle_deg,
+        strict: has(args, "--nonplanar-strict"),
+        underside_bands: has(args, "--nonplanar-underside"),
+        ..NonplanarOptions::default()
     }
 }
 
@@ -222,10 +244,20 @@ fn slice_command(args: &[String]) -> Result<(), String> {
         .ok_or_else(|| "slice needs a model path. Try `shale help`.".to_string())?
         .clone();
     let model_path = PathBuf::from(&model);
+
+    // Refuse a non-planar request on a printer with no toolhead envelope before
+    // doing any work: an explicit `--printer` is checked here, the catalogue
+    // default right after resolution.
+    let nonplanar = nonplanar_options(args);
+    if let Some(printer) = flag(args, "--printer") {
+        nonplanar.check_printer(&printer)?;
+    }
+
     let mesh = load_mesh(&model_path).map_err(|err| err.to_string())?;
 
     let catalog = catalog()?;
     let printer = flag(args, "--printer").unwrap_or(default_printer(&catalog)?);
+    nonplanar.check_printer(&printer)?;
     let request = resolve_request(args, &printer);
     let resolved = catalog.resolve(&request).map_err(|err| err.to_string())?;
     let width = resolved
@@ -300,5 +332,67 @@ fn slice_command(args: &[String]) -> Result<(), String> {
     }
     println!("filament {:.2} m", outcome.filament_metres);
     println!("layers   {}", outcome.toolpath.layers.len());
+    if std::env::var_os("SHALE_BENCH_SUMMARY").is_some() {
+        println!(
+            "bench_summary {}",
+            serde_json::json!({
+                "print_time_seconds": outcome.print_time_seconds,
+                "filament_m": outcome.filament_metres,
+                "layers": outcome.toolpath.layers.len(),
+            })
+        );
+    }
+    if let Some(report) = &outcome.nonplanar_report {
+        let collisions_extruding = report
+            .safety
+            .as_ref()
+            .map_or(0, |safety| safety.collisions_extruding);
+        let collisions_travel = report
+            .safety
+            .as_ref()
+            .map_or(0, |safety| safety.collisions_travel);
+        println!(
+            "nonplanar {} islands={} flattened={} equiv={} fallback={} collisions_extruding={} collisions_travel={}",
+            report.mode,
+            report.top_islands,
+            report.islands_flattened,
+            report.planar_equivalence_ok,
+            report.fallback_to_planar,
+            collisions_extruding,
+            collisions_travel
+        );
+        if report.fallback_to_planar {
+            println!("fallback_reason {}", report.fallback_reasons.join(" | "));
+        }
+        if let Some(auto) = &report.auto_placement {
+            // `auto.fallback_to_planar` is the planner's own view of the plan it
+            // handed over; the authority on what was actually written is the
+            // report. Printing the plan flag as `fallback_planar` made the CLI
+            // announce `fallback_planar=false` directly under `fallback=true`.
+            println!(
+                "auto surfaces={} plan_fallback={} fallback_planar={}",
+                auto.enabled_surface_count, auto.fallback_to_planar, report.fallback_to_planar
+            );
+            if std::env::var_os("SHALE_AUTO_PLAN_JSON").is_some() {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(auto).unwrap_or_else(|_| "{}".into())
+                );
+            }
+        }
+        if let Some(safety) = &report.safety {
+            println!(
+                "nonplanar_safety ok={} violations={} max_slope={:.2}°",
+                safety.ok,
+                safety.violations.len(),
+                safety.max_extrusion_slope_deg.unwrap_or(0.0)
+            );
+            if !safety.violations.is_empty() && std::env::var_os("SHALE_TRACE").is_some() {
+                for v in &safety.violations {
+                    eprintln!("  safety {}: {}", v.kind, v.detail);
+                }
+            }
+        }
+    }
     Ok(())
 }

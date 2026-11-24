@@ -1,0 +1,54 @@
+//! Non-planar **curved tops** for Bambu Lab A1: deform the mesh, slice planar with
+//! an unmodified CuraEngine, then map G-code back with flow correction and a
+//! toolhead collision pass.
+//!
+//! Pipeline design follows the deform → slice → map-back pattern described in
+//! CurviSlicer (ACM TOG 2019) and related work; this crate contains only
+//! Shale-original implementations.
+
+pub mod auto;
+pub mod collision;
+pub mod config;
+pub mod deform;
+pub mod envelope;
+pub mod equivalence;
+pub mod extrusion;
+pub mod height_field;
+pub mod inverse;
+pub mod mesh;
+pub mod pipeline;
+pub mod safety;
+#[cfg(test)]
+mod test_meshes;
+pub mod validate;
+
+pub use auto::{
+    plan_auto_placement, AutoPlacementReport, DetectedFeature, DetectedFeatureKind,
+    DetectionReport, PlannedSurface, SupportSpanInput, SurfacePreview,
+};
+pub use config::{
+    CollisionAdjustment, CurvedSuffixBelowFloorMoves, InverseMapStats, NonplanarMode,
+    NonplanarOptions, NonplanarReport, PlanarEquivalenceResult, SafetyReport, SafetyViolation,
+    SlopeLimitingReport,
+};
+pub use deform::{deform_mesh, subdivide_long_edges, DeformField};
+pub use equivalence::{
+    audit_curved_suffix_below_global_floor, check_grafted_planar_equivalence,
+    check_planar_equivalence, graft_planar_shell_below_band, motion_lines_below_band,
+    SUFFIX_SHELL_EXTRUSION_TOLERANCE_MM,
+};
+pub use inverse::{map_gcode_inverse, map_gcode_inverse_counted, MAX_INVERSE_CLAMP_MM};
+pub use mesh::merge_meshes;
+pub use pipeline::{
+    apply_post_pass, deform_with_field, gcode_respects_envelope, in_layer_slope_histogram,
+    max_extrusion_slope_above_z, max_top_layer_slope_deg, max_top_shell_slope_across_layers_deg,
+    max_top_shell_slope_deg, max_underside_band_slope_deg, merge_meshes as merge_plate_meshes,
+    plan_field, prepare_pre_pass, rebuild_field, top_layer_z_variation, top_shell_z_variation,
+    NonplanarContext, PostPassArgs,
+};
+pub use safety::{
+    field_respects_max_angle, gcode_respects_max_angle, level_slope_violations, limit_field_slopes,
+    max_curved_band_extrusion_slope_deg, max_field_layer_slope_deg, MAX_SLOPE_LIMIT_PASSES,
+    PLANAR_COLLAPSE_STRENGTH, SLOPE_CAP_TOLERANCE_DEG,
+};
+pub use validate::{embed_safety_json, safety_report_from_gcode, validate_gcode, MachineLimits};

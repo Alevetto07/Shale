@@ -26,6 +26,8 @@ pub struct UserSettings {
     pub material_bed_temperature: Option<f64>,
     /// Extra literal overrides (`"key" = "value"`) applied last.
     pub extra: Vec<(String, String)>,
+    #[serde(default)]
+    pub nonplanar: shale_nonplanar::NonplanarOptions,
 }
 
 #[derive(Clone, Debug, Serialize)]

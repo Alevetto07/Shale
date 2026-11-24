@@ -9,6 +9,15 @@ Shale's own source is under AGPL-3.0-or-later; see [LICENSE](LICENSE) in the
 install directory. The table below covers **other** projects compiled or linked
 into the binary, not CuraEngine or Bambu profile data (see [LICENSING.md](LICENSING.md)).
 
+## Non-planar slicing references
+
+Shale v0.2’s `shale-nonplanar` crate implements an original deform → planar slice →
+map-back pipeline informed by published work (CurviSlicer, Ahlers, S³-Slicer). No
+AGPL non-planar slicer source or head-envelope JSON was copied. Physical A1
+measurements cited in `crates/shale-nonplanar/data/bambu_a1_head.json` come from
+public BambuStudio machine presets and Alpaca Engineering’s A1-mini clearance
+discussion; the envelope file is marked uncalibrated.
+
 ## The mesh engine
 
 | Component | Version | Licence |

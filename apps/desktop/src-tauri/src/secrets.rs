@@ -22,6 +22,7 @@
 mod platform {
     use keyring::Entry;
 
+    /// The service name every entry is filed under.
     const SERVICE: &str = "Shale";
 
     fn entry(key: &str) -> Result<Entry, String> {

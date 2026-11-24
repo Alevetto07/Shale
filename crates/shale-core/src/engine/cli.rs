@@ -6,7 +6,7 @@
 
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -35,9 +35,7 @@ impl CliEngine {
     pub fn from_env() -> Self {
         if let Some(program) = env::var_os("SHALE_CURAENGINE") {
             let program = PathBuf::from(program);
-            let lib_dir = env::var_os("SHALE_CURAENGINE_LIB_DIR")
-                .map(PathBuf::from)
-                .or_else(|| program.parent().map(Path::to_path_buf));
+            let lib_dir = lib_dir_for_program(&program);
             return Self { program, lib_dir };
         }
         if let Some(found) = find_installed_engine() {
@@ -368,6 +366,36 @@ fn map_to_json(values: &std::collections::BTreeMap<String, String>) -> Json {
     Json::Object(object)
 }
 
+/// Cura on Linux is often launched via a small shell wrapper that sets
+/// `LD_LIBRARY_PATH` before exec-ing the real ELF. Pushing the AppImage tree
+/// onto the loader path for that wrapper breaks `/usr/bin/env` in the shebang.
+fn lib_dir_for_program(program: &Path) -> Option<PathBuf> {
+    if !program_uses_external_lib_dir(program) {
+        return None;
+    }
+    env::var_os("SHALE_CURAENGINE_LIB_DIR")
+        .map(PathBuf::from)
+        .or_else(|| program.parent().map(Path::to_path_buf))
+}
+
+fn program_uses_external_lib_dir(program: &Path) -> bool {
+    let Ok(mut file) = fs::File::open(program) else {
+        return true;
+    };
+    let mut header = [0_u8; 4];
+    let Ok(n) = file.read(&mut header) else {
+        return true;
+    };
+    if n >= 2 && header[0] == b'#' && header[1] == b'!' {
+        return false;
+    }
+    if n >= 4 && header == *b"\x7fELF" {
+        return true;
+    }
+    // PE (Windows) and Mach-O binaries are native executables, not shell wrappers.
+    n >= 2 && header[0] == b'M' && header[1] == b'Z'
+}
+
 /// Hide console windows for CuraEngine children when the GUI sets `SHALE_HIDE_ENGINE_CONSOLE`.
 #[cfg(windows)]
 pub(crate) fn hide_engine_console(command: &mut Command) {
@@ -387,7 +415,11 @@ pub(crate) fn apply_lib_dir(command: &mut Command, lib_dir: Option<&Path>) {
     let Some(lib_dir) = lib_dir else {
         return;
     };
-    for key in ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PATH"] {
+    #[cfg(windows)]
+    let keys = ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PATH"];
+    #[cfg(not(windows))]
+    let keys = ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"];
+    for key in keys {
         let mut paths = vec![lib_dir.to_path_buf()];
         if let Some(existing) = env::var_os(key) {
             paths.extend(env::split_paths(&existing));
@@ -553,7 +585,27 @@ fn extruder_flag(index: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::extruder_flag;
+    use std::path::Path;
+
+    use super::{extruder_flag, program_uses_external_lib_dir};
+
+    #[test]
+    fn shell_engine_wrappers_skip_external_lib_dir() {
+        let path = std::env::temp_dir().join("shale_engine_wrapper_test.sh");
+        std::fs::write(&path, "#!/bin/bash\nexit 0\n").expect("temp wrapper");
+        assert!(!program_uses_external_lib_dir(&path));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn native_engine_bins_use_external_lib_dir() {
+        let candidate = if cfg!(windows) {
+            Path::new(r"C:\Windows\System32\cmd.exe")
+        } else {
+            Path::new("/bin/ls")
+        };
+        assert!(program_uses_external_lib_dir(candidate));
+    }
 
     #[test]
     fn the_extruder_flag_is_one_attached_argument() {
