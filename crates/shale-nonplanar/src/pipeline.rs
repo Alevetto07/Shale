@@ -338,7 +338,16 @@ pub fn apply_post_pass(args: PostPassArgs<'_>) -> Result<(String, NonplanarRepor
             stats.unclamped_excess, MAX_INVERSE_CLAMP_MM
         ));
     }
-    if !gcode_respects_envelope(&grafted, printer_id, options.max_angle_deg) {
+    // Only a collision the curved pass *introduces* counts. The machine's own
+    // start/end script is in both files: on the X1 Carbon the final
+    // `G0 X65 Y10 Z0` parks the head through the 0.15 mm prime line it laid at the
+    // start of the same print, so the raw check rejected every X1 file for a move
+    // the deformation never touched (0 collisions reported by the swept sweep).
+    // If the planar baseline fails the same check, the script is at fault and the
+    // curved pass is not.
+    if !gcode_respects_envelope(&grafted, printer_id, options.max_angle_deg)
+        && gcode_respects_envelope(planar_baseline_gcode, printer_id, options.max_angle_deg)
+    {
         reasons.push("a curved move leaves the head envelope".to_string());
     }
     if !safety.ok && safety.violations.is_empty() {

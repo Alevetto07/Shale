@@ -200,11 +200,16 @@ foreach ($part in $Parts) {
                 if ($line -match '^bench_summary (\{.*\})') {
                     $summary = $Matches[1] | ConvertFrom-Json
                 } elseif ($line -match '^nonplanar (.*)') {
+                    # The report's own line is the authority on what was written: it
+                    # is the flag `planar_fallback` sets on the report, while the
+                    # `auto surfaces=...` line below carries the planner's separate
+                    # view of the plan it handed over.
                     $npLine = $line
+                    if ($line -match 'fallback=(\w+)') {
+                        $fallback = $Matches[1]
+                    }
                 } elseif ($line -match '^nonplanar_safety (.*)') {
                     $safetyLine = $line
-                } elseif ($line -match '^auto surfaces=\d+ fallback_planar=(\w+)') {
-                    $fallback = $Matches[1]
                 }
             }
             $rows.Add([pscustomobject]@{

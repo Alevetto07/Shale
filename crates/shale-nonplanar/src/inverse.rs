@@ -23,11 +23,15 @@ fn clamp_slope_z(
     stats: &mut InverseMapStats,
 ) -> f64 {
     let step_horiz = ((x - prev[0]).powi(2) + (y - prev[1]).powi(2)).sqrt();
-    let max_dz = if step_horiz < 1e-6 {
-        0.0
-    } else {
-        field.max_angle_deg.to_radians().tan() * step_horiz
-    };
+    if step_horiz < 1e-6 {
+        // No horizontal travel means no slope to cap. These are the slicer's Z
+        // hops and layer changes; the shear translates a vertical move unchanged,
+        // so treating it as an infinite slope rejected three of them on the demo
+        // lid ("3 inverse-map move(s) needed more than the 0.02 mm slope-clamp
+        // budget") for a 0.167 mm hop the printer makes on every layer.
+        return z;
+    }
+    let max_dz = field.max_angle_deg.to_radians().tan() * step_horiz;
     let dz = z - prev[2];
     if dz.abs() > max_dz + 1e-9 {
         let bound = prev[2] + dz.signum() * max_dz;
