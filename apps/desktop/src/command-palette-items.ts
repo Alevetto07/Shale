@@ -16,7 +16,9 @@ export interface CommandPaletteSources {
   uiStyle: UiStyleId;
   onNewProject: () => void;
   onOpenProject: () => void;
+  onImport: () => void;
   onSlice: () => void;
+  onOpenSliceSettings: () => void;
   onPane: (pane: Pane) => void;
   onPrinter: (id: string) => void;
   onQuality: (q: string) => void;
@@ -67,6 +69,21 @@ export function buildCommandPaletteItems(src: CommandPaletteSources): CommandPal
       keywords: ["file", "load"],
       shortcut: "Ctrl O",
       onSelect: src.onOpenProject,
+    },
+    {
+      id: "project-import",
+      group: "Project",
+      label: "Import model…",
+      keywords: ["stl", "3mf", "step", "file"],
+      shortcut: "Ctrl I",
+      onSelect: src.onImport,
+    },
+    {
+      id: "project-slice-settings",
+      group: "Project",
+      label: "Slice settings",
+      keywords: ["process", "quality", "temperature", "non-planar"],
+      onSelect: src.onOpenSliceSettings,
     },
     {
       id: "project-slice",

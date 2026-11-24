@@ -1,6 +1,6 @@
 import { Html, OrbitControls, TransformControls } from "@react-three/drei";
 import { Canvas, useThree } from "@react-three/fiber";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { PreviewPath, SupportOverlay, Transform } from "./api";
 import { localCentre, rotateScale, translationForCentre, worldCentre } from "./coords";
@@ -9,6 +9,7 @@ import {
   CURVED_SLOPE_MIN_DEG,
   KIND_COLOR,
   speedColour,
+  verticesThroughLayer,
   type ColourMode,
   type TransformMode,
   type ViewStyle,
@@ -92,8 +93,21 @@ function MockPlateFallback({
   );
 }
 
-export function Viewport(props: ViewportProps) {
-  if (import.meta.env.VITE_SHALE_MOCK === "1") {
+function noteViewportPerf(kind: "render" | "camera") {
+  if (typeof window === "undefined") return;
+  if (new URLSearchParams(window.location.search).get("perf") !== "1") return;
+  const host = window as Window & { __shalePerf?: { renders: number; cameraMoves: number } };
+  const record = host.__shalePerf ?? { renders: 0, cameraMoves: 0 };
+  if (kind === "render") record.renders += 1;
+  else record.cameraMoves += 1;
+  host.__shalePerf = record;
+}
+
+export const Viewport = memo(function Viewport(props: ViewportProps) {
+  noteViewportPerf("render");
+  const measure =
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("perf") === "1";
+  if (import.meta.env.VITE_SHALE_MOCK === "1" && !measure) {
     return (
       <MockPlateFallback
         width={props.width}
@@ -111,6 +125,7 @@ export function Viewport(props: ViewportProps) {
   const cx = props.centerIsZero ? 0 : props.width / 2;
   const cy = props.centerIsZero ? 0 : props.depth / 2;
   return (
+    <div className="viewport-host">
     <Canvas
       frameloop="demand"
       shadows={false}
@@ -173,8 +188,9 @@ export function Viewport(props: ViewportProps) {
       <MeasureMarks marks={props.marks} label={props.measureLabel} />
       <CameraRig />
     </Canvas>
+    </div>
   );
-}
+});
 
 function SupportVolume({ overlay }: { overlay: SupportOverlay }) {
   const geometry = useMemo(() => {
@@ -787,7 +803,7 @@ function KindLines({ buffer, layer, hidden }: { buffer: KindBuffer; layer: numbe
   const invalidate = useThree((state) => state.invalidate);
   useLayoutEffect(() => {
     const at = Math.min(buffer.lastLayer, Math.max(0, layer));
-    buffer.geometry.setDrawRange(0, buffer.counts[at] ?? 0);
+    buffer.geometry.setDrawRange(0, verticesThroughLayer(buffer.counts, at));
     // The canvas draws on demand; a draw-range change is not a React prop, so
     // nothing would repaint without this.
     invalidate();
@@ -812,7 +828,14 @@ function CameraRig() {
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
   }, []);
-  return <OrbitControls makeDefault enableDamping={damping} dampingFactor={0.12} />;
+  return (
+    <OrbitControls
+      makeDefault
+      enableDamping={damping}
+      dampingFactor={0.12}
+      onChange={() => noteViewportPerf("camera")}
+    />
+  );
 }
 
 function Toolpaths({

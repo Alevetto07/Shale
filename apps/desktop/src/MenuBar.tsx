@@ -78,6 +78,8 @@ export interface MenuBarProps {
   onScope: (scope: string) => void;
   onResetOverrides: () => void;
   onSlice: () => void;
+  /** Stage name while a slice is running, so the button is not a spinner. */
+  sliceStage?: string | null;
   uiStyle: UiStyleId;
   onUiStyle: (id: UiStyleId) => void;
   nonplanar: NonplanarSettings;
@@ -350,7 +352,6 @@ export function MenuBar(props: MenuBarProps) {
         ) : (
           <span className="menu-printer-name">No printer</span>
         )}
-        {props.importing && <span className="menu-note">importing…</span>}
         <Button
           type="button"
           variant="primary"
@@ -359,7 +360,7 @@ export function MenuBar(props: MenuBarProps) {
           disabled={props.busy || !props.hasModels}
           onClick={props.onSlice}
         >
-          {props.busy ? "Slicing…" : "Slice"}
+          {props.busy ? props.sliceStage || "Slicing layers" : "Slice"}
         </Button>
       </div>
     </div>

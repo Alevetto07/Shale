@@ -23,13 +23,12 @@ describe("view motion", () => {
     expect(motion.animate).toEqual({ opacity: 1, y: 0 });
   });
 
-  it("drops the translate when reduced motion is requested", () => {
+  it("does not move or fade when reduced motion is requested", () => {
     const motion = viewMotion(true);
-    expect(motion.initial.y).toBe(0);
-    expect(motion.animate.y).toBe(0);
-    expect(motion.exit.y).toBe(0);
-    expect(motion.initial.opacity).toBe(0);
-    expect(motion.animate.opacity).toBe(1);
+    expect(motion.initial).toEqual({ opacity: 1, y: 0 });
+    expect(motion.animate).toEqual({ opacity: 1, y: 0 });
+    expect(motion.exit).toEqual({ opacity: 1, y: 0 });
+    expect(motion.transition.duration).toBe(0);
   });
 });
 

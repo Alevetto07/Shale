@@ -29,10 +29,10 @@ export function viewMotion(reduce: boolean): {
 } {
   if (reduce) {
     return {
-      initial: { opacity: 0, y: 0 },
+      initial: { opacity: 1, y: 0 },
       animate: { opacity: 1, y: 0 },
-      exit: { opacity: 0, y: 0 },
-      transition: { duration: 0.12, ease: EASE_OUT },
+      exit: { opacity: 1, y: 0 },
+      transition: { duration: 0, ease: EASE_OUT },
     };
   }
   return {

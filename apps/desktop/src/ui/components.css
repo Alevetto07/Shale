@@ -1123,10 +1123,42 @@
 }
 .frame-title {
   font-family: var(--prose);
-  letter-spacing: 0.01em;
+  letter-spacing: -0.011em;
   text-transform: none;
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
+  font-weight: 500;
   color: var(--ink);
+}
+.frame-toggle:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+.banner:has(.ui-meter) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.banner:has(.ui-meter) .ui-meter {
+  flex: 1;
+}
+.pane-fade > .frame {
+  flex: 0 0 auto;
+  width: 100%;
+}
+.pane-fade {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: 0;
+}
+.workspace-skeleton {
+  padding: var(--space-6);
+}
+.import-skeleton {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
 }
 .frame-caret {
   display: inline-flex;
@@ -1143,6 +1175,14 @@
   .frame-toggle:hover {
     background: var(--surface-hover);
   }
+}
+.frame-toggle:hover .frame-title,
+.frame-toggle:focus-visible .frame-title {
+  color: var(--ink);
+}
+.frame-content {
+  padding: var(--space-3) var(--space-3) var(--space-4);
+  gap: var(--space-3);
 }
 
 button:not([class]) {
@@ -1837,7 +1877,7 @@ label .ui-select__trigger {
   color: var(--ink-3);
 }
 .legend-ramp--slope {
-  background: linear-gradient(90deg, var(--ink-3), var(--accent));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 42%, var(--bg)), var(--accent));
 }
 .viewport-skeleton {
   position: absolute;

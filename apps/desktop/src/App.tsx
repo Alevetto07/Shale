@@ -34,14 +34,14 @@ import { worldCentre, translationForCentre } from "./coords";
 import { StartScreen, type StartPanel } from "./StartScreen";
 import { AppSidebar, readSidebarCollapsed, writeSidebarCollapsed } from "./AppSidebar";
 import { TitleBarNav } from "./TitleBarNav";
-import { DevicePane, TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
+import { TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
 import { FeatureLegend } from "./Legend";
 import { thumbnailJpeg } from "./thumbnail";
 import { variantOptionLabel } from "./profile-labels";
 import { toast } from "sonner";
 import { Frame } from "./theme";
 import { MenuBar } from "./MenuBar";
-import { applyUiStyle, readUiStyle, uiStyleById, writeUiStyle, type UiStyleId } from "./ui-styles";
+import { applyUiStyle, readUiStyle, writeUiStyle, type UiStyleId } from "./ui-styles";
 import {
   nonplanarFromSliceSettings,
   overridesFromSliceSettings,
@@ -70,15 +70,20 @@ import {
 import { buildCommandPaletteItems, nextUiStyle } from "./command-palette-items";
 import { isPaletteShortcut } from "./ui/motion";
 import { ShellFrame } from "./ui/shell-frame";
-import { ViewSwap } from "./ui/view-swap";
+import { PaneFade, ViewSwap } from "./ui/view-swap";
 import { UiShowcase } from "./UiShowcase";
-import { SetupWizard } from "./SetupWizard";
 import { shouldShowSetupWizard } from "./setup-wizard";
 import { useRecents } from "./recents";
-import type { TransformMode, ViewStyle, ColourMode } from "./viewport-style";
+import { slopeRampFromDocument, type TransformMode, type ViewStyle, type ColourMode } from "./viewport-style";
 
 const Viewport = lazy(() =>
   import("./Viewport").then((module) => ({ default: module.Viewport })),
+);
+const DevicePane = lazy(() =>
+  import("./DevicePane").then((module) => ({ default: module.DevicePane })),
+);
+const SetupWizard = lazy(() =>
+  import("./SetupWizard").then((module) => ({ default: module.SetupWizard })),
 );
 
 interface Progress {
@@ -293,6 +298,10 @@ export function App() {
     writeUiStyle(id);
     applyUiStyle(id);
   };
+  const [slopeRamp, setSlopeRamp] = useState(slopeRampFromDocument);
+  useEffect(() => {
+    setSlopeRamp(slopeRampFromDocument());
+  }, [uiStyle]);
   const toggleUiStyle = () => chooseUiStyle(nextUiStyle(uiStyle));
   /// What the toolpath is coloured by, as Bambu's preview lets you choose.
   const [colourMode, setColourMode] = useState<ColourMode>("type");
@@ -2806,7 +2815,13 @@ export function App() {
         hasModels: models.length > 0,
         onNewProject: () => void newProject(),
         onOpenProject: () => void openProject(),
+        onImport: () => void importModel(),
         onSlice: () => void slice(),
+        onOpenSliceSettings: () => {
+          setScreen("slicer");
+          setSettingsSection(null);
+          setSettingsNonce((nonce) => nonce + 1);
+        },
         onClearPlate: () => void clearWorkplate(),
         onPane: selectPane,
         onPrinter: setPrinterWithUndo,
@@ -2968,6 +2983,7 @@ export function App() {
           parts={models.map((model) => ({ id: model.id, name: model.name }))}
           onScope={setScope}
           onSlice={() => void slice()}
+          sliceStage={busy && progress ? sliceStage(progress.message) : null}
           uiStyle={uiStyle}
           onUiStyle={chooseUiStyle}
           nonplanar={nonplanar}
@@ -2997,13 +3013,16 @@ export function App() {
         </p>
       )}
       {importing && (
-        <p className="banner" role="status">
-          import {(importProgress ? importProgress.fraction * 100 : 0).toFixed(0)}%{" "}
-          {importProgress?.message ?? "reading"}{" "}
+        <div className="banner" role="status">
+          <Meter
+            fraction={importProgress?.fraction ?? 0.08}
+            message={importProgress?.message ?? "Reading the model"}
+            stage={sliceStage(importProgress?.message ?? "Reading the model")}
+          />
           <button type="button" onClick={() => void cancelImport()}>
-            cancel
+            Cancel
           </button>
-        </p>
+        </div>
       )}
       {error && (
         <p className="banner error" role="alert">
@@ -3097,7 +3116,7 @@ export function App() {
         />
         }
       >
-        <ViewSwap view={pane === "home" ? "home" : "work"}>
+        <ViewSwap view={pane === "prepare" || pane === "preview" ? "workspace" : pane}>
       {pane === "home" ? (
         <div className="home-pane">
           <StartScreen
@@ -3130,6 +3149,7 @@ export function App() {
           />
         </div>
       ) : pane === "device" ? (
+        <Suspense fallback={<div className="workspace-skeleton" aria-hidden><div className="ui-sidebar__skeleton"><i style={{ width: "46%" }} /><i style={{ width: "72%" }} /><i style={{ width: "58%" }} /></div></div>}>
         <DevicePane
           machine={printerLabel()}
           source={printers.find((item) => item.id === printerId)?.source ?? "cura"}
@@ -3153,12 +3173,14 @@ export function App() {
           gcodeReady={layerCount > 0}
           plate={docTabs.find((tab) => tab.id === activeTab)?.name ?? "plate"}
         />
+        </Suspense>
       ) : (
       <div className="workspace">
         <aside className="panel">
+        <PaneFade pane={pane}>
           {pane === "prepare" && (
           <>
-          <Frame title="plates">
+          <Frame title="Plates">
             <div className="row plates">
               {plates.map((plate) => (
                 <span key={plate.index} className="plate-chip">
@@ -3198,7 +3220,7 @@ export function App() {
             </p>
           </Frame>
 
-          <Frame title="objects">
+          <Frame title="Objects">
             {models.length === 0 ? (
               <p className="hint">nothing on this plate yet. import a model and it is listed here.</p>
             ) : (
@@ -3234,7 +3256,7 @@ export function App() {
             )}
           </Frame>
 
-          <Frame title="paint support">
+          <Frame title="Paint support">
             {paintTarget === null ? (
               <p className="hint">import a part and its undersides can be painted here.</p>
             ) : (
@@ -3341,7 +3363,7 @@ export function App() {
               slice is made from. Preview is a reading of the result and offers
               none of them. */}
           {pane === "prepare" && (<>
-          <Frame title="printer">
+          <Frame title="Printer">
             <label>
               filter
               <TextField label="filter" value={printerQuery} placeholder="name…" onChange={setPrinterQuery} />
@@ -3399,7 +3421,7 @@ export function App() {
             </p>
           </Frame>
 
-          <Frame title="non-planar">
+          <Frame title="Non-planar">
             <NonPlanarPanel
               value={nonplanar}
               onChange={setNonplanar}
@@ -3410,7 +3432,7 @@ export function App() {
             />
           </Frame>
 
-          <Frame title="ams">
+          <Frame title="AMS">
             <p className="meta">
               {ams.filter(Boolean).length === 0
                 ? "one spool: the plate material"
@@ -3438,7 +3460,7 @@ export function App() {
             </p>
           </Frame>
 
-          <Frame title="calibration">
+          <Frame title="Calibration">
             <p className="meta">
               {tower
                 ? `${tower.bands.length} bands, ${tower.bands[0].value} to ${
@@ -3475,7 +3497,7 @@ export function App() {
             </p>
           </Frame>
 
-          <Frame title="slice">
+          <Frame title="Slice">
             <label>
               layer mm
               <NumericControl
@@ -3573,7 +3595,7 @@ export function App() {
             </p>
           </Frame>
 
-          <Frame title="supports">
+          <Frame title="Supports">
             <label>
               angle
               <NumericControl label="angle" value={supportAngle} min={0} max={90} step={1} digits={0} onChange={setSupportAngle} />
@@ -3608,7 +3630,7 @@ export function App() {
             </p>
           </Frame>
 
-          <Frame title="instructions">
+          <Frame title="Instructions">
             <label>
               kind
               <Select
@@ -3699,7 +3721,7 @@ export function App() {
             <p className="hint">Marlin gets M600 / M0. RepRap pauses with M226. Klipper uses PAUSE, or M600 for a filament change.</p>
           </Frame>
 
-          <Frame title="model">
+          <Frame title="Model">
             {models.length === 0 && <p className="hint">Import an STL or a simple 3MF. It is centred on the bed.</p>}
             <ul className="models">
               {models.map((model) => (
@@ -3997,7 +4019,7 @@ export function App() {
           {/* Every slice is kept, so two outcomes can be put side by side
               instead of one overwriting the other. */}
           {pane === "preview" && (
-            <Frame title="sliced">
+            <Frame title="Sliced">
               <JobSummary
                 layerCount={layerCount}
                 printSeconds={printSeconds}
@@ -4011,7 +4033,7 @@ export function App() {
           )}
 
           {pane === "preview" && (
-            <Frame title="slices">
+            <Frame title="Slices">
               {history.length === 0 ? (
                 <p className="hint">no slices yet</p>
               ) : (
@@ -4059,7 +4081,7 @@ export function App() {
           {/* Money and energy belong to a slice, not to a part: the numbers only
               mean anything once there is a result to price. */}
           {pane === "preview" && (<>
-          <Frame title="cost">
+          <Frame title="Cost">
             <label>
               currency
               <TextField
@@ -4110,7 +4132,7 @@ export function App() {
           </>)}
 
           {pane === "prepare" && (<>
-          <Frame title="engine">
+          <Frame title="Engine">
             <label>
               backend
               <Select
@@ -4149,6 +4171,7 @@ export function App() {
           </Frame>
           </>)}
 
+        </PaneFade>
         </aside>
 
         <main className="stage">
@@ -4203,6 +4226,11 @@ export function App() {
               formatClock={clockTime}
             />
           )}
+          {importing && models.length === 0 && (
+            <div className="viewport viewport-skeleton import-skeleton" aria-hidden>
+              <div className="viewport-skeleton__plate" />
+            </div>
+          )}
           <Suspense fallback={<div className="viewport viewport-skeleton" aria-hidden><div className="viewport-skeleton__plate" /></div>}>
           <Viewport
             width={bed.width}
@@ -4223,8 +4251,8 @@ export function App() {
             showToolpaths={preview}
             viewStyle={viewStyle}
             colour={colourMode}
-            slopeAccent={uiStyleById(uiStyle).swatch.accent}
-            slopeDim={uiStyleById(uiStyle).swatch.ink}
+            slopeAccent={slopeRamp.accent}
+            slopeDim={slopeRamp.dim}
             mode={mode}
             frameToken={frameToken}
             measuring={measuring}
@@ -4341,6 +4369,7 @@ export function App() {
       </ShellFrame>
       <ThemedToaster uiStyle={uiStyle} />
       <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} items={commandItems} />
+      <Suspense fallback={null}>
       <SetupWizard
         open={setupWizardOpen}
         printers={printers}
@@ -4350,6 +4379,7 @@ export function App() {
         onChoosePrinter={setPrinterId}
         onClose={() => setSetupWizardOpen(false)}
       />
+      </Suspense>
     </div>
     </TooltipProvider>
   );
