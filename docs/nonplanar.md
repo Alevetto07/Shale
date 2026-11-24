@@ -105,9 +105,11 @@ printing flat would hide the request.
 
 ## The 10 degree cap
 
-`default_max_clearance_angle_deg` is 10.0 in every shipped envelope, and
-`--max-angle` cannot exceed it (Shale refuses the request with the limit and the
-reason). The number is a geometry result, not a preference. For the A1 the
+`default_max_clearance_angle_deg` is 10.0 in every shipped envelope. The MCP
+tools refuse a larger angle; the CLI takes `--max-angle` as given, so
+`--max-angle 12` produces a job verified against 12.5° — a limit the envelopes
+were not measured for. Prefer the default. The number is a geometry result, not
+a preference. For the A1 the
 part-cooling duct hangs 6.0 mm above the tip and reaches 26 mm out, so a surface
 climbing at `a` degrees is at `d * tan(a)` above the tip at horizontal distance
 `d`: it touches the duct's underside exactly where `26 * tan(a) = 6.0`, i.e. at
@@ -191,7 +193,9 @@ shale slice examples/nonplanar-demo.stl \
 ```
 
 * `--nonplanar <mode>` — `off` (default), `curved-tops`, `auto`.
-* `--max-angle <deg>` — default 10, must be greater than 0 and at most 10.
+* `--max-angle <deg>` — default 10, the value the envelopes are calibrated for.
+  The CLI parses it as given; the MCP tools refuse anything outside
+  `0 < angle <= 10`.
 * `--nonplanar-strict` — fail instead of falling back to planar.
 * `--printer <id>` — omitted, the catalogue's default printer is used.
 * The usual job flags apply: `--layer`, `--infill`, `--supports`, `--material`,
