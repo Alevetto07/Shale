@@ -1,4 +1,4 @@
-import type { MaterialInfo, PrinterInfo, QualityInfo, RecentProject } from "./api";
+import type { MaterialInfo, NonplanarModeName, PrinterInfo, QualityInfo, RecentProject } from "./api";
 import type { CommandPaletteItem } from "./ui";
 import type { Pane } from "./Tabs";
 import { UI_STYLES, uiStyleLabel, type UiStyleId } from "./ui-styles";
@@ -26,6 +26,19 @@ export interface CommandPaletteSources {
   onOpenRecent: (path: string) => void;
   onClearPlate: () => void;
   hasModels: boolean;
+  nonplanarMode: NonplanarModeName;
+  onNonplanarMode: (mode: NonplanarModeName) => void;
+  onToggleStrict: () => void;
+  onOpenNonplanar: () => void;
+  onExportGcode: () => void;
+  onArrange: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUiStyle: (id: UiStyleId) => void;
+  liveSlice: boolean;
+  onToggleLiveSlice: () => void;
 }
 
 const PANE_ORDER: Pane[] = ["home", "prepare", "preview", "device"];
@@ -63,6 +76,46 @@ export function buildCommandPaletteItems(src: CommandPaletteSources): CommandPal
       onSelect: src.onSlice,
     },
     {
+      id: "project-export",
+      group: "Project",
+      label: "Export G-code",
+      keywords: ["save", "download"],
+      disabled: !src.sliced,
+      onSelect: src.onExportGcode,
+    },
+    {
+      id: "project-arrange",
+      group: "Project",
+      label: "Arrange plate",
+      keywords: ["layout", "pack"],
+      disabled: !src.hasModels,
+      onSelect: src.onArrange,
+    },
+    {
+      id: "project-undo",
+      group: "Project",
+      label: "Undo",
+      keywords: ["back"],
+      shortcut: "Ctrl Z",
+      disabled: !src.canUndo,
+      onSelect: src.onUndo,
+    },
+    {
+      id: "project-redo",
+      group: "Project",
+      label: "Redo",
+      keywords: ["forward"],
+      disabled: !src.canRedo,
+      onSelect: src.onRedo,
+    },
+    {
+      id: "project-live-slice",
+      group: "Project",
+      label: src.liveSlice ? "Background refresh: on" : "Background refresh: off",
+      keywords: ["auto slice", "debounce", "live"],
+      onSelect: src.onToggleLiveSlice,
+    },
+    {
       id: "project-clear",
       group: "Project",
       label: "Clear plate",
@@ -81,6 +134,31 @@ export function buildCommandPaletteItems(src: CommandPaletteSources): CommandPal
     onSelect: () => src.onPane(pane),
   }));
 
+  const nonplanar: CommandPaletteItem[] = [
+    {
+      id: "nonplanar-open",
+      group: "Non-planar",
+      label: "Show non-planar settings",
+      keywords: ["curved", "auto", "angle"],
+      onSelect: src.onOpenNonplanar,
+    },
+    ...(["off", "curved-tops", "auto"] as const).map((mode) => ({
+      id: `nonplanar-${mode}`,
+      group: "Non-planar",
+      label: mode === "off" ? "Non-planar: off" : mode === "auto" ? "Non-planar: auto" : "Non-planar: curved tops",
+      keywords: ["curved layers", "nonplanar", mode],
+      disabled: src.nonplanarMode === mode,
+      onSelect: () => src.onNonplanarMode(mode),
+    })),
+    {
+      id: "nonplanar-strict",
+      group: "Non-planar",
+      label: "Toggle strict curved slice",
+      keywords: ["fallback", "refuse"],
+      onSelect: src.onToggleStrict,
+    },
+  ];
+
   const appearance: CommandPaletteItem[] = [
     {
       id: "theme-toggle",
@@ -89,6 +167,14 @@ export function buildCommandPaletteItems(src: CommandPaletteSources): CommandPal
       keywords: ["andromeda", "lunar", "saturn", "nebula", "style", "dark", "light"],
       onSelect: src.onToggleTheme,
     },
+    ...UI_STYLES.map((style) => ({
+      id: `theme-${style.id}`,
+      group: "Appearance",
+      label: `Theme: ${style.label}`,
+      keywords: ["appearance", style.label.toLowerCase()],
+      disabled: style.id === src.uiStyle,
+      onSelect: () => src.onUiStyle(style.id),
+    })),
     {
       id: "settings-open",
       group: "Appearance",
@@ -140,7 +226,7 @@ export function buildCommandPaletteItems(src: CommandPaletteSources): CommandPal
     onSelect: () => src.onOpenRecent(entry.path),
   }));
 
-  return [...project, ...navigate, ...appearance, ...profile, ...recent];
+  return [...project, ...navigate, ...nonplanar, ...appearance, ...profile, ...recent];
 }
 
 export function nextUiStyle(current: UiStyleId): UiStyleId {

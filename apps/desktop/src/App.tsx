@@ -26,6 +26,9 @@ import {
   type TowerBuilt,
   type Transform,
   type VariantInfo,
+  DEFAULT_NONPLANAR,
+  type NonplanarReportView,
+  type NonplanarSettings,
 } from "./api";
 import { worldCentre, translationForCentre } from "./coords";
 import { StartScreen, type StartPanel } from "./StartScreen";
@@ -38,8 +41,9 @@ import { variantOptionLabel } from "./profile-labels";
 import { toast } from "sonner";
 import { Frame } from "./theme";
 import { MenuBar } from "./MenuBar";
-import { applyUiStyle, readUiStyle, writeUiStyle, type UiStyleId } from "./ui-styles";
+import { applyUiStyle, readUiStyle, uiStyleById, writeUiStyle, type UiStyleId } from "./ui-styles";
 import {
+  nonplanarFromSliceSettings,
   overridesFromSliceSettings,
   QUICK_SETTING_KEYS,
   quickSettingsView,
@@ -47,6 +51,9 @@ import {
 } from "./engine-settings";
 import type { QuickFallbacks } from "./ProcessSheet";
 import { pickQualityType } from "./profile-pick";
+import type { Section } from "./settings-meta";
+import { NonPlanarPanel } from "./ui/non-planar-panel";
+import { sliceStage } from "./ui/slice-stage";
 import { TitleBar } from "./TitleBar";
 import {
   CommandPalette,
@@ -68,7 +75,7 @@ import { UiShowcase } from "./UiShowcase";
 import { SetupWizard } from "./SetupWizard";
 import { shouldShowSetupWizard } from "./setup-wizard";
 import { useRecents } from "./recents";
-import type { TransformMode, ViewStyle, ColourMode } from "./Viewport";
+import type { TransformMode, ViewStyle, ColourMode } from "./viewport-style";
 
 const Viewport = lazy(() =>
   import("./Viewport").then((module) => ({ default: module.Viewport })),
@@ -405,7 +412,33 @@ export function App() {
     [profileValues, scopedOverrides, quickFallbacks],
   );
 
-  const engineSettings = useMemo(() => userSettingsForEngine(scopedOverrides), [scopedOverrides]);
+  const [nonplanar, setNonplanar] = useState<NonplanarSettings>(DEFAULT_NONPLANAR);
+  const [nonplanarReport, setNonplanarReport] = useState<NonplanarReportView | null>(null);
+  const [nonplanarOk, setNonplanarOk] = useState(true);
+  const [liveSlice, setLiveSliceState] = useState(() => {
+    try {
+      return window.localStorage.getItem("shale.live-slice") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const [settingsNonce, setSettingsNonce] = useState(0);
+  const [settingsSection, setSettingsSection] = useState<Section | null>(null);
+  const sliceQuiet = useRef<() => void>(() => undefined);
+
+  function setLiveSlice(next: boolean) {
+    setLiveSliceState(next);
+    try {
+      window.localStorage.setItem("shale.live-slice", next ? "1" : "0");
+    } catch {
+      // The preference is session-only when storage is blocked.
+    }
+  }
+
+  const engineSettings = useMemo(
+    () => userSettingsForEngine(scopedOverrides, nonplanar),
+    [scopedOverrides, nonplanar],
+  );
 
   const { layerHeight, infill, supports, nozzle, bed: bedTemp } = quick;
 
@@ -418,6 +451,7 @@ export function App() {
     quality,
     variant,
     scopedOverrides,
+    nonplanar,
   });
   const lastSlice = history.length > 0 ? history[history.length - 1] : null;
   const stale =
@@ -434,6 +468,29 @@ export function App() {
     setPrintSeconds(null);
     setFilamentMetres(null);
   }, [plateKey]);
+
+  useEffect(() => {
+    if (!printerId) return;
+    let cancelled = false;
+    void api
+      .nonplanarSupported(printerId)
+      .then((ok) => {
+        if (!cancelled) setNonplanarOk(ok);
+      })
+      .catch(() => {
+        if (!cancelled) setNonplanarOk(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [printerId]);
+
+  useEffect(() => {
+    if (!liveSlice || !stale || nonplanar.mode !== "off" || busy) return;
+    const id = window.setTimeout(() => sliceQuiet.current(), 1100);
+    return () => window.clearTimeout(id);
+  }, [liveSlice, stale, nonplanar.mode, settingsKey, busy]);
+
   const [enginePath, setEnginePath] = useState("");
   const [libDir, setLibDir] = useState("");
   const [backend, setBackend] = useState("cli");
@@ -1604,15 +1661,16 @@ export function App() {
     }
   }
 
-  async function slice() {
+  async function slice(options?: { quiet?: boolean }) {
+    const quiet = options?.quiet === true;
     if (!printerId) {
-      setError("Choose a printer first.");
+      if (!quiet) setError("Choose a printer first.");
       return;
     }
     setError(null);
-    setBusy(true);
+    if (!quiet) setBusy(true);
     setCalibration(null);
-    setProgress({ fraction: 0.01, message: "Starting" });
+    setProgress({ fraction: 0.02, message: "Starting" });
     try {
       const summary = await api.slice(printerId, variant, quality, material, ams, engineSettings);
       setLayerCount(summary.layer_count);
@@ -1642,6 +1700,7 @@ export function App() {
       }
       const all = await api.previewAll();
       setPaths(all);
+      setNonplanarReport(summary.nonplanar ?? null);
       const record: SliceRecord = {
         n: history.length + 1,
         seconds: summary.print_time_seconds,
@@ -1657,20 +1716,24 @@ export function App() {
       setViewing(record.n);
       setPreview(true);
       // A finished slice is a result to look at: the app turns to Preview by
-      // itself, the way Bambu Studio does when a slice lands.
-      setPane("preview");
-      setShowModel(false);
-      // The toolpaths arrive at the camera the model was left under; frame
-      // them, the way pressing f would.
-      setFrameToken((token) => token + 1);
+      // itself. A background refresh keeps the person on the pane they are editing.
+      if (!quiet) {
+        setPane("preview");
+        setShowModel(false);
+        setFrameToken((token) => token + 1);
+      }
       setProgress({ fraction: 1, message: `${summary.layer_count} layers` });
     } catch (err) {
-      setError(messageOf(err));
+      if (!quiet) setError(messageOf(err));
       setProgress(null);
     } finally {
-      setBusy(false);
+      if (!quiet) setBusy(false);
     }
   }
+
+  sliceQuiet.current = () => {
+    void slice({ quiet: true });
+  };
 
   async function exportGcode() {
     setError(null);
@@ -2439,6 +2502,8 @@ export function App() {
     setMaterial(opened.material_id);
     setAms([0, 1, 2].map((index) => opened.ams?.[index] ?? ""));
     setOverrides(overridesFromSliceSettings(opened.settings));
+    setNonplanar(nonplanarFromSliceSettings(opened.settings));
+    setNonplanarReport(null);
     if (opened.chord_mm > 0) {
       setChord(opened.chord_mm);
       setChordTied(false);
@@ -2546,6 +2611,8 @@ export function App() {
     setProgress(null);
     setProjectPath(null);
     setProjectName("Untitled");
+    setNonplanar(DEFAULT_NONPLANAR);
+    setNonplanarReport(null);
     setPane("prepare");
     enterSlicer();
   }
@@ -2752,6 +2819,24 @@ export function App() {
           setStartPanel("settings");
         },
         onOpenRecent: (path) => void openProject(path),
+        nonplanarMode: nonplanar.mode,
+        onNonplanarMode: (mode) => setNonplanar((current) => ({ ...current, mode })),
+        onToggleStrict: () => setNonplanar((current) => ({ ...current, strict: !current.strict })),
+        onOpenNonplanar: () => {
+          setScreen("slicer");
+          setPane("prepare");
+          setSettingsSection("Non-planar");
+          setSettingsNonce((nonce) => nonce + 1);
+        },
+        onExportGcode: () => void exportGcode(),
+        onArrange: () => void arrangeAll(),
+        onUndo: () => void undo(),
+        onRedo: () => void redo(),
+        canUndo: historyDepth.past > 0,
+        canRedo: historyDepth.future > 0,
+        onUiStyle: chooseUiStyle,
+        liveSlice,
+        onToggleLiveSlice: () => setLiveSlice(!liveSlice),
       }),
     [
       pane,
@@ -2765,6 +2850,10 @@ export function App() {
       material,
       uiStyle,
       models.length,
+      nonplanar.mode,
+      liveSlice,
+      historyDepth.past,
+      historyDepth.future,
     ],
   );
 
@@ -2881,6 +2970,14 @@ export function App() {
           onSlice={() => void slice()}
           uiStyle={uiStyle}
           onUiStyle={chooseUiStyle}
+          nonplanar={nonplanar}
+          onNonplanar={setNonplanar}
+          nonplanarReport={nonplanarReport}
+          nonplanarSupported={nonplanarOk}
+          liveSlice={liveSlice}
+          onLiveSlice={setLiveSlice}
+          settingsNonce={settingsNonce}
+          settingsSection={settingsSection}
         />
       </TitleBar>
 
@@ -3300,6 +3397,17 @@ export function App() {
               nozzle {bed.nozzle_size.toFixed(2)}  line {bed.line_width.toFixed(2)}  {bed.adhesion_type}  {bed.speed_print.toFixed(0)} mm/s
               {bed.warning_count > 0 ? `\n${bed.warning_count} resolver warnings` : ""}
             </p>
+          </Frame>
+
+          <Frame title="non-planar">
+            <NonPlanarPanel
+              value={nonplanar}
+              onChange={setNonplanar}
+              report={nonplanarReport}
+              supported={nonplanarOk}
+              liveSlice={liveSlice}
+              onLiveSlice={setLiveSlice}
+            />
           </Frame>
 
           <Frame title="ams">
@@ -4095,7 +4203,7 @@ export function App() {
               formatClock={clockTime}
             />
           )}
-          <Suspense fallback={<div className="viewport viewport-loading" aria-hidden />}>
+          <Suspense fallback={<div className="viewport viewport-skeleton" aria-hidden><div className="viewport-skeleton__plate" /></div>}>
           <Viewport
             width={bed.width}
             depth={bed.depth}
@@ -4115,6 +4223,8 @@ export function App() {
             showToolpaths={preview}
             viewStyle={viewStyle}
             colour={colourMode}
+            slopeAccent={uiStyleById(uiStyle).swatch.accent}
+            slopeDim={uiStyleById(uiStyle).swatch.ink}
             mode={mode}
             frameToken={frameToken}
             measuring={measuring}
@@ -4156,7 +4266,7 @@ export function App() {
             {preview && (
             <div className="scrub-bar" role="group" aria-label="Toolpath colour">
               <em>colour</em>
-              {(["type", "speed"] as const).map((item) => (
+              {(["type", "speed", "slope"] as const).map((item) => (
                 <button
                   key={item}
                   type="button"
@@ -4220,7 +4330,9 @@ export function App() {
             ) : (
               <p className="hint">drag to orbit. scroll to zoom. z is up.  1 move  2 rotate  3 scale  f frame</p>
             )}
-            {progress && <Meter fraction={progress.fraction} message={progress.message} />}
+            {progress && (
+              <Meter fraction={progress.fraction} message={progress.message} stage={sliceStage(progress.message)} />
+            )}
           </footer>
         </main>
       </div>

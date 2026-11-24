@@ -16,6 +16,7 @@ pub mod extrusion;
 pub mod height_field;
 pub mod inverse;
 pub mod mesh;
+pub mod moves;
 pub mod pipeline;
 pub mod safety;
 #[cfg(test)]
@@ -24,12 +25,12 @@ pub mod validate;
 
 pub use auto::{
     plan_auto_placement, AutoPlacementReport, DetectedFeature, DetectedFeatureKind,
-    DetectionReport, PlannedSurface, SupportSpanInput, SurfacePreview,
+    DetectionReport, PlannedSurface, PlannedSurfaceKind, SupportSpanInput, SurfacePreview,
 };
 pub use config::{
-    CollisionAdjustment, CurvedSuffixBelowFloorMoves, InverseMapStats, NonplanarMode,
-    NonplanarOptions, NonplanarReport, PlanarEquivalenceResult, SafetyReport, SafetyViolation,
-    SlopeLimitingReport,
+    check_user_max_angle, CollisionAdjustment, CurvedSuffixBelowFloorMoves, InverseMapStats,
+    NonplanarMode, NonplanarOptions, NonplanarReport, PlanarEquivalenceResult, SafetyReport,
+    SafetyViolation, SlopeLimitingReport, USER_MAX_ANGLE_DEG,
 };
 pub use deform::{deform_mesh, subdivide_long_edges, DeformField};
 pub use equivalence::{
@@ -39,6 +40,10 @@ pub use equivalence::{
 };
 pub use inverse::{map_gcode_inverse, map_gcode_inverse_counted, MAX_INVERSE_CLAMP_MM};
 pub use mesh::merge_meshes;
+pub use moves::{
+    count_curved_extrusions, segment_slope_deg, worst_extrusion_slope_deg,
+    CURVED_EXTRUSION_MIN_SLOPE_DEG,
+};
 pub use pipeline::{
     apply_post_pass, deform_with_field, gcode_respects_envelope, in_layer_slope_histogram,
     max_extrusion_slope_above_z, max_top_layer_slope_deg, max_top_shell_slope_across_layers_deg,

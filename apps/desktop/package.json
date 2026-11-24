@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
     "test:unit": "vitest run",
     "preview": "vite preview",
     "mock:dev": "VITE_SHALE_MOCK=1 vite",

@@ -26,6 +26,7 @@ use shale_core::{
 };
 mod cloud;
 mod instance;
+mod nonplanar;
 mod secrets;
 #[cfg(windows)]
 mod windows_chrome;
@@ -84,6 +85,9 @@ struct Inner {
     /// G-code may go out at all.
     printer_id: Option<String>,
     slicing: bool,
+    /// The last curved-layer report, so a plate reopened in this window can
+    /// show it again without slicing twice.
+    nonplanar_view: Option<nonplanar::NonplanarView>,
     cancel_import: Arc<AtomicBool>,
     engine_message: String,
     /// Set after the background CuraEngine probe finishes (avoids probing on every `status`).
@@ -195,6 +199,9 @@ struct SliceSummary {
     /// The slice was started by the machine's own sequence rather than Cura's
     /// generic Marlin one. A Bambu machine may only be sent the former.
     machine_gcode: bool,
+    /// Present when the job asked for curved layers. `None` when non-planar is off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nonplanar: Option<nonplanar::NonplanarView>,
 }
 
 #[derive(Serialize)]
@@ -213,6 +220,10 @@ struct PreviewPath {
     /// and scrubs by draw range, which needs the layer on the vertex data
     /// rather than a fresh IPC call per slider step.
     layer: i32,
+    /// Slope of each segment, in degrees above horizontal. Empty for travel.
+    /// The points themselves keep the G-code Z; this only colours the curve.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    slopes: Vec<f32>,
 }
 
 pub(crate) fn lock(state: &AppState) -> Result<std::sync::MutexGuard<'_, Inner>, String> {
@@ -2566,6 +2577,9 @@ async fn slice_model(
     if std::env::var_os("SHALE_TRACE").is_some() {
         eprintln!("[shale] slice_model extra: {:?}", settings.extra);
     }
+    // Same checks the MCP tools apply, before any engine work. `off` is a no-op.
+    nonplanar::prepare_slice(&settings, &printer_id)?;
+    let nonplanar_options = settings.nonplanar.clone();
     let (catalog_paths, engine, placed, painted, output) = {
         let mut inner = lock(&state)?;
         inner.printer_id = Some(printer_id.clone());
@@ -2724,6 +2738,14 @@ async fn slice_model(
     // `;TIME_ELAPSED:` markers. When the first is missing the second is the
     // truth, and the file is what the person will actually print.
     let facts = shale_core::gcode::header_facts(&read_head(&outcome.gcode_path, 64 * 1024));
+    let nonplanar_view = if nonplanar_options.mode.active() {
+        outcome.nonplanar_report.as_ref().map(|report| {
+            let gcode = fs::read_to_string(&outcome.gcode_path).unwrap_or_default();
+            nonplanar::shape_report(report, &gcode, &nonplanar_options)
+        })
+    } else {
+        None
+    };
     let summary = SliceSummary {
         layer_count: outcome.toolpath.layers.len(),
         layers: outcome
@@ -2747,10 +2769,29 @@ async fn slice_model(
             .map(|model| u64::from(model.id))
             .collect(),
         machine_gcode: outcome.machine_gcode,
+        nonplanar: nonplanar_view.clone(),
     };
     inner.gcode_path = Some(outcome.gcode_path);
     inner.toolpath = Some(outcome.toolpath);
+    inner.nonplanar_view = nonplanar_view;
     Ok(summary)
+}
+
+fn preview_path(kind: &str, points: &[[f32; 3]], feed: f32, layer: i32) -> PreviewPath {
+    // Travel hops are not curved extrusions. Feature lines keep their own Z;
+    // `slopes` only decides which of them take the slope colour.
+    let slopes = if kind == "travel" {
+        Vec::new()
+    } else {
+        nonplanar::segment_slopes(points)
+    };
+    PreviewPath {
+        kind: kind.to_string(),
+        points: points.to_vec(),
+        feed,
+        layer,
+        slopes,
+    }
 }
 
 #[tauri::command]
@@ -2762,12 +2803,12 @@ fn preview_until(state: State<AppState>, layer: i32) -> Result<Vec<PreviewPath>,
     let mut paths = Vec::new();
     for item in toolpath.layers.iter().filter(|item| item.index <= layer) {
         for polyline in &item.polylines {
-            paths.push(PreviewPath {
-                kind: polyline.kind.clone(),
-                points: polyline.points.clone(),
-                feed: polyline.feed,
-                layer: item.index,
-            });
+            paths.push(preview_path(
+                &polyline.kind,
+                &polyline.points,
+                polyline.feed,
+                item.index,
+            ));
         }
     }
     Ok(paths)
@@ -2785,15 +2826,21 @@ fn preview_all(state: State<AppState>) -> Result<Vec<PreviewPath>, String> {
     let mut paths = Vec::new();
     for item in &toolpath.layers {
         for polyline in &item.polylines {
-            paths.push(PreviewPath {
-                kind: polyline.kind.clone(),
-                points: polyline.points.clone(),
-                feed: polyline.feed,
-                layer: item.index,
-            });
+            paths.push(preview_path(
+                &polyline.kind,
+                &polyline.points,
+                polyline.feed,
+                item.index,
+            ));
         }
     }
     Ok(paths)
+}
+
+/// Whether this printer has a head envelope, so the panel can say so before a slice.
+#[tauri::command]
+fn nonplanar_supported(printer_id: String) -> bool {
+    nonplanar::printer_supports(&printer_id)
 }
 
 #[tauri::command]
@@ -3472,6 +3519,7 @@ fn existing_slice(state: State<AppState>) -> Result<Option<SliceSummary>, String
             .map(|model| u64::from(model.id))
             .collect(),
         machine_gcode: starts_with_machine_sequence(path),
+        nonplanar: inner.nonplanar_view.clone(),
     }))
 }
 
@@ -4797,6 +4845,7 @@ pub fn run() {
             printer_id: None,
             queue_running: demo_queue_running,
             slicing: false,
+            nonplanar_view: None,
             cancel_import: import_cancel,
             engine_message,
             engine_checked: false,
@@ -4917,6 +4966,7 @@ pub fn run() {
             current_support,
             compare_supports,
             slice_model,
+            nonplanar_supported,
             host_defaults,
             host_connect,
             host_disconnect,

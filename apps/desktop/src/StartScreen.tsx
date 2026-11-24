@@ -1,11 +1,12 @@
 import { motion, useReducedMotion } from "motion/react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { EASE_OUT } from "./ui/motion";
 import type { PrinterInfo } from "./api";
 import { PlateField } from "./field/PlateField";
-import { SettingsView } from "./SettingsView";
 import { uiStyleById, type UiStyleId } from "./ui-styles";
 import { Button, Input } from "./ui";
+
+const SettingsView = lazy(() => import("./SettingsView").then((module) => ({ default: module.SettingsView })));
 
 export type StartPanel = "home" | "printers" | "settings" | "about";
 
@@ -236,6 +237,7 @@ function SettingsOverlay(props: {
       <Button variant="ghost" size="sm" onClick={props.onBack}>
         Back
       </Button>
+      <Suspense fallback={<div className="ui-sidebar__skeleton" aria-hidden><i style={{ width: "40%" }} /><i style={{ width: "70%" }} /></div>}>
       <SettingsView
         compact
         version={props.version}
@@ -253,6 +255,7 @@ function SettingsOverlay(props: {
         onApplyEngine={props.onApplyEngine}
         onRerunSetup={props.onRerunSetup}
       />
+      </Suspense>
     </>
   );
 }

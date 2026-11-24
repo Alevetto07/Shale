@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { DEFAULT_NONPLANAR } from "./api";
 import { ProcessSheet } from "./ProcessSheet";
 import { TooltipProvider } from "./ui";
 
@@ -36,6 +37,12 @@ describe("ProcessSheet", () => {
         qualityType={null}
         onQuality={() => undefined}
         printerLabel="Bambu Lab A1"
+        nonplanar={DEFAULT_NONPLANAR}
+        onNonplanar={() => undefined}
+        nonplanarReport={null}
+        nonplanarSupported
+        liveSlice={false}
+        onLiveSlice={() => undefined}
       />
       </TooltipProvider>,
     );
@@ -43,7 +50,8 @@ describe("ProcessSheet", () => {
     const tab = screen.getByRole("tab", { name: "Non-planar" });
     fireEvent.mouseDown(tab, { button: 0 });
     fireEvent.click(tab);
-    expect(await screen.findByText(/coming in v0\.2/i)).toBeTruthy();
+    expect(await screen.findByText(/conservative estimates/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Auto" })).toBeTruthy();
     expect(screen.getByRole("slider", { name: "Max angle" })).toBeTruthy();
   });
 });

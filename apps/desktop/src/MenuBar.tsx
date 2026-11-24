@@ -3,10 +3,11 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Popover from "@radix-ui/react-popover";
 import { Check } from "lucide-react";
 
-import type { MaterialInfo, PrinterInfo, QualityInfo, VariantInfo } from "./api";
+import type { MaterialInfo, NonplanarReportView, NonplanarSettings, PrinterInfo, QualityInfo, VariantInfo } from "./api";
+import type { Section } from "./settings-meta";
 import { variantOptionLabel } from "./profile-labels";
 import { ProcessSheet, type QuickFallbacks } from "./ProcessSheet";
-import type { ViewStyle } from "./Viewport";
+import type { ViewStyle } from "./viewport-style";
 import { UiStylePicker } from "./UiStylePicker";
 import type { UiStyleId } from "./ui-styles";
 import { Button, Select, Sheet } from "./ui";
@@ -79,6 +80,15 @@ export interface MenuBarProps {
   onSlice: () => void;
   uiStyle: UiStyleId;
   onUiStyle: (id: UiStyleId) => void;
+  nonplanar: NonplanarSettings;
+  onNonplanar: (next: NonplanarSettings) => void;
+  nonplanarReport: NonplanarReportView | null;
+  nonplanarSupported: boolean;
+  liveSlice: boolean;
+  onLiveSlice: (next: boolean) => void;
+  /** Bumps when the command palette asks the sheet to open on a tab. */
+  settingsNonce: number;
+  settingsSection: Section | null;
 }
 
 function Item({
@@ -111,6 +121,10 @@ export function MenuBar(props: MenuBarProps) {
   useEffect(() => {
     if (props.demo === "presets") setSettingsOpen(true);
   }, [props.demo]);
+
+  useEffect(() => {
+    if (props.settingsNonce > 0) setSettingsOpen(true);
+  }, [props.settingsNonce]);
 
   // The presets panel sits at the foot of a long sheet; the clip has to show
   // it, so the sheet scrolls itself there once it has opened.
@@ -317,6 +331,14 @@ export function MenuBar(props: MenuBarProps) {
           qualityType={props.quality}
           onQuality={(next) => props.onQuality(next)}
           printerLabel={printer ? `${printer.manufacturer} ${printer.name}` : "machine"}
+          nonplanar={props.nonplanar}
+          onNonplanar={props.onNonplanar}
+          nonplanarReport={props.nonplanarReport}
+          nonplanarSupported={props.nonplanarSupported}
+          liveSlice={props.liveSlice}
+          onLiveSlice={props.onLiveSlice}
+          sectionRequest={props.settingsSection}
+          focusNonce={props.settingsNonce}
         />
       </Sheet>
 

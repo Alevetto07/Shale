@@ -296,6 +296,8 @@ export interface SliceSummary {
    * Marlin start. A Bambu machine refuses anything else.
    */
   machine_gcode: boolean;
+  /** Set when the slice asked for curved layers. */
+  nonplanar?: NonplanarReportView | null;
 }
 
 export interface PreviewPath {
@@ -305,6 +307,8 @@ export interface PreviewPath {
   feed?: number;
   /** Which layer the polyline belongs to; the preview scrubs by draw range. */
   layer: number;
+  /** Degrees above horizontal for each segment. Omitted for travel and for a live layer. */
+  slopes?: number[];
 }
 
 export type CustomInstruction =
@@ -377,6 +381,46 @@ export interface SupportView {
   overlays: SupportOverlay[];
 }
 
+export type NonplanarModeName = "off" | "curved-tops" | "auto";
+
+/** Job settings for curved layers. Default is off; the angle cap matches the CLI. */
+export interface NonplanarSettings {
+  mode: NonplanarModeName;
+  max_angle_deg: number;
+  strict: boolean;
+  underside_bands: boolean;
+}
+
+export const DEFAULT_NONPLANAR: NonplanarSettings = {
+  mode: "off",
+  max_angle_deg: 10,
+  strict: false,
+  underside_bands: false,
+};
+
+export interface NonplanarSurfaceView {
+  id: number;
+  kind: string;
+  enabled: boolean;
+  reason: string;
+  tilt_deg: number;
+}
+
+/** Plain-language result of a curved slice. `null` when the job was planar. */
+export interface NonplanarReportView {
+  mode: string;
+  max_angle_deg: number;
+  strict: boolean;
+  underside_bands: boolean;
+  outcome: "curved" | "planar";
+  fallback_to_planar: boolean;
+  fallback_reasons: string[];
+  curved_move_count: number;
+  worst_slope_deg: number | null;
+  surfaces: NonplanarSurfaceView[];
+  envelope_note: string;
+}
+
 export interface SliceSettings {
   layer_height?: number;
   infill_sparse_density?: number;
@@ -384,6 +428,7 @@ export interface SliceSettings {
   material_print_temperature?: number;
   material_bed_temperature?: number;
   extra: [string, string][];
+  nonplanar?: NonplanarSettings;
 }
 
 export const api = {
@@ -598,6 +643,8 @@ export const api = {
   removeInstruction: (id: number) => invoke<StoredInstruction[]>("remove_instruction", { id }),
   previewUntil: (layer: number) => invoke<PreviewPath[]>("preview_until", { layer }),
   previewAll: () => invoke<PreviewPath[]>("preview_all"),
+  /** True when the printer ships a head envelope the curved pass can check. */
+  nonplanarSupported: (printerId: string) => invoke<boolean>("nonplanar_supported", { printerId }),
   exportPlate: (destination: string, format: "stl" | "3mf") =>
     invoke<number>("export_plate", { destination, format }),
   exportGcode: (destination: string) => invoke<string>("export_gcode", { destination }),

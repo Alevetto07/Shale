@@ -259,6 +259,29 @@ The `slice` result carries the decisions, not the raw report: the nested
 `nonplanar_report` is dropped so a job with thousands of collision hits still
 answers in a few kilobytes.
 
+## Desktop
+
+The Prepare workspace and the Slice settings sheet share one Non-planar panel.
+Mode, maximum angle, strict, and the experimental underside opt-in are job
+settings on the same `UserSettings` the CLI and MCP use. They are saved with
+the project and default to off. The angle control is capped at 10°, matching
+`check_user_max_angle`. A printer without a head envelope is told so before
+the slice, and the slice command refuses the job with the same error the MCP
+tools return.
+
+After a curved slice the panel shows whether the file stayed curved or fell
+back to planar, every named fallback reason, the curved move count, the worst
+slope, and the accepted and refused surfaces when the mode is auto. The
+preview draws each segment at the G-code's own Z and colours the ones steeper
+than 0.05° on a slope ramp taken from the active theme. A legend names the
+scale.
+
+Head-clearance envelopes are conservative estimates. They have not been
+measured on a printer yet. The panel says that next to the controls.
+
+A background re-slice, when switched on, refreshes a stale planar plate. It
+stays off for curved modes, because a curved job runs the engine twice.
+
 ## M1 end-to-end results
 
 Measured on 24 November 2026 with the release CLI, `--max-angle 10`, the 0.20 mm

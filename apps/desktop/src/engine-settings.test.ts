@@ -19,6 +19,26 @@ describe("userSettingsForEngine", () => {
     expect(userSettingsForEngine({ speed_print: "80" }).layer_height).toBeUndefined();
     expect(userSettingsForEngine({ speed_print: "80" }).extra).toContainEqual(["speed_print", "80"]);
   });
+
+  it("sends non-planar off unless the plate asks otherwise", () => {
+    expect(userSettingsForEngine({}).nonplanar).toEqual({
+      mode: "off",
+      max_angle_deg: 10,
+      strict: false,
+      underside_bands: false,
+    });
+    expect(
+      userSettingsForEngine(
+        {},
+        { mode: "auto", max_angle_deg: 40, strict: true, underside_bands: true },
+      ).nonplanar,
+    ).toEqual({
+      mode: "auto",
+      max_angle_deg: 10,
+      strict: true,
+      underside_bands: true,
+    });
+  });
 });
 
 describe("quickSettingsView", () => {

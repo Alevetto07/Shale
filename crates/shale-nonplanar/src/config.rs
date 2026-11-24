@@ -36,17 +36,53 @@ impl NonplanarMode {
     }
 }
 
+/// Clearance cap the shipped toolhead envelopes are calibrated for, in degrees.
+pub const USER_MAX_ANGLE_DEG: f64 = 10.0;
+
+fn default_max_angle_deg() -> f64 {
+    USER_MAX_ANGLE_DEG
+}
+
+fn default_grid_step_mm() -> f64 {
+    0.35
+}
+
+/// Reject an angle the calibrated envelopes cannot honour.
+///
+/// Above [`USER_MAX_ANGLE_DEG`] the toolhead envelope is no longer what the
+/// printer data was measured for, and zero or less would make every surface
+/// steeper than the cap.
+pub fn check_user_max_angle(angle_deg: f64) -> Result<(), String> {
+    if !angle_deg.is_finite() || angle_deg <= 0.0 || angle_deg > USER_MAX_ANGLE_DEG {
+        return Err(format!(
+            "nonplanar_max_angle_deg must be greater than 0 and at most \
+             {USER_MAX_ANGLE_DEG:.0} degrees; the shipped toolhead envelopes are \
+             calibrated for a {USER_MAX_ANGLE_DEG:.0} degree clearance cap"
+        ));
+    }
+    Ok(())
+}
+
 /// User-facing options for the non-planar pass.
+///
+/// Missing fields take the defaults, so a project saved before non-planar
+/// settings existed, and a desktop payload that only sends the four controls,
+/// both deserialise.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NonplanarOptions {
+    #[serde(default)]
     pub mode: NonplanarMode,
     /// Maximum surface slope above the bed, in degrees (default 10).
+    #[serde(default = "default_max_angle_deg")]
     pub max_angle_deg: f64,
     /// Grid step for the height field, in millimetres (default 0.35).
+    #[serde(default = "default_grid_step_mm")]
     pub grid_step_mm: f64,
     /// Thickness of the curved top band, in millimetres (default derived from layer height).
+    #[serde(default)]
     pub band_thickness_mm: Option<f64>,
     /// Ramp thickness at the bottom of the band, in millimetres.
+    #[serde(default)]
     pub ramp_thickness_mm: Option<f64>,
     /// Integration tests only: leave CuraEngine output for an outer post-pass.
     #[serde(default)]
@@ -129,6 +165,23 @@ mod tests {
             assert!(NonplanarOptions::allowed_for_printer(id), "{id}");
         }
         assert!(!NonplanarOptions::allowed_for_printer("demo_ender"));
+    }
+
+    #[test]
+    fn partial_options_from_the_desktop_fill_the_internal_knobs() {
+        let parsed: NonplanarOptions = serde_json::from_str(
+            r#"{"mode":"auto","max_angle_deg":8.5,"strict":true,"underside_bands":true}"#,
+        )
+        .expect("partial");
+        assert_eq!(parsed.mode, NonplanarMode::Auto);
+        assert_eq!(parsed.max_angle_deg, 8.5);
+        assert!(parsed.strict);
+        assert!(parsed.underside_bands);
+        assert_eq!(parsed.grid_step_mm, 0.35);
+        assert!(parsed.band_thickness_mm.is_none());
+        check_user_max_angle(8.5).unwrap();
+        assert!(check_user_max_angle(0.0).is_err());
+        assert!(check_user_max_angle(10.5).is_err());
     }
 
     #[test]

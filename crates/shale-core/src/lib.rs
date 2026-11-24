@@ -79,8 +79,10 @@ pub use supports::{
 };
 pub use value::Value;
 pub use shale_nonplanar::{
-    plan_auto_placement, safety_report_from_gcode, AutoPlacementReport, DetectionReport,
-    NonplanarMode, NonplanarOptions, NonplanarReport, PlannedSurface, SafetyReport, SurfacePreview,
+    check_user_max_angle, count_curved_extrusions, plan_auto_placement, safety_report_from_gcode,
+    segment_slope_deg, worst_extrusion_slope_deg, AutoPlacementReport, DetectionReport,
+    NonplanarMode, NonplanarOptions, NonplanarReport, PlannedSurface, PlannedSurfaceKind,
+    SafetyReport, SurfacePreview, CURVED_EXTRUSION_MIN_SLOPE_DEG, USER_MAX_ANGLE_DEG,
 };
 
 /// Removes the pre-v0.1.2 per-install cache under `%LOCALAPPDATA%\\Shale\\cache`.

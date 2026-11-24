@@ -2310,6 +2310,7 @@ select {
   background: var(--panel);
 }
 .legend-ramp i { flex: 1; min-width: 0; }
+.legend-ramp--slope { background: linear-gradient(90deg, var(--ink-3), var(--accent)); }
 .legend-scale-ends {
   display: flex;
   justify-content: space-between;

@@ -9,7 +9,7 @@
 
 export type Section = "Quality" | "Strength" | "Speed" | "Support" | "Others" | "Non-planar";
 
-/// Non-planar is a reserved empty tab. It has no settings keys and no engine flags.
+/// Non-planar is its own tab. The controls are job settings, not Cura keys.
 export const SECTIONS: Section[] = ["Quality", "Strength", "Speed", "Support", "Others", "Non-planar"];
 
 /// Which tab a settings group belongs to. Groups stay the unit of the panel

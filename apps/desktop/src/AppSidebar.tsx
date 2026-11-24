@@ -135,7 +135,11 @@ export function AppSidebar(props: AppSidebarProps) {
 
       <SidebarSection label="Recent" icon={<Clock size={14} strokeWidth={1.5} />}>
         {!props.recentsRead ? (
-          <p className="ui-sidebar__empty">Loading…</p>
+          <div className="ui-sidebar__skeleton" aria-hidden>
+            <i style={{ width: "72%" }} />
+            <i style={{ width: "54%" }} />
+            <i style={{ width: "63%" }} />
+          </div>
         ) : props.recents.length === 0 ? (
           <p className="ui-sidebar__empty">No recent projects yet.</p>
         ) : (

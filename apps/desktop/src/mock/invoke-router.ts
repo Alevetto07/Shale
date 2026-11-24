@@ -124,6 +124,8 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
       return [] as T;
     case "mesh_health":
       return { triangles: 12, openEdges: 0, volumeMm3: 8000 } as T;
+    case "nonplanar_supported":
+      return true as T;
     case "slice_model":
       sliceSummary = mockSlice(models.map((m) => m.id));
       return sliceSummary as T;

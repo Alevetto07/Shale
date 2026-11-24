@@ -21,5 +21,5 @@ export { useReducedMotion } from "./use-reduced-motion";
 export { formatRelativeTime } from "./format-time";
 export { CommandPalette, type CommandPaletteItem, type CommandPaletteProps } from "./command-palette";
 export { toastUndo, type UndoToastOptions } from "./toast-undo";
-export { NonPlanarPlaceholder } from "./non-planar-placeholder";
+export { NonPlanarPanel, ENVELOPE_NOTE } from "./non-planar-panel";
 export { ThemedToaster } from "./themed-toaster";

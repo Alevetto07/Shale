@@ -1344,6 +1344,10 @@ button.model.selected {
   inset: 0;
   background: var(--accent);
   transform-origin: left center;
+  transition: transform 180ms linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-meter__fill { transition: none; }
 }
 .ui-meter__label {
   font-family: var(--mono);
@@ -1705,7 +1709,15 @@ label .ui-select__trigger {
   color: var(--ink-2);
   font-family: var(--prose);
   font-size: var(--text-sm);
-  cursor: not-allowed;
+  cursor: pointer;
+}
+.nonplanar-slot__mode:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+.nonplanar-slot__mode:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .nonplanar-slot__mode[data-active="1"] {
   border-color: var(--accent-muted);
@@ -1729,6 +1741,136 @@ label .ui-select__trigger {
   font-family: var(--mono);
   font-size: var(--text-2xs);
   color: var(--ink-3);
+}
+.nonplanar-slot__warn {
+  margin: 0 0 var(--space-3);
+  color: var(--ink);
+  font-family: var(--prose);
+  font-size: var(--text-sm);
+}
+.nonplanar-slot__angle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.nonplanar-slot__angle input[type="range"] {
+  flex: 1 1 auto;
+  accent-color: var(--accent);
+}
+.nonplanar-slot__angle span {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--ink);
+  min-width: 3.5rem;
+  text-align: right;
+}
+.nonplanar-slot__check {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin-top: var(--space-3);
+  font-family: var(--prose);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+.nonplanar-slot__check input {
+  margin-top: 0.2rem;
+  accent-color: var(--accent);
+}
+.nonplanar-slot__experimental {
+  margin-top: var(--space-3);
+}
+.nonplanar-slot__experimental summary {
+  cursor: pointer;
+  font-family: var(--prose);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+.nonplanar-slot__experimental summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.nonplanar-report {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+.nonplanar-report__outcome {
+  margin: 0 0 var(--space-2);
+  font-family: var(--prose);
+  font-weight: 500;
+  color: var(--ink);
+}
+.nonplanar-report__outcome[data-outcome="curved"] { color: var(--accent); }
+.nonplanar-report__facts {
+  display: flex;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-3);
+}
+.nonplanar-report__facts div { display: flex; flex-direction: column; gap: 2px; }
+.nonplanar-report dt {
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  color: var(--ink-3);
+}
+.nonplanar-report dd {
+  margin: 0;
+  font-family: var(--mono);
+  color: var(--ink);
+}
+.nonplanar-report__heading {
+  margin: var(--space-2) 0;
+  font-family: var(--prose);
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+.nonplanar-report ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--ink-2);
+  font-family: var(--prose);
+  font-size: var(--text-sm);
+}
+.nonplanar-report__surfaces li span {
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  color: var(--ink-3);
+}
+.legend-ramp--slope {
+  background: linear-gradient(90deg, var(--ink-3), var(--accent));
+}
+.viewport-skeleton {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+.viewport-skeleton__plate {
+  width: min(70%, 28rem);
+  height: min(55%, 16rem);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(90deg, var(--surface-inset), var(--panel-raised), var(--surface-inset));
+  background-size: 200% 100%;
+  animation: viewport-shimmer 1.2s ease-in-out infinite;
+}
+@keyframes viewport-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .viewport-skeleton__plate { animation: none; }
+}
+.ui-sidebar__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.ui-sidebar__skeleton i {
+  display: block;
+  height: 0.7rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-inset);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -36,10 +36,26 @@ describe("buildCommandPaletteItems", () => {
       onToggleTheme: vi.fn(),
       onOpenSettings: vi.fn(),
       onOpenRecent: vi.fn(),
+      nonplanarMode: "off",
+      onNonplanarMode: vi.fn(),
+      onToggleStrict: vi.fn(),
+      onOpenNonplanar: vi.fn(),
+      onExportGcode: vi.fn(),
+      onArrange: vi.fn(),
+      onUndo: vi.fn(),
+      onRedo: vi.fn(),
+      canUndo: false,
+      canRedo: false,
+      onUiStyle: vi.fn(),
+      liveSlice: true,
+      onToggleLiveSlice: vi.fn(),
     });
     const preview = items.find((item) => item.id === "pane-preview");
     expect(preview?.disabled).toBe(true);
     const recent = items.find((item) => item.id === "recent-/tmp/bracket.shale");
     expect(recent?.label).toBe("Bracket");
+    expect(items.some((item) => item.id === "nonplanar-auto")).toBe(true);
+    expect(items.some((item) => item.label === "Theme: Andromeda")).toBe(true);
+    expect(items.some((item) => /deep field/i.test(item.label))).toBe(false);
   });
 });

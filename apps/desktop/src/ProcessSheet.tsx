@@ -12,8 +12,8 @@ import {
   describe,
   type Section,
 } from "./settings-meta";
-import { Button, Input, NumericControl, Select, SwitchRow, Tabs, TabsContent, TabsList, TabsTrigger, Tooltip } from "./ui";
-import { NonPlanarPlaceholder } from "./ui/non-planar-placeholder";
+import type { NonplanarReportView, NonplanarSettings } from "./api";
+import { Button, Input, NonPlanarPanel, NumericControl, Select, SwitchRow, Tabs, TabsContent, TabsList, TabsTrigger, Tooltip } from "./ui";
 import { springSnappy } from "./ui/springs";
 import { useReducedMotion } from "./ui/use-reduced-motion";
 
@@ -38,6 +38,16 @@ interface Props {
   qualityType: string | null;
   onQuality: (qualityType: string) => void;
   printerLabel: string;
+  nonplanar: NonplanarSettings;
+  onNonplanar: (next: NonplanarSettings) => void;
+  nonplanarReport: NonplanarReportView | null;
+  nonplanarSupported: boolean;
+  liveSlice: boolean;
+  onLiveSlice: (next: boolean) => void;
+  /** When set, the sheet opens on this tab (command palette). */
+  sectionRequest?: Section | null;
+  /** Bumps when the palette asks again, even if the tab name did not change. */
+  focusNonce?: number;
 }
 
 /// The keys the simple rows already own; showing them twice would let the two
@@ -88,7 +98,10 @@ function Help({ text }: { text: string }) {
 }
 
 export function ProcessSheet(props: Props) {
-  const [section, setSection] = useState<Section>("Quality");
+  const [section, setSection] = useState<Section>(props.sectionRequest ?? "Quality");
+  useEffect(() => {
+    if (props.sectionRequest) setSection(props.sectionRequest);
+  }, [props.sectionRequest, props.focusNonce]);
   const [advanced, setAdvanced] = useState(false);
   const [picking, setPicking] = useState(false);
   const [hidden, setHidden] = useState<Set<string>>(() => loadHidden());
@@ -250,8 +263,14 @@ export function ProcessSheet(props: Props) {
 
   const nonPlanar = section === "Non-planar";
   const body = nonPlanar ? (
-    // SLOT: future non-planar controls — no settings keys, no engine flags, no invoke.
-    <NonPlanarPlaceholder />
+    <NonPlanarPanel
+      value={props.nonplanar}
+      onChange={props.onNonplanar}
+      report={props.nonplanarReport}
+      supported={props.nonplanarSupported}
+      liveSlice={props.liveSlice}
+      onLiveSlice={props.onLiveSlice}
+    />
   ) : search ? (
     <div className="settings-body">
       <p className="hint">

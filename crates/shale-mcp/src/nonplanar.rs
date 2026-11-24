@@ -92,14 +92,10 @@ pub fn parse_mode(mode: &str) -> Result<NonplanarMode, String> {
 /// printer data was measured for, and zero or less would make every surface
 /// steeper than the cap, collapsing the job to a planar slice by design.
 pub fn check_max_angle(angle_deg: f64) -> Result<(), String> {
-    if !angle_deg.is_finite() || angle_deg <= 0.0 || angle_deg > MAX_ANGLE_LIMIT_DEG {
-        return Err(format!(
-            "nonplanar_max_angle_deg must be greater than 0 and at most \
-             {MAX_ANGLE_LIMIT_DEG:.0} degrees; the shipped toolhead envelopes are \
-             calibrated for a {MAX_ANGLE_LIMIT_DEG:.0} degree clearance cap"
-        ));
-    }
-    Ok(())
+    // The MCP cap and the core cap are one number. A drift here would let a
+    // tool accept an angle the pipeline then refuses, or the other way round.
+    debug_assert_eq!(MAX_ANGLE_LIMIT_DEG, shale_core::USER_MAX_ANGLE_DEG);
+    shale_core::check_user_max_angle(angle_deg)
 }
 
 /// Refuse a non-planar mode on a printer with no toolhead envelope.
