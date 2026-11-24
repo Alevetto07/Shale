@@ -76,7 +76,7 @@ pub fn plan_auto_placement(
         options.max_angle_deg,
         band,
     );
-    let (surfaces, notes) = plan_surfaces(&detection, options.max_angle_deg);
+    let (surfaces, notes) = plan_surfaces(&detection, options);
     let enabled_surface_count = surfaces.iter().filter(|s| s.enabled).count();
     let fallback_to_planar = enabled_surface_count == 0;
     let preview = preview_mesh(&surfaces);
@@ -94,8 +94,9 @@ pub fn plan_auto_placement(
 
 fn plan_surfaces(
     detection: &DetectionReport,
-    max_angle_deg: f64,
+    options: &NonplanarOptions,
 ) -> (Vec<PlannedSurface>, Vec<String>) {
+    let max_angle_deg = options.max_angle_deg;
     let mut surfaces = Vec::new();
     let mut notes = Vec::new();
     let mut next_surface = 1u32;
@@ -114,7 +115,7 @@ fn plan_surfaces(
                     &mut next_surface,
                     feature,
                     PlannedSurfaceKind::BridgeTiltBand,
-                    max_angle_deg,
+                    options,
                 );
             }
             DetectedFeatureKind::Cantilever => {
@@ -123,7 +124,7 @@ fn plan_surfaces(
                     &mut next_surface,
                     feature,
                     PlannedSurfaceKind::CantileverTiltBand,
-                    max_angle_deg,
+                    options,
                 );
             }
             DetectedFeatureKind::Overhang | DetectedFeatureKind::Island => {
@@ -132,7 +133,7 @@ fn plan_surfaces(
                     &mut next_surface,
                     feature,
                     PlannedSurfaceKind::OverhangTiltBand,
-                    max_angle_deg,
+                    options,
                 );
             }
             DetectedFeatureKind::Cosmetic => {
@@ -142,7 +143,7 @@ fn plan_surfaces(
                         &mut next_surface,
                         feature,
                         PlannedSurfaceKind::OverhangTiltBand,
-                        max_angle_deg,
+                        options,
                     );
                 } else {
                     notes.push(format!(
@@ -217,12 +218,45 @@ fn plan_underside(
     next_surface: &mut u32,
     feature: &DetectedFeature,
     kind: PlannedSurfaceKind,
-    max_angle_deg: f64,
+    options: &NonplanarOptions,
 ) {
+    let max_angle_deg = options.max_angle_deg;
     let before = feature
         .overhang_angle_before_deg
         .or(Some(feature.angle_from_vertical_deg))
         .unwrap_or(60.0);
+    // An underside band prints under the part, so the thing it has to clear is the
+    // part itself, at the same XY: the head sweep sees the deck above the band as
+    // printed material and the below-band equivalence audit has nothing planar to
+    // compare against. Auto no longer plans them unless asked (M1-B3: the dome fell
+    // back at its first underside surface after the band's own bookkeeping failed).
+    if !options.underside_bands {
+        surfaces.push(PlannedSurface {
+            id: *next_surface,
+            feature_id: feature.id,
+            kind,
+            enabled: false,
+            min: feature.min,
+            max: feature.max,
+            tilt_deg: 0.0,
+            bearing_deg: span_bearing(feature),
+            extent_mm: [
+                feature.max[0] - feature.min[0],
+                feature.max[1] - feature.min[1],
+            ],
+            overhang_angle_before_deg: Some(before),
+            overhang_angle_after_deg: Some(before),
+            overhang_angle_measured_after_deg: None,
+            overhang_slope_measured_from_horizontal_deg: None,
+            reason: format!(
+                "underside band off by default (asked for {before:.1}°): the part above it is \
+                 material at the same XY, so the sweep and the planar audit cannot verify it — \
+                 set NonplanarOptions::underside_bands to try it"
+            ),
+        });
+        *next_surface += 1;
+        return;
+    }
     if before < 52.0 {
         surfaces.push(PlannedSurface {
             id: *next_surface,

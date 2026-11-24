@@ -16,6 +16,16 @@
 //! zero, which calibrates the lattice: no retraction, seam or ironing pattern of
 //! the reference slice is allowed to move the baseline.
 //!
+//! Why the tolerance is one head-clearance unit and not a hair: the band floor is
+//! anchored per island at `h_top_smooth - band`, which lands between two planar
+//! layers, so the first band layer can print a fraction of a layer under the last
+//! planar one at the footprint seam. Measured on the t-wing and the 24 mm ball
+//! (M1-B4) that overlap is 0.057-0.061 mm — a quarter layer, inside the 0.1 mm the
+//! swept toolhead check itself allows, and an overlap rather than a gap, which is
+//! the safe side. Counting it would make the scan assert something the product
+//! deliberately permits; the rim collapse this test exists for dropped 0.69 mm, so
+//! 0.1 mm still catches it with room to spare.
+//!
 //! Fixtures: `examples/t-wing.stl` (flat 40x10x4 deck on a 10x10x20 pillar; the
 //! deck edge is the only part of its top that is not horizontal) and the 12 mm
 //! dome (`primitives::sphere(12.0)`), the curved top the curved band exists for.
@@ -38,7 +48,12 @@ const MATERIAL: &str = "bambu_lab_pla_basic";
 /// XY lattice the printed-height map is kept on, in millimetres.
 const CELL_MM: f32 = 0.4;
 /// How far a move may dip below already-printed plastic before it counts.
-const INVERSION_DROP_MM: f32 = 0.05;
+///
+/// One head-clearance unit (the sweep's own 0.1 mm), not a hair: the band floor is
+/// anchored between two planar layers, so the first band layer legitimately
+/// overlaps the last planar one by up to a quarter of a layer at the seam
+/// (0.061 mm measured on the t-wing). See the module docs.
+const INVERSION_DROP_MM: f32 = 0.1;
 /// Longest sample spacing along an extruding move, in millimetres.
 const SAMPLE_MM: f32 = 0.25;
 

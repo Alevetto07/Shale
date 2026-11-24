@@ -233,6 +233,12 @@ impl DeformField {
     ///
     /// Columns without a printable top are skipped: they carry the initial 1.0
     /// and cannot lift anything, so counting them would hide a fully damped field.
+    ///
+    /// This is *not* the go/no-go for a curved job. In auto the deforming footprint
+    /// is a subset of the top — every column outside the plan, and every column
+    /// cut because its own surface is steeper than the cap, sits at exactly 0 — so
+    /// the minimum is 0 for every honest auto field. Ask [`Self::max_strength`]
+    /// whether anything is still lifting.
     pub fn min_strength(&self) -> f64 {
         let mut min = f64::INFINITY;
         for (i, strength) in self.island_strength.iter().enumerate() {
@@ -245,6 +251,37 @@ impl DeformField {
         } else {
             0.0
         }
+    }
+
+    /// Largest flattening strength left on a column that carries a printable top.
+    ///
+    /// The question a collapse decision actually asks: is there anywhere left for
+    /// the band to follow the surface? A steep patch that had to be un-flattened
+    /// drives its own column to 0 and leaves its neighbours alone, so this stays
+    /// high while [`Self::min_strength`] drops to 0.
+    pub fn max_strength(&self) -> f64 {
+        let mut max = f64::NEG_INFINITY;
+        for (i, strength) in self.island_strength.iter().enumerate() {
+            if self.grid.z_top_smooth.get(i).is_some_and(|z| z.is_some()) {
+                max = max.max(*strength);
+            }
+        }
+        if max.is_finite() {
+            max
+        } else {
+            0.0
+        }
+    }
+
+    /// Columns that carry a printable top and still lift (strength above 0).
+    pub fn engaged_columns(&self) -> usize {
+        self.island_strength
+            .iter()
+            .enumerate()
+            .filter(|(i, s)| {
+                **s > 0.0 && self.grid.z_top_smooth.get(*i).is_some_and(|z| z.is_some())
+            })
+            .count()
     }
 }
 

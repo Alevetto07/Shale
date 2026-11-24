@@ -11,7 +11,10 @@ use crate::equivalence::{check_grafted_planar_equivalence, graft_planar_shell_be
 use crate::height_field::build_height_field;
 use crate::inverse::{map_gcode_inverse_counted, MAX_INVERSE_CLAMP_MM};
 use crate::mesh::{merge_meshes as merge_meshes_internal, Mesh};
-use crate::safety::{limit_field_slopes, PLANAR_COLLAPSE_STRENGTH, SLOPE_CAP_TOLERANCE_DEG};
+use crate::safety::{
+    limit_field_slopes, restrict_to_printable_top, PLANAR_COLLAPSE_STRENGTH,
+    SLOPE_CAP_TOLERANCE_DEG,
+};
 use crate::validate::{embed_safety_json, validate_gcode, MachineLimits};
 
 /// Everything the post-pass needs from the pre-pass.
@@ -38,8 +41,11 @@ pub struct NonplanarContext {
 
 impl NonplanarContext {
     /// Number of top sheets that still receive a lift above their own surface.
+    ///
+    /// Gated on [`DeformField::max_strength`], not the minimum: in auto the
+    /// footprint is a subset of the top, so the minimum is 0 on every honest field.
     pub fn islands_flattened(&self) -> usize {
-        if self.planar_collapsed.is_some() || self.field.min_strength() <= PLANAR_COLLAPSE_STRENGTH
+        if self.planar_collapsed.is_some() || self.field.max_strength() <= PLANAR_COLLAPSE_STRENGTH
         {
             0
         } else {
@@ -84,6 +90,13 @@ pub fn plan_field(
         field.refresh_top_targets();
         auto_placement = Some(plan);
     }
+    // The band follows `z_top_smooth`, so the footprint is what the cap has to be
+    // checked against — not the lift schedule. Cut every column whose own surface
+    // is steeper than the cap (a smoothed rim, a shoulder, the flank of a dome) out
+    // of the footprint and let the planar slicer keep it; the cut boundary is then
+    // ramped at `tan(cap)` so it has no step of its own. Without this the field
+    // carries a rim on every flat deck whose only fix is damping the island to 0.
+    let footprint_cut = restrict_to_printable_top(&mut field);
     let slope_limiting = Some(limit_field_slopes(&mut field, nominal_layer_height));
     let mut planar_collapsed = None;
     if auto_placement
@@ -94,16 +107,21 @@ pub fn plan_field(
             Some("auto placement found no surface it could enable on this geometry".to_string());
     }
     if let Some(limiting) = &slope_limiting {
-        if limiting.min_strength <= PLANAR_COLLAPSE_STRENGTH {
+        // max, not min: the footprint is a subset of the top, so every column the
+        // plan did not cover and every column the cap cut sits at exactly 0. The
+        // only question is whether anything is still lifting.
+        if limiting.max_strength <= PLANAR_COLLAPSE_STRENGTH {
             planar_collapsed = Some(format!(
-                "slope limiting reduced the flattening strength to {:.1}% after {} pass(es) \
-                 (worst level surface {:.2}° -> {:.2}°, cap {:.1}°): the model's own top is \
-                 steeper than the toolhead may follow, so there is nothing left to print curved",
-                limiting.min_strength * 100.0,
+                "slope limiting left {:.1}% strength on the best column after {} pass(es) \
+                 (worst level surface {:.2}° -> {:.2}°, cap {:.1}°, {} of {} top column(s) cut \
+                 by the cap): nothing is left to print curved",
+                limiting.max_strength * 100.0,
                 limiting.passes,
                 limiting.worst_before_deg,
                 limiting.worst_after_deg,
-                limiting.cap_deg
+                limiting.cap_deg,
+                footprint_cut,
+                field.engaged_columns() + footprint_cut
             ));
         }
     }
