@@ -41,6 +41,7 @@ slice options
   --supports          enable support
   --set KEY=VALUE     any Cura setting, repeatable
   --nonplanar MODE    experimental: off, curved-tops, or auto (Bambu printers with head envelope)
+  --nonplanar-strict  fail instead of falling back to a planar print when the curved pass cannot be verified
   --max-angle DEG     clearance limit for curved tops (default 10)
   -o, --output PATH   where to write the G-code
 
@@ -203,6 +204,7 @@ fn nonplanar_options(args: &[String]) -> NonplanarOptions {
     NonplanarOptions {
         mode,
         max_angle_deg,
+        strict: has(args, "--nonplanar-strict"),
         ..NonplanarOptions::default()
     }
 }
@@ -339,14 +341,27 @@ fn slice_command(args: &[String]) -> Result<(), String> {
         );
     }
     if let Some(report) = &outcome.nonplanar_report {
+        let collisions_extruding = report
+            .safety
+            .as_ref()
+            .map_or(0, |safety| safety.collisions_extruding);
+        let collisions_travel = report
+            .safety
+            .as_ref()
+            .map_or(0, |safety| safety.collisions_travel);
         println!(
-            "nonplanar {} islands={} flattened={} equiv={} collisions_fixed={}",
+            "nonplanar {} islands={} flattened={} equiv={} fallback={} collisions_extruding={} collisions_travel={}",
             report.mode,
             report.top_islands,
             report.islands_flattened,
             report.planar_equivalence_ok,
-            report.collision_adjustments.len()
+            report.fallback_to_planar,
+            collisions_extruding,
+            collisions_travel
         );
+        if report.fallback_to_planar {
+            println!("fallback_reason {}", report.fallback_reasons.join(" | "));
+        }
         if let Some(auto) = &report.auto_placement {
             println!(
                 "auto surfaces={} fallback_planar={}",

@@ -1,8 +1,6 @@
 //! Shared non-planar integration / matrix meshes.
 #![allow(dead_code)] // Each test binary includes this module and uses a different subset.
 
-use std::path::PathBuf;
-
 use shale_core::catalog::Catalog;
 use shale_core::engine::SlicingEngine;
 use shale_core::job::{self, PlacedModel};
@@ -90,47 +88,26 @@ fn pillar_quality(catalog: &Catalog, printer_id: &str) -> String {
         .unwrap_or_else(|| PILLAR_QUALITY.into())
 }
 
-fn slice_deferred_engine_gcode(
-    catalog: &Catalog,
-    engine: &dyn SlicingEngine,
-    printer_id: &str,
-    placed: &[PlacedModel],
-    path: PathBuf,
-) -> (String, String, shale_core::resolver::ResolvedSettings) {
-    let settings = UserSettings {
-        layer_height: Some(0.2),
-        nonplanar: NonplanarOptions {
-            mode: NonplanarMode::CurvedTops,
-            max_angle_deg: 10.0,
-            defer_post_pass: true,
-            ..NonplanarOptions::default()
-        },
-        ..UserSettings::default()
-    };
-    let out = job::slice(
-        catalog,
-        engine,
-        printer_id,
-        Some(PILLAR_VARIANT.into()),
-        Some(pillar_quality(catalog, printer_id)),
-        &[Some(PILLAR_MATERIAL.into())],
-        settings,
-        placed,
-        &[],
-        None,
-        &[],
-        path,
-        &mut |_| {},
-    )
-    .expect("deferred slice");
-    (
-        out.engine_gcode.expect("engine gcode"),
-        out.planar_baseline_gcode.expect("planar baseline"),
-        out.resolved,
-    )
+fn limits_from(
+    resolved: &shale_core::resolver::ResolvedSettings,
+) -> shale_nonplanar::MachineLimits {
+    let max_feed = resolved
+        .global
+        .get("machine_max_feedrate_x")
+        .and_then(|s| s.parse::<f64>().ok())
+        .map(|v| (v * 60.0).max(600.0))
+        .unwrap_or(600.0);
+    shale_nonplanar::MachineLimits {
+        z_max_mm: resolved.summary.machine_height.max(1.0),
+        max_feed_mm_per_min: max_feed,
+    }
 }
 
-/// Tall pillar G-code first, then dome — real Cura slices concatenated for envelope flattening.
+/// Pillar and dome as **two print objects**, sliced by one deferred job.
+///
+/// Both parts are deformed with the single plate field `job::slice` planned from
+/// the merged machine-space geometry, then mapped back with that same field: the
+/// inverse here is the inverse of the deformation CuraEngine sliced.
 pub fn slice_pillar_beside_dome_sequential(
     catalog: &Catalog,
     engine: &dyn SlicingEngine,
@@ -139,93 +116,63 @@ pub fn slice_pillar_beside_dome_sequential(
 ) -> (String, shale_nonplanar::NonplanarReport) {
     let (dome_mesh, dome_tf, pillar_mesh, pillar_tf) = pillar_beside_dome_parts();
     let pid = std::process::id();
-    let (p_eng, _p_planar, resolved) = slice_deferred_engine_gcode(
-        catalog,
-        engine,
-        printer_id,
-        &[PlacedModel {
-            name: "pillar".into(),
-            mesh: pillar_mesh.clone(),
-            transform: pillar_tf.clone(),
-            settings: vec![("ironing_enabled".into(), "false".into())],
-            slot: None,
-        }],
-        std::env::temp_dir().join(format!("shale-pillar-{tag}-p-{pid}.gcode")),
-    );
-    let (d_eng, _d_planar, _) = slice_deferred_engine_gcode(
-        catalog,
-        engine,
-        printer_id,
-        &[PlacedModel {
-            name: "dome-pedestal".into(),
-            mesh: dome_mesh.clone(),
-            transform: dome_tf.clone(),
-            settings: vec![("ironing_enabled".into(), "false".into())],
-            slot: None,
-        }],
-        std::env::temp_dir().join(format!("shale-pillar-{tag}-d-{pid}.gcode")),
-    );
-    let deformed = format!("{p_eng}\n{d_eng}");
-    let (dome_mesh2, _, pillar_mesh2, _) = pillar_beside_dome_parts();
-    let merged = merge_meshes(&dome_mesh2, &pillar_mesh2);
-    let merged_tf = mesh::place_on_bed(&merged, 256.0, 256.0, false);
-    let planar_merged_path =
-        std::env::temp_dir().join(format!("shale-pillar-{tag}-merged-planar-{pid}.gcode"));
-    let planar_settings = UserSettings {
+    let options = NonplanarOptions {
+        mode: NonplanarMode::CurvedTops,
+        max_angle_deg: 10.0,
+        defer_post_pass: true,
+        ..NonplanarOptions::default()
+    };
+    let settings = UserSettings {
         layer_height: Some(0.2),
-        nonplanar: NonplanarOptions::default(),
+        nonplanar: options.clone(),
         ..UserSettings::default()
     };
-    job::slice(
+    let per_model = pillar_beside_dome_slice_settings();
+    let out = job::slice(
         catalog,
         engine,
         printer_id,
         Some(PILLAR_VARIANT.into()),
         Some(pillar_quality(catalog, printer_id)),
         &[Some(PILLAR_MATERIAL.into())],
-        planar_settings,
-        &[PlacedModel {
-            name: "pillar-beside-dome".into(),
-            mesh: merged,
-            transform: merged_tf,
-            settings: vec![("ironing_enabled".into(), "false".into())],
-            slot: None,
-        }],
+        settings,
+        &[
+            PlacedModel {
+                name: "pillar".into(),
+                mesh: pillar_mesh,
+                transform: pillar_tf,
+                settings: per_model.clone(),
+                slot: None,
+            },
+            PlacedModel {
+                name: "dome-pedestal".into(),
+                mesh: dome_mesh,
+                transform: dome_tf,
+                settings: per_model,
+                slot: None,
+            },
+        ],
         &[],
         None,
         &[],
-        planar_merged_path.clone(),
+        std::env::temp_dir().join(format!("shale-pillar-{tag}-deferred-{pid}.gcode")),
         &mut |_| {},
     )
-    .expect("merged planar");
-    let planar = std::fs::read_to_string(planar_merged_path).expect("merged planar gcode");
-    let reference = shale_nonplanar::merge_meshes(&[
-        mesh_for_nonplanar(&mesh::bake(&pillar_mesh, &pillar_tf)),
-        mesh_for_nonplanar(&mesh::bake(&dome_mesh, &dome_tf)),
-    ]);
-    let layer_height = resolved.summary.layer_height;
-    let max_feed = resolved
-        .global
-        .get("machine_max_feedrate_x")
-        .and_then(|s| s.parse::<f64>().ok())
-        .map(|v| (v * 60.0).max(600.0))
-        .unwrap_or(600.0);
-    let opts = NonplanarOptions {
-        mode: NonplanarMode::CurvedTops,
-        max_angle_deg: 10.0,
-        ..NonplanarOptions::default()
-    };
-    shale_nonplanar::apply_post_pass(
-        &deformed,
-        &planar,
-        &reference,
-        &opts,
-        layer_height,
-        &[],
+    .expect("deferred slice");
+    let deformed = out.engine_gcode.clone().expect("engine gcode");
+    let planar = out.planar_baseline_gcode.clone().expect("planar baseline");
+    let context = out
+        .nonplanar_context
+        .clone()
+        .expect("deferred job carries its field");
+    let (mapped, report) = shale_nonplanar::apply_post_pass(shale_nonplanar::PostPassArgs {
+        deformed_slice_gcode: &deformed,
+        planar_baseline_gcode: &planar,
+        context: &context,
+        options: &options,
         printer_id,
-        shale_nonplanar::MachineLimits {
-            z_max_mm: resolved.summary.machine_height.max(1.0),
-            max_feed_mm_per_min: max_feed,
-        },
-    )
+        limits: limits_from(&out.resolved),
+    })
+    .expect("non-strict post-pass never errors");
+    (mapped, report)
 }

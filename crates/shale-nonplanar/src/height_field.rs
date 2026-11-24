@@ -1,9 +1,10 @@
 //! Vertical ray casting over an XY grid to find printable top surfaces.
 
 use crate::mesh::Mesh;
+use serde::{Deserialize, Serialize};
 
 /// A scalar field sampled on a regular XY grid.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HeightGrid {
     pub origin: [f64; 2],
     pub step: f64,
@@ -46,7 +47,9 @@ impl HeightGrid {
         }
         let ix = fx.floor() as isize;
         let iy = fy.floor() as isize;
-        if ix as usize >= self.width.saturating_sub(1) || iy as usize >= self.height.saturating_sub(1) {
+        if ix as usize >= self.width.saturating_sub(1)
+            || iy as usize >= self.height.saturating_sub(1)
+        {
             return field.last().copied().flatten();
         }
         let ix = ix as usize;
@@ -128,7 +131,8 @@ pub fn build_height_field(
             }
             let count_all = count_ray_hits(x, y, ray_top, mesh);
             if count_all % 2 == 1 || !hits.is_empty() {
-                z_top[iy * width + ix] = select_exterior_top_hit(&hits, max_angle_deg, band_thickness);
+                z_top[iy * width + ix] =
+                    select_exterior_top_hit(&hits, max_angle_deg, band_thickness);
             }
         }
     }
@@ -177,7 +181,7 @@ fn select_exterior_top_hit(
         return Some(sorted[0].0);
     }
     printable.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-  // Deduplicate heights within one layer.
+    // Deduplicate heights within one layer.
     let mut layers: Vec<(f64, [f64; 3])> = Vec::new();
     for h in printable {
         if layers
@@ -209,13 +213,7 @@ fn count_ray_hits(x: f64, y: f64, z_high: f64, mesh: &Mesh) -> usize {
     count
 }
 
-fn ray_triangle_any(
-    x: f64,
-    y: f64,
-    z_high: f64,
-    mesh: &Mesh,
-    tri: &[u32; 3],
-) -> bool {
+fn ray_triangle_any(x: f64, y: f64, z_high: f64, mesh: &Mesh, tri: &[u32; 3]) -> bool {
     ray_triangle_z(x, y, z_high, mesh, tri).is_some()
 }
 
@@ -229,7 +227,7 @@ fn ray_triangle_z(
     let v0 = mesh.vertices[tri[0] as usize];
     let v1 = mesh.vertices[tri[1] as usize];
     let v2 = mesh.vertices[tri[2] as usize];
-  let edge1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+    let edge1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
     let edge2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
     let normal = cross(edge1, edge2);
     let len = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
@@ -436,7 +434,10 @@ mod tests {
         assert!(!samples.is_empty());
         let mean: f64 = samples.iter().sum::<f64>() / samples.len() as f64;
         for z in samples {
-            assert!((z - mean).abs() < 0.5, "flat top should be level, got spread around {mean}");
+            assert!(
+                (z - mean).abs() < 0.5,
+                "flat top should be level, got spread around {mean}"
+            );
             assert!((z - 10.0).abs() < 0.5);
         }
     }
@@ -453,7 +454,10 @@ mod tests {
                 }
             }
         }
-        assert!(!zs.is_empty(), "12° slab must be detected at 10° print limit");
+        assert!(
+            !zs.is_empty(),
+            "12° slab must be detected at 10° print limit"
+        );
         let z_min = zs.iter().map(|(_, z)| *z).fold(f64::INFINITY, f64::min);
         let z_max = zs.iter().map(|(_, z)| *z).fold(f64::NEG_INFINITY, f64::max);
         let spread = z_max - z_min;

@@ -1,21 +1,43 @@
 //! Map planar-slice G-code Z back through the inverse deformation.
 
+use crate::config::InverseMapStats;
 use crate::deform::DeformField;
 use crate::extrusion::extrusion_scale;
 
 const SEGMENT_MM: f64 = 0.75;
 const MERGE_MM: f64 = 0.2;
 
-fn clamp_slope_z(field: &DeformField, prev: [f64; 3], x: f64, y: f64, mut z: f64) -> f64 {
+/// Largest Z correction the inverse map may make on its own.
+///
+/// Anything bigger means the deformation asked for a move the toolhead cannot
+/// follow; the map leaves that move at its true inverse and the post-pass
+/// verification rejects the file (planar fallback) instead of clamping silently.
+pub const MAX_INVERSE_CLAMP_MM: f64 = 0.02;
+
+fn clamp_slope_z(
+    field: &DeformField,
+    prev: [f64; 3],
+    x: f64,
+    y: f64,
+    z: f64,
+    stats: &mut InverseMapStats,
+) -> f64 {
     let step_horiz = ((x - prev[0]).powi(2) + (y - prev[1]).powi(2)).sqrt();
-    if step_horiz < 1e-6 {
-        return prev[2];
-    }
-    let horiz = step_horiz;
-    let max_dz = field.max_angle_deg.to_radians().tan() * horiz;
+    let max_dz = if step_horiz < 1e-6 {
+        0.0
+    } else {
+        field.max_angle_deg.to_radians().tan() * step_horiz
+    };
     let dz = z - prev[2];
-    if dz.abs() > max_dz {
-        z = prev[2] + dz.signum() * max_dz;
+    if dz.abs() > max_dz + 1e-9 {
+        let bound = prev[2] + dz.signum() * max_dz;
+        let correction = (bound - z).abs();
+        if correction <= MAX_INVERSE_CLAMP_MM + 1e-9 {
+            stats.clamps += 1;
+            stats.largest_clamp_mm = stats.largest_clamp_mm.max(correction);
+            return bound;
+        }
+        stats.unclamped_excess += 1;
     }
     z
 }
@@ -24,8 +46,9 @@ fn bridge_to_line_start(
     field: &DeformField,
     out: &mut String,
     from: &mut [f64; 3],
-    to: [f64;  3],
+    to: [f64; 3],
     g0: bool,
+    stats: &mut InverseMapStats,
 ) {
     let dx = to[0] - from[0];
     let dy = to[1] - from[1];
@@ -50,7 +73,7 @@ fn bridge_to_line_start(
         let x = from[0] + dx * t;
         let y = from[1] + dy * t;
         let mut z = from[2] + (to[2] - from[2]) * t;
-        z = clamp_slope_z(field, prev, x, y, z);
+        z = clamp_slope_z(field, prev, x, y, z, stats);
         let cmd = if g0 { "G0" } else { "G1" };
         out.push_str(&format!("{cmd} X{x:.3} Y{y:.3} Z{z:.3}\n"));
         prev = [x, y, z];
@@ -59,12 +82,29 @@ fn bridge_to_line_start(
 }
 
 /// Post-process G-code text: inverse Z map, segmented moves, E correction.
+///
+/// Thin wrapper over [`map_gcode_inverse_counted`] for callers that do not need
+/// the correction statistics.
 pub fn map_gcode_inverse(field: &DeformField, gcode: &str, nominal_layer: f64) -> String {
+    map_gcode_inverse_counted(field, gcode, nominal_layer).0
+}
+
+/// Inverse map plus the count of slope corrections it had to make.
+///
+/// Corrections are capped at [`MAX_INVERSE_CLAMP_MM`] per move; anything larger
+/// is left in the G-code and counted in `unclamped_excess` so the post-pass can
+/// reject the file rather than ship a silently straightened path.
+pub fn map_gcode_inverse_counted(
+    field: &DeformField,
+    gcode: &str,
+    nominal_layer: f64,
+) -> (String, InverseMapStats) {
     let _ = nominal_layer;
     let mut absolute = true;
     let mut position = [0.0f64; 4]; // x,y,z,e
     let mut last_phys = [0.0f64; 3];
     let mut have_last_phys = false;
+    let mut stats = InverseMapStats::default();
     let mut out = String::with_capacity(gcode.len() + 4096);
     out.push_str(&format!(
         "; nonplanar curved-tops inverse map applied by shale-nonplanar (slope cap {:.1}°)\n",
@@ -145,8 +185,7 @@ pub fn map_gcode_inverse(field: &DeformField, gcode: &str, nominal_layer: f64) -
             // Keep last_phys at the last extrusion point so the next G1 bridges with a
             // slope-capped path. Only pure Z hops (no XY) update vertical position.
             if line.contains('Z') && !line.contains('X') && !line.contains('Y') && have_last_phys {
-                let max_dz =
-                    field.max_angle_deg.to_radians().tan() * field.nominal_layer.max(0.08);
+                let max_dz = field.max_angle_deg.to_radians().tan() * field.nominal_layer.max(0.08);
                 let dz = z_phys - last_phys[2];
                 last_phys[2] = if dz.abs() > max_dz {
                     last_phys[2] + dz.signum() * max_dz
@@ -157,10 +196,28 @@ pub fn map_gcode_inverse(field: &DeformField, gcode: &str, nominal_layer: f64) -
             continue;
         }
 
-        let band_floor = field.global_band_floor_z();
-        if (position[2] < band_floor - 1e-6 && target[2] < band_floor - 1e-6)
+        let below_local_floor = |x: f64, y: f64, z: f64| {
+            field
+                .local_band_floor_z(x, y)
+                .is_none_or(|zb| z < zb - 1e-6)
+        };
+        let midpoint_needs = || {
+            field.gcode_needs_inverse(
+                (position[0] + target[0]) * 0.5,
+                (position[1] + target[1]) * 0.5,
+                (position[2] + target[2]) * 0.5,
+            )
+        };
+        if (below_local_floor(position[0], position[1], position[2])
+            && below_local_floor(target[0], target[1], target[2])
+            && below_local_floor(
+                (position[0] + target[0]) * 0.5,
+                (position[1] + target[1]) * 0.5,
+                (position[2] + target[2]) * 0.5,
+            ))
             || (!field.gcode_needs_inverse(position[0], position[1], position[2])
-                && !field.gcode_needs_inverse(target[0], target[1], target[2]))
+                && !field.gcode_needs_inverse(target[0], target[1], target[2])
+                && !midpoint_needs())
         {
             out.push_str(raw);
             out.push('\n');
@@ -186,14 +243,14 @@ pub fn map_gcode_inverse(field: &DeformField, gcode: &str, nominal_layer: f64) -
             })
             .max(1.0) as usize;
 
-        let band_floor_seg = field.global_band_floor_z();
         let mut line_start_phys = [
             position[0],
             position[1],
-            if position[2] < band_floor_seg - 1e-6 {
-                position[2]
-            } else {
-                field.inverse_z(position[0], position[1], position[2])
+            match field.local_band_floor_z(position[0], position[1]) {
+                Some(zb) if position[2] >= zb - 1e-6 => {
+                    field.inverse_z(position[0], position[1], position[2])
+                }
+                _ => position[2],
             },
         ];
         let mut prev_phys = line_start_phys;
@@ -210,34 +267,47 @@ pub fn map_gcode_inverse(field: &DeformField, gcode: &str, nominal_layer: f64) -
                     line_start_phys[0],
                     line_start_phys[1],
                     line_start_phys[2],
+                    &mut stats,
                 );
             }
             let mut cursor = last_phys;
-            bridge_to_line_start(field, &mut out, &mut cursor, line_start_phys, false);
+            bridge_to_line_start(
+                field,
+                &mut out,
+                &mut cursor,
+                line_start_phys,
+                false,
+                &mut stats,
+            );
             prev_phys = cursor;
             last_phys = cursor;
         }
         let mut prev_e = position[3];
+        // At the start of a file there is no previous extrusion to hold the cap
+        // against: the printer's real position is whatever the start-up script left
+        // it at, so clamping the first move against Z=0 would count a dozen phantom
+        // corrections and push the whole job to the planar fallback.
+        let mut anchored = have_last_phys;
 
         for seg in 1..=segments {
             let t = seg as f64 / segments as f64;
             let x = position[0] + dx * t;
             let y = position[1] + dy * t;
             let z_def = position[2] + (target[2] - position[2]) * t;
-            let z_phys = if z_def < band_floor_seg - 1e-6 {
-                z_def
-            } else {
-                clamp_slope_z(
-                    field,
-                    prev_phys,
-                    x,
-                    y,
-                    field.inverse_z(x, y, z_def),
-                )
+            let z_phys = match field.local_band_floor_z(x, y) {
+                Some(zb) if z_def >= zb - 1e-6 => {
+                    let raw = field.inverse_z(x, y, z_def);
+                    if anchored {
+                        clamp_slope_z(field, prev_phys, x, y, raw, &mut stats)
+                    } else {
+                        anchored = true;
+                        raw
+                    }
+                }
+                _ => z_def,
             };
             if seg < segments {
-                let step_horiz =
-                    ((x - prev_phys[0]).powi(2) + (y - prev_phys[1]).powi(2)).sqrt();
+                let step_horiz = ((x - prev_phys[0]).powi(2) + (y - prev_phys[1]).powi(2)).sqrt();
                 if step_horiz < MERGE_MM {
                     prev_phys = [x, y, z_phys];
                     continue;
@@ -297,7 +367,7 @@ pub fn map_gcode_inverse(field: &DeformField, gcode: &str, nominal_layer: f64) -
         position[2] = target[2];
         position[3] = target[3];
     }
-    out
+    (out, stats)
 }
 
 /// Round-trip helper for tests: apply forward Z only to a single point pair.
@@ -328,10 +398,7 @@ mod tests {
         let field = build_deform_field(grid, 2.0, 0.4, 0.2, 45.0);
         for z in [15.0, 16.0, 17.0, 18.0, 19.0, 20.0] {
             let back = round_trip_z(&field, 0.0, 0.0, z);
-            assert!(
-                (back - z).abs() < 0.02,
-                "round-trip at z={z}: got {back}"
-            );
+            assert!((back - z).abs() < 0.02, "round-trip at z={z}: got {back}");
         }
         assert!(
             field.max_round_trip_error_mm(0.0, 0.0, 128) < 0.02,
@@ -352,7 +419,8 @@ mod tests {
         let mesh = box_mesh(10.0, 10.0, 10.0);
         let grid = build_height_field(&mesh, 1.0, 30.0, 2.0);
         let field = build_deform_field(grid, 2.0, 0.4, 0.2, 45.0);
-        let src = "G1 X1 Y1 Z0.4 E0.5 F1800\nG0 Z1.0\nG1 X2 Y2 Z1.0 E1.0 F1800\nG1 X3 Y3 E-0.2 F3000\n";
+        let src =
+            "G1 X1 Y1 Z0.4 E0.5 F1800\nG0 Z1.0\nG1 X2 Y2 Z1.0 E1.0 F1800\nG1 X3 Y3 E-0.2 F3000\n";
         let out = map_gcode_inverse(&field, src, 0.2);
         assert!(
             out.lines().any(|l| l.starts_with("G0") && l.contains('Z')),
@@ -428,8 +496,11 @@ mod tests {
         );
     }
 
+    /// A correction the field did not ask for is never silently applied: past the
+    /// 0.02 mm budget the Z is left alone and the excess is counted so the verifier
+    /// can reject the file.
     #[test]
-    fn clamp_slope_limits_tiny_horizontal_step() {
+    fn clamp_budget_refuses_a_large_correction_and_counts_it() {
         let mut mesh = sphere_mesh(12.0);
         for v in &mut mesh.vertices {
             v[0] += 128.0;
@@ -439,24 +510,57 @@ mod tests {
         let field = build_deform_field(grid, 1.6, 0.4, 0.2, 10.0);
         let prev = [124.199, 123.416, 19.896];
         let raw = field.inverse_z(124.152, 123.455, 22.4);
-        let capped = clamp_slope_z(&field, prev, 124.152, 123.455, raw);
+        let mut stats = InverseMapStats::default();
+        let z = clamp_slope_z(&field, prev, 124.152, 123.455, raw, &mut stats);
+        let step = (10.0f64).to_radians().tan() * 0.062;
         assert!(
-            (capped - prev[2]).abs() <= (10.0f64).to_radians().tan() * 0.062 + 1e-3,
-            "raw={raw:.4} capped={capped:.4}"
+            (raw - prev[2]).abs() > step + MAX_INVERSE_CLAMP_MM,
+            "fixture must ask for more than the clamp budget: raw={raw:.4}"
         );
+        assert_eq!(z, raw, "a too-large correction must not be applied");
+        assert_eq!(stats.clamps, 0);
+        assert_eq!(stats.unclamped_excess, 1);
+        assert!(stats.largest_clamp_mm == 0.0);
     }
 
+    /// Inside the budget the correction is applied and reported.
     #[test]
-    fn consecutive_tiny_extrusions_respect_cap_after_travel() {
+    fn clamp_budget_applies_a_small_correction_and_counts_it() {
+        let mesh = box_mesh(20.0, 20.0, 10.0);
+        let grid = build_height_field(&mesh, 0.5, 10.0, 2.0);
+        let field = build_deform_field(grid, 2.0, 0.4, 0.2, 10.0);
+        let prev = [10.0, 10.0, 11.0];
+        let step = (10.0f64).to_radians().tan() * 0.5;
+        let mut stats = InverseMapStats::default();
+        let z = clamp_slope_z(&field, prev, 10.5, 10.0, prev[2] + step + 0.01, &mut stats);
+        assert!(
+            (z - (prev[2] + step)).abs() < 1e-9,
+            "the move should be capped at the slope limit: {z:.4}"
+        );
+        assert_eq!(stats.clamps, 1);
+        assert!((stats.largest_clamp_mm - 0.01).abs() < 1e-9);
+        assert_eq!(stats.unclamped_excess, 0);
+    }
+
+    /// The production path: the field is limited *before* slicing, so the mapped
+    /// G-code already respects the cap and the map has nothing to clamp.
+    #[test]
+    fn limited_field_maps_consecutive_tiny_extrusions_inside_the_cap() {
         let mut mesh = sphere_mesh(12.0);
         for v in &mut mesh.vertices {
             v[0] += 128.0;
             v[1] += 128.0;
         }
         let grid = build_height_field(&mesh, 0.35, 10.0, 1.6);
-        let field = build_deform_field(grid, 1.6, 0.4, 0.2, 10.0);
+        let mut field = build_deform_field(grid, 1.6, 0.4, 0.2, 10.0);
+        let limiting = crate::safety::limit_field_slopes(&mut field, 0.2);
+        assert!(
+            limiting.converged
+                && limiting.worst_after_deg <= limiting.cap_deg + crate::SLOPE_CAP_TOLERANCE_DEG,
+            "fixture field must limit to the cap: {limiting:?}"
+        );
         let src = "G1 X124.199 Y123.416 Z22.4 E1.0 F1800\nG1 X124.152 Y123.455 Z22.4 E1.1 F1800\n";
-        let out = map_gcode_inverse(&field, src, 0.2);
+        let (out, stats) = map_gcode_inverse_counted(&field, src, 0.2);
         let mut prev: Option<[f64; 3]> = None;
         let mut max_deg = 0.0f64;
         for line in out.lines() {
@@ -479,8 +583,13 @@ mod tests {
         }
         assert!(
             max_deg <= 10.5,
-            "tiny move chain slope {max_deg:.2}°, out:\n{out}"
+            "a pre-limited field must not need a clamp (saw {max_deg:.2} deg, {stats:?})\n{out}"
         );
+        assert_eq!(
+            stats.unclamped_excess, 0,
+            "the map must not have to refuse corrections: {stats:?}"
+        );
+        assert!(stats.largest_clamp_mm <= MAX_INVERSE_CLAMP_MM, "{stats:?}");
     }
 
     #[test]
@@ -491,11 +600,16 @@ mod tests {
         let src = "G1 X1 Y1 Z5.0 E1.0 F1800\nG1 X2 Y2 Z5.0 E1.1 F1800\n";
         let out = map_gcode_inverse(&field, src, 0.2);
         assert!(
-            out.lines().filter(|l| l.starts_with("G1 X1 Y1 Z5.0 E1.0")).count() == 1,
+            out.lines()
+                .filter(|l| l.starts_with("G1 X1 Y1 Z5.0 E1.0"))
+                .count()
+                == 1,
             "below-band line must pass through unchanged: {out}"
         );
         assert_eq!(
-            out.lines().filter(|l| l.starts_with('G') && l.contains('E')).count(),
+            out.lines()
+                .filter(|l| l.starts_with('G') && l.contains('E'))
+                .count(),
             2
         );
     }

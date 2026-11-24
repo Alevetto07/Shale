@@ -65,7 +65,11 @@ pub fn apply_surface_to_grid(grid: &mut HeightGrid, surface: &PlannedSurface, la
         }
     }
     let band = footprint_z - layer_h * 6.0;
-    for (top, start) in grid.z_top_smooth.iter_mut().zip(grid.z_band_start.iter_mut()) {
+    for (top, start) in grid
+        .z_top_smooth
+        .iter_mut()
+        .zip(grid.z_band_start.iter_mut())
+    {
         if let Some(z) = *top {
             if start.is_none() {
                 *start = Some(z - layer_h * 6.0);
@@ -76,10 +80,7 @@ pub fn apply_surface_to_grid(grid: &mut HeightGrid, surface: &PlannedSurface, la
 }
 
 fn point_in_box(x: f64, y: f64, min: [f64; 3], max: [f64; 3]) -> bool {
-    x >= min[0] - 1e-6
-        && x <= max[0] + 1e-6
-        && y >= min[1] - 1e-6
-        && y <= max[1] + 1e-6
+    x >= min[0] - 1e-6 && x <= max[0] + 1e-6 && y >= min[1] - 1e-6 && y <= max[1] + 1e-6
 }
 
 fn bearing_unit(deg: f64) -> (f64, f64) {
@@ -88,7 +89,7 @@ fn bearing_unit(deg: f64) -> (f64, f64) {
 }
 
 fn surface_max_along_bearing(surface: &PlannedSurface, ux: f64, uy: f64) -> f64 {
-  let corners = [
+    let corners = [
         [surface.min[0], surface.min[1]],
         [surface.max[0], surface.min[1]],
         [surface.max[0], surface.max[1]],

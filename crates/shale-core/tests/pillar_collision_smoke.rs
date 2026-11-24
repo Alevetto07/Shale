@@ -15,7 +15,7 @@ fn configured() -> bool {
 }
 
 #[test]
-fn sliced_pillar_beside_dome_triggers_collision_flattening() {
+fn sliced_pillar_beside_dome_is_clean_or_falls_back_with_a_collision_reason() {
     if !configured() {
         return;
     }
@@ -23,22 +23,35 @@ fn sliced_pillar_beside_dome_triggers_collision_flattening() {
     let engine = CliEngine::from_env();
     let (_, report) =
         slice_pillar_beside_dome_sequential(&catalog, &engine, "bambu_lab_a1", "smoke");
-    let n = report.collision_adjustments.len();
     assert!(
-        n > 0,
-        "expected conservative A1 envelope hits on pillar fixture, got 0; notes={:?}",
-        report.notes
+        report.collision_adjustments.is_empty(),
+        "the post-pass must not edit the field after slicing: {:?}",
+        report.collision_adjustments
     );
-    assert!(
-        report.safety.as_ref().is_some_and(|s| s.ok),
-        "safety must stay ok after flattening: travel_collisions={:?} violations={:?}",
-        report
+    if report.fallback_to_planar {
+        assert!(
+            report.fallback_reasons.iter().any(|r| {
+                let r = r.to_lowercase();
+                r.contains("collision") || r.contains("slope")
+            }),
+            "a fallback must name its cause (collision or slope): {:?}",
+            report.fallback_reasons
+        );
+    } else {
+        let safety = report
             .safety
             .as_ref()
-            .map(|s| s.travel_collisions_remaining),
-        report
-            .safety
-            .as_ref()
-            .map(|s| &s.violations)
-    );
+            .expect("a kept curved slice carries a safety report");
+        assert!(
+            safety.ok,
+            "a kept curved slice must be clean: {:?}",
+            safety.violations
+        );
+        assert_eq!(
+            safety.travel_collisions_remaining, 0,
+            "a kept curved slice must have no travel collisions"
+        );
+        assert!(safety.slope_within_cap, "{safety:?}");
+        assert!(safety.z_within_limits, "{safety:?}");
+    }
 }

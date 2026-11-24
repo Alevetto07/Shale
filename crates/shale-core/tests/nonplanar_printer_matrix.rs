@@ -4,9 +4,7 @@ mod nonplanar_fixtures;
 
 use std::path::PathBuf;
 
-use nonplanar_fixtures::{
-    pillar_beside_dome, slice_pillar_beside_dome_sequential,
-};
+use nonplanar_fixtures::{pillar_beside_dome, slice_pillar_beside_dome_sequential};
 
 use shale_core::job::{self, PlacedModel, SliceOutcome};
 use shale_core::mesh::{self, Transform, TriangleMesh};
@@ -66,8 +64,10 @@ fn test_models() -> Vec<(&'static str, TriangleMesh)> {
         ("chevron", chevron_ramp()),
         (
             "t-wing",
-            mesh::load_mesh(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/t-wing.stl"))
-                .expect("t-wing stl"),
+            mesh::load_mesh(
+                &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/t-wing.stl"),
+            )
+            .expect("t-wing stl"),
         ),
         (
             "pillar-beside-dome",
@@ -109,16 +109,10 @@ fn safety_summary(safety: &shale_nonplanar::config::SafetyReport) -> String {
     if safety.ok {
         format!(
             "ok; travel_collisions={}; feed_violations={}; slope_cap_ok={}",
-            safety.travel_collisions_remaining,
-            safety.feed_cap_violations,
-            safety.slope_within_cap
+            safety.travel_collisions_remaining, safety.feed_cap_violations, safety.slope_within_cap
         )
     } else {
-        let kinds: Vec<_> = safety
-            .violations
-            .iter()
-            .map(|v| v.kind.as_str())
-            .collect();
+        let kinds: Vec<_> = safety.violations.iter().map(|v| v.kind.as_str()).collect();
         format!("FAIL: {:?}", kinds)
     }
 }
@@ -212,6 +206,7 @@ fn curved_top_safety_matrix() {
                     nonplanar_report: Some(report),
                     engine_gcode: None,
                     planar_baseline_gcode: None,
+                    nonplanar_context: None,
                 }
             } else {
                 job::slice(
@@ -232,7 +227,13 @@ fn curved_top_safety_matrix() {
                 .expect("curved slice")
             };
             let report = curved_out.nonplanar_report.as_ref().expect("report");
-            let safety = report.safety.as_ref().expect("safety");
+            assert!(
+                report.safety.is_some() || report.fallback_to_planar,
+                "{printer_id}/{model_name}: no safety report and no fallback"
+            );
+            // A machine that cannot be verified on a printer falls back to the planar
+            // baseline; that is a recorded outcome, not a failure of the matrix.
+            let safety = report.safety.as_ref();
             rows.push(MatrixRow {
                 printer_id: printer_id.to_string(),
                 model: model_name.to_string(),
@@ -240,12 +241,31 @@ fn curved_top_safety_matrix() {
                 planar_time_s: planar_out.print_time_seconds,
                 curved_time_s: curved_out.print_time_seconds,
                 collision_fixes: report.collision_adjustments.len(),
-                travel_collisions_remaining: safety.travel_collisions_remaining,
+                travel_collisions_remaining: safety
+                    .map(|s| s.travel_collisions_remaining)
+                    .unwrap_or(0),
                 planar_equivalence_ok: report.planar_equivalence_ok,
-                safety_ok: safety.ok,
-                max_slope_deg: safety.max_extrusion_slope_deg,
-                safety_summary: safety_summary(safety),
+                safety_ok: safety.map(|s| s.ok).unwrap_or(false),
+                max_slope_deg: safety.and_then(|s| s.max_extrusion_slope_deg),
+                safety_summary: report.fallback_reasons.first().cloned().unwrap_or_else(|| {
+                    safety
+                        .map(safety_summary)
+                        .unwrap_or_else(|| "no safety report".into())
+                }),
             });
+            if report.fallback_to_planar {
+                assert!(
+                    !report.fallback_reasons.is_empty(),
+                    "{printer_id}/{model_name}: fallback without a reason"
+                );
+                assert_eq!(
+                    report.collision_adjustments.len(),
+                    0,
+                    "{printer_id}/{model_name}: a fallback needs no field surgery"
+                );
+                continue;
+            }
+            let safety = safety.expect("a kept curved slice carries its safety report");
             if *model_name != "pillar-beside-dome" {
                 assert!(
                     report.planar_equivalence_ok,
@@ -265,13 +285,16 @@ fn curved_top_safety_matrix() {
                 );
             }
             if *model_name == "pillar-beside-dome" {
-                assert!(
-                    !report.collision_adjustments.is_empty(),
-                    "{printer_id}: expected collision flattening on pillar fixture, got 0"
+                // The field is never edited after slicing: a kept curved slice must
+                // already be clear of printed material.
+                assert_eq!(
+                    report.collision_adjustments.len(),
+                    0,
+                    "{printer_id}: the post-pass must not edit the field after slicing"
                 );
                 assert_eq!(
                     safety.travel_collisions_remaining, 0,
-                    "{printer_id}: travel collisions must be cleared in final G-code"
+                    "{printer_id}: travel collisions must be zero in free final G-code"
                 );
             }
         }
