@@ -171,12 +171,20 @@ The job still prints, at planar quality, and the report says so. With
 ## Why horizontal bridges and cantilevers fall back
 
 Non-planar slicing here tilts *tops*. It cannot make an unsupported horizontal
-underside printable: a bridge needs the previous layer to bridge onto, and
+underside printable: a bridge needs the previous layer to span the gap, and
 tilting a band does not create support where there is none. So when `auto`
-finds a horizontal underside (90° from vertical) or a cantilever whose angle no
-tilt inside the cap can improve, it disables that surface and says why —
-`horizontal underside 90.0 deg`, or the measured angle before and after the
-tilt. What remains is printed planar, with supports if the profile has them.
+finds a horizontal underside, it disables that surface and says why in the
+planner's own words:
+
+```text
+horizontal underside 90.0° — a ±10.0° tilt round-trips to a planar toolpath; bridge printing already spans it
+```
+
+The reasoning is arithmetic: a ±`max_angle` tilt applied to a 90° face is undone
+by the layer quantisation, so the toolpath comes back planar anyway, while the
+bridge already spans the gap. The same test disables a cantilever whose angle no
+tilt inside the cap can improve, reporting the measured angle before and after.
+What remains is printed planar, with supports if the profile has them.
 
 This is the honest outcome, not a limitation to hide: a fallback that prints is
 better than a curved band that drags the nozzle through the part, and the report
