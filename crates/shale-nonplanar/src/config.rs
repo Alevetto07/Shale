@@ -56,6 +56,17 @@ pub struct NonplanarOptions {
     /// cannot be verified still produces the flat G-code the job already sliced.
     #[serde(default)]
     pub strict: bool,
+    /// Let auto plan the underside bands (overhang / cantilever / bridge).
+    ///
+    /// Off by default. A band under the part has the part itself above it at the
+    /// same XY — a deck over a mast, the underside of a T — so neither the head
+    /// sweep nor the planar-equivalence check can clear it, and the tilt it needs is
+    /// the angle *down* from horizontal, not the slope of a top surface. Auto used
+    /// to enable them anyway and then abandon the whole plate when they collided
+    /// (M1-B3: the 24 mm dome fell back at the first underside surface). They stay
+    /// reachable for experiments, but nothing claims they are verified.
+    #[serde(default)]
+    pub underside_bands: bool,
 }
 
 impl Default for NonplanarOptions {
@@ -68,6 +79,7 @@ impl Default for NonplanarOptions {
             ramp_thickness_mm: None,
             defer_post_pass: false,
             strict: false,
+            underside_bands: false,
         }
     }
 }
@@ -164,7 +176,19 @@ pub struct SlopeLimitingReport {
     /// Grid cells whose flattening strength was reduced.
     pub cells_reduced: usize,
     /// Smallest strength left anywhere in the field (1 = untouched, 0 = planar).
+    ///
+    /// Zero for every auto field by construction — the footprint is a subset of the
+    /// top — so this is a diagnostic, not a verdict.
     pub min_strength: f64,
+    /// Largest strength left on a column with a printable top.
+    ///
+    /// This is the collapse verdict: a job is only "flattened away" when nothing
+    /// lifts any more.
+    #[serde(default)]
+    pub max_strength: f64,
+    /// Columns still in the deforming footprint after the cap cut.
+    #[serde(default)]
+    pub footprint_columns: usize,
 }
 
 /// Corrections the inverse map had to make to keep a move inside the slope cap.
@@ -244,6 +268,10 @@ pub struct SafetyReport {
     #[serde(default)]
     pub collisions_travel: usize,
     pub travel_collisions_remaining: usize,
+    /// Collision hits below the band that the sweep ignored because the file is the
+    /// planar baseline there (see [`BELOW_BAND_COLLISION_SLACK_MM`]).
+    #[serde(default)]
+    pub below_band_collisions_ignored: usize,
     pub envelope_checks_enabled: bool,
     pub planar_equivalence: PlanarEquivalenceResult,
     pub collision_adjustments: Vec<CollisionAdjustment>,

@@ -5,7 +5,8 @@ use crate::config::{CollisionAdjustment, PlanarEquivalenceResult, SafetyReport, 
 use crate::deform::DeformField;
 use crate::envelope::HeadEnvelope;
 use crate::safety::{
-    gcode_respects_max_angle, max_curved_band_extrusion_slope_deg, SLOPE_CAP_TOLERANCE_DEG,
+    gcode_respects_max_angle, max_curved_band_extrusion_slope_deg, BELOW_BAND_COLLISION_SLACK_MM,
+    SLOPE_CAP_TOLERANCE_DEG,
 };
 
 /// Allow full profile print speed on curved-band moves (Bambu profiles already cap acceleration).
@@ -121,6 +122,7 @@ pub fn validate_gcode(
     // Swept toolhead check over the finished G-code. Moves are sampled along
     // their whole segments, so a dip beside a taller wall is caught even when
     // both endpoints are clear; planar layers take the map's fast path.
+    let mut ignored_below_band = 0usize;
     let (mut collisions_extruding, mut collisions_travel) = if envelope.calibrated {
         let hits = find_collisions(
             gcode,
@@ -132,6 +134,16 @@ pub fn validate_gcode(
         );
         let (mut extruding, mut travel) = (0usize, 0usize);
         for hit in &hits {
+            // Below the band the file is the planar baseline, byte for byte (the
+            // graft replaces it and the equivalence audit proves it), so nothing
+            // there is the curved pass's doing and a fallback would not remove it.
+            // A1 profiles ship a purge line at the plate's left edge that every
+            // travel at the same height crosses; those hits held the whole plate
+            // to planar while the planar print kept them anyway.
+            if hit.z < band_floor - BELOW_BAND_COLLISION_SLACK_MM {
+                ignored_below_band += 1;
+                continue;
+            }
             if hit.extruding {
                 extruding += 1;
             } else {
@@ -233,6 +245,7 @@ pub fn validate_gcode(
         travel_collisions_remaining: collisions_travel,
         collisions_extruding,
         collisions_travel,
+        below_band_collisions_ignored: ignored_below_band,
         envelope_checks_enabled: envelope.calibrated,
         planar_equivalence: planar_equiv,
         collision_adjustments: collision_adjustments.to_vec(),

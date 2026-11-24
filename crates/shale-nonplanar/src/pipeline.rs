@@ -11,7 +11,10 @@ use crate::equivalence::{check_grafted_planar_equivalence, graft_planar_shell_be
 use crate::height_field::build_height_field;
 use crate::inverse::{map_gcode_inverse_counted, MAX_INVERSE_CLAMP_MM};
 use crate::mesh::{merge_meshes as merge_meshes_internal, Mesh};
-use crate::safety::{limit_field_slopes, PLANAR_COLLAPSE_STRENGTH, SLOPE_CAP_TOLERANCE_DEG};
+use crate::safety::{
+    limit_field_slopes, restrict_to_printable_top, PLANAR_COLLAPSE_STRENGTH,
+    SLOPE_CAP_TOLERANCE_DEG,
+};
 use crate::validate::{embed_safety_json, validate_gcode, MachineLimits};
 
 /// Everything the post-pass needs from the pre-pass.
@@ -38,8 +41,11 @@ pub struct NonplanarContext {
 
 impl NonplanarContext {
     /// Number of top sheets that still receive a lift above their own surface.
+    ///
+    /// Gated on [`DeformField::max_strength`], not the minimum: in auto the
+    /// footprint is a subset of the top, so the minimum is 0 on every honest field.
     pub fn islands_flattened(&self) -> usize {
-        if self.planar_collapsed.is_some() || self.field.min_strength() <= PLANAR_COLLAPSE_STRENGTH
+        if self.planar_collapsed.is_some() || self.field.max_strength() <= PLANAR_COLLAPSE_STRENGTH
         {
             0
         } else {
@@ -84,6 +90,13 @@ pub fn plan_field(
         field.refresh_top_targets();
         auto_placement = Some(plan);
     }
+    // The band follows `z_top_smooth`, so the footprint is what the cap has to be
+    // checked against — not the lift schedule. Cut every column whose own surface
+    // is steeper than the cap (a smoothed rim, a shoulder, the flank of a dome) out
+    // of the footprint and let the planar slicer keep it; the cut boundary is then
+    // ramped at `tan(cap)` so it has no step of its own. Without this the field
+    // carries a rim on every flat deck whose only fix is damping the island to 0.
+    let footprint_cut = restrict_to_printable_top(&mut field);
     let slope_limiting = Some(limit_field_slopes(&mut field, nominal_layer_height));
     let mut planar_collapsed = None;
     if auto_placement
@@ -94,16 +107,21 @@ pub fn plan_field(
             Some("auto placement found no surface it could enable on this geometry".to_string());
     }
     if let Some(limiting) = &slope_limiting {
-        if limiting.min_strength <= PLANAR_COLLAPSE_STRENGTH {
+        // max, not min: the footprint is a subset of the top, so every column the
+        // plan did not cover and every column the cap cut sits at exactly 0. The
+        // only question is whether anything is still lifting.
+        if limiting.max_strength <= PLANAR_COLLAPSE_STRENGTH {
             planar_collapsed = Some(format!(
-                "slope limiting reduced the flattening strength to {:.1}% after {} pass(es) \
-                 (worst level surface {:.2}° -> {:.2}°, cap {:.1}°): the model's own top is \
-                 steeper than the toolhead may follow, so there is nothing left to print curved",
-                limiting.min_strength * 100.0,
+                "slope limiting left {:.1}% strength on the best column after {} pass(es) \
+                 (worst level surface {:.2}° -> {:.2}°, cap {:.1}°, {} of {} top column(s) cut \
+                 by the cap): nothing is left to print curved",
+                limiting.max_strength * 100.0,
                 limiting.passes,
                 limiting.worst_before_deg,
                 limiting.worst_after_deg,
-                limiting.cap_deg
+                limiting.cap_deg,
+                footprint_cut,
+                field.engaged_columns() + footprint_cut
             ));
         }
     }
@@ -513,6 +531,16 @@ type ShellExtrusionChain = Vec<Option<[f64; 3]>>;
 /// Same-XY layer hops are not nozzle tilt in XY (see curved-band slope safety).
 const VERTICAL_STEP_HORIZ_MM: f64 = 0.05;
 
+/// Shortest horizontal run a measured bead slope may span.
+///
+/// Below one line width the ratio `dz/horiz` is a polygon vertex, not a direction:
+/// a pole ring on a sphere, the last segment before a contour closes, or the
+/// quarter-layer step where a row of beads passes from the mapped shell to the
+/// planar one. The toolhead never travels that way for longer than a bead is wide,
+/// and the swept head check (0.1 mm clearance) owns clearance there. Counting them
+/// read 25.8 deg at the 24 mm ball's pole while every real bead sat at 7.6.
+const BEAD_SLOPE_MIN_RUN_MM: f64 = 0.4;
+
 fn max_slope_on_moves(moves: &[ShellExtrusionChain], across_layers: bool) -> f64 {
     let mut max_deg = 0.0f64;
     let mut prev: Option<[f64; 3]> = None;
@@ -534,7 +562,7 @@ fn max_slope_on_moves(moves: &[ShellExtrusionChain], across_layers: bool) -> f64
                     prev = Some(point);
                     continue;
                 }
-                if horiz > VERTICAL_STEP_HORIZ_MM {
+                if horiz > BEAD_SLOPE_MIN_RUN_MM {
                     let deg = dz.atan2(horiz).abs().to_degrees();
                     max_deg = max_deg.max(deg);
                 }
@@ -665,7 +693,7 @@ pub fn max_extrusion_slope_in_box(gcode: &str, min: [f64; 3], max: [f64; 3]) -> 
             let dy = point[1] - prev[1];
             let dz = point[2] - prev[2];
             let horiz = (dx * dx + dy * dy).sqrt();
-            if horiz > VERTICAL_STEP_HORIZ_MM {
+            if horiz > BEAD_SLOPE_MIN_RUN_MM {
                 any = true;
                 max_deg = max_deg.max(dz.atan2(horiz).abs().to_degrees());
             }
@@ -682,8 +710,9 @@ pub fn max_extrusion_slope_above_z(gcode: &str, z_min: f64) -> Option<f64> {
     let mut any = false;
     for raw in gcode.lines() {
         let line = raw.trim();
-        if line.starts_with("G0") && (line.contains('X') || line.contains('Y')) {
-            prev_extrusion = None;
+        let positional = line.starts_with("G0") || line.starts_with("G1");
+        if !positional && !line.contains('X') && !line.contains('Y') && !line.contains('Z') {
+            continue;
         }
         if let Some(x) = parse_word(line, 'X') {
             position[0] = x;
@@ -698,6 +727,13 @@ pub fn max_extrusion_slope_above_z(gcode: &str, z_min: f64) -> Option<f64> {
             && line.contains('E')
             && parse_word(line, 'E').unwrap_or(0.0) > 1e-9;
         if !extruding {
+            // A slope is only defined along a path. A move that carries the nozzle
+            // somewhere else without extruding — a travel, a retract, a layer change
+            // — ends the path; measuring across it compares the end of one contour
+            // with the start of the next and reads the layer step as a slope. That
+            // artefact reported 25.8 deg on the 24 mm ball while every printed bead
+            // sat at 7.6.
+            prev_extrusion = None;
             continue;
         }
         let point = position;
@@ -711,7 +747,7 @@ pub fn max_extrusion_slope_above_z(gcode: &str, z_min: f64) -> Option<f64> {
                 let dy = point[1] - prev[1];
                 let dz = point[2] - prev[2];
                 let horiz = (dx * dx + dy * dy).sqrt();
-                if horiz > VERTICAL_STEP_HORIZ_MM {
+                if horiz > BEAD_SLOPE_MIN_RUN_MM {
                     any = true;
                     max_deg = max_deg.max(dz.atan2(horiz).abs().to_degrees());
                 }

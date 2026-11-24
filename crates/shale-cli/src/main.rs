@@ -42,6 +42,7 @@ slice options
   --set KEY=VALUE     any Cura setting, repeatable
   --nonplanar MODE    experimental: off, curved-tops, or auto (Bambu printers with head envelope)
   --nonplanar-strict  fail instead of falling back to a planar print when the curved pass cannot be verified
+  --nonplanar-underside  let auto plan underside tilt bands too (unverified: the part is above them)
   --max-angle DEG     clearance limit for curved tops (default 10)
   -o, --output PATH   where to write the G-code
 
@@ -205,6 +206,7 @@ fn nonplanar_options(args: &[String]) -> NonplanarOptions {
         mode,
         max_angle_deg,
         strict: has(args, "--nonplanar-strict"),
+        underside_bands: has(args, "--nonplanar-underside"),
         ..NonplanarOptions::default()
     }
 }

@@ -153,6 +153,16 @@ pub fn gcode_respects_max_angle(gcode: &str, field: &DeformField) -> bool {
     slope_violations(gcode, field, field.max_angle_deg).is_empty()
 }
 
+/// Headroom under the band floor inside which a collision hit still counts.
+///
+/// The curved pass edits nothing below `global_band_floor_z()`: the graft splices
+/// the planar baseline there verbatim and the equivalence audit proves the two
+/// agree. A hit below that line therefore already exists in the print the user
+/// gets with the pass off, so it cannot be a reason to fall back — the fallback
+/// would emit the very same moves. One layer of slack keeps the first band layer
+/// and anything the inverse map put a hair under its own floor inside the sweep.
+pub const BELOW_BAND_COLLISION_SLACK_MM: f64 = 0.2;
+
 /// Passes the pre-slice limiter may run before it reports the field unconverged.
 ///
 /// Each pass halves the strength of the cells that own a violating level
@@ -160,6 +170,78 @@ pub fn gcode_respects_max_angle(gcode: &str, field: &DeformField) -> bool {
 /// a field that cannot is reported unconverged and the post-pass sends the job to
 /// the planar baseline instead of clamping Z behind the user's back.
 pub const MAX_SLOPE_LIMIT_PASSES: usize = 24;
+
+/// Degrees of headroom left under the cap when deciding what the band may follow.
+///
+/// The printed shell does not follow `z_top_smooth` exactly (inverse-map
+/// quantisation, the clamp budget, the layer grid), so the footprint is drawn one
+/// degree inside the cap instead of on it.
+pub const FOOTPRINT_SLOPE_MARGIN_DEG: f64 = 1.0;
+
+/// Cut the deforming footprint back to the part of the top the head may follow.
+///
+/// `z_top_smooth` is the surface the printed shell follows: the inverse map puts
+/// every band point back on the model's own top whatever the field does to the
+/// deformed mesh, so a column whose surface is steeper than the cap prints a path
+/// steeper than the cap however the lift is scheduled. The only lever is not to map
+/// that column and let the slicer print it planar.
+///
+/// This is what makes the auto footprint usable. The field smooths the top, so a
+/// flat deck's rim reads as a 20-30° ramp over two cells; with one flat target per
+/// island those cells lift by the island's whole height, which is a rim the
+/// limiter could only remove by damping the island to zero. Cutting the rim keeps
+/// the deck and leaves nothing to damp.
+///
+/// The offset is then Lipschitz-limited, which turns the cut into a ramp of
+/// `tan(cap)` per millimetre at the new boundary instead of a vertical step: the
+/// columns that carried a lift taller than their distance to the footprint edge
+/// keep only the part of it they can reach across the cap.
+///
+/// Returns the number of columns removed from the footprint.
+pub fn restrict_to_printable_top(field: &mut DeformField) -> usize {
+    let limit = (field.max_angle_deg - FOOTPRINT_SLOPE_MARGIN_DEG).max(0.5);
+    let width = field.grid.width;
+    let height = field.grid.height;
+    let step = field.grid.step.max(1e-9);
+    let mut cut = 0usize;
+    for iy in 0..height {
+        for ix in 0..width {
+            let i = iy * width + ix;
+            let here = match field.grid.z_top_smooth[i] {
+                Some(z) if field.island_strength[i] > 0.0 => z,
+                _ => continue,
+            };
+            let mut slope = 0.0_f64;
+            for (dx, dy) in [(1isize, 0isize), (0, 1)] {
+                let (px, py) = (ix as isize + dx, iy as isize + dy);
+                let (nx, ny) = (ix as isize - dx, iy as isize - dy);
+                let sample = |x: isize, y: isize| -> Option<f64> {
+                    if x < 0 || y < 0 || x >= width as isize || y >= height as isize {
+                        return None;
+                    }
+                    field.grid.z_top_smooth[y as usize * width + x as usize]
+                };
+                let (a, b) = (sample(px, py), sample(nx, ny));
+                slope = slope.max(match (a, b) {
+                    (Some(a), Some(b)) => (a - b).abs() / (2.0 * step),
+                    (Some(a), None) => (a - here).abs() / step,
+                    (None, Some(b)) => (b - here).abs() / step,
+                    (None, None) => 0.0,
+                });
+            }
+            if slope.atan().to_degrees() > limit {
+                field.island_strength[i] = 0.0;
+                cut += 1;
+            }
+        }
+    }
+    if cut > 0 {
+        // No strength cliff of our own: the lift may only drop by what the cap
+        // allows per millimetre, so the footprint edge is printed as a ramp.
+        lipschitz_limit_lift(field);
+    }
+    cut
+}
 
 /// Strength at or below this counts as "the deformation was flattened away".
 ///
@@ -345,6 +427,8 @@ pub fn limit_field_slopes(field: &mut DeformField, layer_h: f64) -> SlopeLimitin
         worst_after_deg: worst_before,
         cells_reduced: 0,
         min_strength: field.min_strength(),
+        max_strength: field.max_strength(),
+        footprint_columns: field.engaged_columns(),
     };
     let mut reduced: Vec<u32> = vec![0; field.island_strength.len()];
     let mut passes = 0usize;
@@ -364,6 +448,8 @@ pub fn limit_field_slopes(field: &mut DeformField, layer_h: f64) -> SlopeLimitin
     report.converged = cells.is_empty();
     report.cells_reduced = reduced.iter().filter(|flag| **flag != 0).count();
     report.min_strength = field.min_strength();
+    report.max_strength = field.max_strength();
+    report.footprint_columns = field.engaged_columns();
     report
 }
 

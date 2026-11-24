@@ -17,6 +17,18 @@ mod auto_placement {
         }
     }
 
+    /// Auto with the experimental underside bands switched on.
+    ///
+    /// They are off by default because nothing can verify them (the part itself is
+    /// the material above the band), so any test of the tilt they plan has to ask
+    /// for them explicitly — which is also the only way a user can.
+    fn opts_with_underside() -> NonplanarOptions {
+        NonplanarOptions {
+            underside_bands: true,
+            ..opts()
+        }
+    }
+
     fn mock_bridge_span() -> SupportSpanInput {
         SupportSpanInput {
             kind: "bridge".into(),
@@ -87,7 +99,7 @@ mod auto_placement {
     #[test]
     fn bridge_span_plans_tilt_with_overhang_delta() {
         let mesh = bridge_mesh();
-        let plan = plan_auto_placement(&mesh, &[mock_bridge_span()], &opts(), 0.2);
+        let plan = plan_auto_placement(&mesh, &[mock_bridge_span()], &opts_with_underside(), 0.2);
         let bridge_surface = plan
             .surfaces
             .iter()
@@ -103,7 +115,8 @@ mod auto_placement {
         use crate::pipeline::prepare_pre_pass;
 
         let mesh = bridge_mesh();
-        let (deformed, ctx) = prepare_pre_pass(&mesh, &opts(), 0.2, &[mock_bridge_span()]);
+        let (deformed, ctx) =
+            prepare_pre_pass(&mesh, &opts_with_underside(), 0.2, &[mock_bridge_span()]);
         let auto = ctx.auto_placement.as_ref().expect("auto plan");
         assert!(auto.enabled_surface_count >= 1);
         let zs: Vec<f64> = deformed
@@ -136,7 +149,7 @@ mod auto_placement {
         // ramp between them inside a 0.5 mm grid: that ramp is ~19 deg, so a 10 deg
         // cap cannot represent it. 20 deg is the smallest honest cap for this shape;
         // the 10 deg case is asserted separately below as a clean fallback.
-        let mut opts = opts();
+        let mut opts = opts_with_underside();
         opts.max_angle_deg = 20.0;
         let mesh = bridge_mesh();
         let spans = [mock_bridge_span()];
@@ -373,7 +386,7 @@ mod auto_placement {
             sample_min: [10.0, -4.0, 15.0],
             sample_max: [40.0, 4.0, 16.5],
         };
-        let plan = plan_auto_placement(&mesh, &[span], &opts(), 0.2);
+        let plan = plan_auto_placement(&mesh, &[span], &opts_with_underside(), 0.2);
         assert!(plan
             .surfaces
             .iter()

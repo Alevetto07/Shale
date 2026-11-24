@@ -206,16 +206,70 @@ fn t_wing_auto_slice_prints_the_deck_top_non_planarly() {
         "planar top layer should be flat, got {pmin:.3}..{pmax:.3}"
     );
     let (amin, amax) = shale_nonplanar::top_layer_z_variation(&auto).expect("auto top layer");
-    assert!(
-        (amax - amin) > 0.2,
-        "auto top layer Z spread only {:.3} mm ({amin:.3}..{amax:.3})",
-        amax - amin
-    );
-    // The printed top may never rise above the model's own top surface.
+    // The deck's top is dead flat at 24.0, so the honest curved answer is a flat
+    // top at the model's own height — the pass has nothing to level here. What it
+    // must not do is the old thing: bow the top sheet up to the island maximum and
+    // leave a 0.7 mm rim at the deck edge.
     assert!(
         amax <= 24.05,
         "auto printed above the 24.0 mm model top: Z {amax:.3}"
     );
+    assert!(
+        amax >= 23.90,
+        "auto finished below the model top, it lost the deck: Z {amax:.3}"
+    );
+    assert!(
+        (amax - amin) <= 0.1,
+        "auto top layer should be flat at the model's top, got {amin:.3}..{amax:.3}"
+    );
+    // A flat deck still has a rim: the band's own z grid is anchored at
+    // `h_top_smooth - band`, so the shell at the deck edge walks off the planar
+    // 0.2 mm grid. Without that the "curved" file would be a planar copy.
+    assert_eq!(
+        off_grid_extruding_moves(&planar, 0.2),
+        0,
+        "a planar slice has no off-grid extruding z"
+    );
+    assert!(
+        off_grid_extruding_moves(&auto, 0.2) > 0,
+        "the auto band never left the planar layer grid: the mapping did not engage"
+    );
+}
+
+/// Extruding moves that arrive at a z which is not on the planar layer grid.
+///
+/// The mapped band's grid is anchored per island at `h_top_smooth - band`, which
+/// lands between two planar layers, so mapped shell moves land off the grid while
+/// a planar slice never does.
+fn off_grid_extruding_moves(gcode: &str, layer: f64) -> usize {
+    let mut z = 0.0f64;
+    let mut count = 0usize;
+    for raw in gcode.lines() {
+        let line = raw.trim();
+        if !line.starts_with("G1") {
+            continue;
+        }
+        let mut moved_z = false;
+        let mut extrude = false;
+        for tok in line.split_whitespace().skip(1) {
+            if let Some(v) = tok.strip_prefix('Z') {
+                if let Ok(v) = v.parse::<f64>() {
+                    z = v;
+                    moved_z = true;
+                }
+            } else if let Some(v) = tok.strip_prefix('E') {
+                extrude = v.parse::<f64>().is_ok_and(|e| e > 0.0);
+            }
+        }
+        if !moved_z || !extrude {
+            continue;
+        }
+        let frac = (z / layer).fract().abs();
+        if frac > 0.02 && (1.0 - frac) > 0.02 {
+            count += 1;
+        }
+    }
+    count
 }
 
 #[test]
@@ -249,13 +303,42 @@ fn bridge_overhang_detects_bridge_and_cantilever_and_declines_flat_tilt() {
             "a 90° underside tilt round-trips to a planar toolpath, it must not be enabled: {}",
             s.reason
         );
+        // Auto declines undersides twice over now: off by default (nothing can
+        // verify a band under the part) and, when asked for, the 90° tilt itself
+        // is unrepresentable. Both are named.
         assert!(
-            s.reason.contains("round-trips"),
-            "reason should state the round-trip limit: {}",
+            s.reason.contains("underside band off by default"),
+            "reason should say why the underside is declined: {}",
             s.reason
         );
     }
     // Nothing else to gain: the top is flat and the 40° wall is cosmetic.
     assert_eq!(plan.enabled_surface_count, 0);
     assert!(plan.fallback_to_planar);
+
+    // Ask for the underside bands and the geometry still refuses: a 90° tilt
+    // round-trips to a planar toolpath, so planning it would print nothing new.
+    let asked = shale_nonplanar::plan_auto_placement(
+        &np,
+        &spans,
+        &NonplanarOptions {
+            underside_bands: true,
+            ..opts()
+        },
+        0.2,
+    );
+    let asked_underside: Vec<_> = asked
+        .surfaces
+        .iter()
+        .filter(|s| !is_top_band(s.kind))
+        .collect();
+    assert_eq!(asked_underside.len(), 2);
+    for s in &asked_underside {
+        assert!(!s.enabled, "90° underside must stay disabled: {}", s.reason);
+        assert!(
+            s.reason.contains("round-trips"),
+            "reason should state the round-trip limit: {}",
+            s.reason
+        );
+    }
 }
