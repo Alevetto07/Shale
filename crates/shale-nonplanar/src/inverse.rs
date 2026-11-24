@@ -21,6 +21,7 @@ fn clamp_slope_z(
     y: f64,
     z: f64,
     stats: &mut InverseMapStats,
+    count_excess: bool,
 ) -> f64 {
     let step_horiz = ((x - prev[0]).powi(2) + (y - prev[1]).powi(2)).sqrt();
     if step_horiz < 1e-6 {
@@ -41,7 +42,14 @@ fn clamp_slope_z(
             stats.largest_clamp_mm = stats.largest_clamp_mm.max(correction);
             return bound;
         }
-        stats.unclamped_excess += 1;
+        // A layer-change join between two extrusions is not a surface. The
+        // slicer often steps a full layer across a few tenths of a millimetre,
+        // which is steeper than the nozzle cap even when the surface itself is
+        // flat. Counting that join rejected a flat deck whose extrusions all
+        // sat on the cap. Only an extruding segment can fail the file.
+        if count_excess {
+            stats.unclamped_excess += 1;
+        }
     }
     z
 }
@@ -51,7 +59,7 @@ fn bridge_to_line_start(
     out: &mut String,
     from: &mut [f64; 3],
     to: [f64; 3],
-    g0: bool,
+    z_def: [f64; 2],
     stats: &mut InverseMapStats,
 ) {
     let dx = to[0] - from[0];
@@ -61,8 +69,10 @@ fn bridge_to_line_start(
         *from = to;
         return;
     }
+    // Interpolate in deformed Z and map each sample. A straight line in physical
+    // Z between two rim points cuts under a dome whose middle sits higher.
     let max_step_dz = field.max_angle_deg.to_radians().tan() * SEGMENT_MM;
-    let dz_abs = (to[2] - from[2]).abs();
+    let dz_abs = (z_def[1] - z_def[0]).abs();
     let segments = (horiz / SEGMENT_MM)
         .ceil()
         .max(if max_step_dz > 1e-9 {
@@ -76,10 +86,13 @@ fn bridge_to_line_start(
         let t = seg as f64 / segments as f64;
         let x = from[0] + dx * t;
         let y = from[1] + dy * t;
-        let mut z = from[2] + (to[2] - from[2]) * t;
-        z = clamp_slope_z(field, prev, x, y, z, stats);
-        let cmd = if g0 { "G0" } else { "G1" };
-        out.push_str(&format!("{cmd} X{x:.3} Y{y:.3} Z{z:.3}\n"));
+        let z_def = z_def[0] + (z_def[1] - z_def[0]) * t;
+        let mut z = match field.local_band_floor_z(x, y) {
+            Some(zb) if z_def >= zb - 1e-6 => field.inverse_z(x, y, z_def),
+            _ => z_def,
+        };
+        z = clamp_slope_z(field, prev, x, y, z, stats, false);
+        out.push_str(&format!("G1 X{x:.3} Y{y:.3} Z{z:.3}\n"));
         prev = [x, y, z];
     }
     *from = prev;
@@ -107,6 +120,7 @@ pub fn map_gcode_inverse_counted(
     let mut absolute = true;
     let mut position = [0.0f64; 4]; // x,y,z,e
     let mut last_phys = [0.0f64; 3];
+    let mut last_z_def = 0.0f64;
     let mut have_last_phys = false;
     let mut stats = InverseMapStats::default();
     let mut out = String::with_capacity(gcode.len() + 4096);
@@ -168,15 +182,14 @@ pub fn map_gcode_inverse_counted(
             false
         };
 
-        if line.starts_with("G0") {
+        // A pure Z hop has no horizontal slope. An XY travel is a real path:
+        // mapping only its endpoint and then bridging the next extrusion with a
+        // straight physical chord cuts through a rim-referenced dome, because the
+        // physical surface is higher in the middle than at the two ends. Those
+        // travels fall through and are segmented on the inverse, like a G1.
+        if line.starts_with("G0") && !line.contains('X') && !line.contains('Y') {
             let z_phys = field.inverse_z(target[0], target[1], target[2]);
             let mut parts = vec!["G0".to_string()];
-            if line.contains('X') {
-                parts.push(format!("X{:.3}", target[0]));
-            }
-            if line.contains('Y') {
-                parts.push(format!("Y{:.3}", target[1]));
-            }
             if line.contains('Z') {
                 parts.push(format!("Z{z_phys:.3}"));
             }
@@ -186,9 +199,7 @@ pub fn map_gcode_inverse_counted(
             out.push_str(&parts.join(" "));
             out.push('\n');
             position = target;
-            // Keep last_phys at the last extrusion point so the next G1 bridges with a
-            // slope-capped path. Only pure Z hops (no XY) update vertical position.
-            if line.contains('Z') && !line.contains('X') && !line.contains('Y') && have_last_phys {
+            if line.contains('Z') && have_last_phys {
                 let max_dz = field.max_angle_deg.to_radians().tan() * field.nominal_layer.max(0.08);
                 let dz = z_phys - last_phys[2];
                 last_phys[2] = if dz.abs() > max_dz {
@@ -196,6 +207,7 @@ pub fn map_gcode_inverse_counted(
                 } else {
                     z_phys
                 };
+                last_z_def = target[2];
             }
             continue;
         }
@@ -228,6 +240,7 @@ pub fn map_gcode_inverse_counted(
             position = target;
             if extruding {
                 last_phys = [target[0], target[1], target[2]];
+                last_z_def = target[2];
                 have_last_phys = true;
             }
             continue;
@@ -258,10 +271,13 @@ pub fn map_gcode_inverse_counted(
             },
         ];
         let mut prev_phys = line_start_phys;
-        if have_last_phys && extruding {
+        if have_last_phys {
             let hop = ((line_start_phys[0] - last_phys[0]).powi(2)
                 + (line_start_phys[1] - last_phys[1]).powi(2))
             .sqrt();
+            // The previous line may have left the nozzle a clamp away from this
+            // point's raw inverse. Recomputing the inverse here and stepping from
+            // it skips that correction, so a short following move exceeds the cap.
             if hop < 0.05 {
                 line_start_phys[2] = last_phys[2];
             } else {
@@ -272,19 +288,25 @@ pub fn map_gcode_inverse_counted(
                     line_start_phys[1],
                     line_start_phys[2],
                     &mut stats,
+                    false,
                 );
             }
-            let mut cursor = last_phys;
-            bridge_to_line_start(
-                field,
-                &mut out,
-                &mut cursor,
-                line_start_phys,
-                false,
-                &mut stats,
-            );
-            prev_phys = cursor;
-            last_phys = cursor;
+            if extruding {
+                let mut cursor = last_phys;
+                bridge_to_line_start(
+                    field,
+                    &mut out,
+                    &mut cursor,
+                    line_start_phys,
+                    [last_z_def, position[2]],
+                    &mut stats,
+                );
+                prev_phys = cursor;
+                last_phys = cursor;
+                last_z_def = position[2];
+            } else {
+                prev_phys = line_start_phys;
+            }
         }
         let mut prev_e = position[3];
         // At the start of a file there is no previous extrusion to hold the cap
@@ -302,7 +324,11 @@ pub fn map_gcode_inverse_counted(
                 Some(zb) if z_def >= zb - 1e-6 => {
                     let raw = field.inverse_z(x, y, z_def);
                     if anchored {
-                        clamp_slope_z(field, prev_phys, x, y, raw, &mut stats)
+                        // Only an extruding segment can fail the file. A travel
+                        // that follows the inverse is still slope-capped when the
+                        // correction fits the budget, but a combing move's own
+                        // step is not a surface and must not force the fallback.
+                        clamp_slope_z(field, prev_phys, x, y, raw, &mut stats, extruding)
                     } else {
                         anchored = true;
                         raw
@@ -363,6 +389,7 @@ pub fn map_gcode_inverse_counted(
             out.push('\n');
             prev_phys = [x, y, z_phys];
             last_phys = prev_phys;
+            last_z_def = z_def;
             have_last_phys = true;
         }
 
@@ -515,7 +542,7 @@ mod tests {
         let prev = [124.199, 123.416, 19.896];
         let raw = field.inverse_z(124.152, 123.455, 22.4);
         let mut stats = InverseMapStats::default();
-        let z = clamp_slope_z(&field, prev, 124.152, 123.455, raw, &mut stats);
+        let z = clamp_slope_z(&field, prev, 124.152, 123.455, raw, &mut stats, true);
         let step = (10.0f64).to_radians().tan() * 0.062;
         assert!(
             (raw - prev[2]).abs() > step + MAX_INVERSE_CLAMP_MM,
@@ -536,7 +563,15 @@ mod tests {
         let prev = [10.0, 10.0, 11.0];
         let step = (10.0f64).to_radians().tan() * 0.5;
         let mut stats = InverseMapStats::default();
-        let z = clamp_slope_z(&field, prev, 10.5, 10.0, prev[2] + step + 0.01, &mut stats);
+        let z = clamp_slope_z(
+            &field,
+            prev,
+            10.5,
+            10.0,
+            prev[2] + step + 0.01,
+            &mut stats,
+            true,
+        );
         assert!(
             (z - (prev[2] + step)).abs() < 1e-9,
             "the move should be capped at the slope limit: {z:.4}"

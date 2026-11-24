@@ -221,13 +221,32 @@ pub fn validate_gcode(
         });
     }
 
+    // Physical layer thickness: the map compresses or stretches Z through each
+    // column's transition, and a slicer layer that lands outside the slicer's
+    // own window has no room for the bead. Checked on the field rather than on
+    // the G-code because the G-code's own Z spacing is the field's output.
+    let thickness = crate::safety::physical_layer_thickness(field);
+    let thickness_ok = thickness.violations == 0;
+    if !thickness_ok {
+        let worst = thickness.worst_mm.unwrap_or(thickness.min_mm);
+        violations.push(SafetyViolation {
+            kind: "layer_thickness".into(),
+            detail: format!(
+                "layer thickness {worst:.3} mm outside [{:.3}, {:.3}] mm ({} of {} band samples)",
+                field.min_layer, field.max_layer, thickness.violations, thickness.samples
+            ),
+            line: None,
+        });
+    }
+
     let ok = violations.is_empty()
         && collisions_extruding == 0
         && collisions_travel == 0
         && gcode_respects_max_angle(gcode, field)
         && planar_ok
         && z_ok
-        && slope_ok;
+        && slope_ok
+        && thickness_ok;
 
     SafetyReport {
         ok,
@@ -247,6 +266,10 @@ pub fn validate_gcode(
         collisions_travel,
         below_band_collisions_ignored: ignored_below_band,
         envelope_checks_enabled: envelope.calibrated,
+        min_physical_layer_mm: (thickness.samples > 0).then_some(thickness.min_mm),
+        max_physical_layer_mm: (thickness.samples > 0).then_some(thickness.max_mm),
+        layer_thickness_within_bounds: thickness_ok,
+        layer_thickness_samples: thickness.samples,
         planar_equivalence: planar_equiv,
         collision_adjustments: collision_adjustments.to_vec(),
         violations,

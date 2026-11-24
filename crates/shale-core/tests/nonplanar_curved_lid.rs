@@ -65,9 +65,10 @@ fn slice_lid(printer: &str, tag: &str) -> (String, SliceOutcome) {
         max_angle_deg: 10.0,
         ..NonplanarOptions::default()
     };
-    let path = std::env::temp_dir()
-        .join("shale")
-        .join(format!("nonplanar-curved-lid-{tag}-{}.gcode", std::process::id()));
+    let path = std::env::temp_dir().join("shale").join(format!(
+        "nonplanar-curved-lid-{tag}-{}.gcode",
+        std::process::id()
+    ));
     let outcome = job::slice(
         &catalog,
         &engine,
@@ -185,14 +186,115 @@ fn assert_curved_lid(printer: &str, tag: &str) {
         "{printer}: only {curved} curved extruding moves - the top is not being swept"
     );
     let safety = report.safety.as_ref().expect("safety report");
-    assert_eq!(safety.collisions_extruding, 0, "{printer} extruding collisions");
+    assert_eq!(
+        safety.collisions_extruding, 0,
+        "{printer} extruding collisions"
+    );
     assert_eq!(safety.collisions_travel, 0, "{printer} travel collisions");
     let slope = safety.max_extrusion_slope_deg.unwrap_or(0.0);
     assert!(
         slope <= 10.5,
         "{printer}: toolhead would follow {slope:.2} deg (cap 10 + 0.5)"
     );
-    assert_eq!(z_inversions(&gcode), 0, "{printer}: Z inversions in the band");
+    assert_eq!(
+        z_inversions(&gcode),
+        0,
+        "{printer}: Z inversions in the band"
+    );
+}
+
+/// A constant deformed layer must stay inside the cap between nodes as well
+/// as on them. Interpolating the ramp parameters used to leave a 75° spike in
+/// the middle of a cell the node scan called flat.
+#[test]
+fn demo_lid_level_surfaces_stay_inside_the_cap_between_nodes() {
+    let mesh: TriangleMesh = mesh::load_mesh(&demo_lid()).expect("stl");
+    let transform = mesh::place_on_bed(&mesh, 256.0, 256.0, false);
+    let baked = mesh::bake(&mesh, &transform);
+    let m = shale_nonplanar::mesh::Mesh {
+        vertices: baked
+            .vertices
+            .iter()
+            .map(|v| [v[0] as f64, v[1] as f64, v[2] as f64])
+            .collect(),
+        triangles: baked.triangles.clone(),
+    };
+    let opts = NonplanarOptions {
+        mode: NonplanarMode::Auto,
+        max_angle_deg: 10.0,
+        grid_step_mm: 0.35,
+        ..NonplanarOptions::default()
+    };
+    let ctx = shale_nonplanar::pipeline::plan_field(&m, &opts, 0.2, &[]);
+    assert!(
+        ctx.planar_collapsed.is_none(),
+        "the lid must stay curved: {:?}",
+        ctx.planar_collapsed
+    );
+    let field = &ctx.field;
+    let thick = shale_nonplanar::safety::physical_layer_thickness(field);
+    assert_eq!(
+        thick.violations, 0,
+        "layer thickness {:.3}..{:.3} mm",
+        thick.min_mm, thick.max_mm
+    );
+    let step = field.grid.step;
+    let mut worst = 0.0_f64;
+    let mut worst_at = String::new();
+    for iy in 0..field.grid.height.saturating_sub(1) {
+        for ix in 0..field.grid.width.saturating_sub(1) {
+            let x = field.grid.origin[0] + (ix as f64 + 0.5) * step;
+            let y = field.grid.origin[1] + (iy as f64 + 0.5) * step;
+            let lift = field.lift_at(x, y);
+            let lift_x = field.lift_at(x + step, y);
+            let lift_y = field.lift_at(x, y + step);
+            if lift.abs() < 0.2 || lift_x.abs() < 0.2 || lift_y.abs() < 0.2 {
+                continue;
+            }
+            for &z_def in &[4.0_f64, 5.2, 8.0, 11.0, 13.5] {
+                let z = field.inverse_z(x, y, z_def);
+                let zx = field.inverse_z(x + step, y, z_def);
+                let zy = field.inverse_z(x, y + step, z_def);
+                let sx = ((zx - z) / step).atan().to_degrees().abs();
+                let sy = ((zy - z) / step).atan().to_degrees().abs();
+                let slope = sx.max(sy);
+                if slope > worst {
+                    worst = slope;
+                    worst_at = format!("({x:.2},{y:.2}) zdef={z_def:.1}");
+                }
+            }
+        }
+    }
+    assert!(
+        worst <= 10.5,
+        "a level between nodes reaches {worst:.2}° at {worst_at}, past the 10° cap"
+    );
+    let mut round_trip = 0.0_f64;
+    for iy in (0..field.grid.height).step_by(8) {
+        for ix in (0..field.grid.width).step_by(8) {
+            let x = field.grid.origin[0] + ix as f64 * step;
+            let y = field.grid.origin[1] + iy as f64 * step;
+            if field.lift_at(x, y).abs() < 0.2 {
+                continue;
+            }
+            for z in [2.0_f64, 5.2, 8.0, 11.0, 14.0, 16.0] {
+                let mapped = field.forward_z(x, y, z);
+                let back = field.inverse_z(x, y, mapped);
+                round_trip = round_trip.max((back - z).abs());
+            }
+        }
+    }
+    assert!(
+        round_trip < 0.01,
+        "forward/inverse round trip misses by {round_trip:.3} mm"
+    );
+    let min_lift = (0..field.island_strength.len())
+        .map(|i| field.node_lift(i))
+        .fold(0.0_f64, f64::min);
+    assert!(
+        min_lift < -2.0,
+        "the peak should still be pressed down, lift {min_lift:.3}"
+    );
 }
 
 #[test]

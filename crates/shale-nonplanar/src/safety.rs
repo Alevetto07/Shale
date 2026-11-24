@@ -26,10 +26,15 @@ fn segment_in_curved_band(field: &DeformField, a: [f64; 3], b: [f64; 3]) -> bool
 /// Finished G-code is physical: the map has already put the top back on the
 /// model's own surface, so the band runs from `z_band` to `h_top` at that XY.
 fn point_in_curved_band_geom(field: &DeformField, p: [f64; 3]) -> bool {
-    match field.column_limits(p[0], p[1]) {
-        Some(col) => col.strength > 0.0 && p[2] >= col.z_band - 0.05 && p[2] <= col.h_top + 0.05,
-        None => false,
-    }
+    let Some(col) = field.column_limits(p[0], p[1]) else {
+        return false;
+    };
+    let Some(t) = field.column_transition(p[0], p[1]) else {
+        return false;
+    };
+    // The transition below the band is curved too: a ramp that starts under
+    // `z_band` is where a negative rim-referenced lift stretches the layers.
+    t.lift.abs() > 1e-12 && p[2] >= t.z_band - t.ramp - 0.05 && p[2] <= col.h_top + 0.05
 }
 
 fn slope_deg(a: [f64; 3], b: [f64; 3]) -> Option<f64> {
@@ -197,6 +202,21 @@ pub const FOOTPRINT_SLOPE_MARGIN_DEG: f64 = 1.0;
 ///
 /// Returns the number of columns removed from the footprint.
 pub fn restrict_to_printable_top(field: &mut DeformField) -> usize {
+    // The blur halo has a smoothed height and no material. Leaving it in the
+    // footprint pulled the rim target off the part.
+    for i in 0..field.island_strength.len() {
+        if field
+            .grid
+            .z_deform_cap
+            .get(i)
+            .is_some_and(|cap| cap.is_some())
+        {
+            continue;
+        }
+        if field.grid.z_top.get(i).is_none_or(|z| z.is_none()) {
+            field.island_strength[i] = 0.0;
+        }
+    }
     let limit = (field.max_angle_deg - FOOTPRINT_SLOPE_MARGIN_DEG).max(0.5);
     let width = field.grid.width;
     let height = field.grid.height;
@@ -233,11 +253,9 @@ pub fn restrict_to_printable_top(field: &mut DeformField) -> usize {
             }
         }
     }
-    if cut > 0 {
-        // No strength cliff of our own: the lift may only drop by what the cap
-        // allows per millimetre, so the footprint edge is printed as a ramp.
-        lipschitz_limit_lift(field);
-    }
+    // The chamfer runs after the rim retarget, inside `limit_field_slopes`.
+    // Chamfering here, while the flat target is still the island peak, is what
+    // ate the lid down to a 14 mm arch.
     cut
 }
 
@@ -323,9 +341,21 @@ pub fn level_slope_violations(field: &DeformField, layer_h: f64) -> (f64, Vec<us
             let Some(a) = column(field, i) else {
                 continue;
             };
-            let right = (ix + 1 < width).then(|| i + 1);
-            let up = (iy + 1 < height).then(|| i + width);
-            for neighbour in [right, up].into_iter().flatten() {
+            let diag = step * std::f64::consts::SQRT_2;
+            let mut neighbours: Vec<(usize, f64)> = Vec::with_capacity(4);
+            if ix + 1 < width {
+                neighbours.push((i + 1, step));
+            }
+            if iy + 1 < height {
+                neighbours.push((i + width, step));
+            }
+            if ix + 1 < width && iy + 1 < height {
+                neighbours.push((i + width + 1, diag));
+            }
+            if ix > 0 && iy + 1 < height {
+                neighbours.push((i + width - 1, diag));
+            }
+            for (neighbour, distance) in neighbours {
                 let Some(b) = column(field, neighbour) else {
                     continue;
                 };
@@ -357,31 +387,38 @@ pub fn level_slope_violations(field: &DeformField, layer_h: f64) -> (f64, Vec<us
                 // overlap of the two bands can hold a level curve crossing both.
                 //
                 // Start at the *lower* ramp start, not at the band entry. The map
-                // blends each column's lift over `ramp_thickness` below its band
-                // floor, so two neighbours with different band starts or lifts
-                // already deposit at different heights under the lower band entry.
-                // Sampling from `f_band()` (the higher band entry) skipped that
-                // ramp: the limiter then reported `converged` on a field whose own
-                // G-code still turned a 0.061 mm move into a 26.3 deg one.
-                let ramp = field.ramp_thickness.max(1e-6);
-                let lo = ((a.z_band.min(b.z_band) - ramp) / layer).ceil();
+                // blends each column's lift over its own ramp below the band
+                // floor, and that ramp is sized from the lift — several millimetres
+                // when the peak is pressed down onto the rim. Sampling only
+                // `ramp_thickness` (the configured minimum) stepped over the
+                // stretch the thickness guard exists to bound.
+                let start_a = field
+                    .column_transition(xa, ya)
+                    .map(|t| t.z_band - t.ramp)
+                    .unwrap_or(a.z_band);
+                let start_b = field
+                    .column_transition(xb, yb)
+                    .map(|t| t.z_band - t.ramp)
+                    .unwrap_or(b.z_band);
+                let ramp_floor = start_a.min(start_b);
+                let lo = (ramp_floor / layer).ceil();
                 let hi = (a.f_top().min(b.f_top()) / layer).floor();
                 if hi < lo {
                     continue;
                 }
                 let count = (hi - lo) as usize + 1;
                 let stride = count.div_ceil(LEVEL_SAMPLES_PER_EDGE).max(1);
-                // The ramp is only a few layers thick. A stride coarser than it
-                // would step straight over the region this scan exists to cover,
-                // so walk the ramp level by level and stride above it.
-                let ramp_levels = (ramp / layer).ceil() as usize;
+                // Walk the whole transition level by level. A stride coarser than
+                // it would step over the region this scan exists to cover.
+                let trans_top = a.z_band.max(b.z_band);
+                let ramp_levels = ((trans_top - ramp_floor) / layer).ceil().max(0.0) as usize;
                 let mut k = lo;
                 let mut visited = 0usize;
                 while k <= hi {
                     let z_def = k * layer;
                     let pa = field.inverse_z(xa, ya, z_def);
                     let pb = field.inverse_z(xb, yb, z_def);
-                    let slope = (pa - pb).abs() / step;
+                    let slope = (pa - pb).abs() / distance;
                     if slope > tan_cap {
                         let deg = slope.atan().to_degrees();
                         if deg > worst {
@@ -417,13 +454,147 @@ pub fn field_respects_max_angle(field: &DeformField) -> bool {
         .is_empty()
 }
 
+/// Physical layer thickness the map deposits, worst case, and how many samples
+/// leave the slicer's window.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LayerThicknessScan {
+    /// Band samples taken (zero when nothing lifts).
+    pub samples: usize,
+    /// Thinnest physical layer found, in millimetres.
+    pub min_mm: f64,
+    /// Thickest physical layer found, in millimetres.
+    pub max_mm: f64,
+    /// Samples outside `[min_layer - tolerance, max_layer + tolerance]`.
+    pub violations: usize,
+    /// The worst offending thickness, for the report.
+    pub worst_mm: Option<f64>,
+}
+
+/// Tolerance on the physical layer window, in millimetres.
+///
+/// The scan measures a Jacobian, not a bead: a sample can straddle the band
+/// floor, where one deformed layer is part sheared and part ramped. Anything
+/// below the slicer's own layer quantisation would reject that boundary.
+pub const LAYER_THICKNESS_TOLERANCE_MM: f64 = 0.005;
+
+/// Worst physical layer thickness the field implies, column by column.
+///
+/// One deformed layer is `nominal_layer` tall, and the inverse map sends it to
+/// `nominal_layer * r` of physical Z with `r = dz_phys / dz_def`. The transition
+/// below each band is where that bites: a fixed ramp under a multi-millimetre
+/// lift used to deposit layers of a few hundredths of a millimetre, and nothing
+/// rejected the file.
+pub fn physical_layer_thickness(field: &DeformField) -> LayerThicknessScan {
+    let nominal = field.nominal_layer.max(1e-6);
+    let (r_min, r_max) = field.jacobian_bounds();
+    let min_layer = r_min * nominal;
+    let max_layer = r_max * nominal;
+    let mut scan = LayerThicknessScan {
+        samples: 0,
+        min_mm: nominal,
+        max_mm: nominal,
+        violations: 0,
+        worst_mm: None,
+    };
+    let mut lowest = f64::INFINITY;
+    let mut highest = f64::NEG_INFINITY;
+    let mut worst_gap = 0.0_f64;
+    for i in 0..field.island_strength.len() {
+        if field.grid.z_top.get(i).is_none_or(|z| z.is_none()) {
+            continue;
+        }
+        if field
+            .grid
+            .z_deform_cap
+            .get(i)
+            .is_some_and(|cap| cap.is_some())
+        {
+            continue;
+        }
+        let (x, y) = node_xy(field, i);
+        let Some(col) = field.column_limits(x, y) else {
+            continue;
+        };
+        let Some(t) = field.column_transition(x, y) else {
+            continue;
+        };
+        if col.lift.abs() <= 1e-12 || col.strength <= 1e-12 || t.lift.abs() <= 1e-12 {
+            continue;
+        }
+        let band = col.z_band;
+        let ramp_start = t.z_band - t.ramp;
+        let samples = [
+            ramp_start + 0.25 * t.ramp,
+            ramp_start + 0.50 * t.ramp,
+            ramp_start + 0.75 * t.ramp,
+            band + 0.5 * nominal,
+            0.5 * (band + col.h_top.max(band + nominal)),
+            (col.h_top - 0.5 * nominal).max(band + 0.5 * nominal),
+        ];
+        let dz = nominal.min(t.ramp / 8.0).max(1e-4);
+        for z in samples {
+            let z = z.max(0.0);
+            let dz_def = field.forward_z(x, y, z + dz) - field.forward_z(x, y, z);
+            scan.samples += 1;
+            if dz_def <= 1e-9 {
+                scan.violations += 1;
+                lowest = lowest.min(0.0);
+                if worst_gap < min_layer {
+                    worst_gap = min_layer;
+                    scan.worst_mm = Some(0.0);
+                }
+                continue;
+            }
+            let thickness = nominal * dz / dz_def;
+            lowest = lowest.min(thickness);
+            highest = highest.max(thickness);
+            let gap = if thickness < min_layer {
+                min_layer - thickness
+            } else if thickness > max_layer {
+                thickness - max_layer
+            } else {
+                0.0
+            };
+            if gap > LAYER_THICKNESS_TOLERANCE_MM {
+                scan.violations += 1;
+                if gap > worst_gap {
+                    worst_gap = gap;
+                    scan.worst_mm = Some(thickness);
+                }
+            }
+        }
+    }
+    if scan.samples > 0 && lowest.is_finite() {
+        scan.min_mm = lowest;
+        scan.max_mm = highest.max(lowest);
+    }
+    scan
+}
+
+/// Lengthen transition ramps until their level surfaces fit the cap.
+///
+/// A floor smoothed at `tan(cap)` can still leave a level in the middle of the
+/// blend a degree or two over the cap, and the strength damper then eats a
+/// legal dome. Tightening the floor (never shortening a Jacobian ramp) removes
+/// that excess without giving up lift. Returns the scan after the last attempt.
+fn settle_transition_ramps(field: &mut DeformField, layer: f64) -> (f64, Vec<usize>) {
+    field.smooth_transition_ramps();
+    let mut prepared = level_slope_violations(field, layer);
+    let mut margin = 0.98_f64;
+    while !prepared.1.is_empty() && margin > 0.12 {
+        margin *= 0.75;
+        field.smooth_transition_ramps_with(margin);
+        prepared = level_slope_violations(field, layer);
+    }
+    prepared
+}
+
 /// Make the field printable before anything is sliced.
 ///
-/// Repeatedly halves the flattening strength of the cells that own an over-cap
-/// level surface, then Lipschitz-limits the lift field so a damped cell never
-/// leaves a cliff beside an undamped one. Both steps only ever lower strength, so
-/// the schedule walks monotonically towards planar and the loop terminates: at
-/// strength 0 the mapping is the identity and every level surface is horizontal.
+/// Sizes each column's transition, chamfers the lift so a rim-referenced dome
+/// stays inside the cap, then halves the strength of any cell that still owns
+/// an over-cap level surface. Every step only lowers strength, so the schedule
+/// walks towards planar and the loop terminates.
 ///
 /// The report carries the worst slope found before and after, the number of
 /// passes, and the smallest remaining strength so the post-pass can decide
@@ -435,29 +606,48 @@ pub fn limit_field_slopes(field: &mut DeformField, layer_h: f64) -> SlopeLimitin
         field.nominal_layer.max(0.04)
     };
     let cap_deg = field.max_angle_deg;
-    let (worst_before, mut cells) = level_slope_violations(field, layer);
+    // Measured on the field as it arrived, before the transition pass moves
+    // anything. Callers compare this with a slope taken on that same field.
+    let (worst_before, _) = level_slope_violations(field, layer);
+    let mut attenuated = field.attenuate_transitions();
+    lipschitz_limit_lift(field);
+    attenuated += field.attenuate_transitions();
+    let (prepared, mut cells) = settle_transition_ramps(field, layer);
     let mut report = SlopeLimitingReport {
         cap_deg,
         passes: 0,
         converged: cells.is_empty(),
-        worst_before_deg: worst_before,
-        worst_after_deg: worst_before,
+        worst_before_deg: worst_before.max(prepared),
+        worst_after_deg: prepared,
         cells_reduced: 0,
         min_strength: field.min_strength(),
         max_strength: field.max_strength(),
         footprint_columns: field.engaged_columns(),
+        thickness_attenuated_columns: attenuated,
     };
     let mut reduced: Vec<u32> = vec![0; field.island_strength.len()];
     let mut passes = 0usize;
     while !cells.is_empty() && passes < MAX_SLOPE_LIMIT_PASSES {
         passes += 1;
         for &i in &cells {
+            // A planned underside already has the tilt the plan asked for.
+            // Halving it is what collapsed the bridge wedge from 4.32 mm to a
+            // 1 mm plateau.
+            if field
+                .grid
+                .z_deform_cap
+                .get(i)
+                .is_some_and(|cap| cap.is_some())
+            {
+                continue;
+            }
             field.island_strength[i] = (field.island_strength[i] * SLOPE_DAMP_FACTOR).max(0.0);
             reduced[i] = 1;
         }
         spread_damped_strength(field, &mut reduced);
         lipschitz_limit_lift(field);
-        let (worst, next) = level_slope_violations(field, layer);
+        attenuated += field.attenuate_transitions();
+        let (worst, next) = settle_transition_ramps(field, layer);
         report.worst_after_deg = worst;
         cells = next;
     }
@@ -467,6 +657,7 @@ pub fn limit_field_slopes(field: &mut DeformField, layer_h: f64) -> SlopeLimitin
     report.min_strength = field.min_strength();
     report.max_strength = field.max_strength();
     report.footprint_columns = field.engaged_columns();
+    report.thickness_attenuated_columns = attenuated;
     report
 }
 
@@ -490,6 +681,16 @@ fn spread_damped_strength(field: &mut DeformField, reduced: &mut [u32]) {
                     continue;
                 }
                 let j = ny as usize * width + nx as usize;
+                // Spreading into a planned underside band was damping a legal
+                // affine wedge because a neighbour outside the band had been halved.
+                if field
+                    .grid
+                    .z_deform_cap
+                    .get(j)
+                    .is_some_and(|cap| cap.is_some())
+                {
+                    continue;
+                }
                 if snapshot[j] > value {
                     field.island_strength[j] = value;
                     reduced[j] = 1;
@@ -499,62 +700,150 @@ fn spread_damped_strength(field: &mut DeformField, reduced: &mut [u32]) {
     }
 }
 
-/// Lower-only Lipschitz limit on the lift each column applies.
+/// Lipschitz limit on the signed lift each column applies.
 ///
-/// The lift is `strength * (flat - h_top)`; two neighbouring columns whose lifts
-/// differ by more than `tan(cap) * step` produce a step the toolhead cannot
-/// follow, so the higher lift is pulled down to its neighbour's lift plus that
-/// budget. Forward and backward chamfer passes leave the largest cap-compliant
-/// lift under the current schedule, in one sweep.
+/// Positive lift is pulled down and negative lift is pulled up, each only as
+/// far as `tan(cap)` per millimetre, and only towards zero. Two chamfer passes
+/// are the fixed point of that bound. Planned underside columns are left
+/// alone: their affine is the tilt the plan asked for, and chamfering it
+/// against the zero cells outside the band is what flattened a 4.32 mm wedge.
 fn lipschitz_limit_lift(field: &mut DeformField) {
     let width = field.grid.width;
     let height = field.grid.height;
+    let n = width * height;
     let step = field.grid.step;
     let max_dz = field.max_angle_deg.to_radians().tan() * step;
     if max_dz <= 1e-9 {
         return;
     }
-    let mut lift: Vec<f64> = vec![0.0; width * height];
-    let mut base: Vec<f64> = vec![0.0; width * height];
-    for i in 0..width * height {
+    let mut lift = vec![0.0; n];
+    let mut base = vec![0.0; n];
+    let mut live = vec![false; n];
+    let mut constrains = vec![false; n];
+    for i in 0..n {
+        // A planned underside keeps the affine the plan wrote. Air beside the
+        // footprint does not constrain either: nothing is printed there, and
+        // treating it as a zero lift chamfered a legal dome down to the cap
+        // just to meet a boundary the toolhead never crosses.
+        if field
+            .grid
+            .z_deform_cap
+            .get(i)
+            .is_some_and(|cap| cap.is_some())
+        {
+            continue;
+        }
         let Some(col) = column(field, i) else {
             continue;
         };
-        base[i] = (col.flat - col.h_top).max(0.0);
+        if !col.material {
+            continue;
+        }
+        constrains[i] = true;
+        base[i] = col.flat - col.h_top;
         lift[i] = col.strength * base[i];
+        live[i] = true;
     }
+    let mut positive: Vec<f64> = lift.iter().map(|value| value.max(0.0)).collect();
+    let mut negative: Vec<f64> = lift.iter().map(|value| (-value).max(0.0)).collect();
+    chamfer_magnitude(&mut positive, &live, &constrains, width, height, max_dz);
+    chamfer_magnitude(&mut negative, &live, &constrains, width, height, max_dz);
+    for i in 0..n {
+        if !live[i] || base[i].abs() <= 1e-9 {
+            continue;
+        }
+        let target = if lift[i] >= 0.0 {
+            positive[i].clamp(0.0, lift[i])
+        } else {
+            (-negative[i]).clamp(lift[i], 0.0)
+        };
+        let ratio = (target / base[i]).clamp(0.0, field.island_strength[i]);
+        field.island_strength[i] = ratio;
+    }
+}
+
+/// Pull magnitudes down so neighbours differ by at most `max_dz`.
+///
+/// Cells that are not live contribute 0 when they constrain (the footprint
+/// edge) and are ignored when they do not (a planned underside band).
+fn chamfer_magnitude(
+    values: &mut [f64],
+    live: &[bool],
+    constrains: &[bool],
+    width: usize,
+    height: usize,
+    max_dz: f64,
+) {
+    let neighbour = |values: &[f64], j: usize| -> Option<f64> {
+        if !constrains[j] {
+            return None;
+        }
+        Some(if live[j] { values[j] } else { 0.0 })
+    };
+    // Diagonal neighbours are `step * sqrt(2)` apart, so they may differ by
+    // that much and still sit on the cap. An orthogonal-only chamfer left
+    // diagonal toolpaths about 4° over it.
+    let diag = max_dz * std::f64::consts::SQRT_2;
+    let at = |ix: usize, iy: usize| iy * width + ix;
     for iy in 0..height {
         for ix in 0..width {
-            let i = iy * width + ix;
-            let mut bound = lift[i];
+            let i = at(ix, iy);
+            if !live[i] {
+                continue;
+            }
+            let mut bound = values[i];
             if ix > 0 {
-                bound = bound.min(lift[i - 1] + max_dz);
+                if let Some(other) = neighbour(values, at(ix - 1, iy)) {
+                    bound = bound.min(other + max_dz);
+                }
             }
             if iy > 0 {
-                bound = bound.min(lift[i - width] + max_dz);
+                if let Some(other) = neighbour(values, at(ix, iy - 1)) {
+                    bound = bound.min(other + max_dz);
+                }
             }
-            lift[i] = bound;
+            if ix > 0 && iy > 0 {
+                if let Some(other) = neighbour(values, at(ix - 1, iy - 1)) {
+                    bound = bound.min(other + diag);
+                }
+            }
+            if ix + 1 < width && iy > 0 {
+                if let Some(other) = neighbour(values, at(ix + 1, iy - 1)) {
+                    bound = bound.min(other + diag);
+                }
+            }
+            values[i] = bound;
         }
     }
     for iy in (0..height).rev() {
         for ix in (0..width).rev() {
-            let i = iy * width + ix;
-            let mut bound = lift[i];
+            let i = at(ix, iy);
+            if !live[i] {
+                continue;
+            }
+            let mut bound = values[i];
             if ix + 1 < width {
-                bound = bound.min(lift[i + 1] + max_dz);
+                if let Some(other) = neighbour(values, at(ix + 1, iy)) {
+                    bound = bound.min(other + max_dz);
+                }
             }
             if iy + 1 < height {
-                bound = bound.min(lift[i + width] + max_dz);
+                if let Some(other) = neighbour(values, at(ix, iy + 1)) {
+                    bound = bound.min(other + max_dz);
+                }
             }
-            lift[i] = bound;
+            if ix + 1 < width && iy + 1 < height {
+                if let Some(other) = neighbour(values, at(ix + 1, iy + 1)) {
+                    bound = bound.min(other + diag);
+                }
+            }
+            if ix > 0 && iy + 1 < height {
+                if let Some(other) = neighbour(values, at(ix - 1, iy + 1)) {
+                    bound = bound.min(other + diag);
+                }
+            }
+            values[i] = bound;
         }
-    }
-    for i in 0..width * height {
-        if base[i] <= 1e-9 {
-            continue;
-        }
-        let ratio = (lift[i] / base[i]).clamp(0.0, field.island_strength[i]);
-        field.island_strength[i] = ratio;
     }
 }
 

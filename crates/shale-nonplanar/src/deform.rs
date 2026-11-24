@@ -5,6 +5,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::height_field::HeightGrid;
 
+/// How one column maps: the shear lift and the physical transition below it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transition {
+    /// Physical Z where the column's band starts (the shear applies above this).
+    pub z_band: f64,
+    /// Vertical displacement applied above `z_band`. Negative presses a peak down
+    /// onto the rim; positive is the legacy upward lift.
+    pub lift: f64,
+    /// Physical thickness of the blend between untouched plastic and `z_band`.
+    pub ramp: f64,
+}
+
 /// Maps physical coordinates to the deformed space used for planar slicing.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeformField {
@@ -23,6 +35,12 @@ pub struct DeformField {
     /// Connected top sheets the field flattens (one flat target each).
     #[serde(default)]
     pub top_islands: usize,
+    /// Per-node transition thickness after the slope-aware lengthening pass.
+    ///
+    /// Empty until [`DeformField::smooth_transition_ramps`] runs. Sampling then
+    /// falls back to [`DeformField::transition_thickness_for_lift`].
+    #[serde(default)]
+    pub node_ramp: Vec<f64>,
 }
 
 /// The band geometry and the lift [`DeformField`] applies at one XY.
@@ -46,13 +64,21 @@ impl DeformField {
     /// map skip every move under a short part of the plate.
     pub fn global_band_floor_z(&self) -> f64 {
         let mut floor = f64::INFINITY;
-        for (i, top) in self.grid.z_top_smooth.iter().enumerate() {
-            if top.is_none() {
+        for i in 0..self.grid.z_band_start.len() {
+            let Some(z_band) = self.grid.z_band_start[i] else {
+                continue;
+            };
+            let lift = self.node_lift(i);
+            if lift.abs() < 1e-12 {
                 continue;
             }
-            if let Some(z) = self.grid.z_band_start[i] {
-                floor = floor.min(z);
-            }
+            let ramp = self
+                .node_ramp
+                .get(i)
+                .copied()
+                .filter(|ramp| *ramp > 1e-9)
+                .unwrap_or_else(|| self.transition_thickness_for_lift(lift));
+            floor = floor.min(z_band - ramp);
         }
         if floor.is_finite() {
             return floor;
@@ -64,6 +90,75 @@ impl DeformField {
             .filter_map(|z| *z)
             .fold(0.0_f64, f64::max);
         max_top - self.band_thickness - self.ramp_thickness
+    }
+
+    /// Allowed range of `r = dz_phys / dz_def` inside the map.
+    ///
+    /// A deformed layer is `nominal_layer` tall in the space the slicer works
+    /// in; the physical thickness it deposits is `nominal_layer * r`. Both
+    /// bounds come from the field's own slicer limits, so a job can never be
+    /// laid down thinner than `min_layer` or thicker than `max_layer`.
+    pub fn jacobian_bounds(&self) -> (f64, f64) {
+        let nominal = self.nominal_layer.max(1e-6);
+        // Keep 1.0 inside the range: above the band the map is a pure shear and
+        // r = 1 whatever the limits say, so a nominal layer taller than
+        // `max_layer` must not turn every band move into a violation.
+        let r_min = (self.min_layer / nominal).clamp(1e-3, 0.999);
+        let r_max = (self.max_layer / nominal).max(1.001);
+        (r_min, r_max)
+    }
+
+    /// Physical transition thickness a lift of `lift` needs for `r` to stay in bounds.
+    ///
+    /// The transition is linear in the ramp, so `r` is constant through it:
+    /// `r = ramp / (ramp + lift)`. Solving `r >= r_min` for a positive lift gives
+    /// `ramp >= lift * r_min / (1 - r_min)`; solving `r <= r_max` for a negative
+    /// one gives `ramp >= |lift| * r_max / (r_max - 1)`. The configured
+    /// `ramp_thickness` is the floor: a short, gentle lift keeps the blend it was
+    /// configured with.
+    pub fn transition_thickness_for_lift(&self, lift: f64) -> f64 {
+        let base = self.ramp_thickness.max(1e-6);
+        let (r_min, r_max) = self.jacobian_bounds();
+        if lift > 0.0 {
+            (lift * r_min / (1.0 - r_min)).max(base)
+        } else if lift < 0.0 {
+            (lift.abs() * r_max / (r_max - 1.0)).max(base)
+        } else {
+            base
+        }
+    }
+
+    /// Lowest Z the transition may start at: two nominal layers off the bed.
+    pub fn transition_floor_z(&self) -> f64 {
+        (2.0 * self.nominal_layer).max(0.0)
+    }
+
+    /// Strength a column may keep so its transition fits above the bed.
+    ///
+    /// `transition_thickness_for_lift` is linear in `|lift|`, so the largest
+    /// strength that fits below `z_band` has a closed form. The smaller of that
+    /// and the planned strength keeps the schedule continuous: the cap goes to
+    /// zero exactly as the room does.
+    fn fitted_strength(&self, z_band: f64, base: f64, strength: f64) -> f64 {
+        let strength = strength.clamp(0.0, 1.0);
+        if strength <= 0.0 || base.abs() <= 1e-12 {
+            return strength;
+        }
+        let available = (z_band - self.transition_floor_z()).max(0.0);
+        let configured = self.ramp_thickness.max(1e-6);
+        if available + 1e-9 < configured {
+            // Not even the configured blend fits: this column cannot be lifted
+            // without starting the ramp inside the first two layers.
+            return 0.0;
+        }
+        let (r_min, r_max) = self.jacobian_bounds();
+        let coefficient = if base > 0.0 {
+            r_min / (1.0 - r_min)
+        } else {
+            r_max / (r_max - 1.0)
+        };
+        let fit = available / (coefficient * base.abs());
+        strength.min(fit).clamp(0.0, 1.0)
     }
 
     pub(crate) fn column_limits(&self, x: f64, y: f64) -> Option<ColumnLimits> {
@@ -145,23 +240,100 @@ impl DeformField {
     /// above it, so a lifted island next to a lower one printed its upper band
     /// at un-mapped Z and the next layer descended into it. Every skip test
     /// has to be local to the column it is judged in.
+    /// Lift and physical transition thickness this column actually applies.
+    ///
+    /// The lift is the interpolated per-node value ([`Self::lift_at`]), not the
+    /// product of bilinear samples. The ramp is the smoothed per-node thickness
+    /// when that pass has run, and never shorter than the lift's own Jacobian
+    /// minimum. Forward, inverse and the safety scan all read this one struct.
+    pub fn column_transition(&self, x: f64, y: f64) -> Option<Transition> {
+        let z_band = self.grid.sample_band_start(x, y)?;
+        // Interpolated per-node lift, then the closed-form cap for the room
+        // under this sample's band. At a node `attenuate_transitions` has
+        // already written that cap into the strength, so this is the identity
+        // there and only bites between nodes.
+        let raw = self.lift_at(x, y);
+        let lift = if raw.abs() < 1e-12 {
+            0.0
+        } else {
+            self.fitted_strength(z_band, raw, 1.0) * raw
+        };
+        Some(Transition {
+            z_band,
+            lift,
+            ramp: self.ramp_at(x, y, lift),
+        })
+    }
+
+    /// Transition thickness at an XY: smoothed node ramps, floored by the lift's
+    /// own Jacobian minimum so a sample between nodes cannot crush or tear.
+    fn ramp_at(&self, x: f64, y: f64, lift: f64) -> f64 {
+        let sized = self.transition_thickness_for_lift(lift);
+        if self.node_ramp.len() != self.island_strength.len() || self.node_ramp.is_empty() {
+            return sized;
+        }
+        let Some((ix, iy, tx, ty)) = self.grid.cell_weights(x, y) else {
+            return self.edge_ramp(x, y).max(sized);
+        };
+        let w = self.grid.width;
+        let sample = |i: usize| {
+            let ramp = self.node_ramp.get(i).copied().unwrap_or(0.0);
+            (ramp > 1e-9).then_some(ramp)
+        };
+        let corners = [
+            (sample(iy * w + ix), (1.0 - tx) * (1.0 - ty)),
+            (sample(iy * w + ix + 1), tx * (1.0 - ty)),
+            (sample((iy + 1) * w + ix), (1.0 - tx) * ty),
+            (sample((iy + 1) * w + ix + 1), tx * ty),
+        ];
+        let mut sum = 0.0;
+        let mut weight = 0.0;
+        for (ramp, corner_w) in corners {
+            if let Some(ramp) = ramp {
+                sum += ramp * corner_w;
+                weight += corner_w;
+            }
+        }
+        if weight > 0.0 {
+            (sum / weight).max(sized)
+        } else {
+            sized
+        }
+    }
+
+    fn edge_ramp(&self, x: f64, y: f64) -> f64 {
+        if self.node_ramp.is_empty() {
+            return 0.0;
+        }
+        let fx = (x - self.grid.origin[0]) / self.grid.step;
+        let fy = (y - self.grid.origin[1]) / self.grid.step;
+        if fx < 0.0 || fy < 0.0 {
+            return self.node_ramp.first().copied().unwrap_or(0.0);
+        }
+        let ix = (fx.round() as isize).clamp(0, self.grid.width as isize - 1) as usize;
+        let iy = (fy.round() as isize).clamp(0, self.grid.height as isize - 1) as usize;
+        self.node_ramp
+            .get(iy * self.grid.width + ix)
+            .copied()
+            .unwrap_or(0.0)
+    }
+
     pub fn local_band_floor_z(&self, x: f64, y: f64) -> Option<f64> {
-        self.column_limits(x, y)
-            .and_then(|col| (col.strength > 0.0).then_some(col.z_band))
+        self.column_transition(x, y)
+            .and_then(|t| (t.lift.abs() > 1e-12).then_some(t.z_band - t.ramp))
     }
 
     /// True when this G-code point lies in the curved-top shell (deformed coordinates).
     pub fn gcode_needs_inverse(&self, x: f64, y: f64, z_def: f64) -> bool {
-        let Some(col) = self.column_limits(x, y) else {
+        let Some(t) = self.column_transition(x, y) else {
             return false;
         };
-        if col.strength <= 0.0 {
+        if t.lift.abs() < 1e-12 {
             return false;
         }
         let z_phys = self.inverse_z(x, y, z_def);
-        // The ramp below the band is mapped too, just at a fraction of the lift.
-        let ramp_start = col.z_band - self.ramp_thickness.max(1e-6);
-        z_phys > ramp_start + 1e-9 && (z_phys - z_def).abs() > 5e-3
+        // The ramp below the band is mapped too, at a fraction of the lift.
+        z_phys > t.z_band - t.ramp + 1e-9 && (z_phys - z_def).abs() > 5e-3
     }
 
     /// Forward map: physical Z → deformed Z.
@@ -183,9 +355,30 @@ impl DeformField {
     /// band prints like any other slab and the inverse map still restores the
     /// model's own surface.
     pub fn forward_z(&self, x: f64, y: f64, z: f64) -> f64 {
-        let Some(col) = self.column_limits(x, y) else {
-            return z;
-        };
+        // A planned underside is a tilted plane the algebraic map already
+        // describes. Everywhere else the inverse is a bilinear blend of the
+        // node values, and this is its inverse: the blend is monotone in Z, so
+        // a search lands on the unique deformed height.
+        if self.cell_has_cap(x, y) || self.on_grid_node(x, y) {
+            return self.forward_z_algebraic(x, y, z);
+        }
+        let mut lo = z - 40.0;
+        let mut hi = z + 40.0;
+        for _ in 0..48 {
+            let mid = 0.5 * (lo + hi);
+            if self.inverse_z(x, y, mid) < z {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        0.5 * (lo + hi)
+    }
+
+    /// Algebraic shear, using the interpolated column. Exact on a grid node and
+    /// on a uniform cell; between nodes the ramp terms are nonlinear, so the
+    /// public map blends node results instead of using this directly.
+    fn forward_z_algebraic(&self, x: f64, y: f64, z: f64) -> f64 {
         if self
             .grid
             .sample_deform_cap(x, y)
@@ -193,32 +386,34 @@ impl DeformField {
         {
             return z;
         }
-        let lift = col.lift;
-        if lift.abs() < 1e-12 {
+        let Some(t) = self.column_transition(x, y) else {
+            return z;
+        };
+        if t.lift.abs() < 1e-12 {
             return z;
         }
-        let ramp = self.ramp_thickness.max(1e-6);
-        let ramp_start = col.z_band - ramp;
+        let ramp_start = t.z_band - t.ramp;
         if z <= ramp_start {
             return z;
         }
-        if z >= col.z_band {
-            return z + lift;
+        if z >= t.z_band {
+            return z + t.lift;
         }
-        let w = (z - ramp_start) / ramp;
-        z + w * lift
+        let w = (z - ramp_start) / t.ramp;
+        z + w * t.lift
     }
 
-    /// Effective layer thickness ratio for extrusion correction.
+    /// Local `dz_def / dz_phys`.
+    ///
+    /// Deliberately unclamped: a ratio outside `[min_layer, max_layer] /
+    /// nominal` is a field that crushes or stretches the part, and the safety
+    /// pass has to see the real number to reject it. Clamping here was hiding a
+    /// several-fold over-extrusion in the transition.
     pub fn layer_thickness_ratio(&self, x: f64, y: f64, z0: f64, z1: f64) -> f64 {
         let dz_phys = (z1 - z0).abs().max(1e-6);
         let d0 = self.forward_z(x, y, z0);
         let d1 = self.forward_z(x, y, z1);
-        let dz_def = (d1 - d0).abs();
-        (dz_def / dz_phys).clamp(
-            self.min_layer / self.nominal_layer,
-            self.max_layer / self.nominal_layer,
-        )
+        (d1 - d0).abs() / dz_phys
     }
 
     pub fn island_strength_at(&self, x: f64, y: f64) -> f64 {
@@ -243,31 +438,109 @@ impl DeformField {
         value.clamp(0.0, 1.0)
     }
 
-    /// Inverse Z: algebraic inverse of the shear in [`Self::forward_z`].
+    /// Inverse Z of one deformed layer.
+    ///
+    /// Evaluated at the four surrounding nodes with the algebraic shear, then
+    /// bilinearly blended. Interpolating the ramp *parameters* and then running
+    /// the shear made a level that was flat on the nodes spike to 75° in the
+    /// middle of a 0.35 mm cell, and the toolpath followed the spike into
+    /// material it had just laid. A blend of the node heights cannot be steeper
+    /// than the edges the slope scan already checked.
     pub fn inverse_z(&self, x: f64, y: f64, z_deformed: f64) -> f64 {
-        let Some(col) = self.column_limits(x, y) else {
+        if self.cell_has_cap(x, y) || self.on_grid_node(x, y) {
+            return self.inverse_z_algebraic(x, y, z_deformed);
+        }
+        let Some((ix, iy, tx, ty)) = self.grid.cell_weights(x, y) else {
+            return self.inverse_z_algebraic(x, y, z_deformed);
+        };
+        let w = self.grid.width;
+        let at = |ix: usize, iy: usize| {
+            let x = self.grid.origin[0] + ix as f64 * self.grid.step;
+            let y = self.grid.origin[1] + iy as f64 * self.grid.step;
+            self.inverse_z_algebraic(x, y, z_deformed)
+        };
+        // Air beside the mesh is not a level. A column the slope cut zeroed
+        // still has a top: the chamfer already brought its neighbours down to
+        // meet it, and leaving it out of the blend kept their lift constant
+        // across the cell and then dropped it all on the cut node. A short
+        // perimeter move crossed that step at ~20° and missed the clamp budget.
+        let corner = |cix: usize, ciy: usize, weight: f64| -> Option<(f64, f64)> {
+            if weight <= 1e-12 {
+                return None;
+            }
+            let i = ciy * w + cix;
+            let on_part = self.grid.z_top.get(i).is_some_and(|z| z.is_some());
+            on_part.then_some((at(cix, ciy), weight))
+        };
+        let corners = [
+            corner(ix, iy, (1.0 - tx) * (1.0 - ty)),
+            corner(ix + 1, iy, tx * (1.0 - ty)),
+            corner(ix, iy + 1, (1.0 - tx) * ty),
+            corner(ix + 1, iy + 1, tx * ty),
+        ];
+        let mut sum = 0.0;
+        let mut weight = 0.0;
+        for (z, corner_w) in corners.into_iter().flatten() {
+            sum += z * corner_w;
+            weight += corner_w;
+        }
+        if weight <= 1e-12 {
+            return self.inverse_z_algebraic(x, y, z_deformed);
+        }
+        sum / weight
+    }
+
+    fn on_grid_node(&self, x: f64, y: f64) -> bool {
+        match self.grid.cell_weights(x, y) {
+            Some((_, _, tx, ty)) => tx <= 1e-9 && ty <= 1e-9,
+            None => true,
+        }
+    }
+
+    /// True when any corner of the cell carries a planned underside cap.
+    fn cell_has_cap(&self, x: f64, y: f64) -> bool {
+        let Some((ix, iy, _, _)) = self.grid.cell_weights(x, y) else {
+            return self.grid.sample_deform_cap(x, y).is_some();
+        };
+        let w = self.grid.width;
+        [
+            iy * w + ix,
+            iy * w + ix + 1,
+            (iy + 1) * w + ix,
+            (iy + 1) * w + ix + 1,
+        ]
+        .into_iter()
+        .any(|i| {
+            self.grid
+                .z_deform_cap
+                .get(i)
+                .is_some_and(|cap| cap.is_some())
+        })
+    }
+
+    /// Algebraic inverse of the shear in [`Self::forward_z_algebraic`].
+    fn inverse_z_algebraic(&self, x: f64, y: f64, z_deformed: f64) -> f64 {
+        let Some(t) = self.column_transition(x, y) else {
             return z_deformed;
         };
-        let lift = col.lift;
-        if lift.abs() < 1e-12 {
+        if t.lift.abs() < 1e-12 {
             return z_deformed;
         }
         if let Some(cap) = self.grid.sample_deform_cap(x, y) {
-            let phys_est = z_deformed - lift;
+            let phys_est = z_deformed - t.lift;
             if phys_est > cap + 1e-9 {
                 return z_deformed;
             }
         }
-        let ramp = self.ramp_thickness.max(1e-6);
-        let ramp_start = col.z_band - ramp;
+        let ramp_start = t.z_band - t.ramp;
         if z_deformed <= ramp_start + 1e-12 {
             return z_deformed;
         }
-        if z_deformed >= col.z_band + lift {
-            return z_deformed - lift;
+        if z_deformed >= t.z_band + t.lift {
+            return z_deformed - t.lift;
         }
         // Inside the ramp, `z_def = z + (z - ramp_start) / ramp * lift`.
-        (z_deformed + ramp_start * lift / ramp) / (1.0 + lift / ramp)
+        (z_deformed + ramp_start * t.lift / t.ramp) / (1.0 + t.lift / t.ramp)
     }
 
     /// Worst |round-trip Z error| on a grid inside the deformation band (millimetres).
@@ -334,10 +607,25 @@ impl DeformField {
     /// cut because its own surface is steeper than the cap, sits at exactly 0 — so
     /// the minimum is 0 for every honest auto field. Ask [`Self::max_strength`]
     /// whether anything is still lifting.
+    /// A column the strength summaries should count.
+    ///
+    /// Real material, or a planned underside band. The blur halo has a smoothed
+    /// height and no `z_top`; counting it made every honest field report a
+    /// minimum of zero.
+    fn counts_for_strength(&self, i: usize) -> bool {
+        let smooth = self.grid.z_top_smooth.get(i).is_some_and(|z| z.is_some());
+        if !smooth {
+            return false;
+        }
+        let real = self.grid.z_top.get(i).is_some_and(|z| z.is_some());
+        let capped = self.grid.z_deform_cap.get(i).is_some_and(|z| z.is_some());
+        real || capped
+    }
+
     pub fn min_strength(&self) -> f64 {
         let mut min = f64::INFINITY;
         for (i, strength) in self.island_strength.iter().enumerate() {
-            if self.grid.z_top_smooth.get(i).is_some_and(|z| z.is_some()) {
+            if self.counts_for_strength(i) {
                 min = min.min(*strength);
             }
         }
@@ -357,7 +645,7 @@ impl DeformField {
     pub fn max_strength(&self) -> f64 {
         let mut max = f64::NEG_INFINITY;
         for (i, strength) in self.island_strength.iter().enumerate() {
-            if self.grid.z_top_smooth.get(i).is_some_and(|z| z.is_some()) {
+            if self.counts_for_strength(i) {
                 max = max.max(*strength);
             }
         }
@@ -373,10 +661,250 @@ impl DeformField {
         self.island_strength
             .iter()
             .enumerate()
-            .filter(|(i, s)| {
-                **s > 0.0 && self.grid.z_top_smooth.get(*i).is_some_and(|z| z.is_some())
-            })
+            .filter(|(i, s)| **s > 0.0 && self.counts_for_strength(*i))
             .count()
+    }
+
+    /// Columns with a printable top of their own (the real footprint size).
+    pub fn material_columns(&self) -> usize {
+        self.grid.z_top.iter().filter(|z| z.is_some()).count()
+    }
+
+    /// Lower every column's strength so its transition fits above the bed.
+    ///
+    /// The ramp each column needs is linear in `|lift|`, so the strength that
+    /// fits below `z_band` has a closed form ([`Self::fitted_strength`]). The
+    /// map applies that same cap at the nodes, and [`Self::lift_at`] carries it
+    /// between them. Returns the number of columns whose strength had to drop.
+    pub fn attenuate_transitions(&mut self) -> usize {
+        let mut changed = 0usize;
+        for i in 0..self.island_strength.len() {
+            let (Some(z_band), Some(h_top)) = (
+                self.grid.z_band_start.get(i).copied().flatten(),
+                self.grid.z_top_smooth.get(i).copied().flatten(),
+            ) else {
+                continue;
+            };
+            let flat = self
+                .grid
+                .z_deform_flat
+                .get(i)
+                .copied()
+                .flatten()
+                .unwrap_or(self.deformed_top_z);
+            let strength = self.island_strength[i];
+            let fitted = self.fitted_strength(z_band, flat - h_top, strength);
+            if fitted < strength - 1e-12 {
+                self.island_strength[i] = fitted;
+                changed += 1;
+            }
+        }
+        changed
+    }
+
+    /// Lengthen short ramps so the transition floor stays inside the slope cap.
+    ///
+    /// A per-column minimum ramp meets the layer-thickness window, but that
+    /// minimum changes faster than the surface: on the demo lid the floor of
+    /// the transition would tilt at about 15° where the lid itself is 6°.
+    /// Lengthening the short ramps (never shortening a Jacobian ramp) pulls
+    /// neighbouring floors together at `tan(cap)`. A column with no lift is
+    /// still the identity however long its ramp is, so the rim can take a long
+    /// blend without moving.
+    pub fn smooth_transition_ramps(&mut self) {
+        self.smooth_transition_ramps_with(0.98);
+    }
+
+    /// As [`Self::smooth_transition_ramps`], but the floor may tilt by only
+    /// `margin` times `tan(cap)`.
+    ///
+    /// The floor itself is not what the toolhead follows. A level in the middle
+    /// of the blend is steeper than the floor, so the caller tightens `margin`
+    /// until those levels fit the cap. Lengthening is still the only change:
+    /// a ramp never goes below its Jacobian minimum.
+    pub fn smooth_transition_ramps_with(&mut self, margin: f64) {
+        let width = self.grid.width;
+        let height = self.grid.height;
+        let n = width * height;
+        let step = self.grid.step.max(1e-9);
+        let max_dz = self.max_angle_deg.to_radians().tan() * step * margin.clamp(0.05, 1.0);
+        let floor_z = self.transition_floor_z();
+        let mut present = vec![false; n];
+        let mut start = vec![0.0; n];
+        let mut ramp_min = vec![self.ramp_thickness.max(1e-6); n];
+        for i in 0..n {
+            let Some(z_band) = self.grid.z_band_start.get(i).copied().flatten() else {
+                continue;
+            };
+            if self.grid.z_top_smooth.get(i).is_none_or(|z| z.is_none()) {
+                continue;
+            }
+            let min_ramp = self.transition_thickness_for_lift(self.node_lift(i));
+            ramp_min[i] = min_ramp;
+            // Highest ramp start that still meets the Jacobian.
+            start[i] = z_band - min_ramp;
+            present[i] = true;
+        }
+        if max_dz > 1e-9 {
+            let diag = max_dz * std::f64::consts::SQRT_2;
+            for iy in 0..height {
+                for ix in 0..width {
+                    let i = iy * width + ix;
+                    if !present[i] {
+                        continue;
+                    }
+                    if ix > 0 && present[i - 1] {
+                        start[i] = start[i].min(start[i - 1] + max_dz);
+                    }
+                    if iy > 0 && present[i - width] {
+                        start[i] = start[i].min(start[i - width] + max_dz);
+                    }
+                    if ix > 0 && iy > 0 && present[i - width - 1] {
+                        start[i] = start[i].min(start[i - width - 1] + diag);
+                    }
+                    if ix + 1 < width && iy > 0 && present[i - width + 1] {
+                        start[i] = start[i].min(start[i - width + 1] + diag);
+                    }
+                }
+            }
+            for iy in (0..height).rev() {
+                for ix in (0..width).rev() {
+                    let i = iy * width + ix;
+                    if !present[i] {
+                        continue;
+                    }
+                    if ix + 1 < width && present[i + 1] {
+                        start[i] = start[i].min(start[i + 1] + max_dz);
+                    }
+                    if iy + 1 < height && present[i + width] {
+                        start[i] = start[i].min(start[i + width] + max_dz);
+                    }
+                    if ix + 1 < width && iy + 1 < height && present[i + width + 1] {
+                        start[i] = start[i].min(start[i + width + 1] + diag);
+                    }
+                    if ix > 0 && iy + 1 < height && present[i + width - 1] {
+                        start[i] = start[i].min(start[i + width - 1] + diag);
+                    }
+                }
+            }
+        }
+        let mut ramps = vec![0.0; n];
+        for i in 0..n {
+            if !present[i] {
+                continue;
+            }
+            let z_band = self.grid.z_band_start[i].unwrap_or(0.0);
+            let smoothed = start[i].max(floor_z);
+            ramps[i] = (z_band - smoothed).max(ramp_min[i]);
+        }
+        self.node_ramp = ramps;
+    }
+
+    /// Point each printable island's flat target at its footprint rim.
+    ///
+    /// The rim is the lowest top on the boundary of the columns that still
+    /// lift. Lift is then `flat - h_top`: zero on that rim and negative toward
+    /// a peak inside it, so a gentle dome is pressed down onto the rim instead
+    /// of the rim being pulled up to the peak. Planned underside bands keep
+    /// the flat the plan stamped into them.
+    ///
+    /// Only a real dome is retargeted: the highest column has to sit inside
+    /// the footprint, above every boundary column, by at least one layer.
+    /// A blur lip is shallower than that, and a descending slope has its high
+    /// end on the boundary. Pressing either down leaves Cura's top sheet above
+    /// the model. They keep the peak target [`assign_island_flat_targets`] wrote.
+    pub fn retarget_flats_to_footprint_rim(&mut self) {
+        let width = self.grid.width;
+        let height = self.grid.height;
+        let n = width * height;
+        let mut member = vec![false; n];
+        for (i, is_member) in member.iter_mut().enumerate() {
+            if self.grid.z_deform_cap.get(i).is_some_and(|z| z.is_some()) {
+                continue;
+            }
+            if self.island_strength.get(i).copied().unwrap_or(0.0) <= 0.0 {
+                continue;
+            }
+            if self.grid.z_top.get(i).is_none_or(|z| z.is_none()) {
+                continue;
+            }
+            if self.grid.z_top_smooth.get(i).is_none_or(|z| z.is_none()) {
+                continue;
+            }
+            *is_member = true;
+        }
+        let mut labels = vec![0u32; n];
+        let mut next = 0u32;
+        let mut stack: Vec<usize> = Vec::new();
+        let mut rims: Vec<f64> = vec![0.0];
+        let mut dome: Vec<bool> = vec![false];
+        let layer = self.nominal_layer.max(0.05);
+        for start in 0..n {
+            if !member[start] || labels[start] != 0 {
+                continue;
+            }
+            next += 1;
+            labels[start] = next;
+            stack.push(start);
+            let mut boundary_min = f64::INFINITY;
+            let mut boundary_max = f64::NEG_INFINITY;
+            let mut interior_max = f64::NEG_INFINITY;
+            let mut component_min = f64::INFINITY;
+            let mut saw_boundary = false;
+            while let Some(i) = stack.pop() {
+                let z = self.grid.z_top_smooth[i].unwrap_or(0.0);
+                component_min = component_min.min(z);
+                let ix = i % width;
+                let iy = i / width;
+                let mut boundary = ix == 0 || iy == 0 || ix + 1 == width || iy + 1 == height;
+                let neighbours = [
+                    (ix > 0).then(|| i - 1),
+                    (ix + 1 < width).then(|| i + 1),
+                    (iy > 0).then(|| i - width),
+                    (iy + 1 < height).then(|| i + width),
+                ];
+                for neighbour in neighbours.into_iter().flatten() {
+                    if member[neighbour] {
+                        if labels[neighbour] == 0 {
+                            labels[neighbour] = next;
+                            stack.push(neighbour);
+                        }
+                    } else {
+                        boundary = true;
+                    }
+                }
+                if boundary {
+                    saw_boundary = true;
+                    boundary_min = boundary_min.min(z);
+                    boundary_max = boundary_max.max(z);
+                } else {
+                    interior_max = interior_max.max(z);
+                }
+            }
+            let rim = if saw_boundary && boundary_min.is_finite() {
+                boundary_min
+            } else {
+                component_min
+            };
+            let is_dome = interior_max.is_finite()
+                && boundary_max.is_finite()
+                && interior_max > boundary_max + 1e-3
+                && interior_max - rim >= layer;
+            rims.push(rim);
+            dome.push(is_dome);
+        }
+        let mut highest = f64::NEG_INFINITY;
+        for (i, label) in labels.iter().enumerate() {
+            if *label == 0 || !dome[*label as usize] {
+                continue;
+            }
+            let rim = rims[*label as usize];
+            self.grid.z_deform_flat[i] = Some(rim);
+            highest = highest.max(rim);
+        }
+        if highest.is_finite() {
+            self.deformed_top_z = highest;
+        }
     }
 }
 
@@ -408,6 +936,7 @@ pub fn build_deform_field(
         island_strength: vec![1.0; len],
         max_angle_deg,
         top_islands,
+        node_ramp: Vec::new(),
     }
 }
 
@@ -471,13 +1000,10 @@ pub fn deform_mesh(mesh: &Mesh, field: &DeformField) -> Mesh {
     let mut out = mesh.clone();
     for vertex in &mut out.vertices {
         let [x, y, z] = *vertex;
-        let below_band = field
-            .grid
-            .sample_band_start(x, y)
-            .is_none_or(|z_band| z <= z_band + 1e-9);
-        if below_band {
-            continue;
-        }
+        // The ramp below the band moves too. Skipping it left a step of the full
+        // lift at `z_band`: fine when the limiter had already eaten the lift,
+        // a self-intersection once the rim-referenced peak is pressed down by
+        // a few millimetres. `forward_z` is the identity below the ramp start.
         vertex[2] = field.forward_z(x, y, z);
     }
     out
@@ -564,13 +1090,180 @@ mod tests {
         assert!(field.verify_monotone(20), "dh/dz must stay positive");
     }
 
+    /// Uniform 3x3 grid whose every column has the same top, lift and band.
+    fn synthetic_field(lift: f64, z_band: f64, ramp: f64) -> DeformField {
+        let band = 1.6;
+        let h_top = z_band + band;
+        let flat = h_top + lift;
+        let n = 3usize;
+        let len = n * n;
+        DeformField {
+            grid: HeightGrid {
+                origin: [0.0, 0.0],
+                step: 1.0,
+                width: n,
+                height: n,
+                z_top: vec![Some(h_top); len],
+                z_top_smooth: vec![Some(h_top); len],
+                z_band_start: vec![Some(z_band); len],
+                z_deform_cap: vec![None; len],
+                z_deform_flat: vec![Some(flat); len],
+            },
+            band_thickness: band,
+            ramp_thickness: ramp,
+            deformed_top_z: flat,
+            min_layer: 0.08,
+            max_layer: 0.28,
+            nominal_layer: 0.2,
+            island_strength: vec![1.0; len],
+            max_angle_deg: 10.0,
+            top_islands: 1,
+            node_ramp: Vec::new(),
+        }
+    }
+
+    /// Worst slack of `r = dz_phys / dz_def` against the Jacobian window.
+    fn jacobian_scan(field: &DeformField, x: f64, y: f64, z_top: f64) -> (f64, f64) {
+        let (r_min, r_max) = field.jacobian_bounds();
+        let dz = field.nominal_layer;
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        let steps = (z_top / 0.01).ceil() as usize;
+        for i in 0..=steps {
+            let z = z_top * i as f64 / steps as f64;
+            let dz_def = field.forward_z(x, y, z + dz) - field.forward_z(x, y, z);
+            let r = dz / dz_def.max(1e-12);
+            lo = lo.min(r);
+            hi = hi.max(r);
+        }
+        (lo - r_min, r_max - hi)
+    }
+
     #[test]
-    fn layer_thickness_ratio_is_clamped() {
-        let mesh = crate::test_meshes::box_mesh(10.0, 10.0, 10.0);
-        let grid = build_height_field(&mesh, 1.0, 30.0, 2.0);
-        let field = build_deform_field(grid, 2.0, 0.4, 0.2, 30.0);
-        let r = field.layer_thickness_ratio(0.0, 0.0, 8.0, 9.0);
-        assert!(r >= 0.08 / 0.2 - 0.01);
-        assert!(r <= 0.28 / 0.2 + 0.01);
+    fn transition_ramp_is_sized_from_the_lift() {
+        let field = synthetic_field(4.0, 12.0, 0.4);
+        let (r_min, r_max) = field.jacobian_bounds();
+        assert!((r_min - 0.4).abs() < 1e-9 && (r_max - 1.4).abs() < 1e-9);
+        let expected = 4.0 * r_min / (1.0 - r_min);
+        let ramp = field.transition_thickness_for_lift(4.0);
+        assert!(
+            (ramp - expected).abs() < 1e-9,
+            "lift 4 needs {expected} mm of transition, got {ramp}"
+        );
+        let t = field.column_transition(0.5, 0.5).expect("column");
+        assert!((t.ramp - expected).abs() < 1e-9);
+        assert!((t.z_band - t.ramp - (12.0 - expected)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn positive_lift_stays_inside_the_jacobian_bounds() {
+        let field = synthetic_field(8.4, 14.0, 0.4);
+        let (lo_slack, hi_slack) = jacobian_scan(&field, 0.5, 0.5, 14.0 + 1.6);
+        assert!(
+            lo_slack >= -1e-9,
+            "physical layer thickness fell {lo_slack} below min_layer"
+        );
+        assert!(
+            hi_slack >= -1e-9,
+            "physical layer thickness rose {hi_slack} above max_layer"
+        );
+        let t = field.column_transition(0.5, 0.5).expect("column");
+        let mid = t.z_band - 0.5 * t.ramp;
+        let dz = 0.01;
+        let r = dz / (field.forward_z(0.5, 0.5, mid + dz) - field.forward_z(0.5, 0.5, mid));
+        assert!(
+            (r - (0.08 / 0.2)).abs() < 1e-6,
+            "r must sit exactly on r_min in the transition, got {r}"
+        );
+    }
+
+    #[test]
+    fn negative_lift_stretches_within_the_jacobian_bounds() {
+        let field = synthetic_field(-1.0, 12.0, 0.4);
+        let (_, r_max) = field.jacobian_bounds();
+        let expected = 1.0 * r_max / (r_max - 1.0);
+        let ramp = field.transition_thickness_for_lift(-1.0);
+        assert!(
+            (ramp - expected).abs() < 1e-9,
+            "stretch 1 mm needs {expected} mm, got {ramp}"
+        );
+        let (lo_slack, hi_slack) = jacobian_scan(&field, 0.5, 0.5, 13.6);
+        assert!(lo_slack >= -1e-9 && hi_slack >= -1e-9);
+        assert!(ramp > 1.0, "ramp {ramp} must exceed the 1 mm stretch");
+    }
+
+    #[test]
+    fn forward_and_inverse_are_exact_inverses() {
+        for lift in [8.4, 1.0, 0.05, -0.7] {
+            let field = synthetic_field(lift, 12.0, 0.4);
+            let t = field.column_transition(0.5, 0.5).expect("column");
+            let top = 13.6;
+            for i in 0..=400 {
+                let z = top * i as f64 / 400.0;
+                let f = field.forward_z(0.5, 0.5, z);
+                let back = field.inverse_z(0.5, 0.5, f);
+                assert!(
+                    (back - z).abs() < 1e-9,
+                    "lift {lift}: z {z} round-tripped to {back} (band {} ramp {})",
+                    t.z_band,
+                    t.ramp
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn short_columns_attenuate_instead_of_crushing() {
+        let field = synthetic_field(8.0, 1.0, 0.4);
+        let t = field.column_transition(0.5, 0.5).expect("column");
+        assert!(t.lift > 0.0 && t.lift < 8.0, "strength must attenuate");
+        let (lo_slack, hi_slack) = jacobian_scan(&field, 0.5, 0.5, 2.6);
+        assert!(lo_slack >= -1e-9, "attenuated field still crushes");
+        assert!(hi_slack >= -1e-9);
+        assert!(
+            t.z_band - t.ramp >= field.transition_floor_z() - 1e-9,
+            "ramp starts at {:.3}, floor is {:.3}",
+            t.z_band - t.ramp,
+            field.transition_floor_z()
+        );
+    }
+
+    #[test]
+    fn no_room_below_the_band_leaves_the_column_planar() {
+        let field = synthetic_field(8.0, 0.3, 0.4);
+        let t = field.column_transition(0.5, 0.5).unwrap();
+        assert!(t.lift.abs() < 1e-12 || field.forward_z(0.5, 0.5, 0.2) == 0.2);
+        // Attenuation is applied by the explicit pass; the on-the-fly map still
+        // sizes the ramp. A column with no room is zeroed by attenuate_transitions.
+        let mut field = field;
+        assert!(field.attenuate_transitions() > 0);
+        assert!(field.node_lift(0).abs() < 1e-9);
+        for z in [0.0, 0.1, 0.3, 1.0] {
+            assert!((field.forward_z(0.5, 0.5, z) - z).abs() < 1e-12);
+        }
+        assert!(field.local_band_floor_z(0.5, 0.5).is_none());
+        assert!(!field.gcode_needs_inverse(0.5, 0.5, 0.5));
+    }
+
+    #[test]
+    fn engaged_columns_ignores_extrapolated_padding() {
+        let mut field = synthetic_field(1.0, 12.0, 0.4);
+        for top in field.grid.z_top.iter_mut().take(9).skip(2) {
+            *top = None;
+        }
+        assert_eq!(field.engaged_columns(), 2);
+        assert_eq!(field.material_columns(), 2);
+        assert_eq!(field.island_strength.len(), 9);
+    }
+
+    #[test]
+    fn attenuating_transitions_reports_the_columns_it_touched() {
+        let mut field = synthetic_field(8.0, 1.0, 0.4);
+        assert_eq!(field.attenuate_transitions(), 9);
+        assert_eq!(
+            field.attenuate_transitions(),
+            0,
+            "attenuation must be idempotent"
+        );
     }
 }
