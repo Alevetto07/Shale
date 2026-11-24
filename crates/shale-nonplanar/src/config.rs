@@ -51,6 +51,11 @@ pub struct NonplanarOptions {
     /// Integration tests only: leave CuraEngine output for an outer post-pass.
     #[serde(default)]
     pub defer_post_pass: bool,
+    /// When the post-pass cannot verify the curved output, fail the slice with an
+    /// error instead of emitting the planar baseline. Off by default: a print that
+    /// cannot be verified still produces the flat G-code the job already sliced.
+    #[serde(default)]
+    pub strict: bool,
 }
 
 impl Default for NonplanarOptions {
@@ -62,6 +67,7 @@ impl Default for NonplanarOptions {
             band_thickness_mm: None,
             ramp_thickness_mm: None,
             defer_post_pass: false,
+            strict: false,
         }
     }
 }
@@ -80,8 +86,7 @@ impl NonplanarOptions {
     /// Non-planar curved tops are enabled for Bambu printers that ship a head envelope.
     pub fn allowed_for_printer(printer_id: &str) -> bool {
         let id = printer_id.to_ascii_lowercase();
-        id.starts_with("bambu_lab_")
-            && crate::envelope::head_envelope_for_printer(&id).is_some()
+        id.starts_with("bambu_lab_") && crate::envelope::head_envelope_for_printer(&id).is_some()
     }
 
     pub fn active_for_printer(&self, printer_id: &str) -> bool {
@@ -102,7 +107,42 @@ mod tests {
     }
 }
 
-/// Moves in the grafted **curved suffix** whose live Z is still below `global_band_floor_z()`.
+/// What the pre-slice slope limiter did to the deformation field.
+///
+/// The limiter raises the strength schedule monotonically towards planar, so
+/// `worst_after_deg` is what the post-pass verification is judged against; the
+/// report carries the number of damping passes and the field slope before and
+/// after so a reviewer can see the margin instead of trusting a boolean.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct SlopeLimitingReport {
+    /// Limit applied to level-surface gradients, in degrees.
+    pub cap_deg: f64,
+    /// Damping passes actually run; 0 means the field was already inside the cap.
+    pub passes: usize,
+    /// False when the pass budget ran out before the worst slope fit the cap.
+    pub converged: bool,
+    pub worst_before_deg: f64,
+    pub worst_after_deg: f64,
+    /// Grid cells whose flattening strength was reduced.
+    pub cells_reduced: usize,
+    /// Smallest strength left anywhere in the field (1 = untouched, 0 = planar).
+    pub min_strength: f64,
+}
+
+/// Corrections the inverse map had to make to keep a move inside the slope cap.
+///
+/// The map used to clamp Z by any amount; M1 restricts it to
+/// [`crate::inverse::MAX_INVERSE_CLAMP_MM`], counts every one of those, and
+/// leaves larger excess in the G-code for the post-pass to verify (and to reject
+/// with a planar fallback).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct InverseMapStats {
+    pub clamps: usize,
+    pub largest_clamp_mm: f64,
+    /// Moves whose slope excess exceeded the clamp budget and were left alone.
+    pub unclamped_excess: usize,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct CurvedSuffixBelowFloorMoves {
     pub band_floor_z: f64,
@@ -190,6 +230,15 @@ pub struct NonplanarReport {
     pub collision_adjustments: Vec<CollisionAdjustment>,
     #[serde(default)]
     pub planar_equivalence_ok: bool,
+    /// Pre-slice slope limiting result; `None` for jobs that never built a field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slope_limiting: Option<SlopeLimitingReport>,
+    /// Inverse-map slope clamps that were small enough to apply (<= 0.02 mm each).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inverse_corrections: Option<InverseMapStats>,
+    /// Why the curved pass was abandoned for the planar baseline, verbatim.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback_reasons: Vec<String>,
     #[serde(default)]
     pub safety: Option<SafetyReport>,
 }

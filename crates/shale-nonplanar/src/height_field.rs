@@ -1,9 +1,10 @@
 //! Vertical ray casting over an XY grid to find printable top surfaces.
 
 use crate::mesh::Mesh;
+use serde::{Deserialize, Serialize};
 
 /// A scalar field sampled on a regular XY grid.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HeightGrid {
     pub origin: [f64; 2],
     pub step: f64,

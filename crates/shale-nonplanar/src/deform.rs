@@ -1,11 +1,12 @@
 //! Mesh deformation for the curved-top band (ramp + band, monotone in Z).
 
 use crate::mesh::Mesh;
+use serde::{Deserialize, Serialize};
 
 use crate::height_field::HeightGrid;
 
 /// Maps physical coordinates to the deformed space used for planar slicing.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeformField {
     pub grid: HeightGrid,
     pub band_thickness: f64,
@@ -19,11 +20,31 @@ pub struct DeformField {
     pub island_strength: Vec<f64>,
     /// Slope limit applied when inverse-mapping G-code segments (degrees).
     pub max_angle_deg: f64,
+    /// Connected top sheets the field flattens (one flat target each).
+    #[serde(default)]
+    pub top_islands: usize,
 }
 
 impl DeformField {
-    /// Conservative Z cut: below this height, deformation should not apply.
+    /// Lowest Z at which any column's deformation band starts.
+    ///
+    /// Below it no column can be deformed, so callers can skip the map. This is a
+    /// minimum over the plate on purpose: a tall island's band floor says nothing
+    /// about a low island beside it, and using the tallest top here made the inverse
+    /// map skip every move under a short part of the plate.
     pub fn global_band_floor_z(&self) -> f64 {
+        let mut floor = f64::INFINITY;
+        for (i, top) in self.grid.z_top_smooth.iter().enumerate() {
+            if top.is_none() {
+                continue;
+            }
+            if let Some(z) = self.grid.z_band_start[i] {
+                floor = floor.min(z);
+            }
+        }
+        if floor.is_finite() {
+            return floor;
+        }
         let max_top = self
             .grid
             .z_top_smooth
@@ -33,7 +54,7 @@ impl DeformField {
         max_top - self.band_thickness - self.ramp_thickness
     }
 
-    fn column_limits(&self, x: f64, y: f64) -> Option<(f64, f64, f64, f64)> {
+    pub(crate) fn column_limits(&self, x: f64, y: f64) -> Option<(f64, f64, f64, f64)> {
         let z_band = self.grid.sample_band_start(x, y)?;
         let h_top = self
             .grid
@@ -89,7 +110,10 @@ impl DeformField {
         let d0 = self.forward_z(x, y, z0);
         let d1 = self.forward_z(x, y, z1);
         let dz_def = (d1 - d0).abs();
-        (dz_def / dz_phys).clamp(self.min_layer / self.nominal_layer, self.max_layer / self.nominal_layer)
+        (dz_def / dz_phys).clamp(
+            self.min_layer / self.nominal_layer,
+            self.max_layer / self.nominal_layer,
+        )
     }
 
     pub fn island_strength_at(&self, x: f64, y: f64) -> f64 {
@@ -176,6 +200,39 @@ impl DeformField {
         }
         true
     }
+
+    /// Recompute `deformed_top_z` and the per-island flat targets.
+    ///
+    /// Called again after the auto plan has tilted `z_top_smooth`: the island
+    /// maximum is the height the plan asks that sheet to flatten to, so it has to
+    /// be read from the tilted grid, not the raw one.
+    pub fn refresh_top_targets(&mut self) {
+        self.top_islands = assign_island_flat_targets(&mut self.grid);
+        self.deformed_top_z = self
+            .grid
+            .z_top_smooth
+            .iter()
+            .flatten()
+            .fold(0.0_f64, |acc, z| acc.max(*z));
+    }
+
+    /// Smallest flattening strength anywhere the field actually bends something.
+    ///
+    /// Columns without a printable top are skipped: they carry the initial 1.0
+    /// and cannot lift anything, so counting them would hide a fully damped field.
+    pub fn min_strength(&self) -> f64 {
+        let mut min = f64::INFINITY;
+        for (i, strength) in self.island_strength.iter().enumerate() {
+            if self.grid.z_top_smooth.get(i).is_some_and(|z| z.is_some()) {
+                min = min.min(*strength);
+            }
+        }
+        if min.is_finite() {
+            min
+        } else {
+            0.0
+        }
+    }
 }
 
 pub fn build_deform_field(
@@ -185,6 +242,8 @@ pub fn build_deform_field(
     nominal_layer: f64,
     max_angle_deg: f64,
 ) -> DeformField {
+    let mut grid = grid;
+    let top_islands = assign_island_flat_targets(&mut grid);
     let mut max_top = 0.0f64;
     for v in grid.z_top_smooth.iter().flatten() {
         max_top = max_top.max(*v);
@@ -203,7 +262,63 @@ pub fn build_deform_field(
         nominal_layer,
         island_strength: vec![1.0; len],
         max_angle_deg,
+        top_islands,
     }
+}
+
+/// Give every connected top island its own flat target.
+///
+/// `forward_z` lifts a column's top to `z_deform_flat`. With a single global
+/// target, a plate beside a tall tower would be lifted to the tower's height and
+/// its band squashed into a fraction of a millimetre of plastic. Islands are the
+/// connected regions of the top grid — exactly the columns a slicer treats as one
+/// top sheet — so each sheet flattens to its own highest point.
+///
+/// Columns owned by a planned underside band (`z_deform_cap`) keep the flat
+/// target the plan stamped into them.
+pub fn assign_island_flat_targets(grid: &mut HeightGrid) -> usize {
+    let width = grid.width;
+    let height = grid.height;
+    let mut labels: Vec<u32> = vec![0; width * height];
+    let mut island_max: Vec<f64> = vec![0.0];
+    let mut next = 0u32;
+    let mut stack: Vec<usize> = Vec::new();
+    for start in 0..width * height {
+        if labels[start] != 0 || grid.z_top_smooth[start].is_none() {
+            continue;
+        }
+        next += 1;
+        let mut max_z = f64::NEG_INFINITY;
+        labels[start] = next;
+        stack.push(start);
+        while let Some(i) = stack.pop() {
+            if let Some(z) = grid.z_top_smooth[i] {
+                max_z = max_z.max(z);
+            }
+            let ix = i % width;
+            let iy = i / width;
+            let neighbours = [
+                (ix > 0).then(|| i - 1),
+                (ix + 1 < width).then(|| i + 1),
+                (iy > 0).then(|| i - width),
+                (iy + 1 < height).then(|| i + width),
+            ];
+            for neighbour in neighbours.into_iter().flatten() {
+                if labels[neighbour] == 0 && grid.z_top_smooth[neighbour].is_some() {
+                    labels[neighbour] = next;
+                    stack.push(neighbour);
+                }
+            }
+        }
+        island_max.push(max_z);
+    }
+    for (i, label) in labels.iter().enumerate() {
+        if *label == 0 || grid.z_deform_cap[i].is_some() {
+            continue;
+        }
+        grid.z_deform_flat[i] = Some(island_max[*label as usize]);
+    }
+    next as usize
 }
 
 /// Deform mesh vertices in place (copy returned).
@@ -228,7 +343,8 @@ pub fn subdivide_long_edges(mesh: &Mesh, max_edge_mm: f64) -> Mesh {
     let max_edge = max_edge_mm.max(0.2);
     let mut vertices = mesh.vertices.clone();
     let mut triangles = mesh.triangles.clone();
-    let mut split_edge: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
+    let mut split_edge: std::collections::HashMap<(u32, u32), u32> =
+        std::collections::HashMap::new();
 
     let mut need_split = true;
     let mut pass = 0;
@@ -246,7 +362,9 @@ pub fn subdivide_long_edges(mesh: &Mesh, max_edge_mm: f64) -> Mesh {
             for (i, &(a, b)) in edges.iter().enumerate() {
                 let va = vertices[a as usize];
                 let vb = vertices[b as usize];
-                let len = ((va[0] - vb[0]).powi(2) + (va[1] - vb[1]).powi(2) + (va[2] - vb[2]).powi(2)).sqrt();
+                let len =
+                    ((va[0] - vb[0]).powi(2) + (va[1] - vb[1]).powi(2) + (va[2] - vb[2]).powi(2))
+                        .sqrt();
                 if len > max_edge {
                     need_split = true;
                     let key = (a.min(b), a.max(b));
@@ -281,7 +399,10 @@ pub fn subdivide_long_edges(mesh: &Mesh, max_edge_mm: f64) -> Mesh {
         }
         triangles = new_tris;
     }
-    Mesh { vertices, triangles }
+    Mesh {
+        vertices,
+        triangles,
+    }
 }
 
 #[cfg(test)]
