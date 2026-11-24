@@ -277,15 +277,6 @@ impl Column {
         self.h_top + (self.flat - self.h_top) * self.strength
     }
 
-    /// Deformed-space Z where this column's band starts.
-    ///
-    /// The forward map is a shear, so the lift `strength * (flat - h_top)` raises
-    /// the whole band: no level surface of this column exists below its band
-    /// floor plus that lift, and sampling there would read the identity and
-    /// report a slope the toolhead never follows.
-    fn f_band(&self) -> f64 {
-        self.z_band + (self.flat - self.h_top) * self.strength
-    }
 }
 
 fn column(field: &DeformField, i: usize) -> Option<Column> {
@@ -367,14 +358,28 @@ pub fn level_slope_violations(field: &DeformField, layer_h: f64) -> (f64, Vec<us
                 let (xb, yb) = node_xy(field, neighbour);
                 // Layers only exist where both columns carry material, so only the
                 // overlap of the two bands can hold a level curve crossing both.
-                let lo = (a.f_band().max(b.f_band()) / layer).ceil();
+                //
+                // Start at the *lower* ramp start, not at the band entry. The map
+                // blends each column's lift over `ramp_thickness` below its band
+                // floor, so two neighbours with different band starts or lifts
+                // already deposit at different heights under the lower band entry.
+                // Sampling from `f_band()` (the higher band entry) skipped that
+                // ramp: the limiter then reported `converged` on a field whose own
+                // G-code still turned a 0.061 mm move into a 26.3 deg one.
+                let ramp = field.ramp_thickness.max(1e-6);
+                let lo = ((a.z_band.min(b.z_band) - ramp) / layer).ceil();
                 let hi = (a.f_top().min(b.f_top()) / layer).floor();
                 if hi < lo {
                     continue;
                 }
                 let count = (hi - lo) as usize + 1;
                 let stride = count.div_ceil(LEVEL_SAMPLES_PER_EDGE).max(1);
+                // The ramp is only a few layers thick. A stride coarser than it
+                // would step straight over the region this scan exists to cover,
+                // so walk the ramp level by level and stride above it.
+                let ramp_levels = (ramp / layer).ceil() as usize;
                 let mut k = lo;
+                let mut visited = 0usize;
                 while k <= hi {
                     let z_def = k * layer;
                     let pa = field.inverse_z(xa, ya, z_def);
@@ -388,7 +393,12 @@ pub fn level_slope_violations(field: &DeformField, layer_h: f64) -> (f64, Vec<us
                         cells.push(i);
                         cells.push(neighbour);
                     }
-                    k += stride as f64;
+                    k += if visited < ramp_levels {
+                        1.0
+                    } else {
+                        stride as f64
+                    };
+                    visited += 1;
                 }
             }
         }
