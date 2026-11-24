@@ -213,12 +213,19 @@ The CLI prints time, filament and layers, then the non-planar summary:
 
 ```text
 time     1 h 11 m
-filament 7.23 m
+filament 7.24 m
 layers   80
-nonplanar auto islands=1 flattened=0 equiv=true fallback=true collisions_extruding=6 collisions_travel=2534
-auto surfaces=1 fallback_planar=false
-nonplanar_safety ok=false violations=2540 max_slope=5.99°
+nonplanar auto islands=1 flattened=1 equiv=true fallback=false collisions_extruding=0 collisions_travel=0
+auto surfaces=1 plan_fallback=false fallback_planar=false
+nonplanar_safety ok=true violations=0 max_slope=6.61°
 ```
+
+`fallback` on the `nonplanar` line and `fallback_planar` on the `auto` line are
+the same flag: whether the written file is the planar baseline. `plan_fallback`
+is the auto planner's own view of the plan it handed over, before verification.
+`flattened` is the number of top islands that still receive a curved band. A
+successful one-island lid reports `flattened=1`. It drops to 0 only when slope
+limiting or a safety check collapses the curve and the planar baseline is written.
 
 Slicing for real needs the engine and the resource trees pointed at by
 `SHALE_CURAENGINE`, `SHALE_CURAENGINE_LIB_DIR`, `SHALE_CURA_DIR`,
@@ -254,52 +261,81 @@ answers in a few kilobytes.
 
 ## M1 end-to-end results
 
-Measured on integration commit `ce02df9` (24 November 2026) with the release CLI,
-`--max-angle 10`, the default 0.20 mm process per printer and the vendored, unmodified
-CuraEngine 5.13. Print time is the CLI's own estimate; worst slope and collisions come
-from the CLI's safety report (`nonplanar_safety`, swept at the 0.1 mm tolerance) and
-were cross-checked with an independent G-code validator (bounds, slope histogram,
-stepped toolhead profile at 0.1 mm). "Fallback" means the planar baseline was written
-and the reason was named in the `;SHALE_NONPLANAR` header.
+Measured on 24 November 2026 with the release CLI, `--max-angle 10`, the 0.20 mm
+standard process and the vendored, unmodified CuraEngine 5.13. The P1S catalogue entry
+exposes the shared X1 Carbon process `0_20mm_standard_bbl_x1c` (there is no separate
+`0_20mm_standard_bbl_p1s` file in the vendored profiles). Every file was cross-checked
+with an independent G-code validator (bounds, slope histogram, a stepped toolhead
+profile swept at 0.1 mm, and a Z-inversion scan that rejects extrusion below material
+already printed in the same 0.4 mm cell) and a flow audit (physical gap to the previous
+layer, and filament per millimetre per gap against the planar median). "Fallback" means
+the planar baseline was written and the reason was named in the `;SHALE_NONPLANAR` header.
+"Curved moves" counts extrusions whose slope exceeds 0.05°.
 
-| Part | A1 mini | A1 | P1S | X1C | Planar → auto time | Worst curved slope | Collisions |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `t-wing` | curved | curved | curved | fallback: a curved move leaves the head envelope | 858–863 s → unchanged | 6.34° | 0 / 0 |
-| `dome` (24 mm ball) | fallback: 1 move over the 0.02 mm clamp budget | curved | curved | fallback: a curved move leaves the head envelope | 917–920 s → +0–1 s | 7.61° | 0 / 0 |
-| `bridge-overhang` | fallback: no printable surface | fallback | fallback | fallback | 1670–1680 s → unchanged | — | — |
-| `pillar-beside-dome` | fallback: collisions | fallback: collisions | fallback: collisions | fallback: collisions | 2347–2359 s → unchanged | — | — |
-| `nonplanar-demo` lid | fallback: limiter left a 12.7° level surface | fallback | fallback | fallback | 4234–4263 s → unchanged | — | — |
+Full matrix (five parts, four printers, `off` and `auto`, 40 files). Every `off` slice
+is planar and passes the validator. The `auto` results:
 
-All 40 files pass the independent validator (no out-of-bounds body moves, no
-collisions at 0.1 mm), and the CLI's safety report found no Z inversions on the
-curved runs. Curved output costs no measurable time or
-filament (at most 1 s and 0.0001 m). The curved region itself is small: on the dome
-only the cap where the sphere is flatter than about 9° is lifted, so most of the
-part prints exactly as planar. The demo lid currently falls back on every printer;
-making it print curved is open work (see below).
+| Part | A1 mini | A1 | P1S | X1C |
+| --- | --- | --- | --- | --- |
+| `examples/nonplanar-demo.stl` | curved, 134,882 moves, 6.07° | curved, 134,862 moves, 6.06° | curved, 134,862 moves, 6.06° | curved, 134,862 moves, 6.06° |
+| `t-wing` | curved, 147 moves, 5.30° | curved, 164 moves, 5.70° | curved, 164 moves, 5.70° | curved, 164 moves, 5.70° |
+| `dome` (24 mm ball) | curved, 552 moves, 10.11° | curved, 546 moves, 10.11° | curved, 546 moves, 10.11° | curved, 546 moves, 10.11° |
+| `bridge-overhang` | fallback: no printable curved top surface | fallback: no printable curved top surface | fallback: no printable curved top surface | fallback: no printable curved top surface |
+| `pillar-beside-dome` | curved, 327 moves, 10.08° | fallback: 16 start-sequence travel collisions | curved, 329 moves, 10.08° | curved, 329 moves, 10.08° |
 
-Extrusion: `E` is rescaled per move by the local layer-thickness ratio of the
-deformation (clamped to 0.5–2×). Measured median `E` per millimetre of 3D path is
-0.0331 on curved moves against 0.0333 on planar ones, the largest curved value is
-0.0484 (1.45× nominal, on the dome's thinnest band layer), and no move exceeds
-0.2 mm of filament per millimetre.
+All 40 written files pass the validator: no out-of-bounds body moves, no collisions at
+0.1 mm, no Z inversions. The lid's crest along Y = 128.8 mm runs from X ≈ 88 mm at
+14.39 mm up to X = 128 mm at 16.19 mm and back down to X = 168 mm at 14.39 mm, a smooth
+arch across the full ~80 mm top, with no 0.07 mm V-notch. Worst extrusion slope on the
+lid is 6.07°, under the 10° cap.
+
+The flat target is the footprint rim, so the lift is zero at the boundary and negative
+towards the peak: the gentle dome is pressed down into the slicer's space and the inverse
+map lays it back as continuous layers. A transition under each column is long enough for
+both compression (`ramp >= lift * r_min / (1 - r_min)`) and stretch
+(`ramp >= |lift| * r_max / (r_max - 1)`), with `r` the min/max layer height over the
+nominal 0.20 mm. Where the plastic below the band cannot hold that ramp, strength is
+reduced in closed form. Extrusion scale follows the physical thickness and is no longer
+clamped to 0.5–2. A layer outside `[min, max]` mm is rejected with a named fallback
+(`layer thickness X mm outside [min, max] mm`).
+
+Pointwise, consecutive deformed layers on the lid map to about 0.14–0.28 mm. The flow
+auditor's 0.4 mm cell also flags 46–47 shoulder samples at 0.33–0.34 mm, where one cell
+contains both the last planar sheet at 5.0 mm and the first ramp step; nothing is thinner
+than 0.08 mm. Filament per millimetre per gap on the lid is 0.96× the planar median and
+1.18× at the 99th percentile. Two moves on the A1, P1S and X1C (none on the A1 mini)
+exceed 0.20 mm of filament per millimetre of path; the curved-move median is 0.033 mm.
+
+The dome's 10.11° worst slope is inside the verifier's 10.5° tolerance, and the earlier
+one-move clamp-budget fallback is gone on all four printers. `pillar-beside-dome` now
+curves on the A1 mini, P1S and X1C (the dome apex only; the pillar stays planar). The A1
+still falls back, because 16 travel moves in the machine start sequence at X = −35 mm
+pass the A1 head envelope through printed material (X = -35 mm). `bridge-overhang` falls back on every
+printer with `no printable curved top surface: slope limiting left 0.0% strength...`.
 
 Known limitations at this commit:
 
+* **Dome curvature is small by geometry.** Under a 10° cap only the apex of a 12 mm
+  sphere is flat enough to follow; the rest prints as planar steps. The curved patch is
+  a few millimetres wide.
 * **The 0.06 mm seam.** The band floor is anchored between two planar layers, so the
   first band layer can sit up to 0.06 mm into the last planar one at the footprint
   edge. This is an overlap rather than a gap and stays inside the 0.1 mm contact
-  tolerance; very short moves (0.1–0.2 mm) at that seam can show apparent slopes of
+  tolerance; very short moves (0.1-0.2 mm) at that seam can show apparent slopes of
   up to 26° that are a squish of a few hundredths of a millimetre, not a tilt.
+* **Shoulder cells on a full-width lid.** A 0.4 mm audit cell that straddles the ramp
+  floor can read 0.33–0.34 mm between the last planar layer and the first curved one
+  even though the pointwise step is 0.28 mm. That is the 46–47 samples above.
 * **P1S, P1P, X1C and H2D head geometry is still unmeasured.** Their envelopes declare
   a 0.35 mm flat tip land against the 0.42 mm line spacing of a 0.4 mm nozzle; the
   values are conservative estimates listed under `needs_measurement` (the A1 and
-  A1 mini envelopes are conservative estimates too), and the X1C fallbacks above
-  come from its larger envelope.
+  A1 mini envelopes are conservative estimates too).
 * **Horizontal bridges and cantilevers print planar** in auto mode: a ±10° tilt of a
   90° underside round-trips to a planar toolpath, so the planner disables those
-  surfaces and says why (see above). Underside bands remain available, unverified,
-  behind `--nonplanar-underside`.
+  surfaces and says why (see above). Underside bands remain available, unverified on
+  a printer, behind `--nonplanar-underside`. The opt-in unit test
+  (`enabled_underside_band_produces_measurable_gcode_tilt`) passes: a planned wedge
+  keeps its affine lift through to the mapped G-code.
 
 ## What it is not
 

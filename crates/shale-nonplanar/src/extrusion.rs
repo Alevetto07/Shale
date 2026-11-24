@@ -4,6 +4,13 @@ use crate::deform::DeformField;
 
 /// Multiply extrusion delta by this factor for a move from `(x0,y0,z0)` to `(x1,y1,z1)`
 /// in **physical** space after inverse mapping.
+///
+/// The factor is the local physical/deformed thickness ratio with no clamp: a
+/// layer squashed to 0.02 mm really does need E at a fifth of nominal, and
+/// holding it at half (the old clamp) laid down five times the plastic the layer
+/// had room for. If the ratio leaves `[min_layer, max_layer] / nominal` the
+/// field is wrong, and the safety pass rejects it as a layer-thickness
+/// violation instead of hiding it here.
 pub fn extrusion_scale(
     field: &DeformField,
     x0: f64,
@@ -16,7 +23,11 @@ pub fn extrusion_scale(
     let mx = 0.5 * (x0 + x1);
     let my = 0.5 * (y0 + y1);
     let ratio = field.layer_thickness_ratio(mx, my, z0, z1);
-    (1.0 / ratio).clamp(0.5, 2.0)
+    if ratio.is_finite() && ratio > 0.0 {
+        1.0 / ratio
+    } else {
+        1.0
+    }
 }
 
 #[cfg(test)]

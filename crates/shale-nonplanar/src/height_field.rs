@@ -39,23 +39,49 @@ impl HeightGrid {
         self.bilinear(&self.z_deform_flat, x, y)
     }
 
-    fn bilinear(&self, field: &[Option<f64>], x: f64, y: f64) -> Option<f64> {
-        let fx = (x - self.origin[0]) / self.step;
-        let fy = (y - self.origin[1]) / self.step;
-        if fx < 0.0 || fy < 0.0 {
-            return field.first().copied().flatten();
+    /// Cell index and in-cell weights of the node pair that brackets a point.
+    ///
+    /// A point that sits on a node is snapped to it. `origin + i * step` is not
+    /// exact in binary floating point, so `floor` used to pick `i - 1` with
+    /// `tx = 1` for a grid node: the heights then came from the neighbouring
+    /// pair while `island_strength_at` (a plain floor lookup) read a different
+    /// cell again. One point must be judged with one column's values.
+    ///
+    /// `None` means the point is outside the grid or on its last row/column;
+    /// callers fall back to the edge sample, as they always have.
+    pub(crate) fn cell_weights(&self, x: f64, y: f64) -> Option<(usize, usize, f64, f64)> {
+        let snap = |t: f64| -> f64 {
+            let rounded = t.round();
+            if (t - rounded).abs() < 1e-6 {
+                rounded
+            } else {
+                t
+            }
+        };
+        let fx = snap((x - self.origin[0]) / self.step);
+        let fy = snap((y - self.origin[1]) / self.step);
+        if !fx.is_finite() || !fy.is_finite() || fx < 0.0 || fy < 0.0 {
+            return None;
         }
         let ix = fx.floor() as isize;
         let iy = fy.floor() as isize;
         if ix as usize >= self.width.saturating_sub(1)
             || iy as usize >= self.height.saturating_sub(1)
         {
-            return field.last().copied().flatten();
+            return None;
         }
-        let ix = ix as usize;
-        let iy = iy as usize;
-        let tx = fx - ix as f64;
-        let ty = fy - iy as f64;
+        Some((ix as usize, iy as usize, fx - ix as f64, fy - iy as f64))
+    }
+
+    fn bilinear(&self, field: &[Option<f64>], x: f64, y: f64) -> Option<f64> {
+        let Some((ix, iy, tx, ty)) = self.cell_weights(x, y) else {
+            let fx = (x - self.origin[0]) / self.step;
+            let fy = (y - self.origin[1]) / self.step;
+            if fx < 0.0 || fy < 0.0 {
+                return field.first().copied().flatten();
+            }
+            return field.last().copied().flatten();
+        };
         let samples = [
             (field[iy * self.width + ix], (1.0 - tx) * (1.0 - ty)),
             (field[iy * self.width + ix + 1], tx * (1.0 - ty)),

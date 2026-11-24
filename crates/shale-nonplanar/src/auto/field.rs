@@ -20,7 +20,17 @@ use super::plan::PlannedSurface;
 use super::plan::PlannedSurfaceKind;
 
 /// Tilt or inject printable height samples for a planned surface.
-pub fn apply_surface_to_grid(grid: &mut HeightGrid, surface: &PlannedSurface, layer_h: f64) {
+///
+/// Returns a per-node mask of the columns this surface actually wrote, so the
+/// plan can stamp its strength footprint from what happened rather than from
+/// the requested box: a column the band skipped (its top reaches far above the
+/// band) must not be lifted either.
+pub fn apply_surface_to_grid(
+    grid: &mut HeightGrid,
+    surface: &PlannedSurface,
+    layer_h: f64,
+) -> Vec<bool> {
+    let mut written = vec![false; grid.width * grid.height];
     let (ux, uy) = bearing_unit(surface.bearing_deg);
     let tan_tilt = surface.tilt_deg.to_radians().tan().clamp(-0.18, 0.18);
     let footprint_z = surface.min[2].max(layer_h);
@@ -38,6 +48,8 @@ pub fn apply_surface_to_grid(grid: &mut HeightGrid, surface: &PlannedSurface, la
                 PlannedSurfaceKind::CurvedTopBand | PlannedSurfaceKind::SlopedTopBand => {
                     // No slope injection: the deform's flatten + inverse map already
                     // turns this into an in-layer sloped toolpath (see module doc).
+                    // The whole box is the footprint, so every node counts as written.
+                    written[i] = true;
                 }
                 PlannedSurfaceKind::BridgeTiltBand
                 | PlannedSurfaceKind::CantileverTiltBand
@@ -60,6 +72,7 @@ pub fn apply_surface_to_grid(grid: &mut HeightGrid, surface: &PlannedSurface, la
                     grid.z_band_start[i] = Some((underside_z - layer_h * 6.0).max(0.0));
                     grid.z_deform_cap[i] = Some(surface.max[2]);
                     grid.z_deform_flat[i] = Some(underside_z + max_along * tan_tilt);
+                    written[i] = true;
                 }
             }
         }
@@ -77,6 +90,7 @@ pub fn apply_surface_to_grid(grid: &mut HeightGrid, surface: &PlannedSurface, la
             let _ = band;
         }
     }
+    written
 }
 
 fn point_in_box(x: f64, y: f64, min: [f64; 3], max: [f64; 3]) -> bool {

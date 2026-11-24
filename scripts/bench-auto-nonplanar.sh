@@ -47,7 +47,12 @@ slice_model() {
 }
 
 metrics_from_auto_json() {
-  local json="${1:-{}}"
+  # ${1:-{}} is not a default of {}: the first } closes the expansion and a
+  # second } is left behind, so a real plan becomes invalid JSON.
+  local json="$1"
+  if [[ -z "$json" ]]; then
+    json='{}'
+  fi
   jq -c '
     def oh:
       [.surfaces[]? | select(.enabled) |
@@ -112,7 +117,9 @@ emit_row() {
   as=$(parse_seconds "$auto_out")
 
   local auto_json
-  auto_json=$(echo "$auto_out" | awk '/^\{/{found=1} found' | jq -s 'add // {}')
+  # The plan is pretty-printed and the CLI prints a safety line after it.
+  # Stop at the root object's closing brace so that line is not parsed as JSON.
+  auto_json=$(echo "$auto_out" | awk '/^\{/{found=1} found {print} found && /^\}/{exit}' | jq -s 'add // {}')
 
   local meta underside
   meta=$(metrics_from_auto_json "$auto_json")

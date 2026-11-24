@@ -365,9 +365,13 @@ fn slice_command(args: &[String]) -> Result<(), String> {
             println!("fallback_reason {}", report.fallback_reasons.join(" | "));
         }
         if let Some(auto) = &report.auto_placement {
+            // `auto.fallback_to_planar` is the planner's own view of the plan it
+            // handed over; the authority on what was actually written is the
+            // report. Printing the plan flag as `fallback_planar` made the CLI
+            // announce `fallback_planar=false` directly under `fallback=true`.
             println!(
-                "auto surfaces={} fallback_planar={}",
-                auto.enabled_surface_count, auto.fallback_to_planar
+                "auto surfaces={} plan_fallback={} fallback_planar={}",
+                auto.enabled_surface_count, auto.fallback_to_planar, report.fallback_to_planar
             );
             if std::env::var_os("SHALE_AUTO_PLAN_JSON").is_some() {
                 println!(

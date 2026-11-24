@@ -97,6 +97,10 @@ pub fn plan_field(
     // ramped at `tan(cap)` so it has no step of its own. Without this the field
     // carries a rim on every flat deck whose only fix is damping the island to 0.
     let footprint_cut = restrict_to_printable_top(&mut field);
+    // Peak-referenced flats leave a multi-millimetre lift at the rim. Retarget
+    // to the footprint boundary first, so the chamfer inside the limiter sees a
+    // lift that is already zero there.
+    field.retarget_flats_to_footprint_rim();
     let slope_limiting = Some(limit_field_slopes(&mut field, nominal_layer_height));
     let mut planar_collapsed = None;
     if auto_placement
@@ -112,9 +116,9 @@ pub fn plan_field(
         // only question is whether anything is still lifting.
         if limiting.max_strength <= PLANAR_COLLAPSE_STRENGTH {
             planar_collapsed = Some(format!(
-                "slope limiting left {:.1}% strength on the best column after {} pass(es) \
-                 (worst level surface {:.2}° -> {:.2}°, cap {:.1}°, {} of {} top column(s) cut \
-                 by the cap): nothing is left to print curved",
+                "no printable curved top surface: slope limiting left {:.1}% strength on the \
+                 best column after {} pass(es) (worst level surface {:.2}° -> {:.2}°, cap {:.1}°, \
+                 {} of {} top column(s) cut by the cap)",
                 limiting.max_strength * 100.0,
                 limiting.passes,
                 limiting.worst_before_deg,
@@ -194,6 +198,19 @@ pub struct PostPassArgs<'a> {
 ///
 /// Returns `Err` only in [`NonplanarOptions::strict`] mode; otherwise an
 /// unverifiable pass returns the planar baseline with the reasons recorded.
+/// The sample furthest outside `[min_layer, max_layer]`, for the fallback line.
+fn offending_layer_thickness(safety: &crate::config::SafetyReport, field: &DeformField) -> f64 {
+    let lo = safety.min_physical_layer_mm.unwrap_or(field.nominal_layer);
+    let hi = safety.max_physical_layer_mm.unwrap_or(field.nominal_layer);
+    let thin = (field.min_layer - lo).max(0.0);
+    let thick = (hi - field.max_layer).max(0.0);
+    if thick > thin {
+        hi
+    } else {
+        lo
+    }
+}
+
 pub fn apply_post_pass(args: PostPassArgs<'_>) -> Result<(String, NonplanarReport), String> {
     let PostPassArgs {
         deformed_slice_gcode,
@@ -338,7 +355,23 @@ pub fn apply_post_pass(args: PostPassArgs<'_>) -> Result<(String, NonplanarRepor
             stats.unclamped_excess, MAX_INVERSE_CLAMP_MM
         ));
     }
-    if !gcode_respects_envelope(&grafted, printer_id, options.max_angle_deg) {
+    // Only a collision the curved pass *introduces* counts. The machine's own
+    // start/end script is in both files: on the X1 Carbon the final
+    // `G0 X65 Y10 Z0` parks the head through the 0.15 mm prime line it laid at the
+    // start of the same print, so the raw check rejected every X1 file for a move
+    // the deformation never touched (0 collisions reported by the swept sweep).
+    // If the planar baseline fails the same check, the script is at fault and the
+    // curved pass is not.
+    if !safety.layer_thickness_within_bounds {
+        let worst = offending_layer_thickness(&safety, field);
+        reasons.push(format!(
+            "layer thickness {worst:.3} mm outside [{:.3}, {:.3}] mm",
+            field.min_layer, field.max_layer
+        ));
+    }
+    if !gcode_respects_envelope(&grafted, printer_id, options.max_angle_deg)
+        && gcode_respects_envelope(planar_baseline_gcode, printer_id, options.max_angle_deg)
+    {
         reasons.push("a curved move leaves the head envelope".to_string());
     }
     if !safety.ok && safety.violations.is_empty() {
@@ -1002,6 +1035,133 @@ mod post_pass_tests {
             .iter()
             .filter(|v| v[0] >= x_min && v[0] <= x_max)
             .fold(f64::NEG_INFINITY, |acc, v| acc.max(v[2]))
+    }
+
+    /// A gentle dome referenced to its rim presses down across the whole top.
+    ///
+    /// Peak-referenced flats left a multi-millimetre cliff at the outline, and
+    /// the slope cap then ate the lift until only the middle arched. The rim
+    /// target is zero on the footprint boundary, so the whole ≤6° top stays
+    /// curved and the centre lift is negative.
+    #[test]
+    fn rim_referenced_pillow_curves_across_its_full_width() {
+        let mesh = gentle_pillow();
+        let ctx = plan_field(&mesh, &options(NonplanarMode::CurvedTops, 10.0), 0.2, &[]);
+        assert!(
+            ctx.planar_collapsed.is_none(),
+            "a ≤6° pillow must stay curved: {:?}",
+            ctx.planar_collapsed
+        );
+        let field = &ctx.field;
+        let centre = field.lift_at(0.0, 0.0);
+        assert!(
+            centre < -2.5,
+            "the peak should be pressed down by most of the 3 mm rise, lift {centre:.3}"
+        );
+        // The outline is not one height: the corners sit on the rim and the
+        // mid-edge still carries the cross-dome. Both have to stay inside the
+        // curved footprint, with the lift gone only where the surface meets the rim.
+        let corner = field.lift_at(-18.0, -18.0).abs();
+        assert!(
+            corner < 0.45,
+            "lift must be gone at the rim corner, |lift| {corner:.3} mm"
+        );
+        let mut span = 0.0_f64;
+        let step = field.grid.step;
+        for i in 0..field.island_strength.len() {
+            if field.node_lift(i).abs() < 0.4 || field.island_strength[i] <= 0.5 {
+                continue;
+            }
+            let ix = i % field.grid.width;
+            let x = field.grid.origin[0] + ix as f64 * step;
+            span = span.max(x.abs());
+        }
+        assert!(
+            span > 17.0,
+            "the curve must reach the outline, furthest |lift|>0.4 mm column is at x={span:.2}"
+        );
+        let centre_strength = field.island_strength_at(0.0, 0.0);
+        assert!(
+            centre_strength > 0.9,
+            "the centre should keep its strength, got {centre_strength:.3}"
+        );
+        let slope = max_field_layer_slope_deg(field);
+        assert!(
+            slope <= field.max_angle_deg + crate::safety::SLOPE_CAP_TOLERANCE_DEG,
+            "level surfaces {slope:.2}° exceed the cap"
+        );
+        let thickness = crate::safety::physical_layer_thickness(field);
+        assert_eq!(
+            thickness.violations, 0,
+            "layer thickness {:.3}..{:.3} mm ({} violations)",
+            thickness.min_mm, thickness.max_mm, thickness.violations
+        );
+    }
+
+    /// Analytic lid: z = 13 + 1.5*(1-u²)² + 1.5*(1-v²)², |u|,|v| ≤ 1.
+    ///
+    /// The gradient vanishes on the outline and the peak slope stays under 6°,
+    /// the same shape as `examples/nonplanar-demo.stl` on a smaller plate.
+    fn gentle_pillow() -> Mesh {
+        let half = 20.0;
+        let n = 40i32;
+        let mut vertices = Vec::new();
+        let index = |ix: i32, iy: i32| (iy * (n + 1) + ix) as u32;
+        for iy in 0..=n {
+            for ix in 0..=n {
+                let u = (ix as f64 / n as f64) * 2.0 - 1.0;
+                let v = (iy as f64 / n as f64) * 2.0 - 1.0;
+                let z = 13.0 + 1.5 * (1.0 - u * u).powi(2) + 1.5 * (1.0 - v * v).powi(2);
+                vertices.push([u * half, v * half, z]);
+            }
+        }
+        // A flat base so the height field sees a solid, not a single sheet.
+        let base = vertices.len() as u32;
+        for iy in 0..=n {
+            for ix in 0..=n {
+                let u = (ix as f64 / n as f64) * 2.0 - 1.0;
+                let v = (iy as f64 / n as f64) * 2.0 - 1.0;
+                vertices.push([u * half, v * half, 0.0]);
+            }
+        }
+        let mut triangles = Vec::new();
+        for iy in 0..n {
+            for ix in 0..n {
+                let a = index(ix, iy);
+                let b = index(ix + 1, iy);
+                let c = index(ix, iy + 1);
+                let d = index(ix + 1, iy + 1);
+                // Upward normal on the dome, downward on the base.
+                triangles.push([a, b, c]);
+                triangles.push([b, d, c]);
+                let (a, b, c, d) = (a + base, b + base, c + base, d + base);
+                triangles.push([a, c, b]);
+                triangles.push([b, c, d]);
+            }
+        }
+        // Walls around the outline so the rim is a closed solid.
+        for i in 0..n {
+            let top_a = index(i, 0);
+            let top_b = index(i + 1, 0);
+            triangles.push([top_a, top_b, top_a + base]);
+            triangles.push([top_b, top_b + base, top_a + base]);
+            let top_a = index(i, n);
+            let top_b = index(i + 1, n);
+            triangles.push([top_a, top_a + base, top_b]);
+            triangles.push([top_b, top_a + base, top_b + base]);
+            let top_a = index(0, i);
+            let top_b = index(0, i + 1);
+            triangles.push([top_a, top_a + base, top_b]);
+            triangles.push([top_b, top_a + base, top_b + base]);
+            let top_a = index(n, i);
+            let top_b = index(n, i + 1);
+            triangles.push([top_a, top_b, top_a + base]);
+            triangles.push([top_b, top_b + base, top_a + base]);
+        }
+        Mesh {
+            vertices,
+            triangles,
+        }
     }
 
     /// COORD acceptance B: the inverse map is the inverse of the forward map for

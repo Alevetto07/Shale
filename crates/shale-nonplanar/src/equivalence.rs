@@ -470,10 +470,12 @@ mod tests {
         assert_eq!(audit.shell_extrusion_violations, 1);
     }
 
-    /// The global floor is the *lowest* band start on the plate, not the tallest
-    /// column's. When it was computed from the tallest top, every move under a short
-    /// island sat "below the floor" and the inverse map skipped it (a 0.37 mm error
-    /// on the bridge fixture).
+    /// The global floor is the lowest transition start on the plate, not the
+    /// tallest column's band. When it was computed from the tallest top, every
+    /// move under a short island sat "below the floor" and the inverse map
+    /// skipped it (a 0.37 mm error on the bridge fixture). The transition now
+    /// starts below the band by the column's own ramp, so the floor sits at or
+    /// under the lowest band and must not climb up to the tallest one.
     #[test]
     fn global_floor_is_the_lowest_column_band() {
         use crate::deform::build_deform_field;
@@ -502,8 +504,12 @@ mod tests {
         }
         assert!(material > 100, "fixture must have material columns");
         assert!(
-            (floor - lowest).abs() < 1e-9,
-            "floor {floor:.3} must be the lowest band {lowest:.3}, not the highest {highest:.3}"
+            floor <= lowest + 1e-9,
+            "floor {floor:.3} must sit at or below the lowest band {lowest:.3}, not the highest {highest:.3}"
+        );
+        assert!(
+            highest - floor > 1.0,
+            "floor {floor:.3} collapsed towards the tallest band {highest:.3}"
         );
         // A move inside the lowest column's band needs the map; the tallest column on
         // the plate must not exempt it.

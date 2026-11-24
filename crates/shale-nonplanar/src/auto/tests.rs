@@ -180,7 +180,12 @@ mod auto_placement {
             ";TYPE:SKIN\nG0 X10.0 Y0.000 Z{:.3}\n",
             field.forward_z(10.0, 0.0, 20.0)
         );
-        for (i, x) in [10.0, 14.0, 18.0, 22.0, 26.0, 30.0].iter().enumerate() {
+        // The last move stops at 29.0: the bridge mesh's second pillar ends at
+        // x = 29, so a move to 30.0 runs over air, where `column_limits` has no
+        // band (grid padding) and the map is the identity. A 4 mm chord ending
+        // in a 0.45 mm identity step is what pulled the mapped path 0.25 mm low,
+        // not the deformation.
+        for (i, x) in [10.0, 14.0, 18.0, 22.0, 26.0, 29.0].iter().enumerate() {
             deformed.push_str(&format!(
                 "G1 X{x:.1} Y0 Z{:.3} E{}.{i}\n",
                 field.forward_z(*x, 0.0, 20.0),
@@ -188,7 +193,7 @@ mod auto_placement {
             ));
         }
         // Slope of the deck underside on the deformed mesh, along the bearing.
-        let mut path: Vec<(f64, f64)> = [11.0, 15.0, 19.0, 23.0, 27.0, 31.0]
+        let mut path: Vec<(f64, f64)> = [11.0, 15.0, 19.0, 23.0, 27.0, 29.0]
             .iter()
             .map(|x| (*x, field.forward_z(*x, 0.0, 20.0)))
             .collect();
