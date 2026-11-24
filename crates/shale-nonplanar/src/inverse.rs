@@ -196,7 +196,11 @@ pub fn map_gcode_inverse_counted(
             continue;
         }
 
-        let band_floor = field.global_band_floor_z();
+        let below_local_floor = |x: f64, y: f64, z: f64| {
+            field
+                .local_band_floor_z(x, y)
+                .is_none_or(|zb| z < zb - 1e-6)
+        };
         let midpoint_needs = || {
             field.gcode_needs_inverse(
                 (position[0] + target[0]) * 0.5,
@@ -204,7 +208,13 @@ pub fn map_gcode_inverse_counted(
                 (position[2] + target[2]) * 0.5,
             )
         };
-        if (position[2] < band_floor - 1e-6 && target[2] < band_floor - 1e-6)
+        if (below_local_floor(position[0], position[1], position[2])
+            && below_local_floor(target[0], target[1], target[2])
+            && below_local_floor(
+                (position[0] + target[0]) * 0.5,
+                (position[1] + target[1]) * 0.5,
+                (position[2] + target[2]) * 0.5,
+            ))
             || (!field.gcode_needs_inverse(position[0], position[1], position[2])
                 && !field.gcode_needs_inverse(target[0], target[1], target[2])
                 && !midpoint_needs())
@@ -233,14 +243,14 @@ pub fn map_gcode_inverse_counted(
             })
             .max(1.0) as usize;
 
-        let band_floor_seg = field.global_band_floor_z();
         let mut line_start_phys = [
             position[0],
             position[1],
-            if position[2] < band_floor_seg - 1e-6 {
-                position[2]
-            } else {
-                field.inverse_z(position[0], position[1], position[2])
+            match field.local_band_floor_z(position[0], position[1]) {
+                Some(zb) if position[2] >= zb - 1e-6 => {
+                    field.inverse_z(position[0], position[1], position[2])
+                }
+                _ => position[2],
             },
         ];
         let mut prev_phys = line_start_phys;
@@ -284,16 +294,17 @@ pub fn map_gcode_inverse_counted(
             let x = position[0] + dx * t;
             let y = position[1] + dy * t;
             let z_def = position[2] + (target[2] - position[2]) * t;
-            let z_phys = if z_def < band_floor_seg - 1e-6 {
-                z_def
-            } else {
-                let raw = field.inverse_z(x, y, z_def);
-                if anchored {
-                    clamp_slope_z(field, prev_phys, x, y, raw, &mut stats)
-                } else {
-                    anchored = true;
-                    raw
+            let z_phys = match field.local_band_floor_z(x, y) {
+                Some(zb) if z_def >= zb - 1e-6 => {
+                    let raw = field.inverse_z(x, y, z_def);
+                    if anchored {
+                        clamp_slope_z(field, prev_phys, x, y, raw, &mut stats)
+                    } else {
+                        anchored = true;
+                        raw
+                    }
                 }
+                _ => z_def,
             };
             if seg < segments {
                 let step_horiz = ((x - prev_phys[0]).powi(2) + (y - prev_phys[1]).powi(2)).sqrt();

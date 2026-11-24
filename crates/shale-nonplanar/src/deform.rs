@@ -68,6 +68,19 @@ impl DeformField {
         Some((z_band, h_top, strength, flat_top))
     }
 
+    /// Lowest deformed Z at this XY: below it the map is the identity.
+    ///
+    /// The G-code side used to compare against [`Self::global_band_floor_z`],
+    /// the lowest band floor anywhere on the plate. That passes through any
+    /// move below the global floor even when the *local* band starts well
+    /// above it, so a lifted island next to a lower one printed its upper band
+    /// at un-mapped Z and the next layer descended into it. Every skip test
+    /// has to be local to the column it is judged in.
+    pub fn local_band_floor_z(&self, x: f64, y: f64) -> Option<f64> {
+        self.column_limits(x, y)
+            .and_then(|(z_band, _, strength, _)| (strength > 0.0).then_some(z_band))
+    }
+
     /// True when this G-code point lies in the curved-top shell (deformed coordinates).
     pub fn gcode_needs_inverse(&self, x: f64, y: f64, z_def: f64) -> bool {
         let Some((z_band, _, strength, _)) = self.column_limits(x, y) else {
