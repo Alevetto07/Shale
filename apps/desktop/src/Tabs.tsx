@@ -59,7 +59,7 @@ export function TabBar({
   sliced,
 }: TabBarProps) {
   return (
-    <div className="tabs">
+    <div className="tabs" data-docs={tabs.length}>
       <div className="doc-tabs">
         <Tabs value={String(activeTab)} onValueChange={(id) => onTab(Number(id))}>
           <TabsList aria-label="Open projects" className="doc-tabs-list">
@@ -70,7 +70,7 @@ export function TabBar({
                     {tab.name}
                   </TabsTrigger>
                 </Tooltip>
-                {tab.dirty && <span className="doc-dirty" aria-label="unsaved changes">•</span>}
+                {tab.dirty && <span className="doc-dirty" aria-label="Unsaved changes">•</span>}
                 {tabs.length > 1 && (
                   <button
                     type="button"
@@ -87,7 +87,7 @@ export function TabBar({
         </Tabs>
         <span className="doc-rule" aria-hidden="true" />
         <Tooltip label="A new empty plate in its own tab">
-          <button type="button" className="doc-add" aria-label="new project" onClick={onNewTab}>
+          <button type="button" className="doc-add" aria-label="New project" onClick={onNewTab}>
             +
           </button>
         </Tooltip>

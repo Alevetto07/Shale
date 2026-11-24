@@ -10,6 +10,7 @@ import { ProcessSheet, type QuickFallbacks } from "./ProcessSheet";
 import type { ViewStyle } from "./viewport-style";
 import { UiStylePicker } from "./UiStylePicker";
 import type { UiStyleId } from "./ui-styles";
+import type { Pane } from "./Tabs";
 import { Button, Select, Sheet } from "./ui";
 
 export interface MenuBarProps {
@@ -91,6 +92,9 @@ export interface MenuBarProps {
   /** Bumps when the command palette asks the sheet to open on a tab. */
   settingsNonce: number;
   settingsSection: Section | null;
+  pane: Pane;
+  onPane: (pane: Pane) => void;
+  onOpenPalette: () => void;
 }
 
 function Item({
@@ -118,8 +122,6 @@ function Item({
 export function MenuBar(props: MenuBarProps) {
   const [settingsOpen, setSettingsOpen] = useState(props.demo === "presets");
 
-  // The demo flag arrives with the status, one render after this component
-  // mounts, so the sheet cannot be opened in the initial state alone.
   useEffect(() => {
     if (props.demo === "presets") setSettingsOpen(true);
   }, [props.demo]);
@@ -128,8 +130,6 @@ export function MenuBar(props: MenuBarProps) {
     if (props.settingsNonce > 0) setSettingsOpen(true);
   }, [props.settingsNonce]);
 
-  // The presets panel sits at the foot of a long sheet; the clip has to show
-  // it, so the sheet scrolls itself there once it has opened.
   useEffect(() => {
     if (props.demo !== "presets" || !settingsOpen) return;
     const timer = window.setTimeout(() => {
@@ -139,110 +139,43 @@ export function MenuBar(props: MenuBarProps) {
   }, [props.demo, settingsOpen]);
 
   const printer = props.printers.find((entry) => entry.id === props.printerId);
+  const panes: { id: Pane; label: string }[] = [
+    { id: "home", label: "Home" },
+    { id: "prepare", label: "Prepare" },
+    { id: "preview", label: "Preview" },
+    { id: "device", label: "Device" },
+  ];
 
   return (
     <div className="menubar">
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger className="menu-title">File</DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content className="ui-dropdown" sideOffset={6} align="start" collisionPadding={8}>
-            <Item onSelect={props.onNew} kbd="Ctrl N">New project</Item>
-            <Item onSelect={props.onOpen} kbd="Ctrl O">Open project…</Item>
-            <Item onSelect={props.onImport} kbd="Ctrl I">Import model…</Item>
-            <DropdownMenu.Separator className="ui-dropdown__sep" />
-            <p className="menu-label">Add a part</p>
-            {(
-              [
-                ["cube", "Cube"],
-                ["cylinder", "Cylinder"],
-                ["cone", "Cone"],
-                ["sphere", "Sphere"],
-              ] as const
-            ).map(([kind, title]) => (
-              <Item key={kind} onSelect={() => props.onAddPart(kind)} kbd="20 mm">
-                {title}
-              </Item>
-            ))}
-            <DropdownMenu.Separator className="ui-dropdown__sep" />
-            <Item onSelect={props.onSave} kbd="Ctrl S">Save</Item>
-            <Item onSelect={props.onSaveAs} kbd="Ctrl ⇧ S">Save as…</Item>
-            <DropdownMenu.Separator className="ui-dropdown__sep" />
-            <Item onSelect={() => props.onExportGeometry("stl")} disabled={!props.modelCount}>
-              Export plate as STL…
-            </Item>
-            <Item onSelect={() => props.onExportGeometry("3mf")} disabled={!props.modelCount}>
-              Export plate as 3MF…
-            </Item>
-            <DropdownMenu.Separator className="ui-dropdown__sep" />
-            <Item onSelect={props.onExport} disabled={!props.sliced} kbd="Ctrl E">
-              Export G-code…
-            </Item>
-            <DropdownMenu.Separator className="ui-dropdown__sep" />
-            <Item onSelect={props.onStart}>Start screen</Item>
-            <Item onSelect={props.onQuit}>Quit</Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
-
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger className="menu-title">Edit</DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content className="ui-dropdown" sideOffset={6} align="start" collisionPadding={8}>
-            <Item onSelect={props.onUndo} disabled={!props.canUndo} kbd="Ctrl Z">Undo</Item>
-            <Item onSelect={props.onRedo} disabled={!props.canRedo} kbd="Ctrl ⇧ Z">Redo</Item>
-            <DropdownMenu.Separator className="ui-dropdown__sep" />
-            <Item onSelect={props.onDuplicate} disabled={!props.hasSelection} kbd="Ctrl D">Duplicate</Item>
-            <Item onSelect={props.onSplit} disabled={!props.hasSelection}>Split to objects</Item>
-            <Item onSelect={props.onFillPlate} disabled={!props.hasSelection}>Fill the plate</Item>
-            <Item onSelect={props.onDrop} disabled={!props.hasSelection} kbd="D">Drop to plate</Item>
-            <Item onSelect={props.onArrange} disabled={props.modelCount < 2} kbd="Ctrl ⇧ A">
-              Arrange on plate
-            </Item>
-            <DropdownMenu.Separator className="ui-dropdown__sep" />
-            <Item onSelect={props.onDelete} disabled={!props.hasSelection} kbd="Del">Delete</Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
-
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger className="menu-title">View</DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content className="ui-dropdown" sideOffset={6} align="start" collisionPadding={8}>
-            {(
-              [
-                ["solid", "Solid"],
-                ["wire", "Wireframe"],
-                ["ascii", "ASCII"],
-              ] as [ViewStyle, string][]
-            ).map(([value, label]) => (
-              <Item key={value} checked={props.viewStyle === value} onSelect={() => props.onViewStyle(value)}>
-                {label}
-              </Item>
-            ))}
-            <DropdownMenu.Separator className="ui-dropdown__sep" />
-            <Item checked={props.showModel} onSelect={() => props.onShowModel(!props.showModel)}>
-              Show model
-            </Item>
-            <Item checked={props.preview} disabled={!props.sliced} onSelect={() => props.onPreview(!props.preview)}>
-              Show toolpaths
-            </Item>
-            <DropdownMenu.Separator className="ui-dropdown__sep" />
-            <Item onSelect={props.onFrame} kbd="F">Frame model</Item>
-            <DropdownMenu.Separator className="ui-dropdown__sep" />
-            <div className="ui-dropdown__block">
-              <UiStylePicker compact value={props.uiStyle} onChange={props.onUiStyle} />
-            </div>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
-
+      <nav className="studio-nav" aria-label="Workspace">
+        {panes.map((item) => {
+          const waiting = item.id === "preview" && !props.sliced;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className="studio-nav__item"
+              aria-pressed={props.pane === item.id}
+              data-waiting={waiting ? "1" : undefined}
+              title={waiting ? "Slice the plate first. There is no toolpath to show yet." : undefined}
+              onClick={() => props.onPane(item.id)}
+            >
+              {item.label}
+            </button>
+          );
+        })}
+      </nav>
+      <span className="studio-spacer" data-tauri-drag-region />
       <Popover.Root>
-        <Popover.Trigger className="menu-title">Printer</Popover.Trigger>
+        <Popover.Trigger className="studio-printer">
+          {printer ? `${printer.manufacturer} ${printer.name}` : "No printer"}
+        </Popover.Trigger>
         <Popover.Portal>
           <Popover.Content
             className="ui-dropdown ui-popover"
             sideOffset={6}
-            align="start"
+            align="end"
             collisionPadding={8}
             onInteractOutside={(event) => {
               const target = event.target as HTMLElement | null;
@@ -300,10 +233,92 @@ export function MenuBar(props: MenuBarProps) {
           </Popover.Content>
         </Popover.Portal>
       </Popover.Root>
-
-      <Button type="button" variant="ghost" size="sm" className="menu-title" onClick={() => setSettingsOpen(true)}>
-        Slice settings
+      <button type="button" className="studio-search" onClick={props.onOpenPalette}>
+        Search
+        <kbd>Ctrl K</kbd>
+      </button>
+      <Button
+        type="button"
+        variant="primary"
+        size="sm"
+        className="menu-slice"
+        disabled={props.busy || !props.hasModels}
+        onClick={props.onSlice}
+      >
+        {props.busy ? props.sliceStage || "Slicing layers" : "Slice"}
       </Button>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger className="menu-title">Menu</DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content className="ui-dropdown" sideOffset={6} align="end" collisionPadding={8}>
+            <Item onSelect={props.onNew} kbd="Ctrl N">New project</Item>
+            <Item onSelect={props.onOpen} kbd="Ctrl O">Open project…</Item>
+            <Item onSelect={props.onImport} kbd="Ctrl I">Import model…</Item>
+            <DropdownMenu.Separator className="ui-dropdown__sep" />
+            <p className="menu-label">Add a part</p>
+            {(
+              [
+                ["cube", "Cube"],
+                ["cylinder", "Cylinder"],
+                ["cone", "Cone"],
+                ["sphere", "Sphere"],
+              ] as const
+            ).map(([kind, title]) => (
+              <Item key={kind} onSelect={() => props.onAddPart(kind)} kbd="20 mm">
+                {title}
+              </Item>
+            ))}
+            <DropdownMenu.Separator className="ui-dropdown__sep" />
+            <Item onSelect={props.onSave} kbd="Ctrl S">Save</Item>
+            <Item onSelect={props.onSaveAs} kbd="Ctrl ⇧ S">Save as…</Item>
+            <Item onSelect={() => props.onExportGeometry("stl")} disabled={!props.modelCount}>
+              Export plate as STL…
+            </Item>
+            <Item onSelect={() => props.onExportGeometry("3mf")} disabled={!props.modelCount}>
+              Export plate as 3MF…
+            </Item>
+            <Item onSelect={props.onExport} disabled={!props.sliced} kbd="Ctrl E">
+              Export G-code…
+            </Item>
+            <DropdownMenu.Separator className="ui-dropdown__sep" />
+            <Item onSelect={props.onUndo} disabled={!props.canUndo} kbd="Ctrl Z">Undo</Item>
+            <Item onSelect={props.onRedo} disabled={!props.canRedo} kbd="Ctrl ⇧ Z">Redo</Item>
+            <Item onSelect={props.onDuplicate} disabled={!props.hasSelection} kbd="Ctrl D">Duplicate</Item>
+            <Item onSelect={props.onSplit} disabled={!props.hasSelection}>Split to objects</Item>
+            <Item onSelect={props.onFillPlate} disabled={!props.hasSelection}>Fill the plate</Item>
+            <Item onSelect={props.onDrop} disabled={!props.hasSelection} kbd="D">Drop to plate</Item>
+            <Item onSelect={props.onArrange} disabled={props.modelCount < 2} kbd="Ctrl ⇧ A">
+              Arrange on plate
+            </Item>
+            <Item onSelect={props.onDelete} disabled={!props.hasSelection} kbd="Del">Delete</Item>
+            <DropdownMenu.Separator className="ui-dropdown__sep" />
+            {(
+              [
+                ["solid", "Solid"],
+                ["wire", "Wireframe"],
+              ] as [ViewStyle, string][]
+            ).map(([value, label]) => (
+              <Item key={value} checked={props.viewStyle === value} onSelect={() => props.onViewStyle(value)}>
+                {label}
+              </Item>
+            ))}
+            <Item checked={props.showModel} onSelect={() => props.onShowModel(!props.showModel)}>
+              Show model
+            </Item>
+            <Item checked={props.preview} disabled={!props.sliced} onSelect={() => props.onPreview(!props.preview)}>
+              Show toolpaths
+            </Item>
+            <Item onSelect={props.onFrame} kbd="F">Frame model</Item>
+            <DropdownMenu.Separator className="ui-dropdown__sep" />
+            <Item onSelect={() => setSettingsOpen(true)}>Slice settings</Item>
+            <Item onSelect={props.onStart}>Home</Item>
+            <Item onSelect={props.onQuit}>Quit</Item>
+            <div className="ui-dropdown__block">
+              <UiStylePicker compact value={props.uiStyle} onChange={props.onUiStyle} />
+            </div>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen} title="Slice settings">
         <div className="settings-scope">
           <span>Applies to</span>
@@ -343,26 +358,6 @@ export function MenuBar(props: MenuBarProps) {
           focusNonce={props.settingsNonce}
         />
       </Sheet>
-
-      <div className="menu-status">
-        {printer ? (
-          <span className="menu-printer-name">
-            {printer.manufacturer} {printer.name}
-          </span>
-        ) : (
-          <span className="menu-printer-name">No printer</span>
-        )}
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          className="menu-slice"
-          disabled={props.busy || !props.hasModels}
-          onClick={props.onSlice}
-        >
-          {props.busy ? props.sliceStage || "Slicing layers" : "Slice"}
-        </Button>
-      </div>
     </div>
   );
 }

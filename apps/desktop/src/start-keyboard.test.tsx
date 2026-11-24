@@ -38,6 +38,9 @@ function renderStart(overrides: Partial<Parameters<typeof StartScreen>[0]> = {})
       onQuit={onQuit}
       uiStyle={"deep-field" as UiStyleId}
       onUiStyle={() => undefined}
+      recents={[]}
+      onOpenRecent={() => undefined}
+      onDropModel={() => undefined}
       {...overrides}
     />,
   );

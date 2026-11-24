@@ -10,6 +10,7 @@ import "./themes/lunar.css";
 import "./styles.css";
 import "./themes/ui-polish.css";
 import "./ui/components.css";
+import "./themes/studio.css";
 import { applyUiStyle, readUiStyle } from "./ui-styles";
 import { springPanel } from "./ui/springs";
 applyUiStyle(readUiStyle());

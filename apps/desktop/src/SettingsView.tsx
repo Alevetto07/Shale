@@ -110,7 +110,7 @@ export function SettingsView({
                 <label className="ui-field">
                   <span className="ui-field__label">backend</span>
                   <Select
-                    label="backend"
+                    label="Backend"
                     value={backend}
                     options={[
                       { value: "cli", label: "cli" },
@@ -121,11 +121,11 @@ export function SettingsView({
                 </label>
                 <label className="ui-field">
                   <span className="ui-field__label">binary</span>
-                  <TextField label="binary" value={enginePath} onChange={onEnginePath} />
+                  <TextField label="Binary" value={enginePath} onChange={onEnginePath} />
                 </label>
                 <label className="ui-field">
                   <span className="ui-field__label">libs</span>
-                  <TextField label="libs" value={libDir} onChange={onLibDir} />
+                  <TextField label="Libraries" value={libDir} onChange={onLibDir} />
                 </label>
                 <Button type="button" variant="secondary" onClick={onApplyEngine}>
                   Check engine
@@ -142,7 +142,7 @@ export function SettingsView({
             {active.id === "printers" && (
               <div className="settings-group">
                 <TextField
-                  label="filter printers"
+                  label="Filter printers"
                   value={printerQuery}
                   placeholder="Filter catalogue…"
                   onChange={setPrinterQuery}

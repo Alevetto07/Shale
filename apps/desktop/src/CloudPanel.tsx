@@ -123,7 +123,7 @@ export function CloudPanel({ taskName }: { taskName: string }) {
 
   return (
     <section className="cloud-panel">
-      <p className="cloud-kicker">Bambu cloud</p>
+      <p className="cloud-kicker">Bambu Cloud</p>
       {!session ? (
         <p className="cloud-line dim">reading the account…</p>
       ) : session.signedIn ? (
@@ -164,26 +164,26 @@ export function CloudPanel({ taskName }: { taskName: string }) {
       ) : (
         <>
           <p className="cloud-line dim">
-            the same account Bambu Studio uses: the printers in it, whether or not they are on this
+            The same account Bambu Studio uses: the printers in it, whether or not they are on this
             network.
           </p>
           {stage === "form" ? (
             <div className="cloud-form">
               <label>
-                <span>email</span>
+                <span>Email</span>
                 <Input
                   type="email"
-                  aria-label="email"
+                  aria-label="Email"
                   value={email}
                   autoComplete="username"
                   onChange={(event) => setEmail(event.target.value)}
                 />
               </label>
               <label>
-                <span>password</span>
+                <span>Password</span>
                 <Input
                   type="password"
-                  aria-label="password"
+                  aria-label="Password"
                   value={password}
                   autoComplete="current-password"
                   onChange={(event) => setPassword(event.target.value)}
@@ -199,10 +199,10 @@ export function CloudPanel({ taskName }: { taskName: string }) {
           ) : (
             <div className="cloud-form">
               <label>
-                <span>code</span>
+                <span>Code</span>
                 <Input
                   inputMode="numeric"
-                  aria-label="code"
+                  aria-label="Code"
                   value={code}
                   autoComplete="one-time-code"
                   onChange={(event) => setCode(event.target.value)}

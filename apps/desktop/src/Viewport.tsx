@@ -47,6 +47,8 @@ interface ViewportProps {
   slopeDim?: string;
   mode: TransformMode;
   frameToken: number;
+  cameraPreset?: "iso" | "top" | "front";
+  cameraToken?: number;
   /// Measuring is a mode of its own: clicks pick points instead of selecting.
   measuring: boolean;
   marks: Array<[number, number, number]>;
@@ -137,9 +139,10 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
       }}
     >
       <color attach="background" args={[sceneBg]} />
-      <ambientLight intensity={0.55} />
-      <directionalLight position={[120, -80, 220]} intensity={0.9} color="#e9e8f2" />
-      <directionalLight position={[-80, 140, 40]} intensity={0.18} color="#8a8798" />
+      <hemisphereLight args={["#d9d6ea", "#1c1e28", 0.72]} />
+      <ambientLight intensity={0.22} />
+      <directionalLight position={[140, -90, 260]} intensity={1.15} color="#f6f4ff" />
+      <directionalLight position={[-180, 120, 90]} intensity={0.38} color="#7d7a90" />
       <Framer
         width={props.width}
         depth={props.depth}
@@ -160,6 +163,7 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
             key={model.id}
             model={model}
             viewStyle={props.viewStyle}
+            accent={props.slopeAccent}
             mode={props.mode}
             measuring={props.measuring}
             onMeasure={props.onMeasure}
@@ -187,6 +191,12 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
       )}
       <MeasureMarks marks={props.marks} label={props.measureLabel} />
       <CameraRig />
+      <CameraAim
+        preset={props.cameraPreset ?? "iso"}
+        token={props.cameraToken ?? 0}
+        cx={cx}
+        cy={cy}
+      />
     </Canvas>
     </div>
   );
@@ -369,7 +379,6 @@ function Bed({
 }) {
   const cx = centerIsZero ? 0 : width / 2;
   const cy = centerIsZero ? 0 : depth / 2;
-  const divisions = Math.max(4, Math.round(Math.max(width, depth) / 10));
   const outline = useMemo(() => new THREE.EdgesGeometry(new THREE.PlaneGeometry(width, depth)), [width, depth]);
   return (
     <group>
@@ -387,13 +396,7 @@ function Bed({
           depthWrite={false}
         />
       </mesh>
-      <gridHelper
-        args={[Math.max(width, depth), divisions, "#34343e", "#1e1f28"]}
-        rotation={[Math.PI / 2, 0, 0]}
-        position={[cx, cy, 0.04]}
-      >
-        <lineBasicMaterial attach="material" vertexColors transparent opacity={0.7} depthWrite={false} />
-      </gridHelper>
+      <FadingGrid width={width} depth={depth} cx={cx} cy={cy} />
       <lineSegments geometry={outline} position={[cx, cy, 0.08]}>
         <lineBasicMaterial color="#4a4856" transparent opacity={0.9} depthWrite={false} />
       </lineSegments>
@@ -452,10 +455,95 @@ function Axes({ width, depth, cx, cy }: { width: number; depth: number; cx: numb
   );
 }
 
+function FadingGrid({ width, depth, cx, cy }: { width: number; depth: number; cx: number; cy: number }) {
+  const geometry = useMemo(() => {
+    const positions: number[] = [];
+    const alphas: number[] = [];
+    const step = 10;
+    const x0 = cx - width / 2;
+    const y0 = cy - depth / 2;
+    const x1 = cx + width / 2;
+    const y1 = cy + depth / 2;
+    const maxR = Math.hypot(width, depth) * 0.62;
+    const push = (ax: number, ay: number, bx: number, by: number) => {
+      const fade = (x: number, y: number) => Math.max(0, 1 - Math.hypot(x - cx, y - cy) / maxR);
+      positions.push(ax, ay, 0.05, bx, by, 0.05);
+      alphas.push(fade(ax, ay), fade(bx, by));
+    };
+    for (let x = x0; x <= x1 + 0.01; x += step) push(x, y0, x, y1);
+    for (let y = y0; y <= y1 + 0.01; y += step) push(x0, y, x1, y);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute("alpha", new THREE.Float32BufferAttribute(alphas, 1));
+    return geo;
+  }, [width, depth, cx, cy]);
+  const light =
+    typeof document !== "undefined" && document.documentElement.getAttribute("data-ui-theme") === "lunar";
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        uniforms: { uColor: { value: new THREE.Color(light ? "#7d8796" : "#8d8aa0") } },
+        vertexShader: `
+          attribute float alpha;
+          varying float vAlpha;
+          void main() {
+            vAlpha = alpha;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 uColor;
+          varying float vAlpha;
+          void main() {
+            gl_FragColor = vec4(uColor, vAlpha * 0.72);
+          }
+        `,
+      }),
+    [light],
+  );
+  return <lineSegments geometry={geometry} material={material} />;
+}
+
+function CameraAim({
+  preset,
+  token,
+  cx,
+  cy,
+}: {
+  preset: "iso" | "top" | "front";
+  token: number;
+  cx: number;
+  cy: number;
+}) {
+  const camera = useThree((state) => state.camera);
+  const controls = useThree((state) => state.controls);
+  const invalidate = useThree((state) => state.invalidate);
+  useLayoutEffect(() => {
+    if (token === 0) return;
+    const next =
+      preset === "top"
+        ? ([cx, cy - 0.01, 460] as const)
+        : preset === "front"
+          ? ([cx, cy - 380, 70] as const)
+          : ([cx + 80, cy - 220, 180] as const);
+    camera.position.set(next[0], next[1], next[2]);
+    camera.up.set(0, 0, 1);
+    camera.lookAt(cx, cy, 12);
+    const orbit = controls as { target?: THREE.Vector3; update?: () => void } | null;
+    orbit?.target?.set(cx, cy, 12);
+    orbit?.update?.();
+    invalidate();
+  }, [token, preset, cx, cy, camera, controls, invalidate]);
+  return null;
+}
+
 function PrintModel({
   model,
   mode,
   viewStyle,
+  accent,
   measuring,
   onMeasure,
   onSelect,
@@ -479,6 +567,7 @@ function PrintModel({
   paintArmed: boolean;
   paintRadius: number;
   onBrush: (id: number, points: Array<[number, number, number]>) => void;
+  accent?: string;
 }) {
   const geometry = useMemo(() => {
     const geo = new THREE.BufferGeometry();
@@ -653,10 +742,9 @@ function PrintModel({
             <meshBasicMaterial color={model.selected ? "#b9b3ff" : "#a39fb4"} wireframe />
           ) : (
             <meshStandardMaterial
-              color={model.selected ? "#b9b3ff" : "#a39fb4"}
-              roughness={0.62}
-              metalness={0.02}
-              flatShading
+              color={model.selected ? accent || "#b9b3ff" : "#c8c4d4"}
+              roughness={0.4}
+              metalness={0.14}
             />
           )}
         </mesh>

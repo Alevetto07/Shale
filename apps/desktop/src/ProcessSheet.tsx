@@ -385,12 +385,12 @@ export function ProcessSheet(props: Props) {
         {!nonPlanar && (
           <div className="process-tools">
             <label className="process-search">
-              <span className="visually-hidden">search settings</span>
+              <span className="visually-hidden">Search settings</span>
               <Input
                 type="search"
                 value={search}
-                placeholder="search settings"
-                aria-label="search settings"
+                placeholder="Search settings"
+                aria-label="Search settings"
                 onChange={(event) => setSearch(event.target.value)}
               />
             </label>

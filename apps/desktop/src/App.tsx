@@ -41,6 +41,7 @@ import { variantOptionLabel } from "./profile-labels";
 import { toast } from "sonner";
 import { Frame } from "./theme";
 import { MenuBar } from "./MenuBar";
+import { SliceDock } from "./ui/slice-dock";
 import { applyUiStyle, readUiStyle, writeUiStyle, type UiStyleId } from "./ui-styles";
 import {
   nonplanarFromSliceSettings,
@@ -286,6 +287,8 @@ export function App() {
   const [measureMarks, setMeasureMarks] = useState<Array<[number, number, number]>>([]);
   const [measureSpan, setMeasureSpan] = useState<MeasureSpan | null>(null);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("solid");
+  const [cameraPreset, setCameraPreset] = useState<"iso" | "top" | "front">("iso");
+  const [cameraToken, setCameraToken] = useState(0);
   const [uiStyle, setUiStyle] = useState<UiStyleId>(() => readUiStyle());
   const [setupWizardOpen, setSetupWizardOpen] = useState(() => {
     if (import.meta.env.VITE_SHALE_MOCK === "1") {
@@ -1320,6 +1323,34 @@ export function App() {
     await importFromPath(picked);
   }
 
+  const importPathRef = useRef(importFromPath);
+  importPathRef.current = importFromPath;
+  useEffect(() => {
+    if (import.meta.env.VITE_SHALE_MOCK === "1") return;
+    const win = getCurrentWindow() as {
+      onDragDropEvent?: (
+        cb: (event: { payload: { type: string; paths?: string[] } }) => void,
+      ) => Promise<() => void>;
+    };
+    if (typeof win.onDragDropEvent !== "function") return;
+    let stop: (() => void) | undefined;
+    let alive = true;
+    void win
+      .onDragDropEvent((event) => {
+        if (event.payload.type !== "drop") return;
+        const path = event.payload.paths?.[0];
+        if (path && /\.(stl|3mf|step|stp)$/i.test(path)) void importPathRef.current(path);
+      })
+      .then((off) => {
+        if (!alive) off();
+        else stop = off;
+      });
+    return () => {
+      alive = false;
+      stop?.();
+    };
+  }, []);
+
   async function cancelImport() {
     try {
       await api.cancelImport();
@@ -2025,7 +2056,7 @@ export function App() {
 
   /// One drag of the brush. The whole path goes over the boundary together, so a
   /// stroke is one edit on the undo stack and not thirty: taking a pen stroke
-  /// back should take back the stroke.
+  /// back should Take back the stroke.
   async function paintStroke(target: number, points: Array<[number, number, number]>) {
     const block = paintMode === "block";
     try {
@@ -2994,6 +3025,9 @@ export function App() {
           onLiveSlice={setLiveSlice}
           settingsNonce={settingsNonce}
           settingsSection={settingsSection}
+          pane={pane}
+          onPane={selectPane}
+          onOpenPalette={() => setCommandPaletteOpen(true)}
         />
       </TitleBar>
 
@@ -3146,6 +3180,12 @@ export function App() {
             uiStyle={uiStyle}
             onUiStyle={chooseUiStyle}
             onRerunSetup={() => setSetupWizardOpen(true)}
+            recents={recents.all}
+            onOpenRecent={(path) => void openProject(path)}
+            onDropModel={(path) => {
+              if (path) void importFromPath(path);
+              else void importModel();
+            }}
           />
         </div>
       ) : pane === "device" ? (
@@ -3177,6 +3217,7 @@ export function App() {
       ) : (
       <div className="workspace">
         <aside className="panel">
+        <div className="panel-scroll">
         <PaneFade pane={pane}>
           {pane === "prepare" && (
           <>
@@ -3193,7 +3234,7 @@ export function App() {
                     <span className="plate-name">Plate {plate.index + 1}</span>
                     <span className="plate-count">
                       {plate.models === 0
-                        ? "empty"
+                        ? "Empty"
                         : plate.models === 1
                           ? "1 part"
                           : `${plate.models} parts`}
@@ -3211,18 +3252,18 @@ export function App() {
                   )}
                 </span>
               ))}
-              <button type="button" title="add a plate" onClick={() => void newPlate()}>
+              <button type="button" title="Add a plate" onClick={() => void newPlate()}>
                 +
               </button>
             </div>
             <p className="hint">
-              each plate holds its own parts and is sliced on its own. a project saves every plate with it.
+              Each plate holds its own parts and is sliced on its own. A project saves every plate with it.
             </p>
           </Frame>
 
           <Frame title="Objects">
             {models.length === 0 ? (
-              <p className="hint">nothing on this plate yet. import a model and it is listed here.</p>
+              <p className="hint">Nothing on this plate yet. Import a model and it is listed here.</p>
             ) : (
               <ul className="objects" role="listbox" aria-label="Objects on this plate">
                 {models.map((model, index) => (
@@ -3258,7 +3299,7 @@ export function App() {
 
           <Frame title="Paint support">
             {paintTarget === null ? (
-              <p className="hint">import a part and its undersides can be painted here.</p>
+              <p className="hint">Import a part and its undersides can be painted here.</p>
             ) : (
               <>
                 <p className="hint">
@@ -3277,11 +3318,11 @@ export function App() {
                 {/* Two brushes, because they ask for opposite things. A patch is
                     just triangles; what you press decides whether support grows
                     under them or is kept out. */}
-                <div className="row paint-brush" role="group" aria-label="brush">
+                <div className="row paint-brush" role="group" aria-label="Brush">
                   {(
                     [
-                      ["enforce", "hold up"],
-                      ["block", "keep out"],
+                      ["enforce", "Hold up"],
+                      ["block", "Keep out"],
                     ] as const
                   ).map(([value, label]) => (
                     <button
@@ -3295,7 +3336,7 @@ export function App() {
                     </button>
                   ))}
                 </div>
-                <div className="row paint-brush" role="group" aria-label="brush reach">
+                <div className="row paint-brush" role="group" aria-label="Brush reach">
                   <button
                     type="button"
                     className={`paint-brush-button${paintArmed ? " on" : ""}`}
@@ -3303,10 +3344,10 @@ export function App() {
                     title="Drag over the part to paint the surface under the cursor"
                     onClick={() => setPaintArmed((armed) => !armed)}
                   >
-                    brush
+                    Brush
                   </button>
                   <label className="paint-radius ui-field">
-                    <span className="ui-field__label">reach</span>
+                    <span className="ui-field__label">Reach</span>
                     <Slider
                       label="Brush reach in millimetres"
                       value={[Math.max(1, Math.min(40, Number(paintRadius) || 1))]}
@@ -3350,8 +3391,8 @@ export function App() {
                 </div>
                 )}
                 <p className="hint">
-                  a painted face is held up by a column to the bed, and painting turns the plate's own
-                  support off: what you paint is the whole of it.
+                  A painted face is held up by a column to the bed, and painting turns the plate's own
+                  support off. What you paint is the whole of it.
                 </p>
               </>
             )}
@@ -3365,13 +3406,13 @@ export function App() {
           {pane === "prepare" && (<>
           <Frame title="Printer">
             <label>
-              filter
-              <TextField label="filter" value={printerQuery} placeholder="name…" onChange={setPrinterQuery} />
+              Filter
+              <TextField label="Filter" value={printerQuery} placeholder="Name…" onChange={setPrinterQuery} />
             </label>
             <label>
-              machine
+              Machine
               <Select
-                label="machine"
+                label="Machine"
                 value={printerId}
                 options={filteredPrinters.map((printer) => ({
                   value: printer.id,
@@ -3381,9 +3422,9 @@ export function App() {
               />
             </label>
             <label>
-              nozzle
+              Nozzle
               <Select
-                label="nozzle"
+                label="Nozzle"
                 value={variant ?? ""}
                 options={variants.map((item) => ({
                   value: item.name,
@@ -3393,9 +3434,9 @@ export function App() {
               />
             </label>
             <label>
-              quality
+              Quality
               <Select
-                label="quality"
+                label="Quality"
                 value={quality ?? ""}
                 options={qualities.map((item) => ({ value: item.quality_type, label: item.name }))}
                 onChange={(next) => {
@@ -3405,19 +3446,20 @@ export function App() {
               />
             </label>
             <label>
-              material
+              Material
               <Select
-                label="material"
+                label="Material"
                 value={material ?? ""}
                 options={spools.map((item) => ({ value: item.id, label: item.label }))}
                 onChange={(next) => setMaterial(next || null)}
               />
             </label>
-            <p className="meta">
-              bed {bed.width.toFixed(0)} x {bed.depth.toFixed(0)} x {bed.height.toFixed(0)} mm
-              {"\n"}
-              nozzle {bed.nozzle_size.toFixed(2)}  line {bed.line_width.toFixed(2)}  {bed.adhesion_type}  {bed.speed_print.toFixed(0)} mm/s
-              {bed.warning_count > 0 ? `\n${bed.warning_count} resolver warnings` : ""}
+            <p className="value-chips">
+              <span>Bed {bed.width.toFixed(0)} × {bed.depth.toFixed(0)} × {bed.height.toFixed(0)} mm</span>
+              <span>Nozzle {bed.nozzle_size.toFixed(2)} mm</span>
+              <span>Line {bed.line_width.toFixed(2)} mm</span>
+              <span>{bed.speed_print.toFixed(0)} mm/s</span>
+              {bed.warning_count > 0 ? <span>{bed.warning_count} resolver warnings</span> : null}
             </p>
           </Frame>
 
@@ -3435,17 +3477,17 @@ export function App() {
           <Frame title="AMS">
             <p className="meta">
               {ams.filter(Boolean).length === 0
-                ? "one spool: the plate material"
+                ? "One spool: the plate material"
                 : `plate plus ${ams.filter(Boolean).length} spool${ams.filter(Boolean).length === 1 ? "" : "s"}`}
             </p>
             {[0, 1, 2].map((index) => (
               <label key={index}>
-                spool {index + 2}
+                Spool {index + 2}
                 <Select
-                  label={`spool ${index + 2}`}
+                  label={`Spool ${index + 2}`}
                   value={ams[index] ?? ""}
                   options={[
-                    { value: "", label: "empty" },
+                    { value: "", label: "Empty" },
                     ...materials.map((item) => ({ value: item.id, label: item.label })),
                   ]}
                   onChange={(next) =>
@@ -3455,31 +3497,31 @@ export function App() {
               </label>
             ))}
             <p className="hint">
-              the plate material is spool 1. give a part a spool in the model frame and the slice gets a tool change,
-              its own hotend temperature and its own filament.
+              The plate material is Spool 1. Give a part a spool in the model frame and the slice gets a tool change,
+              its own hotend temperature, and its own filament.
             </p>
           </Frame>
 
-          <Frame title="Calibration">
+          <Frame title="Calibration" advanced>
             <p className="meta">
               {tower
                 ? `${tower.bands.length} bands, ${tower.bands[0].value} to ${
                     tower.bands[tower.bands.length - 1].value
                   } ${tower.unit}, ${tower.band_height_mm} mm each — ${tower.kind}`
-                : "a five-band temperature tower, 5 °C apart"}
+                : "A five-band temperature tower, 5 °C apart"}
             </p>
             <div className="row">
               <button type="button" disabled={calibrating} onClick={() => void addCalibration("temperature")}>
-                temperature tower
+                Temperature tower
               </button>
               <button type="button" disabled={calibrating} onClick={() => void addCalibration("flow")}>
-                flow coupon
+                Flow coupon
               </button>
               <button type="button" disabled={calibrating} onClick={() => void addCalibration("pressure")}>
-                pressure tower
+                Pressure tower
               </button>
               <button type="button" disabled={!tower || calibrating} onClick={() => void stepCalibration()}>
-                step it
+                Step it
               </button>
             </div>
             {calibration && (
@@ -3491,17 +3533,17 @@ export function App() {
               </p>
             )}
             <p className="hint">
-              the tower alternates 20 mm and 26 mm blocks, so every band overhangs the one below by 3 mm; the flow
-              coupon is a 30 mm single-wall tube, because flow is measured with calipers, not judged. slice it, then
+              The tower alternates 20 mm and 26 mm blocks, so every band overhangs the one below by 3 mm. The flow
+              coupon is a 30 mm single-wall tube, because flow is measured with calipers, not judged. Slice it, then
               step it: one M104, M221 or M900 per band, written into the slice, and the preview stays as it was.
             </p>
           </Frame>
 
           <Frame title="Slice">
             <label>
-              layer mm
+              Layer height
               <NumericControl
-                label="layer mm"
+                label="Layer height"
                 value={layerHeight}
                 min={0.05}
                 max={0.8}
@@ -3511,9 +3553,9 @@ export function App() {
               />
             </label>
             <label>
-              infill %
+              Infill
               <NumericControl
-                label="infill %"
+                label="Infill"
                 value={infill}
                 min={0}
                 max={100}
@@ -3528,12 +3570,12 @@ export function App() {
               checked={supports}
               onChange={(value) => void setScopedOverride(QUICK_SETTING_KEYS.supports, value ? "1" : "0")}
             >
-              supports
+              Supports
             </SwitchRow>
             <label>
-              hotend C
+              Nozzle
               <NumericControl
-                label="hotend C"
+                label="Nozzle temperature"
                 value={nozzle}
                 min={0}
                 max={400}
@@ -3545,9 +3587,9 @@ export function App() {
               />
             </label>
             <label>
-              bed C
+              Bed
               <NumericControl
-                label="bed C"
+                label="Bed temperature"
                 value={bedTemp}
                 min={0}
                 max={150}
@@ -3558,11 +3600,11 @@ export function App() {
                 }
               />
             </label>
-            <p className="hint">layer height also sets the first layer. changing quality reloads these values.</p>
+            <p className="hint">Layer height also sets the first layer. Changing quality reloads these values.</p>
             <label>
-              chord mm
+              Chord
               <NumericControl
-                label="chord mm"
+                label="Chord"
                 value={chord}
                 min={0.02}
                 max={0.5}
@@ -3577,7 +3619,7 @@ export function App() {
             <label>
               turn °
               <NumericControl
-                label="turn"
+                label="Turn"
                 value={turn}
                 min={2}
                 max={45}
@@ -3587,7 +3629,7 @@ export function App() {
               />
             </label>
             <button type="button" onClick={() => setChordTied(true)}>
-              tie chord to layer
+              Tie chord to the layer
             </button>
             <p className="hint">
               step files are tessellated here. chord is half the layer height, and no coarser than half the nozzle.
@@ -3598,11 +3640,11 @@ export function App() {
           <Frame title="Supports">
             <label>
               angle
-              <NumericControl label="angle" value={supportAngle} min={0} max={90} step={1} digits={0} onChange={setSupportAngle} />
+              <NumericControl label="Angle" value={supportAngle} min={0} max={90} step={1} digits={0} onChange={setSupportAngle} />
             </label>
             <label>
               bridge mm
-              <NumericControl label="bridge mm" value={bridgeMm} min={0} max={80} step={1} digits={0} onChange={setBridgeMm} />
+              <NumericControl label="Bridge" value={bridgeMm} min={0} max={80} step={1} digits={0} onChange={setBridgeMm} />
             </label>
             <div className="row">
               <button type="button" disabled={selectedId == null || supportBusy} onClick={() => void proposeSupports()}>
@@ -3634,7 +3676,7 @@ export function App() {
             <label>
               kind
               <Select
-                label="kind"
+                label="Kind"
                 value={kind}
                 options={[
                   { value: "pause", label: "pause" },
@@ -3651,7 +3693,7 @@ export function App() {
               <label>
                 by
                 <Select
-                  label="by"
+                  label="By"
                   value={anchor}
                   options={[
                     { value: "layer", label: "layer" },
@@ -3675,18 +3717,18 @@ export function App() {
             {kind === "fan" && (
               <label>
                 percent
-                <NumericControl label="percent" value={fanPercent} min={0} max={100} step={1} digits={0} onChange={setFanPercent} />
+                <NumericControl label="Percent" value={fanPercent} min={0} max={100} step={1} digits={0} onChange={setFanPercent} />
               </label>
             )}
             {kind === "temperature" && (
               <>
                 <label>
-                  hotend C
-                  <NumericControl label="hotend C" value={tempNozzle} min={0} max={400} step={1} digits={0} onChange={setTempNozzle} />
+                  Nozzle
+                  <NumericControl label="Nozzle temperature" value={tempNozzle} min={0} max={400} step={1} digits={0} onChange={setTempNozzle} />
                 </label>
                 <label>
-                  bed C
-                  <NumericControl label="bed C" value={tempBed} min={0} max={150} step={1} digits={0} onChange={setTempBed} />
+                  Bed
+                  <NumericControl label="Bed temperature" value={tempBed} min={0} max={150} step={1} digits={0} onChange={setTempBed} />
                 </label>
                 <SwitchRow checked={tempWait} onChange={setTempWait}>
                   wait until reached
@@ -3701,7 +3743,7 @@ export function App() {
             {(kind === "pause" || kind === "message" || kind === "park_and_wait") && (
               <label>
                 note
-                <TextField label="note" value={note} onChange={setNote} />
+                <TextField label="Note" value={note} onChange={setNote} />
               </label>
             )}
             <button type="button" onClick={() => void addInstruction()}>
@@ -3742,7 +3784,7 @@ export function App() {
                 <label>
                   spool
                   <Select
-                    label="spool"
+                    label="Spool"
                     value={String(selected.slot ?? 0)}
                     options={[
                       { value: "0", label: "plate (T1)" },
@@ -4035,7 +4077,7 @@ export function App() {
           {pane === "preview" && (
             <Frame title="Slices">
               {history.length === 0 ? (
-                <p className="hint">no slices yet</p>
+                <p className="hint">No slices yet</p>
               ) : (
                 <div className="slice-list">
                   {history.map((record) => {
@@ -4083,17 +4125,17 @@ export function App() {
           {pane === "preview" && (<>
           <Frame title="Cost">
             <label>
-              currency
+              Currency
               <TextField
-                label="currency"
+                label="Currency"
                 value={cost.currency}
                 onChange={(value) => changeCost({ currency: value })}
               />
             </label>
             <label>
-              price / kg
+              Price per kg
               <TextField
-                label="price per kg"
+                label="Price per kg"
                 value={String(cost.price_per_kg)}
                 onChange={(value) => {
                   const next = Number(value.replace(",", "."));
@@ -4102,9 +4144,9 @@ export function App() {
               />
             </label>
             <label>
-              power, W
+              Power
               <TextField
-                label="printer power"
+                label="Printer power"
                 value={String(cost.watts)}
                 onChange={(value) => {
                   const next = Number(value.replace(",", "."));
@@ -4113,9 +4155,9 @@ export function App() {
               />
             </label>
             <label>
-              energy / kWh
+              Energy per kWh
               <TextField
-                label="electricity price"
+                label="Electricity price"
                 value={String(cost.electricity_per_kwh)}
                 onChange={(value) => {
                   const next = Number(value.replace(",", "."));
@@ -4124,7 +4166,7 @@ export function App() {
               />
             </label>
             <p className="hint">
-              filament weight is the slice's metres through the material's strand; energy is
+              Filament weight is the slice's metres through the material's strand. Energy is
               printer power times the estimate. both figures are only ever as good as the three
               numbers above.
             </p>
@@ -4132,15 +4174,15 @@ export function App() {
           </>)}
 
           {pane === "prepare" && (<>
-          <Frame title="Engine">
+          <Frame title="Engine" advanced>
             <label>
-              backend
+              Backend
               <Select
-                label="backend"
+                label="Backend"
                 value={backend}
                 options={[
-                  { value: "cli", label: "cli  log progress" },
-                  { value: "arcus", label: "arcus  live layers" },
+                  { value: "cli", label: "CLI, log progress" },
+                  { value: "arcus", label: "Arcus, live layers" },
                 ]}
                 onChange={(next) => {
                   setBackend(next);
@@ -4153,25 +4195,41 @@ export function App() {
               />
             </label>
             <label>
-              binary
-              <TextField label="binary" value={enginePath} onChange={setEnginePath} />
+              Binary
+              <TextField label="Binary" value={enginePath} onChange={setEnginePath} />
             </label>
             <label>
-              libs
+              Libraries
               <TextField
-                label="libs"
+                label="Libraries"
                 value={libDir}
                 placeholder="bundled libs, if needed"
                 onChange={setLibDir}
               />
             </label>
             <button type="button" onClick={() => void applyEngine()}>
-              check engine
+              Check engine
             </button>
           </Frame>
           </>)}
 
         </PaneFade>
+        </div>
+        {(pane === "prepare" || pane === "preview") && (
+          <SliceDock
+            busy={busy}
+            stage={busy && progress ? sliceStage(progress.message) : null}
+            fraction={busy && progress ? progress.fraction : null}
+            disabled={busy || models.length === 0}
+            onSlice={() => void slice()}
+            time={layerCount > 0 && printSeconds != null ? clockTime(printSeconds) : null}
+            filament={layerCount > 0 && filamentMetres != null ? `${filamentMetres.toFixed(1)} m` : null}
+            weight={
+              layerCount > 0 && grams != null ? `${grams < 10 ? grams.toFixed(1) : grams.toFixed(0)} g` : null
+            }
+            cost={layerCount > 0 && estimate ? money(estimate.total) : null}
+          />
+        )}
         </aside>
 
         <main className="stage">
@@ -4179,9 +4237,9 @@ export function App() {
               moved on from the last slice it says so and offers the press. */}
           {pane === "prepare" && stale && (
             <p className="slice-again" role="status">
-              changed since slice {lastSlice?.n}
+              Changed since slice {lastSlice?.n}
               <button type="button" onClick={() => void slice()}>
-                slice again
+                Slice again
               </button>
             </p>
           )}
@@ -4255,6 +4313,8 @@ export function App() {
             slopeDim={slopeRamp.dim}
             mode={mode}
             frameToken={frameToken}
+            cameraPreset={cameraPreset}
+            cameraToken={cameraToken}
             measuring={measuring}
             marks={measureMarks}
             measureLabel={measureSpan ? `${measureSpan.distance_mm.toFixed(2)} mm` : null}
@@ -4274,94 +4334,119 @@ export function App() {
           />
           </Suspense>
           {models.length === 0 && !preview && (
-            <p className="caption">no model on the plate. import an stl, 3mf, or step</p>
+            <div className="studio-empty">
+              <h2>No model on this plate</h2>
+              <p>Drop an STL, 3MF, or STEP file here, or import one.</p>
+              <button type="button" onClick={() => void importModel()}>
+                Import a model
+              </button>
+            </div>
           )}
-          </div>
-          <footer className="scrubber">
-            <div className="scrub-bar" role="group" aria-label="View style">
-              <em>view</em>
-              {(["solid", "wire", "ascii"] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  className={viewStyle === item ? "selected" : ""}
-                  onClick={() => setViewStyle(item)}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
+          <div className="studio-float studio-float--tools" role="toolbar" aria-label="View">
+            {(
+              [
+                ["solid", "Solid"],
+                ["wire", "Wireframe"],
+              ] as const
+            ).map(([item, label]) => (
+              <button
+                key={item}
+                type="button"
+                aria-pressed={viewStyle === item}
+                onClick={() => setViewStyle(item)}
+              >
+                {label}
+              </button>
+            ))}
+            {(
+              [
+                ["iso", "Iso"],
+                ["top", "Top"],
+                ["front", "Front"],
+              ] as const
+            ).map(([item, label]) => (
+              <button
+                key={item}
+                type="button"
+                aria-pressed={cameraPreset === item}
+                onClick={() => {
+                  setCameraPreset(item);
+                  setCameraToken((token) => token + 1);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+            <button type="button" onClick={() => setFrameToken((token) => token + 1)}>
+              Frame
+            </button>
             {preview && (
-            <div className="scrub-bar" role="group" aria-label="Toolpath colour">
-              <em>colour</em>
-              {(["type", "speed", "slope"] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  className={colourMode === item ? "selected" : ""}
-                  onClick={() => setColourMode(item)}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-            )}
-            {preview ? (
               <>
-                <div className="scrub-bar" role="group" aria-label="Preview playback">
-                  <em>preview</em>
                 <button
                   type="button"
-                  className={playing ? "selected" : ""}
+                  aria-pressed={playing}
                   onClick={() => {
-                    // At the top of a finished preview, play means watch it
-                    // again, not press a button that does nothing.
                     if (!playing && layer >= layerCount - 1) setLayer(0);
                     setPlaying((on) => !on);
                   }}
                 >
-                  {playing ? "pause" : "play"}
+                  {playing ? "Pause" : "Play"}
                 </button>
                 <button type="button" onClick={() => { setPreview(false); setShowModel(true); }}>
-                  model
+                  Model
                 </button>
                 <button type="button" onClick={() => void addMarkAt(layer, false)}>
-                  pause here
+                  Pause here
                 </button>
                 <button type="button" onClick={() => void addMarkAt(layer, true)}>
-                  swap here
+                  Swap here
                 </button>
-                <SwitchRow checked={showModel} onChange={setShowModel}>
-                  ghost
-                </SwitchRow>
-                </div>
-                <div className="layer-slider">
-                  <div className="readout">
-                    {layerZ[layer] != null ? `z ${layerZ[layer].toFixed(2)}` : `layer ${layer + 1}`}
-                    {` / ${layerCount}`}
-                    {minutes == null ? "" : ` · ~${minutes} min`}
-                    {marksHere.length > 0 ? ` · ${marksHere.map((item) => item.summary).join(" / ")}` : ""}
-                  </div>
-                  <Slider
-                    label="Layer"
-                    value={[layer]}
-                    min={0}
-                    max={Math.max(0, layerCount - 1)}
-                    step={1}
-                    inputDigits={0}
-                    marks={marks}
-                    formatValue={(value) => `layer ${value + 1}`}
-                    onValueChange={setLayer}
-                  />
-                </div>
+                <button type="button" aria-pressed={showModel} onClick={() => setShowModel((on) => !on)}>
+                  Ghost
+                </button>
               </>
-            ) : (
-              <p className="hint">drag to orbit. scroll to zoom. z is up.  1 move  2 rotate  3 scale  f frame</p>
             )}
-            {progress && (
-              <Meter fraction={progress.fraction} message={progress.message} stage={sliceStage(progress.message)} />
-            )}
-          </footer>
+          </div>
+          {preview && (
+            <div className="studio-float studio-float--layers">
+              <div className="studio-float" role="toolbar" aria-label="Toolpath colour">
+                {(
+                  [
+                    ["type", "Feature"],
+                    ["speed", "Speed"],
+                    ["slope", "Slope"],
+                  ] as const
+                ).map(([item, label]) => (
+                  <button
+                    key={item}
+                    type="button"
+                    aria-pressed={colourMode === item}
+                    onClick={() => setColourMode(item)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="readout">
+                {layerZ[layer] != null ? `Z ${layerZ[layer].toFixed(2)}` : `Layer ${layer + 1}`}
+                {` / ${layerCount}`}
+                {minutes == null ? "" : ` · ~${minutes} min`}
+                {marksHere.length > 0 ? ` · ${marksHere.map((item) => item.summary).join(" / ")}` : ""}
+              </div>
+              <Slider
+                label="Layer"
+                value={[layer]}
+                min={0}
+                max={Math.max(0, layerCount - 1)}
+                step={1}
+                inputDigits={0}
+                marks={marks}
+                formatValue={(value) => `Layer ${value + 1}`}
+                onValueChange={setLayer}
+              />
+            </div>
+          )}
+          </div>
         </main>
       </div>
       )}
@@ -4459,52 +4544,52 @@ function JobSummary({
   const className =
     variant === "demo" ? "job-card demo-cost" : "job-card job-card--panel";
   if (layerCount <= 0) {
-    return <span className="job-state quiet">not sliced</span>;
+    return <span className="job-state quiet">Not sliced</span>;
   }
   return (
     <div className={className} data-sliced="yes">
-      {variant !== "panel" && <span className="job-state">sliced</span>}
+      {variant !== "panel" && <span className="job-state">Sliced</span>}
       <dl>
         <div>
-          <dt>time</dt>
+          <dt>Time</dt>
           <dd>{printSeconds == null ? "—" : formatClock(printSeconds)}</dd>
         </div>
         <div>
-          <dt>length</dt>
+          <dt>Filament</dt>
           <dd>{filamentMetres == null ? "—" : `${filamentMetres.toFixed(1)} m`}</dd>
         </div>
         {grams != null && (
           <div>
-            <dt>weight</dt>
+            <dt>Weight</dt>
             <dd>{grams < 10 ? grams.toFixed(1) : grams.toFixed(0)} g</dd>
           </div>
         )}
         <div>
-          <dt>layers</dt>
+          <dt>Layers</dt>
           <dd>{layerCount}</dd>
         </div>
         {estimate && (
           <>
             <div>
-              <dt>material</dt>
+              <dt>Material</dt>
               <dd>{formatMoney(estimate.filament_cost)}</dd>
             </div>
             <div>
-              <dt>energy</dt>
+              <dt>Energy</dt>
               <dd>
                 {estimate.kwh.toFixed(3)} kWh · {formatMoney(estimate.energy_cost)}
               </dd>
             </div>
             {estimate.spools.map((spool) => (
               <div key={spool.slot}>
-                <dt>{`spool ${spool.slot + 1}`}</dt>
+                <dt>{`Spool ${spool.slot + 1}`}</dt>
                 <dd>
                   {spool.grams.toFixed(0)} g · {formatMoney(spool.cost)}
                 </dd>
               </div>
             ))}
             <div className="job-total">
-              <dt>total</dt>
+              <dt>Total</dt>
               <dd>{formatMoney(estimate.total)}</dd>
             </div>
           </>

@@ -1,10 +1,11 @@
 import { motion, useReducedMotion } from "motion/react";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { EASE_OUT } from "./ui/motion";
-import type { PrinterInfo } from "./api";
+import type { PrinterInfo, RecentProject } from "./api";
 import { PlateField } from "./field/PlateField";
 import { uiStyleById, type UiStyleId } from "./ui-styles";
 import { Button, Input } from "./ui";
+import { HomeLanding } from "./ui/home-landing";
 
 const SettingsView = lazy(() => import("./SettingsView").then((module) => ({ default: module.SettingsView })));
 
@@ -34,6 +35,9 @@ export function StartScreen({
   onRerunSetup,
   uiStyle,
   onUiStyle,
+  recents,
+  onOpenRecent,
+  onDropModel,
 }: {
   live: boolean;
   panel: StartPanel;
@@ -58,6 +62,9 @@ export function StartScreen({
   onApplyEngine: () => void;
   onQuit: () => void;
   onRerunSetup?: () => void;
+  recents: RecentProject[];
+  onOpenRecent: (path: string) => void;
+  onDropModel: (path: string | null) => void;
 }) {
   const [printerQuery, setPrinterQuery] = useState("");
   const plate = uiStyleById(uiStyle);
@@ -113,6 +120,19 @@ export function StartScreen({
         backgroundRgb={plate.plateBackground}
         plateTune={plate.plateTune}
       />
+      {panel === "home" ? (
+        <HomeLanding
+          recents={recents}
+          printers={printers}
+          printerId={printerId}
+          onNew={onNew}
+          onOpen={onOpen}
+          onImport={onImport}
+          onOpenRecent={onOpenRecent}
+          onChoosePrinter={onChoosePrinter}
+          onDropModel={onDropModel}
+        />
+      ) : null}
       {panel !== "home" ? (
         <div className="start-panel-overlay">
           <StartPanelShell key={panel}>

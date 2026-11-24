@@ -399,7 +399,7 @@ export function DevicePane({
           is going to it on the right. */}
       <div className="device-col">
       <section className="device-head">
-        <p className="device-kicker">device</p>
+        <p className="device-kicker">Device</p>
         <h2 className="device-title">{machine}</h2>
         <p className="device-sub">
           {source === "bambu" ? "Bambu Studio profile" : "Cura profile"} ·{" "}
@@ -412,8 +412,8 @@ export function DevicePane({
                 statusOf?.file ? ` · ${statusOf.file}` : ""
               }`
             : statusOf?.note
-              ? `not connected — ${statusOf.note}`
-              : "no printer connected"}
+              ? `Not connected. ${statusOf.note}`
+              : "No printer connected"}
         </p>
         {statusOf?.note?.includes("certificate changed") ? (
           <div className="device-pin">
@@ -432,21 +432,21 @@ export function DevicePane({
       <CloudPanel taskName={plate} />
 
       <section className="device-live">
-        <div className="device-bar" aria-label="print progress">
+        <div className="device-bar" aria-label="Print progress">
           <span style={{ width: `${Math.max(0, Math.min(100, statusOf?.percent ?? 0))}%` }} />
         </div>
         <div className="device-readouts">
           <span>
-            layer <b>{statusOf?.layers ? `${statusOf.layer}/${statusOf.layers}` : "—"}</b>
+            Layer <b>{statusOf?.layers ? `${statusOf.layer}/${statusOf.layers}` : "—"}</b>
           </span>
           <span>
-            left <b>{statusOf?.remainingMin ? `${statusOf.remainingMin} min` : "—"}</b>
+            Left <b>{statusOf?.remainingMin ? `${statusOf.remainingMin} min` : "—"}</b>
           </span>
           <span>
-            nozzle <b>{statusOf ? `${deg(statusOf.nozzle)}° / ${deg(statusOf.nozzleTarget)}°` : "—"}</b>
+            Nozzle <b>{statusOf ? `${deg(statusOf.nozzle)}° / ${deg(statusOf.nozzleTarget)}°` : "—"}</b>
           </span>
           <span>
-            bed <b>{statusOf ? `${deg(statusOf.bed)}° / ${deg(statusOf.bedTarget)}°` : "—"}</b>
+            Bed <b>{statusOf ? `${deg(statusOf.bed)}° / ${deg(statusOf.bedTarget)}°` : "—"}</b>
           </span>
         </div>
 
@@ -459,7 +459,7 @@ export function DevicePane({
           >
             {tools && (tools.tools?.length ?? 0) > 1 ? (
               <p className="device-warn">
-                this slice uses {tools.tools.length} spools ({tools.changes} tool changes)
+                This slice uses {tools.tools.length} spools ({tools.changes} tool changes)
                 {(tools.usage?.length ?? 0) > 0
                   ? ` — ${tools.usage
                       .map((used) => `T${used.tool + 1}:\u00a0${used.metres.toFixed(2)}\u00a0m`)
@@ -500,49 +500,49 @@ export function DevicePane({
       </section>
 
       <section className="device-panel">
-        <p className="device-label">connection</p>
+        <p className="device-label">Connection</p>
         <div className="device-form">
           <label className="ui-field">
-            <span className="ui-field__label">host</span>
+            <span className="ui-field__label">Host</span>
             <Input
               type="text"
-              aria-label="printer host"
-              placeholder="printer address"
+              aria-label="Printer host"
+              placeholder="Printer address"
               value={host}
               onChange={(event) => setHost(event.target.value)}
             />
           </label>
           <label className="ui-field">
-            <span className="ui-field__label">serial</span>
+            <span className="ui-field__label">Serial</span>
             <Input
               type="text"
-              aria-label="printer serial"
-              placeholder="serial number"
+              aria-label="Printer serial"
+              placeholder="Serial number"
               value={serial}
               onChange={(event) => setSerial(event.target.value)}
             />
           </label>
           <label className="ui-field">
-            <span className="ui-field__label">access code</span>
+            <span className="ui-field__label">Access code</span>
             <Input
               type="password"
               className="access-code"
-              aria-label="printer access code"
+              aria-label="Printer access code"
               placeholder="8 characters from the printer"
               value={code}
               onChange={(event) => setCode(event.target.value)}
             />
           </label>
           <label className="ui-field">
-            <span className="ui-field__label">plate</span>
+            <span className="ui-field__label">Plate</span>
             <Select
-              label="build plate"
+              label="Build plate"
               value={bedType}
               options={[
-                { value: "textured_plate", label: "textured PEI" },
-                { value: "smooth_plate", label: "smooth PEI" },
-                { value: "engineering_plate", label: "engineering" },
-                { value: "cool_plate", label: "cool plate" },
+                { value: "textured_plate", label: "Textured PEI" },
+                { value: "smooth_plate", label: "Smooth PEI" },
+                { value: "engineering_plate", label: "Engineering" },
+                { value: "cool_plate", label: "Cool plate" },
               ]}
               onChange={setBedType}
             />
@@ -563,21 +563,21 @@ export function DevicePane({
           <span className="device-note">
             {connected
               ? `${statusOf?.reports ?? 0} reports received`
-              : "the printer must be in LAN mode with the access code enabled"}
+              : "The printer must be in LAN mode with the access code enabled"}
           </span>
         </div>
         <p className="device-note">
-          the access code is kept in the windows credential manager, never in the repository. the link is read-write:
+          The access code is kept in the Windows credential manager, never in the repository. The link is read-write:
           send, pause, resume and stop all go to the machine over its own local interface.
         </p>
       </section>
       </div>
       <div className="device-col">
       <section className="device-queue">
-        <p className="device-label">queue</p>
+        <p className="device-label">Queue</p>
         {queue.length === 0 ? (
           <p className="device-note">
-            nothing queued — a job here starts on its own when the machine goes idle, so the
+            Nothing queued. A job here starts on its own when the machine goes idle, so the
             queue is the one place that happens.
           </p>
         ) : (
@@ -653,41 +653,41 @@ export function DevicePane({
 
       <section className="device-grid">
         <article className="device-card">
-          <p className="device-label">plate</p>
+          <p className="device-label">Plate</p>
           <p className="device-big">{job.layers > 0 ? job.layers : "—"}</p>
-          <p className="device-note">{job.layers > 0 ? "layers sliced" : "nothing sliced yet"}</p>
+          <p className="device-note">{job.layers > 0 ? "Layers sliced" : "Nothing sliced yet"}</p>
         </article>
         <article className="device-card">
-          <p className="device-label">print time</p>
+          <p className="device-label">Print time</p>
           <p className="device-big">{clock(job.seconds)}</p>
-          <p className="device-note">{job.layers > 0 ? `at ${job.layerHeight.toFixed(2)} mm layers` : "slice to find out"}</p>
+          <p className="device-note">{job.layers > 0 ? `At ${job.layerHeight.toFixed(2)} mm layers` : "Slice to find out"}</p>
         </article>
         <article className="device-card">
-          <p className="device-label">nozzle</p>
+          <p className="device-label">Nozzle</p>
           <p className="device-big">{job.nozzle.toFixed(0)}°</p>
-          <p className="device-note">bed {job.bedTemp.toFixed(0)}° · {job.material || "no material"}</p>
+          <p className="device-note">Bed {job.bedTemp.toFixed(0)}° · {job.material || "No material"}</p>
         </article>
         <article className="device-card">
-          <p className="device-label">engine</p>
-          <p className="device-big">{engineBackend}</p>
-          <p className="device-note">{engineReady ? "ready" : "not found"}</p>
+          <p className="device-label">Engine</p>
+          <p className="device-big">{engineBackend === "cli" ? "CLI" : engineBackend === "arcus" ? "Arcus" : engineBackend}</p>
+          <p className="device-note">{engineReady ? "Ready" : "Not found"}</p>
         </article>
       </section>
 
       <section className="device-panel">
-        <p className="device-label">spools</p>
+        <p className="device-label">Spools</p>
         <ul className="device-spools">
           {spools.map((spool) => (
             <li key={spool.bay}>
               <span className="bay">T{spool.bay}</span>
               <span className={spool.material ? "spool" : "spool empty"}>
-                {spool.material || (baysInUse.includes(spool.bay) ? "no material set" : "empty bay")}
+                {spool.material || (baysInUse.includes(spool.bay) ? "No material set" : "Empty bay")}
               </span>
             </li>
           ))}
         </ul>
         <p className="device-note">
-          the plate prints from T1 unless a part is pointed at another bay. each spool is resolved as its own
+          The plate prints from T1 unless a part is pointed at another bay. Each spool is resolved as its own
           material, with its own hotend temperature.
         </p>
       </section>

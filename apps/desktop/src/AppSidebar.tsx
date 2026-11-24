@@ -68,8 +68,9 @@ export interface AppSidebarProps {
 }
 
 function recentSubtitle(entry: RecentProject): string {
-  const when = entry.missing ? "missing" : formatRelativeTime(entry.saved_at_ms);
-  const machine = entry.printer?.trim() || "local";
+  const raw = entry.missing ? "Missing" : formatRelativeTime(entry.saved_at_ms);
+  const when = raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : raw;
+  const machine = entry.printer?.trim() || "Local";
   if (entry.missing) return when;
   return `${when} · ${machine}`;
 }
@@ -175,10 +176,10 @@ export function AppSidebar(props: AppSidebarProps) {
             {props.plates.map((plate) => (
               <SidebarRow
                 key={plate.index}
-                title={plate.name || `Plate ${plate.index + 1}`}
+                title={`Plate ${plate.index + 1}`}
                 subtitle={
                   plate.models === 0
-                    ? "empty"
+                    ? "Empty"
                     : plate.models === 1
                       ? "1 part"
                       : `${plate.models} parts`
