@@ -414,10 +414,9 @@ pub fn apply_plan_to_field(field: &mut DeformField, plan: &AutoPlacementReport, 
     let step = field.grid.step;
     let width = field.grid.width;
     let height = field.grid.height;
-    let has_top = field.grid.z_top_smooth.clone();
     for surface in plan.surfaces.iter().filter(|s| s.enabled) {
-        stamp_surface(origin, step, width, height, &has_top, field, surface, len);
-        field::apply_surface_to_grid(&mut field.grid, surface, layer_h);
+        let written = field::apply_surface_to_grid(&mut field.grid, surface, layer_h);
+        stamp_surface(origin, step, width, height, field, surface, len, &written);
     }
     let band = field.band_thickness;
     for (top, start) in field
@@ -440,10 +439,10 @@ fn stamp_surface(
     step: f64,
     width: usize,
     height: usize,
-    has_top: &[Option<f64>],
     field: &mut DeformField,
     surface: &PlannedSurface,
     len: usize,
+    written: &[bool],
 ) {
     for iy in 0..height {
         for ix in 0..width {
@@ -456,11 +455,15 @@ fn stamp_surface(
             {
                 continue;
             }
+            // Strength is the deformation footprint, so it follows the band the
+            // surface actually wrote. Stamping the whole box gave strength to
+            // columns the tilt skipped (a flank reaching above the band, or air
+            // past the part) and the slope limiter then had to chamfer a multi-
+            // millimetre lift step at that edge, damping the entire band.
             let i = iy * width + ix;
-            if i < len {
+            if i < len && written.get(i).copied().unwrap_or(false) {
                 field.island_strength[i] = 1.0;
             }
-            let _ = has_top.get(i);
         }
     }
 }
