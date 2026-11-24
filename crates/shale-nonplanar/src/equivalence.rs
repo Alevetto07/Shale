@@ -18,7 +18,8 @@ fn is_ignorable_line(line: &str) -> bool {
     if t.starts_with(";SHALE_") || t.contains("SHALE_NONPLANAR") {
         return true;
     }
-    if t.starts_with("G28") || t.starts_with("G90") || t.starts_with("G91") || t.starts_with("G92") {
+    if t.starts_with("G28") || t.starts_with("G90") || t.starts_with("G91") || t.starts_with("G92")
+    {
         return false;
     }
     t.starts_with('G') && (t.contains('X') || t.contains('Y') || t.contains('Z'))
@@ -48,8 +49,12 @@ fn normalize_motion(line: &str) -> String {
     let t = line.trim();
     let g0 = t.starts_with("G0");
     let mut parts: Vec<String> = Vec::new();
-    parts.push(if g0 { "G0".to_string() } else { "G1".to_string() });
-  // Travel moves may carry stale E on Marlin; compare XY(ZF) only.
+    parts.push(if g0 {
+        "G0".to_string()
+    } else {
+        "G1".to_string()
+    });
+    // Travel moves may carry stale E on Marlin; compare XY(ZF) only.
     let axes: &[char] = if g0 {
         &['X', 'Y', 'Z', 'F']
     } else {
@@ -283,7 +288,10 @@ pub fn audit_curved_suffix_below_global_floor(
             audit.mcode_or_other += 1;
             continue;
         }
-        if line.starts_with("G28") || line.starts_with("G90") || line.starts_with("G91") || line.starts_with("G92")
+        if line.starts_with("G28")
+            || line.starts_with("G90")
+            || line.starts_with("G91")
+            || line.starts_with("G92")
         {
             audit.mcode_or_other += 1;
             continue;
@@ -350,10 +358,10 @@ pub fn check_planar_equivalence(
     curved_gcode: &str,
     band_floor_z: f64,
 ) -> PlanarEquivalenceResult {
-    let planar_split =
-        first_band_motion_line(planar_gcode, band_floor_z).unwrap_or_else(|| planar_gcode.lines().count());
-    let curved_split =
-        first_band_motion_line(curved_gcode, band_floor_z).unwrap_or_else(|| curved_gcode.lines().count());
+    let planar_split = first_band_motion_line(planar_gcode, band_floor_z)
+        .unwrap_or_else(|| planar_gcode.lines().count());
+    let curved_split = first_band_motion_line(curved_gcode, band_floor_z)
+        .unwrap_or_else(|| curved_gcode.lines().count());
     let planar_moves = motion_lines_shell_region(planar_gcode, band_floor_z, Some(planar_split));
     let curved_moves = motion_lines_shell_region(curved_gcode, band_floor_z, Some(curved_split));
     let mut mismatched = 0usize;
@@ -462,8 +470,12 @@ mod tests {
         assert_eq!(audit.shell_extrusion_violations, 1);
     }
 
+    /// The global floor is the *lowest* band start on the plate, not the tallest
+    /// column's. When it was computed from the tallest top, every move under a short
+    /// island sat "below the floor" and the inverse map skipped it (a 0.37 mm error
+    /// on the bridge fixture).
     #[test]
-    fn suffix_allows_band_edge_extrusion_below_global_floor() {
+    fn global_floor_is_the_lowest_column_band() {
         use crate::deform::build_deform_field;
         use crate::height_field::build_height_field;
         use crate::test_meshes::sphere_mesh;
@@ -475,24 +487,34 @@ mod tests {
         }
         let grid = build_height_field(&mesh, 0.35, 10.0, 1.6);
         let field = build_deform_field(grid, 1.6, 0.4, 0.2, 10.0);
-        let band = field.global_band_floor_z();
+        let floor = field.global_band_floor_z();
+        let mut lowest = f64::INFINITY;
+        let mut highest = f64::NEG_INFINITY;
+        let mut material = 0usize;
+        for (i, top) in field.grid.z_top_smooth.iter().enumerate() {
+            if top.is_none() {
+                continue;
+            }
+            let band = field.grid.z_band_start[i].expect("material columns carry a band");
+            lowest = lowest.min(band);
+            highest = highest.max(band);
+            material += 1;
+        }
+        assert!(material > 100, "fixture must have material columns");
+        assert!(
+            (floor - lowest).abs() < 1e-9,
+            "floor {floor:.3} must be the lowest band {lowest:.3}, not the highest {highest:.3}"
+        );
+        // A move inside the lowest column's band needs the map; the tallest column on
+        // the plate must not exempt it.
         let (x, y) = (126.2, 124.3);
         let z_band = field.grid.sample_band_start(x, y).expect("sphere column");
-        let z_mid = (z_band + band) * 0.5;
+        let z_top = field.grid.sample_top_smooth(x, y).expect("sphere top");
+        let z = z_band + (z_top - z_band) * 0.5;
         assert!(
-            z_mid > z_band + SUFFIX_SHELL_EXTRUSION_TOLERANCE_MM && z_mid < band - 1e-3,
-            "fixture needs z between column band ({z_band:.3}) and global floor ({band:.3})"
+            field.gcode_needs_inverse(x, y, field.forward_z(x, y, z)),
+            "an in-band move must be mapped (band {z_band:.3}, top {z_top:.3})"
         );
-        let gcode = format!(
-            "G1 X{x} Y{y} Z{} E0\nG1 X{x} Y{y} Z{} E1\nG1 X{x} Y{y} Z{:.3} E2\n",
-            band - 2.0,
-            band + 0.5,
-            z_mid
-        );
-        let audit = audit_curved_suffix_below_global_floor(&gcode, &gcode, &field);
-        assert!(audit.ok, "{audit:?}");
-        assert_eq!(audit.band_edge_extrusion, 1);
-        assert_eq!(audit.shell_extrusion_violations, 0);
     }
 
     #[test]
