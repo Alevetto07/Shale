@@ -134,10 +134,14 @@ struct ThicknessScan {
     violations: Vec<String>,
 }
 
+/// `(cell, layer) -> (lowest z, highest z, sum of z, sample count)`.
+type CellLayers = HashMap<((i32, i32), usize), (f32, f32, f32, usize)>;
+/// `cell -> [(layer, mean z, z span)]`.
+type CellProfile = HashMap<(i32, i32), Vec<(usize, f32, f32)>>;
+
 fn scan_thickness(gcode: &str) -> ThicknessScan {
     let toolpath = shale_core::gcode::parse_toolpaths(gcode);
-    // (cell, layer) -> (min z, max z, sum z, count)
-    let mut cell_layers: HashMap<((i32, i32), usize), (f32, f32, f32, usize)> = HashMap::new();
+    let mut cell_layers: CellLayers = HashMap::new();
     let cell = |x: f32, y: f32| ((x / CELL_MM).floor() as i32, (y / CELL_MM).floor() as i32);
     for (index, layer) in toolpath.layers.iter().enumerate() {
         for poly in &layer.polylines {
@@ -157,7 +161,7 @@ fn scan_thickness(gcode: &str) -> ThicknessScan {
         }
     }
     // cell -> [(layer, mean z, span)]
-    let mut by_cell: HashMap<(i32, i32), Vec<(usize, f32, f32)>> = HashMap::new();
+    let mut by_cell: CellProfile = HashMap::new();
     for ((xy, index), (lo, hi, sum, count)) in cell_layers {
         by_cell
             .entry(xy)
