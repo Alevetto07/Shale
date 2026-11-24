@@ -110,6 +110,9 @@ struct SettingsArgs {
     nonplanar_mode: Option<String>,
     /// Maximum surface angle in degrees (default 10).
     nonplanar_max_angle_deg: Option<f64>,
+    /// Error out instead of falling back to a planar slice when the curved
+    /// pass cannot be verified.
+    nonplanar_strict: Option<bool>,
 }
 
 impl From<SettingsArgs> for SettingsPatch {
@@ -126,6 +129,7 @@ impl From<SettingsArgs> for SettingsPatch {
             material_bed_temperature: args.material_bed_temperature,
             nonplanar_mode: args.nonplanar_mode,
             nonplanar_max_angle_deg: args.nonplanar_max_angle_deg,
+            nonplanar_strict: args.nonplanar_strict,
         }
     }
 }

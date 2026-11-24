@@ -340,6 +340,9 @@ impl Session {
         if let Some(angle) = patch.nonplanar_max_angle_deg {
             self.settings.nonplanar.max_angle_deg = angle;
         }
+        if let Some(strict) = patch.nonplanar_strict {
+            self.settings.nonplanar.strict = strict;
+        }
         Ok(())
     }
 
@@ -579,6 +582,8 @@ pub struct SettingsPatch {
     pub material_bed_temperature: Option<f64>,
     pub nonplanar_mode: Option<String>,
     pub nonplanar_max_angle_deg: Option<f64>,
+    /// Turn an unverifiable curved slice into an error instead of a planar fallback.
+    pub nonplanar_strict: Option<bool>,
 }
 
 const DEFAULT_KEYS: &[&str] = &[
