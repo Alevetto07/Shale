@@ -6,7 +6,7 @@ use crate::auto::{apply_plan_to_field, plan_auto_placement, PlannedSurfaceKind, 
 use crate::collision::PrintedHeightMap;
 use crate::config::{NonplanarMode, NonplanarOptions, NonplanarReport, SlopeLimitingReport};
 use crate::deform::{build_deform_field, deform_mesh, subdivide_long_edges, DeformField};
-use crate::envelope::{bambu_a1_envelope, head_envelope_for_printer};
+use crate::envelope::{require_head_envelope, COLLISION_TOLERANCE_MM};
 use crate::equivalence::{check_grafted_planar_equivalence, graft_planar_shell_below_band};
 use crate::height_field::build_height_field;
 use crate::inverse::{map_gcode_inverse_counted, MAX_INVERSE_CLAMP_MM};
@@ -186,7 +186,6 @@ pub fn apply_post_pass(args: PostPassArgs<'_>) -> Result<(String, NonplanarRepor
         limits,
     } = args;
     let field = &context.field;
-    let envelope = head_envelope_for_printer(printer_id).unwrap_or_else(bambu_a1_envelope);
     let mut report = NonplanarReport {
         mode: options.mode.name().into(),
         max_angle_deg: options.max_angle_deg,
@@ -194,6 +193,19 @@ pub fn apply_post_pass(args: PostPassArgs<'_>) -> Result<(String, NonplanarRepor
         islands_flattened: context.islands_flattened(),
         slope_limiting: context.slope_limiting.clone(),
         ..NonplanarReport::default()
+    };
+    // The head envelope is measured data, not a default: an unknown printer has
+    // no verified clearance, so it cannot be cleared for a curved pass.
+    let envelope = match require_head_envelope(printer_id) {
+        Ok(envelope) => envelope,
+        Err(err) => {
+            return planar_fallback(
+                report,
+                vec![err.to_string()],
+                planar_baseline_gcode,
+                options,
+            )
+        }
     };
     report
         .notes
@@ -248,13 +260,29 @@ pub fn apply_post_pass(args: PostPassArgs<'_>) -> Result<(String, NonplanarRepor
         equiv.clone(),
         &report.collision_adjustments,
     );
-    // Collision verification: the curved path must stay inside what the head and
-    // gantry can reach without hitting printed material. Today that is the
-    // printed-height-map envelope check below plus validate_gcode's travel scan.
-    // TODO(M1-A): call `find_collisions` / `require_head_envelope` / `check_printer`
-    // here and push their findings into the same `reasons` vector; the field must
-    // not be edited to route around a collision.
+    // Collision verification: the head and gantry must not sweep through printed
+    // material. `validate_gcode` samples every move against the printed height
+    // map with the calibrated head envelope; a hit means the curved file is not
+    // printable, so the job goes back to its planar baseline. The field is never
+    // edited to route around a collision: that changes the printed shape.
     let mut reasons: Vec<String> = Vec::new();
+    if !safety.envelope_checks_enabled {
+        reasons.push(format!(
+            "no calibrated head envelope for {printer_id}, collision sweep skipped"
+        ));
+    }
+    if safety.collisions_extruding > 0 {
+        reasons.push(format!(
+            "{} extruding move(s) collide with printed material (tolerance {:.1} mm)",
+            safety.collisions_extruding, COLLISION_TOLERANCE_MM
+        ));
+    }
+    if safety.collisions_travel > 0 {
+        reasons.push(format!(
+            "{} travel move(s) collide with printed material (tolerance {:.1} mm)",
+            safety.collisions_travel, COLLISION_TOLERANCE_MM
+        ));
+    }
     if let Some(limiting) = &report.slope_limiting {
         if !limiting.converged
             || limiting.worst_after_deg > limiting.cap_deg + SLOPE_CAP_TOLERANCE_DEG
@@ -280,12 +308,6 @@ pub fn apply_post_pass(args: PostPassArgs<'_>) -> Result<(String, NonplanarRepor
             SLOPE_CAP_TOLERANCE_DEG
         ));
     }
-    if safety.travel_collisions_remaining > 0 {
-        reasons.push(format!(
-            "{} travel move(s) collide with printed material",
-            safety.travel_collisions_remaining
-        ));
-    }
     if !equiv.ok {
         reasons.push(format!(
             "planar equivalence: {} mismatched move(s) below the band",
@@ -304,8 +326,17 @@ pub fn apply_post_pass(args: PostPassArgs<'_>) -> Result<(String, NonplanarRepor
     if !safety.ok && safety.violations.is_empty() {
         reasons.push("safety report failed".to_string());
     }
-    for violation in &safety.violations {
+    // One or two concrete samples help debugging; the counts above carry the
+    // magnitude, and a thousand identical lines make the report unreadable.
+    const SAMPLES: usize = 3;
+    for violation in safety.violations.iter().take(SAMPLES) {
         reasons.push(format!("{}: {}", violation.kind, violation.detail));
+    }
+    if safety.violations.len() > SAMPLES {
+        reasons.push(format!(
+            "... and {} more violation(s), see the safety report",
+            safety.violations.len() - SAMPLES
+        ));
     }
     report.notes.push(format!(
         "safety report: {} violation(s)",
@@ -421,7 +452,11 @@ fn ok_attach_header(
 
 /// Build a printed height map envelope self-test on finished G-code (no extrusion moves should violate).
 pub fn gcode_respects_envelope(gcode: &str, printer_id: &str, max_angle_deg: f64) -> bool {
-    let envelope = head_envelope_for_printer(printer_id).unwrap_or(bambu_a1_envelope());
+    // Fail closed: an unknown printer has no measured clearance, so it does not
+    // get the A1 numbers by default.
+    let Ok(envelope) = require_head_envelope(printer_id) else {
+        return false;
+    };
     let step = 2.0;
     // Machine-coordinate G-code from Cura (front-left origin on a 256 mm bed).
     let mut printed = PrintedHeightMap::new([0.0, 0.0], step, 130, 130);
