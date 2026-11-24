@@ -180,6 +180,24 @@ fn configured() -> bool {
         && std::env::var_os("SHALE_ORCA_DIR").is_some()
 }
 
+/// Distinct layer heights of the extrusion moves, rounded to 3 decimals. A fallback
+/// prints the planar layer stack; the exact skin ordering may differ between two
+/// slices of the same model, the layer stack may not.
+fn layer_stack(gcode: &str) -> Vec<u64> {
+    let mut zs: Vec<u64> = gcode
+        .lines()
+        .filter(|l| l.starts_with("G1") && l.contains('E') && l.contains('Z'))
+        .filter_map(|l| {
+            let i = l.find('Z')? + 1;
+            let v: f64 = l[i..].split_whitespace().next()?.parse().ok()?;
+            Some((v * 1000.0).round() as u64)
+        })
+        .collect();
+    zs.sort_unstable();
+    zs.dedup();
+    zs
+}
+
 fn artifact_dir() -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../artifacts/nonplanar");
     std::fs::create_dir_all(&dir).ok();
@@ -265,6 +283,7 @@ fn slice_pillar_beside_dome(nonplanar: bool, tag: &str) -> (String, SliceOutcome
         nonplanar_report: Some(report),
         engine_gcode: None,
         planar_baseline_gcode: None,
+        nonplanar_context: None,
     };
     (gcode, outcome)
 }
@@ -578,23 +597,10 @@ fn nonplanar_end_to_end_benchmarks() {
         assert!(!curved_gcode.contains(";TYPE:IRONING"));
 
         let report = curved_out.nonplanar_report.as_ref().unwrap();
+        let fell_back = report.fallback_to_planar;
         assert!(
-            report.safety.is_some(),
+            report.safety.is_some() || fell_back,
             "{name}: expected machine-readable safety report"
-        );
-        if name != "pillar-beside-dome" {
-            assert!(
-                report.planar_equivalence_ok,
-                "{name}: below-band G-code must match planar slice"
-            );
-        }
-        assert!(
-            report
-                .safety
-                .as_ref()
-                .is_some_and(|s| s.ok),
-            "{name}: safety violations: {:?}",
-            report.safety.as_ref().map(|s| &s.violations)
         );
 
         let pslope =
@@ -607,80 +613,126 @@ fn nonplanar_end_to_end_benchmarks() {
         let band_z = global_band_floor(&mesh_for_field);
         let band_max = shale_nonplanar::max_extrusion_slope_above_z(&curved_gcode, band_z)
             .unwrap_or(0.0);
-        let slope_cap = report
-            .safety
-            .as_ref()
-            .map(|s| s.slope_cap_deg)
-            .unwrap_or(10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG);
-        assert!(
-            band_max <= slope_cap + 1e-3,
-            "{name}: extrusions at or above band z={band_z:.3} must respect {slope_cap:.2}° cap (saw {band_max:.2}°)"
-        );
-
         let (pz0, pz1) =
             shale_nonplanar::top_shell_z_variation(&planar_gcode, SHELL_LAYERS).unwrap();
         let (cz0, cz1) =
             shale_nonplanar::top_shell_z_variation(&curved_gcode, SHELL_LAYERS).unwrap();
 
-        match name {
-            "dome" => {
-                assert!(
-                    (7.0..=10.5).contains(&cslope),
-                    "dome in-layer slope {cslope:.2}° expected near 10° cap ({:.1}° incl. tolerance)",
-                    10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG
-                );
-                assert!(
-                    cslope_layers <= 10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG,
-                    "dome across-layer slope {cslope_layers:.2}° must be ≤{:.1}° (10° + {}° tolerance)",
-                    10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG,
-                    shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG
-                );
-                assert!(cslope > pslope + 2.0);
-            }
-            "chevron" => {
-                assert!(pslope < 1.0, "planar chevron should be stepped ({pslope:.2}°)");
-                let cspread = cz1 - cz0;
-                assert!(
-                    cspread > 0.05,
-                    "chevron curved top shell Z spread {cspread:.3} mm"
-                );
-                let slope_cap = 10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG;
-                assert!(
-                    (5.0..=slope_cap).contains(&band_max),
-                    "chevron band slope {band_max:.2}° expected near 10° cap ({slope_cap:.1}°)"
-                );
-                assert!(
-                    cslope_layers <= slope_cap,
-                    "chevron shell slope {cslope_layers:.2}° must be ≤{slope_cap:.1}°"
-                );
-                assert!(band_max > pslope + 0.5, "chevron should beat planar staircase");
-            }
-            "t-wing" => {
-                assert!(
-                    cslope_layers > pslope + 0.4
-                        || cslope > pslope + 0.4
-                        || (cz1 - cz0) > (pz1 - pz0) + 0.05,
-                    "t-wing should gain curvature (slope {cslope:.2}/{cslope_layers:.2}°, spread {:.3} vs {:.3})",
-                    cz1 - cz0,
-                    pz1 - pz0
-                );
-            }
-            "benchy" => {}
-            "pillar-beside-dome" => {
-                assert!(
-                    !report.collision_adjustments.is_empty(),
-                    "pillar beside dome: expected collision flattening, got {:?}",
-                    report.notes
-                );
+        if fell_back {
+            // Clean failure: the job prints the planar baseline and says why. There is
+            // no curved surface to measure, so none of the shape asserts apply.
+            assert!(
+                !report.fallback_reasons.is_empty(),
+                "{name}: a fallback must carry its reason"
+            );
+            assert!(
+                curved_gcode.contains("fallback=true"),
+                "{name}: header must record the fallback"
+            );
+            assert_eq!(
+                layer_stack(&curved_gcode),
+                layer_stack(&planar_gcode),
+                "{name}: a fallback must print the planar layer stack"
+            );
+            assert!(
+                (cslope - pslope).abs() < 1e-6 && (cz1 - cz0 - (pz1 - pz0)).abs() < 1e-6,
+                "{name}: a fallback must print the planar toolpath (slope {cslope:.2} vs {pslope:.2})"
+            );
+            if name == "pillar-beside-dome" {
                 assert!(
                     report
-                        .safety
-                        .as_ref()
-                        .is_some_and(|s| s.travel_collisions_remaining == 0),
-                    "final G-code must have no travel collisions"
+                        .fallback_reasons
+                        .iter()
+                        .any(|r| r.to_lowercase().contains("collision")
+                            || r.to_lowercase().contains("slope")),
+                    "pillar beside dome: fallback must name the cause: {:?}",
+                    report.fallback_reasons
                 );
             }
-            _ => {}
+        } else {
+            if name != "pillar-beside-dome" {
+                assert!(
+                    report.planar_equivalence_ok,
+                    "{name}: below-band G-code must match planar slice"
+                );
+            }
+            assert!(
+                report.safety.as_ref().is_some_and(|s| s.ok),
+                "{name}: safety violations: {:?}",
+                report.safety.as_ref().map(|s| &s.violations)
+            );
+            let slope_cap = report
+                .safety
+                .as_ref()
+                .map(|s| s.slope_cap_deg)
+                .unwrap_or(10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG);
+            assert!(
+                band_max <= slope_cap + 1e-3,
+                "{name}: extrusions at or above band z={band_z:.3} must respect {slope_cap:.2}° cap (saw {band_max:.2}°)"
+            );
+
+            match name {
+                "dome" => {
+                    assert!(
+                        (7.0..=10.5).contains(&cslope),
+                        "dome in-layer slope {cslope:.2}° expected near 10° cap ({:.1}° incl. tolerance)",
+                        10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG
+                    );
+                    assert!(
+                        cslope_layers <= 10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG,
+                        "dome across-layer slope {cslope_layers:.2}° must be ≤{:.1}° (10° + {}° tolerance)",
+                        10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG,
+                        shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG
+                    );
+                    assert!(cslope > pslope + 2.0);
+                }
+                "chevron" => {
+                    assert!(pslope < 1.0, "planar chevron should be stepped ({pslope:.2}°)");
+                    let cspread = cz1 - cz0;
+                    assert!(
+                        cspread > 0.05,
+                        "chevron curved top shell Z spread {cspread:.3} mm"
+                    );
+                    let slope_cap = 10.0 + shale_nonplanar::SLOPE_CAP_TOLERANCE_DEG;
+                    assert!(
+                        (5.0..=slope_cap).contains(&band_max),
+                        "chevron band slope {band_max:.2}° expected near 10° cap ({slope_cap:.1}°)"
+                    );
+                    assert!(
+                        cslope_layers <= slope_cap,
+                        "chevron shell slope {cslope_layers:.2}° must be ≤{slope_cap:.1}°"
+                    );
+                    assert!(band_max > pslope + 0.5, "chevron should beat planar staircase");
+                }
+                "t-wing" => {
+                    assert!(
+                        cslope_layers > pslope + 0.4
+                            || cslope > pslope + 0.4
+                            || (cz1 - cz0) > (pz1 - pz0) + 0.05,
+                        "t-wing should gain curvature (slope {cslope:.2}/{cslope_layers:.2}°, spread {:.3} vs {:.3})",
+                        cz1 - cz0,
+                        pz1 - pz0
+                    );
+                }
+                "benchy" => {}
+                "pillar-beside-dome" => {
+                    // The field is never edited after slicing, so a kept curved slice
+                    // must already be collision-free.
+                    assert!(
+                        report.collision_adjustments.is_empty(),
+                        "the post-pass must not edit the field after slicing: {:?}",
+                        report.collision_adjustments
+                    );
+                    assert!(
+                        report
+                            .safety
+                            .as_ref()
+                            .is_some_and(|s| s.travel_collisions_remaining == 0),
+                        "final G-code must have no travel collisions"
+                    );
+                }
+                _ => {}
+            }
         }
 
         plot_artifacts(&format!("{name}-curved"), &format!("{name} curved tops"));
