@@ -276,6 +276,8 @@ export const cloudLoginWeb = () => invoke<CloudSession>("cloud_login_web");
 export const cloudVerify = (email: string, tfaKey: string, code: string) =>
   invoke<void>("cloud_verify", { email, tfaKey, code });
 export const cloudSignOut = () => invoke<void>("cloud_sign_out");
+export const cloudSetRegion = (region: string) =>
+  invoke<CloudSession>("cloud_set_region", { region });
 export const cloudDevices = () => invoke<CloudDeviceRow[]>("cloud_devices");
 export const cloudSend = (devId: string, taskName: string) =>
   invoke<string>("cloud_send", { devId, taskName });
@@ -755,6 +757,7 @@ export const api = {
   cloudLoginWeb,
   cloudVerify,
   cloudSignOut,
+  cloudSetRegion,
   cloudDevices,
   cloudSend,
 };

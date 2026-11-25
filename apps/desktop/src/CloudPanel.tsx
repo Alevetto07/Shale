@@ -104,6 +104,18 @@ export function CloudPanel({ taskName }: { taskName: string }) {
     }
   }
 
+  async function chooseRegion(region: "Global" | "China") {
+    setBusy(true);
+    setNote(null);
+    try {
+      setSession(await api.cloudSetRegion(region));
+    } catch (err) {
+      setNote(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function signOut() {
     setBusy(true);
     try {
@@ -179,8 +191,28 @@ export function CloudPanel({ taskName }: { taskName: string }) {
         <>
           <p className="cloud-line dim">
             The same account Bambu Studio uses: the printers in it, whether or not they are on this
-            network.
+            network. A China account uses api.bambulab.cn.
           </p>
+          <div className="cloud-actions">
+            <Button
+              type="button"
+              size="sm"
+              variant={session.host.includes("bambulab.cn") ? "ghost" : "secondary"}
+              disabled={busy}
+              onClick={() => void chooseRegion("Global")}
+            >
+              Global
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={session.host.includes("bambulab.cn") ? "secondary" : "ghost"}
+              disabled={busy}
+              onClick={() => void chooseRegion("China")}
+            >
+              China
+            </Button>
+          </div>
           <div className="cloud-actions">
             <Button type="button" variant="secondary" disabled={busy} onClick={() => void signInWithBambu()}>
               Sign in with Bambu Lab (Google, Apple, email)

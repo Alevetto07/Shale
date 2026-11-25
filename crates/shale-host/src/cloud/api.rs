@@ -243,18 +243,52 @@ pub fn profile() -> Call {
 
 // ---------------------------------------------------------------- devices
 
+/// The bound-device list. `GET /v1/iot-service/api/user/device/list` is not a
+/// route: Bambu answers 404. Bambu Studio, OrcaSlicer, and ha-bambulab all
+/// call `GET /v1/iot-service/api/user/bind` (ha-bambulab `BambuUrl.BIND`,
+/// OpenBambuAPI "GET /v1/iot-service/api/user/bind").
 pub fn devices() -> Call {
     Call {
-        name: "GET /v1/iot-service/api/user/device/list",
+        name: "GET /v1/iot-service/api/user/bind",
         method: "GET",
-        path: "/v1/iot-service/api/user/device/list",
+        path: "/v1/iot-service/api/user/bind",
         body: Body::None,
+    }
+}
+
+/// Recent print tasks. ha-bambulab `BambuUrl.TASKS` and OpenBambuAPI both use
+/// `GET /v1/user-service/my/tasks`. `limit` keeps the page small. Creating a
+/// task is still [`create_task`], which posts the file.
+pub fn tasks() -> Call {
+    Call {
+        name: "GET /v1/user-service/my/tasks",
+        method: "GET",
+        path: "/v1/user-service/my/tasks?limit=20",
+        body: Body::None,
+    }
+}
+
+/// `China` / `CN` is `api.bambulab.cn`. Anything else, including an empty
+/// region, is the global cloud. The two clouds do not share tokens.
+/// ha-bambulab swaps `.com` for `.cn` when the region is exactly `China`.
+pub fn host_for_region(region: &str) -> &'static str {
+    let region = region.trim();
+    if region.eq_ignore_ascii_case("cn")
+        || region.eq_ignore_ascii_case("china")
+        || region.eq_ignore_ascii_case("zh-cn")
+    {
+        CHINA_HOST
+    } else {
+        GLOBAL_HOST
     }
 }
 
 /// One printer's state as the cloud sees it. The fields Bambu leaves out when a
 /// machine is offline are the reason everything here is optional.
-#[derive(Debug, Clone, Default, Deserialize)]
+///
+/// `dev_access_code` is the printer's LAN password. [`Debug`] says whether it
+/// is set and never the value.
+#[derive(Clone, Default, Deserialize)]
 pub struct CloudDevice {
     #[serde(default)]
     pub dev_id: String,
@@ -270,12 +304,43 @@ pub struct CloudDevice {
     pub print_status: Option<String>,
     #[serde(default)]
     pub mc_print_stage: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "optional_id")]
     pub task_id: Option<String>,
+    /// Newer bind answers name the current job `print_job` (OpenBambuAPI,
+    /// August 2026). It matches `id` in [`tasks`].
+    #[serde(default, deserialize_with = "optional_id")]
+    pub print_job: Option<String>,
     #[serde(default)]
     pub mc_percent: Option<i64>,
     #[serde(default)]
     pub mc_remaining_time: Option<i64>,
+    #[serde(default, deserialize_with = "optional_f64")]
+    pub nozzle_diameter: Option<f64>,
+    #[serde(default)]
+    pub dev_access_code: String,
+}
+
+impl std::fmt::Debug for CloudDevice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CloudDevice")
+            .field("dev_id", &self.dev_id)
+            .field("name", &self.name)
+            .field("dev_model_name", &self.dev_model_name)
+            .field("dev_product_name", &self.dev_product_name)
+            .field("online", &self.online)
+            .field("print_status", &self.print_status)
+            .field("print_job", &self.print_job)
+            .field("nozzle_diameter", &self.nozzle_diameter)
+            .field(
+                "dev_access_code",
+                &if self.dev_access_code.is_empty() {
+                    "empty"
+                } else {
+                    "set"
+                },
+            )
+            .finish()
+    }
 }
 
 impl CloudDevice {
@@ -290,6 +355,74 @@ impl CloudDevice {
             self.dev_id.clone()
         }
     }
+
+    /// The current job, from `print_job` when the bind list has it, otherwise
+    /// the older `task_id`.
+    pub fn job_id(&self) -> Option<String> {
+        self.print_job
+            .clone()
+            .filter(|id| !id.is_empty())
+            .or_else(|| self.task_id.clone().filter(|id| !id.is_empty()))
+    }
+}
+
+fn optional_id<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(text)) if text.trim().is_empty() => None,
+        Some(serde_json::Value::String(text)) => Some(text),
+        Some(serde_json::Value::Number(number)) => Some(number.to_string()),
+        _ => None,
+    })
+}
+
+fn optional_f64<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<f64>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::Number(number)) => number.as_f64(),
+        Some(serde_json::Value::String(text)) => text.trim().parse().ok(),
+        _ => None,
+    })
+}
+
+/// One row of `GET /v1/user-service/my/tasks`. `status` 2 is finished and 3 is
+/// failed or aborted (OpenBambuAPI, observed August 2026).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudTask {
+    #[serde(default, deserialize_with = "optional_id")]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub device_id: String,
+    #[serde(default)]
+    pub status: Option<serde_json::Value>,
+}
+
+impl CloudTask {
+    pub fn id(&self) -> Option<String> {
+        self.id.clone().filter(|id| !id.is_empty())
+    }
+
+    pub fn state(&self) -> String {
+        match &self.status {
+            Some(serde_json::Value::Number(number)) if number.as_i64() == Some(2) => {
+                "finished".into()
+            }
+            Some(serde_json::Value::Number(number)) if number.as_i64() == Some(3) => "failed".into(),
+            Some(serde_json::Value::Number(number)) => format!("status {number}"),
+            Some(serde_json::Value::String(text)) if !text.trim().is_empty() => text.clone(),
+            _ => "unknown".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TaskList {
+    #[serde(default)]
+    pub hits: Vec<CloudTask>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -440,6 +573,31 @@ mod tests {
                 .unwrap();
         assert!(!answer.wants_code());
         assert_eq!(answer.tokens(), Some(("a", "r")));
+    }
+
+    #[test]
+    fn china_is_the_cn_host_and_anything_else_is_global() {
+        assert_eq!(host_for_region("CN"), CHINA_HOST);
+        assert_eq!(host_for_region("China"), CHINA_HOST);
+        assert_eq!(host_for_region("zh-CN"), CHINA_HOST);
+        assert_eq!(host_for_region("Global"), GLOBAL_HOST);
+        assert_eq!(host_for_region(""), GLOBAL_HOST);
+    }
+
+    #[test]
+    fn a_bind_fixture_keeps_the_access_code_out_of_debug() {
+        let list: DeviceList = serde_json::from_str(
+            r#"{"devices":[{"dev_id":"01","name":"Shed","online":true,"print_status":"SUCCESS","dev_product_name":"A1","dev_access_code":"ACCESS-CODE-SECRET","nozzle_diameter":"0.4","print_job":"4821"}]}"#,
+        )
+        .unwrap();
+        let device = &list.devices[0];
+        assert_eq!(device.nozzle_diameter, Some(0.4));
+        assert_eq!(device.job_id().as_deref(), Some("4821"));
+        let printed = format!("{device:?}");
+        assert!(!printed.contains("ACCESS-CODE-SECRET"), "{printed}");
+        let call = devices();
+        assert_eq!(call.path, "/v1/iot-service/api/user/bind");
+        assert_eq!(tasks().path, "/v1/user-service/my/tasks?limit=20");
     }
 
     #[test]

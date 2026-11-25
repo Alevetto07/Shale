@@ -36,7 +36,22 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(length) if length else b""
 
     def do_GET(self):
-        if self.path == "/v1/iot-service/api/user/device/list":
+        if self.path.split("?", 1)[0] == "/v1/user-service/my/tasks":
+            return self._answer(
+                200,
+                {
+                    "total": 1,
+                    "hits": [
+                        {
+                            "id": 4821,
+                            "title": "cube",
+                            "status": 2,
+                            "deviceId": "FAKE01A000000001",
+                        }
+                    ],
+                },
+            )
+        if self.path == "/v1/iot-service/api/user/bind":
             return self._answer(
                 200,
                 {

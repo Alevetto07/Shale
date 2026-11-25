@@ -23,13 +23,38 @@ pub use api::{CloudDevice, LoginAnswer};
 pub use session::{SignIn, Tokens};
 
 /// A request on its way out, named so an error can say which call it was.
-#[derive(Debug, Clone)]
+///
+/// [`Debug`] redacts `Authorization`. The access token is never printed.
+#[derive(Clone)]
 pub struct HttpRequest {
     pub name: &'static str,
     pub method: &'static str,
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
+}
+
+impl std::fmt::Debug for HttpRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let headers: Vec<(&str, &str)> = self
+            .headers
+            .iter()
+            .map(|(name, value)| {
+                if name.eq_ignore_ascii_case("authorization") {
+                    (name.as_str(), "Bearer [redacted]")
+                } else {
+                    (name.as_str(), value.as_str())
+                }
+            })
+            .collect();
+        f.debug_struct("HttpRequest")
+            .field("name", &self.name)
+            .field("method", &self.method)
+            .field("url", &self.url)
+            .field("headers", &headers)
+            .field("body_bytes", &self.body.as_ref().map(Vec::len))
+            .finish()
+    }
 }
 
 /// The seam that lets the tests answer without a network.
@@ -117,7 +142,18 @@ impl std::fmt::Display for CloudError {
                 call,
                 status,
                 message,
-            } => write!(f, "{call} answered {status}: {message}"),
+            } => {
+                if *status == 404 {
+                    write!(
+                        f,
+                        "Bambu's cloud did not recognise that request. Sign out and sign in again if this account uses the China cloud."
+                    )
+                } else if message.is_empty() || message.starts_with('{') {
+                    write!(f, "Bambu's cloud refused {call} ({status}).")
+                } else {
+                    write!(f, "{call} was refused ({status}): {message}")
+                }
+            }
             Self::Shape { call, message } => {
                 write!(f, "{call} answered something unexpected: {message}")
             }
@@ -159,6 +195,7 @@ const KEY_ACCESS: &str = "cloud.access";
 const KEY_REFRESH: &str = "cloud.refresh";
 const KEY_EXPIRES: &str = "cloud.expires";
 const KEY_ACCOUNT: &str = "cloud.account";
+const KEY_HOST: &str = "cloud.host";
 
 impl<T: Transport> Cloud<T> {
     pub fn new(host: &str, transport: Arc<T>, store: Arc<dyn SecretStore>) -> Self {
@@ -174,6 +211,7 @@ impl<T: Transport> Cloud<T> {
     /// Read whatever the last run left behind. A store that fails here is not
     /// fatal: the window shows signed out and signing in will try again.
     pub fn load(&mut self) {
+        self.apply_stored_host();
         let access = self.store.get(KEY_ACCESS).ok().flatten();
         let refresh = self.store.get(KEY_REFRESH).ok().flatten();
         let expires = self
@@ -277,6 +315,7 @@ impl<T: Transport> Cloud<T> {
             .map_err(CloudError::Store)?;
         self.account = Some(account.to_string());
         self.tokens = Some(tokens);
+        self.store_host()?;
         Ok(())
     }
 
@@ -333,7 +372,7 @@ impl<T: Transport> Cloud<T> {
             return Err(CloudError::Status {
                 call: request.name.to_string(),
                 status: response.status,
-                message: message_of(&response.body),
+                message: redact(&message_of(&response.body)),
             });
         }
         Ok(response)
@@ -395,8 +434,17 @@ impl<T: Transport> Cloud<T> {
         let token = self.access_token()?;
         let request = api::devices().into_request(&self.host, Some(&token));
         let answer = self.send(request)?;
-        let list: api::DeviceList = parse(&answer, "GET /v1/iot-service/api/user/device/list")?;
+        let list: api::DeviceList = parse(&answer, "GET /v1/iot-service/api/user/bind")?;
         Ok(list.devices)
+    }
+
+    /// Recent tasks from `GET /v1/user-service/my/tasks`. Read only.
+    pub fn tasks(&mut self) -> Result<Vec<api::CloudTask>, CloudError> {
+        let token = self.access_token()?;
+        let request = api::tasks().into_request(&self.host, Some(&token));
+        let answer = self.send(request)?;
+        let list: api::TaskList = parse(&answer, "GET /v1/user-service/my/tasks")?;
+        Ok(list.hits)
     }
 
     /// Send a sliced file to one printer through the cloud, and return the task
@@ -430,6 +478,42 @@ impl<T: Transport> Cloud<T> {
     pub fn host(&self) -> &str {
         &self.host
     }
+
+    /// Point the next sign-in at the global cloud or the China cloud.
+    ///
+    /// A China account (`CN`, `China`, `zh-CN`) uses `api.bambulab.cn`. The
+    /// two clouds do not share tokens, so changing region while signed in
+    /// signs out. A loopback host set for a test is left alone and is not
+    /// written into the store.
+    pub fn set_region(&mut self, region: &str) -> Result<(), CloudError> {
+        let next = api::host_for_region(region).to_string();
+        if next != self.host && self.signed_in() {
+            self.sign_out()?;
+        }
+        self.host = next;
+        self.store_host()
+    }
+
+    fn apply_stored_host(&mut self) {
+        let Ok(Some(stored)) = self.store.get(KEY_HOST) else {
+            return;
+        };
+        if stored != api::GLOBAL_HOST && stored != api::CHINA_HOST {
+            return;
+        }
+        if self.host == api::GLOBAL_HOST || self.host == api::CHINA_HOST {
+            self.host = stored;
+        }
+    }
+
+    fn store_host(&self) -> Result<(), CloudError> {
+        if self.host == api::GLOBAL_HOST || self.host == api::CHINA_HOST {
+            self.store
+                .set(KEY_HOST, &self.host)
+                .map_err(CloudError::Store)?;
+        }
+        Ok(())
+    }
 }
 
 fn parse<R: serde::de::DeserializeOwned>(
@@ -438,14 +522,17 @@ fn parse<R: serde::de::DeserializeOwned>(
 ) -> Result<R, CloudError> {
     serde_json::from_slice(&response.body).map_err(|err| CloudError::Shape {
         call: call.to_string(),
-        message: format!("{err}; first bytes: {}", message_of(&response.body)),
+        message: format!(
+            "{err}; first bytes: {}",
+            redact(&message_of(&response.body))
+        ),
     })
 }
 
 /// Bambu's own message, or a readable slice of the body when it is not JSON.
 fn message_of(body: &[u8]) -> String {
     if let Ok(value) = serde_json::from_slice::<Value>(body) {
-        for key in ["error", "message", "msg", "errorMessage"] {
+        for key in ["error", "message", "msg", "errorMessage", "error_msg"] {
             if let Some(text) = value.get(key).and_then(|v| v.as_str()) {
                 if !text.is_empty() {
                     return text.to_string();
@@ -458,9 +545,33 @@ fn message_of(body: &[u8]) -> String {
     text.chars().take(200).collect()
 }
 
+/// Drop a body that carries a token or a printer access code. The window and
+/// the logs must not repeat those.
+fn redact(text: &str) -> String {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("accesstoken")
+        || lower.contains("access_token")
+        || lower.contains("refreshtoken")
+        || lower.contains("refresh_token")
+        || lower.contains("dev_access_code")
+        || lower.contains("authorization")
+        || lower.contains("bearer ")
+    {
+        return "the cloud's answer was withheld because it contained a secret".into();
+    }
+    text.chars().take(180).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_body_that_contains_an_access_code_is_not_repeated() {
+        let text = redact(r#"{"dev_access_code":"ACCESS-CODE-SECRET","accessToken":"access-secret-token"}"#);
+        assert!(!text.contains("ACCESS-CODE-SECRET"), "{text}");
+        assert!(!text.contains("access-secret-token"), "{text}");
+    }
 
     #[test]
     fn tokens_never_print_themselves() {

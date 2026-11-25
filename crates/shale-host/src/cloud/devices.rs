@@ -28,7 +28,9 @@ impl State {
             Some("RUNNING") | Some("PREPARE") | Some("PAUSE") | Some("SLICING") => Self::Printing {
                 percent: device.mc_percent,
             },
-            Some("IDLE") | Some("FINISH") | Some("FAILED") => Self::Idle,
+            // SUCCESS is what the bind list says for a machine that is not
+            // printing (ha-bambulab's recorded device list, OpenBambuAPI).
+            Some("IDLE") | Some("FINISH") | Some("FAILED") | Some("SUCCESS") => Self::Idle,
             Some(_) => Self::Busy,
             None => match device.mc_print_stage.as_deref() {
                 Some("0") | None => Self::Idle,

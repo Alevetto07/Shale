@@ -44,7 +44,7 @@ Use this to see nozzle variants and quality profiles.
 
 ### `list_my_printers`
 
-Use this for the printers on the signed-in Bambu account. Read only.
+Use this for the printers bound to the signed-in Bambu account. Read only.
 
 No arguments. If this process is not signed in, the error is exactly `sign in to Bambu in Shale first`.
 
@@ -60,7 +60,7 @@ The cloud device list does not include temperatures or AMS humidity. A LAN statu
 
 ### `list_print_jobs`
 
-Use this for recent and current jobs. Read only.
+Use this for recent print tasks on the signed-in account (`GET /v1/user-service/my/tasks`). Read only.
 
 No arguments. The same sign-in error as `list_my_printers` when there is no account.
 

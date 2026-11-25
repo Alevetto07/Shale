@@ -161,6 +161,19 @@ pub fn cloud_verify(
         .map_err(|err| err.to_string())
 }
 
+/// Global, or China (`CN` / `China` / `zh-CN`) which uses `api.bambulab.cn`.
+/// Switching region while signed in signs out: the two clouds do not share tokens.
+#[tauri::command]
+pub fn cloud_set_region(state: tauri::State<CloudState>, region: String) -> Result<Session, String> {
+    let mut cloud = lock(&state)?;
+    cloud.set_region(&region).map_err(|err| err.to_string())?;
+    Ok(Session {
+        signed_in: cloud.signed_in(),
+        account: cloud.account().map(str::to_string),
+        host: cloud.host().to_string(),
+    })
+}
+
 #[tauri::command]
 pub fn cloud_sign_out(state: tauri::State<CloudState>) -> Result<(), String> {
     let mut cloud = lock(&state)?;

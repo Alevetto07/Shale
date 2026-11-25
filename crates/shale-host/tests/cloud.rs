@@ -199,12 +199,15 @@ fn an_expired_token_is_refreshed_before_it_is_used() {
     );
     assert_eq!(
         seen[1].url,
-        "https://api.bambulab.com/v1/iot-service/api/user/device/list"
+        "https://api.bambulab.com/v1/iot-service/api/user/bind"
     );
     assert!(seen[1]
         .headers
         .iter()
         .any(|(name, value)| name == "Authorization" && value == "Bearer a3"));
+    let printed = format!("{:?}", seen[1]);
+    assert!(!printed.contains("a3"), "the token was logged: {printed}");
+    assert!(printed.contains("[redacted]"), "{printed}");
     assert_eq!(store.get("cloud.access").unwrap().as_deref(), Some("a3"));
 }
 
@@ -282,6 +285,151 @@ fn a_sent_print_returns_the_task_the_cloud_made() {
     assert!(body.contains("name=\"task\""));
     assert!(body.contains("\"dev_id\":\"01P00\""));
     assert!(body.contains("name=\"file\"; filename=\"plate.gcode\""));
+}
+
+/// A recorded bind answer, shaped like ha-bambulab's `get_device_list` note
+/// and OpenBambuAPI's `GET /v1/iot-service/api/user/bind`. The access code is
+/// fake. Nothing in this test opens a socket.
+const BIND_FIXTURE: &str = r#"{
+  "message": "success",
+  "code": null,
+  "error": null,
+  "devices": [
+    {
+      "dev_id": "01P00A000000001",
+      "name": "Shed A1",
+      "online": true,
+      "print_status": "SUCCESS",
+      "dev_model_name": "N2S",
+      "dev_product_name": "A1",
+      "dev_access_code": "ACCESS-CODE-SECRET",
+      "nozzle_diameter": 0.4,
+      "print_job": 4821
+    }
+  ]
+}"#;
+
+const TASKS_FIXTURE: &str = r#"{
+  "total": 1,
+  "hits": [
+    {
+      "id": 4821,
+      "title": "cube",
+      "status": 2,
+      "deviceId": "01P00A000000001",
+      "mode": "cloud_file"
+    }
+  ]
+}"#;
+
+#[test]
+fn a_recorded_bind_list_is_read_without_calling_the_old_route() {
+    let script = Script::new(vec![
+        answer(
+            200,
+            r#"{"accessToken":"access-secret-token","refreshToken":"refresh-secret-token","expiresIn":3600}"#,
+        ),
+        answer(200, BIND_FIXTURE),
+        answer(200, TASKS_FIXTURE),
+    ]);
+    let store = Arc::new(MemoryStore::default());
+    let mut cloud = cloud(script.clone(), store);
+    cloud.sign_in("a@b.c", "pw").unwrap();
+
+    let devices = cloud.devices().unwrap();
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0].name, "Shed A1");
+    assert_eq!(devices[0].dev_product_name, "A1");
+    assert!(devices[0].online);
+    assert_eq!(devices[0].print_status.as_deref(), Some("SUCCESS"));
+    assert_eq!(devices[0].nozzle_diameter, Some(0.4));
+    assert_eq!(devices[0].job_id().as_deref(), Some("4821"));
+    assert!(devices::State::of(&devices[0]).may_print());
+    let printed = format!("{:?}", devices[0]);
+    assert!(!printed.contains("ACCESS-CODE-SECRET"), "{printed}");
+    assert!(printed.contains("set"), "{printed}");
+
+    let tasks = cloud.tasks().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].id().as_deref(), Some("4821"));
+    assert_eq!(tasks[0].title, "cube");
+    assert_eq!(tasks[0].state(), "finished");
+
+    let seen = script.seen();
+    assert_eq!(
+        seen[1].url,
+        "https://api.bambulab.com/v1/iot-service/api/user/bind"
+    );
+    assert!(
+        !seen.iter().any(|request| request.url.contains("device/list")),
+        "the removed route was called: {seen:?}"
+    );
+    assert_eq!(
+        seen[2].url,
+        "https://api.bambulab.com/v1/user-service/my/tasks?limit=20"
+    );
+    let logged = format!("{:?}", seen[1]);
+    assert!(
+        !logged.contains("access-secret-token"),
+        "the access token was logged: {logged}"
+    );
+}
+
+#[test]
+fn a_china_account_uses_the_china_host_and_a_later_run_remembers_it() {
+    let script = Script::new(vec![
+        answer(
+            200,
+            r#"{"accessToken":"a","refreshToken":"r","expiresIn":3600}"#,
+        ),
+        answer(200, BIND_FIXTURE),
+    ]);
+    let store = Arc::new(MemoryStore::default());
+    let mut session = cloud(script.clone(), store.clone());
+    session.set_region("CN").unwrap();
+    session.sign_in("a@b.c", "pw").unwrap();
+    assert_eq!(session.devices().unwrap().len(), 1);
+    assert!(script.seen()[0]
+        .url
+        .starts_with("https://api.bambulab.cn/"));
+    assert_eq!(
+        script.seen()[1].url,
+        "https://api.bambulab.cn/v1/iot-service/api/user/bind"
+    );
+
+    let again = Script::new(vec![]);
+    let mut restored = cloud(again, store);
+    restored.load();
+    assert_eq!(restored.host(), api::CHINA_HOST);
+    assert!(restored.signed_in());
+}
+
+#[test]
+fn a_missing_route_is_not_shown_as_the_raw_404_body() {
+    let script = Script::new(vec![answer(
+        404,
+        r#"{"error_msg":"404 Route Not Found","dev_access_code":"ACCESS-CODE-SECRET"}"#,
+    )]);
+    let store = Arc::new(MemoryStore::default());
+    store.set("cloud.access", "access-secret-token").unwrap();
+    store.set("cloud.refresh", "refresh-secret-token").unwrap();
+    store
+        .set(
+            "cloud.expires",
+            &(shale_host::cloud::now_unix() + 3600).to_string(),
+        )
+        .unwrap();
+    let mut cloud = cloud(script, store);
+    cloud.load();
+
+    let err = cloud.devices().unwrap_err();
+    let text = err.to_string();
+    assert!(text.contains("did not recognise"), "{text}");
+    assert!(!text.contains("Route Not Found"), "{text}");
+    assert!(!text.contains("error_msg"), "{text}");
+    assert!(!text.contains("ACCESS-CODE-SECRET"), "{text}");
+    assert!(!text.contains("access-secret-token"), "{text}");
+    assert!(!format!("{err:?}").contains("ACCESS-CODE-SECRET"), "{err:?}");
 }
 
 #[test]

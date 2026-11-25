@@ -60,12 +60,7 @@ pub struct AccountPrinters;
 
 impl PrinterDirectory for AccountPrinters {
     fn printers(&self) -> Result<Vec<PrinterView>, String> {
-        let mut cloud = Cloud::new(
-            api::GLOBAL_HOST,
-            Arc::new(HttpTransport),
-            Arc::new(MemoryStore::default()),
-        );
-        cloud.load();
+        let mut cloud = account();
         if !cloud.signed_in() {
             return Err(SIGN_IN.to_string());
         }
@@ -83,12 +78,39 @@ impl PrinterDirectory for AccountPrinters {
     }
 
     fn jobs(&self) -> Result<Vec<PrintJob>, String> {
-        Ok(self
-            .printers()?
-            .into_iter()
-            .filter_map(|printer| printer.job)
-            .collect())
+        let mut cloud = account();
+        if !cloud.signed_in() {
+            return Err(SIGN_IN.to_string());
+        }
+        cloud
+            .tasks()
+            .map(|list| {
+                list.into_iter()
+                    .filter_map(|task| {
+                        let id = task.id()?;
+                        Some(PrintJob {
+                            id,
+                            name: task.title.clone(),
+                            state: task.state(),
+                            progress_percent: None,
+                            remaining_minutes: None,
+                            file: String::new(),
+                        })
+                    })
+                    .collect()
+            })
+            .map_err(|err| err.to_string())
     }
+}
+
+fn account() -> Cloud<HttpTransport> {
+    let mut cloud = Cloud::new(
+        api::GLOBAL_HOST,
+        Arc::new(HttpTransport),
+        Arc::new(MemoryStore::default()),
+    );
+    cloud.load();
+    cloud
 }
 
 pub fn from_cloud(device: &CloudDevice) -> PrinterView {
@@ -99,18 +121,13 @@ pub fn from_cloud(device: &CloudDevice) -> PrinterView {
             "OFFLINE".into()
         }
     });
-    let job = device.task_id.as_ref().and_then(|id| {
-        if id.is_empty() {
-            return None;
-        }
-        Some(PrintJob {
-            id: id.clone(),
-            name: String::new(),
-            state: state.clone(),
-            progress_percent: device.mc_percent.map(|value| value as f64),
-            remaining_minutes: device.mc_remaining_time.map(|value| value as f64),
-            file: String::new(),
-        })
+    let job = device.job_id().map(|id| PrintJob {
+        id,
+        name: String::new(),
+        state: state.clone(),
+        progress_percent: device.mc_percent.map(|value| value as f64),
+        remaining_minutes: device.mc_remaining_time.map(|value| value as f64),
+        file: String::new(),
     });
     PrinterView {
         id: device.dev_id.clone(),
@@ -183,6 +200,14 @@ mod tests {
         };
         let view = from_cloud(&device);
         assert_eq!(view.name, "Shed");
+        let secret = CloudDevice {
+            dev_access_code: "ACCESS-CODE-SECRET".into(),
+            print_job: Some("99".into()),
+            ..device.clone()
+        };
+        let with_job = from_cloud(&secret);
+        assert_eq!(with_job.job.as_ref().map(|job| job.id.as_str()), Some("99"));
+        assert!(!format!("{with_job:?}").contains("ACCESS-CODE-SECRET"));
         assert_eq!(view.job.as_ref().map(|job| job.progress_percent), Some(Some(40.0)));
         assert!(view.ams.is_empty());
         assert!(view.nozzle_c.is_none());

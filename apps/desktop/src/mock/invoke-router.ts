@@ -155,6 +155,16 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
       return mockHost(flags.hostConnected) as T;
     case "cloud_state":
       return cloudSession as T;
+    case "cloud_set_region":
+      cloudSession = {
+        ...cloudSession,
+        signedIn: false,
+        host:
+          String(args.region) === "China" || String(args.region) === "CN"
+            ? "https://api.bambulab.cn"
+            : "https://api.bambulab.com",
+      };
+      return cloudSession as T;
     case "cloud_login":
       cloudSession = mockCloud(false);
       return { needsCode: true, tfaKey: "mock-tfa" } as T;

@@ -5423,6 +5423,7 @@ pub fn run() {
             cloud::cloud_login,
             cloud::cloud_login_web,
             cloud::cloud_verify,
+            cloud::cloud_set_region,
             cloud::cloud_sign_out,
             cloud::cloud_devices,
             cloud::cloud_send
