@@ -334,7 +334,9 @@ impl ShaleMcp {
         )
     }
 
-    #[tool(description = "Centre a model on the build plate and drop it onto Z = 0.")]
+    #[tool(
+        description = "Centre a model on the build plate and drop it onto Z = 0. Rotation and scale are reset to the identity; set them again afterwards if the part should stay scaled or rotated."
+    )]
     fn arrange_model(
         &self,
         Parameters(ModelIdArgs { id }): Parameters<ModelIdArgs>,
