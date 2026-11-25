@@ -542,9 +542,15 @@ impl Session {
     }
 
     fn printer<'a>(&'a self, override_id: Option<&'a str>) -> Result<&'a str, Error> {
-        override_id
+        let id = override_id
             .or(self.printer_id.as_deref())
-            .ok_or_else(|| Error::message("choose a printer first"))
+            .ok_or_else(|| Error::message("choose a printer first"))?;
+        // An explicit id that is not a definition used to come back as an empty
+        // profile list, which an agent reads as "this printer has no profiles".
+        if self.catalog.printer(id).is_none() {
+            return Err(Error::UnknownPrinter(id.to_string()));
+        }
+        Ok(id)
     }
 
     fn model(&self, id: u32) -> Result<&Loaded, Error> {

@@ -191,6 +191,31 @@ async fn slice_cube(
 }
 
 #[tokio::test]
+async fn an_unknown_printer_is_an_error_not_an_empty_profile_list() {
+    ensure_test_cache();
+    let session = shale_core::Session::new(fixture_catalog(), Box::new(FakeEngine));
+    let err = session
+        .list_profiles(Some("not_a_printer"))
+        .expect_err("unknown printer must not look like a printer with no profiles");
+    let text = err.to_string();
+    assert!(
+        text.contains("not_a_printer"),
+        "the id should be in the error, got {text}"
+    );
+    assert!(
+        text.contains("not found"),
+        "the error should say the printer was not found, got {text}"
+    );
+    session
+        .list_profiles(None)
+        .expect("the session printer still has profiles");
+    let materials = session
+        .list_materials(Some("not_a_printer"))
+        .expect_err("materials for an unknown printer should fail the same way");
+    assert!(materials.to_string().contains("not_a_printer"));
+}
+
+#[tokio::test]
 async fn in_process_client_slices_the_20mm_cube() {
     ensure_test_cache();
     let destination = tempfile::Builder::new()
