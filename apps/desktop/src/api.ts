@@ -88,6 +88,27 @@ export interface PlateView {
   active: boolean;
 }
 
+export interface FitWarning {
+  plate_index: number;
+  plate_name: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface ImportedSetting {
+  key: string;
+  label: string;
+  value: string;
+  detail: string;
+}
+
+export interface ProjectSettingsImport {
+  applied: ImportedSetting[];
+  ignored: number;
+  note: string;
+}
+
 export interface PlateSwitch {
   plates: PlateView[];
   models: ModelView[];
@@ -592,6 +613,7 @@ export const api = {
     materialId: string | null,
     ams: string[],
     settings: SliceSettings,
+    ignoreProjectSettings = false,
   ) =>
     invoke<SliceSummary>("slice_model", {
       printerId,
@@ -600,7 +622,10 @@ export const api = {
       materialId,
       ams,
       settings,
+      ignoreProjectSettings,
     }),
+  plateFit: (printerId: string | null) => invoke<FitWarning>("plate_fit", { printerId }),
+  importedSettings: () => invoke<ProjectSettingsImport | null>("imported_settings"),
   supportPlan: () => invoke<SupportView | null>("current_support"),
   overhangPatches: (modelId: number) => invoke<OverhangPatch[]>("overhang_patches", { modelId }),
   /** `block` paints the faces as needing no support; the default holds them up. */

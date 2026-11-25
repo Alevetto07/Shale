@@ -1656,6 +1656,44 @@ button.recent-row.dim { color: var(--ink-3); }
 .slice-data { grid-area: data; font-variant-numeric: tabular-nums; }
 .slice-diff { grid-area: diff; color: var(--ink-3); }
 
+.fit-warning {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 12px;
+  z-index: 30;
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.import-summary {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.import-summary summary {
+  cursor: pointer;
+}
+.import-summary ul {
+  margin: 6px 0;
+  padding-left: 1.1rem;
+}
+.import-summary p {
+  margin: 0 0 6px;
+  opacity: 0.75;
+}
+.import-summary label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .slice-again {
   position: absolute;
   left: 50%;

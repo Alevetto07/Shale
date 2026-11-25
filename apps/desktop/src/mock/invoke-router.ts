@@ -65,6 +65,10 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
       return models as T;
     case "list_plates":
       return mockPlates(models.length) as T;
+    case "plate_fit":
+      return { plate_index: 0, plate_name: "plate 1", x: 0, y: 0, z: 0 } as T;
+    case "imported_settings":
+      return null as T;
     case "add_plate":
     case "switch_plate":
       return { plates: mockPlates(models.length), models } as T;

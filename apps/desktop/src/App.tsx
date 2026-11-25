@@ -15,7 +15,9 @@ import {
   type OverhangPatch,
   type OpenedProject,
   type PlateSwitch,
+  type FitWarning,
   type PlateView,
+  type ProjectSettingsImport,
   type PreviewPath,
   type PrinterInfo,
   type QualityInfo,
@@ -41,6 +43,7 @@ import { variantOptionLabel } from "./profile-labels";
 import { toast } from "sonner";
 import { Frame } from "./theme";
 import { MenuBar } from "./MenuBar";
+import { Dialog } from "./ui/dialog";
 import { SliceDock } from "./ui/slice-dock";
 import { applyUiStyle, readUiStyle, writeUiStyle, type UiStyleId } from "./ui-styles";
 import {
@@ -251,6 +254,10 @@ export function App() {
   /// The plates in this project. The one flagged `active` is the one `models`
   /// holds; the rest live in the backend until they are turned to.
   const [plates, setPlates] = useState<PlateView[]>([]);
+  const [fit, setFit] = useState<FitWarning | null>(null);
+  const [embedded, setEmbedded] = useState<ProjectSettingsImport | null>(null);
+  const [ignoreEmbedded, setIgnoreEmbedded] = useState(false);
+  const [confirmExport, setConfirmExport] = useState<null | "gcode" | "stl" | "3mf">(null);
   // Part counts are the backend's, because it holds the plates that are not in
   // front. A part arriving or leaving is the only thing that changes them.
   useEffect(() => {
@@ -397,12 +404,21 @@ export function App() {
     .join("|");
   const slicedPlate = useRef<string | null>(null);
 
+  const plateOverrides = useMemo(() => {
+    if (!embedded || ignoreEmbedded) return overrides;
+    const next = { ...overrides };
+    for (const setting of embedded.applied) {
+      if (!(setting.key in next)) next[setting.key] = setting.value;
+    }
+    return next;
+  }, [overrides, embedded, ignoreEmbedded]);
+
   const scopedOverrides = useMemo(
     () =>
       scope === "all"
-        ? overrides
+        ? plateOverrides
         : (models.find((m) => m.id === Number(scope))?.settings ?? {}),
-    [scope, overrides, models],
+    [scope, plateOverrides, models],
   );
 
   const quickFallbacks = useMemo(
@@ -816,6 +832,7 @@ export function App() {
         const next = await api.bed(printerId, variant, quality, material);
         if (cancelled) return;
         setBed(next);
+        setError((current) => (current && current.includes("unknown quality") ? null : current));
       } catch (err) {
         if (!cancelled) setError(messageOf(err));
       }
@@ -1285,7 +1302,14 @@ export function App() {
     try {
       const added = await api.importModel(picked, printerId || null, variant, quality, chord, turn);
       remember();
-      setModels((current) => [...current, ...added]);
+      setModels(added);
+      try {
+        setPlates(await api.listPlates());
+        setEmbedded(await api.importedSettings());
+        setIgnoreEmbedded(false);
+      } catch {
+        // The models are on the plate even if the plate list did not refresh.
+      }
       const last = added[added.length - 1];
       setSelectedId(last.id);
       setPreview(false);
@@ -1322,6 +1346,25 @@ export function App() {
     if (typeof picked !== "string") return;
     await importFromPath(picked);
   }
+
+  useEffect(() => {
+    if (models.length === 0) {
+      setFit(null);
+      return;
+    }
+    let live = true;
+    api
+      .plateFit(printerId || null)
+      .then((next) => {
+        if (live) setFit(next);
+      })
+      .catch(() => {
+        if (live) setFit(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [models, printerId, plates]);
 
   const importPathRef = useRef(importFromPath);
   importPathRef.current = importFromPath;
@@ -1712,7 +1755,15 @@ export function App() {
     setCalibration(null);
     setProgress({ fraction: 0.02, message: "Starting" });
     try {
-      const summary = await api.slice(printerId, variant, quality, material, ams, engineSettings);
+      const summary = await api.slice(
+        printerId,
+        variant,
+        quality,
+        material,
+        ams,
+        engineSettings,
+        ignoreEmbedded,
+      );
       setLayerCount(summary.layer_count);
       slicedPlate.current = plateKey;
       setLayerZ(summary.layers.map((item) => item.z));
@@ -1775,7 +1826,19 @@ export function App() {
     void slice({ quiet: true });
   };
 
+  function plateOverflows() {
+    return fit != null && Math.max(fit.x, fit.y, fit.z) > 0.5;
+  }
+
   async function exportGcode() {
+    if (plateOverflows()) {
+      setConfirmExport("gcode");
+      return;
+    }
+    await writeGcode();
+  }
+
+  async function writeGcode() {
     setError(null);
     const destination = await save({
       defaultPath: "shale.gcode",
@@ -1903,6 +1966,14 @@ export function App() {
   }, [models, scope]);
 
   async function exportGeometry(format: "stl" | "3mf") {
+    if (plateOverflows()) {
+      setConfirmExport(format);
+      return;
+    }
+    await writeGeometry(format);
+  }
+
+  async function writeGeometry(format: "stl" | "3mf") {
     setError(null);
     setNotice(null);
     const destination = await save({
@@ -3231,7 +3302,7 @@ export function App() {
                     title={plate.name}
                     onClick={() => void showPlate(plate.index)}
                   >
-                    <span className="plate-name">Plate {plate.index + 1}</span>
+                    <span className="plate-name">{plate.name}</span>
                     <span className="plate-count">
                       {plate.models === 0
                         ? "Empty"
@@ -3260,6 +3331,11 @@ export function App() {
               Each plate holds its own parts and is sliced on its own. A project saves every plate with it.
             </p>
           </Frame>
+          <ProjectSummary
+            embedded={embedded}
+            ignored={ignoreEmbedded}
+            onIgnore={setIgnoreEmbedded}
+          />
 
           <Frame title="Objects">
             {models.length === 0 ? (
@@ -4122,7 +4198,33 @@ export function App() {
 
           {/* Money and energy belong to a slice, not to a part: the numbers only
               mean anything once there is a result to price. */}
+          {pane === "preview" && plates.length > 0 && (
+            <Frame title="Plates">
+              <div className="row plates">
+                {plates.map((plate) => (
+                  <span key={plate.index} className="plate-chip">
+                    <button
+                      type="button"
+                      className={plate.active ? "plate-tab active" : "plate-tab"}
+                      title={plate.name}
+                      onClick={() => void showPlate(plate.index)}
+                    >
+                      <span className="plate-name">{plate.name}</span>
+                      <span className="plate-count">
+                        {plate.models === 0 ? "Empty" : plate.models === 1 ? "1 part" : `${plate.models} parts`}
+                      </span>
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </Frame>
+          )}
           {pane === "preview" && (<>
+          <ProjectSummary
+            embedded={embedded}
+            ignored={ignoreEmbedded}
+            onIgnore={setIgnoreEmbedded}
+          />
           <Frame title="Cost">
             <label>
               Currency
@@ -4235,6 +4337,43 @@ export function App() {
         <main className="stage">
           {/* Prepare never shows a result, so when the plate or the process has
               moved on from the last slice it says so and offers the press. */}
+          {(pane === "prepare" || pane === "preview") &&
+            fit != null &&
+            Math.max(fit.x, fit.y, fit.z) > 0.5 && (
+            <p className="fit-warning" role="status">
+              {fit.plate_name} extends outside the build volume (X {fit.x.toFixed(1)} mm, Y {fit.y.toFixed(1)} mm, Z {fit.z.toFixed(1)} mm past the plate).
+            </p>
+          )}
+          <Dialog
+            open={confirmExport !== null}
+            onOpenChange={(open) => {
+              if (!open) setConfirmExport(null);
+            }}
+            title="This plate extends past the bed"
+            description={
+              fit
+                ? `${fit.plate_name} is outside the build volume by X ${fit.x.toFixed(1)} mm, Y ${fit.y.toFixed(1)} mm, Z ${fit.z.toFixed(1)} mm. Exporting writes that geometry as it is.`
+                : "This plate extends past the bed."
+            }
+          >
+            <div className="row">
+              <button type="button" onClick={() => setConfirmExport(null)}>
+                Stay
+              </button>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  const kind = confirmExport;
+                  setConfirmExport(null);
+                  if (kind === "gcode") void writeGcode();
+                  else if (kind === "stl" || kind === "3mf") void writeGeometry(kind);
+                }}
+              >
+                Export anyway
+              </button>
+            </div>
+          </Dialog>
           {pane === "prepare" && stale && (
             <p className="slice-again" role="status">
               Changed since slice {lastSlice?.n}
@@ -4471,6 +4610,40 @@ export function App() {
 }
 
 type InstructionKind = "pause" | "temperature" | "fan" | "beep" | "message" | "park_and_wait";
+
+function ProjectSummary({
+  embedded,
+  ignored,
+  onIgnore,
+}: {
+  embedded: ProjectSettingsImport | null;
+  ignored: boolean;
+  onIgnore: (ignored: boolean) => void;
+}) {
+  if (!embedded || embedded.applied.length === 0) return null;
+  return (
+    <details className="import-summary">
+      <summary>Project settings</summary>
+      <ul>
+        {embedded.applied.map((setting) => (
+          <li key={setting.key}>
+            {setting.label} {setting.detail}
+            {ignored ? " (ignored)" : ""}
+          </li>
+        ))}
+      </ul>
+      <p>{embedded.note}</p>
+      <label>
+        <input
+          type="checkbox"
+          checked={ignored}
+          onChange={(event) => onIgnore(event.target.checked)}
+        />
+        Ignore project settings
+      </label>
+    </details>
+  );
+}
 
 function markOf(item: StoredInstruction, layerZ: number[], layerHeight: number): number | null {
   const instruction = item.instruction;
