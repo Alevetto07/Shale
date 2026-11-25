@@ -49,6 +49,12 @@ fn clamp_slope_z(
         // sat on the cap. Only an extruding segment can fail the file.
         if count_excess {
             stats.unclamped_excess += 1;
+            if std::env::var_os("SHALE_TRACE").is_some() {
+                let slope = (dz.abs() / step_horiz).atan().to_degrees();
+                eprintln!(
+                    "inverse excess {correction:.4} mm over {step_horiz:.3} mm ({slope:.2}°) at {x:.2},{y:.2}"
+                );
+            }
         }
     }
     z
@@ -118,6 +124,10 @@ pub fn map_gcode_inverse_counted(
 ) -> (String, InverseMapStats) {
     let _ = nominal_layer;
     let mut absolute = true;
+    // G90/G91 move X, Y and Z. `absolute` stays the extrusion mode the rest of
+    // this function already used; mixing the two made a relative wipe (`G91` /
+    // `G1 X-35`) look like a jump to X = -35.
+    let mut absolute_xyz = true;
     let mut position = [0.0f64; 4]; // x,y,z,e
     let mut last_phys = [0.0f64; 3];
     let mut last_z_def = 0.0f64;
@@ -133,12 +143,14 @@ pub fn map_gcode_inverse_counted(
         let line = raw.trim();
         if line.starts_with("G90") {
             absolute = true;
+            absolute_xyz = true;
             out.push_str(raw);
             out.push('\n');
             continue;
         }
         if line.starts_with("G91") {
             absolute = false;
+            absolute_xyz = false;
             out.push_str(raw);
             out.push('\n');
             continue;
@@ -166,10 +178,17 @@ pub fn map_gcode_inverse_counted(
             continue;
         }
 
+        let placed = |index: usize, letter: char| -> f64 {
+            match word_f(line, letter) {
+                Some(value) if absolute_xyz => value,
+                Some(value) => position[index] + value,
+                None => position[index],
+            }
+        };
         let target = [
-            word_f(line, 'X').unwrap_or(position[0]),
-            word_f(line, 'Y').unwrap_or(position[1]),
-            word_f(line, 'Z').unwrap_or(position[2]),
+            placed(0, 'X'),
+            placed(1, 'Y'),
+            placed(2, 'Z'),
             word_f(line, 'E').unwrap_or(position[3]),
         ];
         let extruding = if let Some(e) = word_f(line, 'E') {

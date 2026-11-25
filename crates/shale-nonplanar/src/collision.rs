@@ -380,12 +380,17 @@ struct MoveSpan {
     arc: bool,
 }
 
-/// G-code move parser carrying the modal state (`M82`/`M83`/`G92`).
+/// G-code move parser carrying the modal state (`G90`/`G91`, `M82`/`M83`, `G92`).
 struct MoveState {
     position: [f64; 3],
     /// Last absolute E word seen (M82 mode).
     last_e: Option<f64>,
     absolute_e: bool,
+    /// `G90` is absolute XYZ, `G91` adds the word to the current position.
+    /// A nozzle wipe is written in relative mode (`G91` then `G1 X-35`); reading
+    /// that word as an absolute coordinate reports a travel through empty space
+    /// beside the brim.
+    absolute_xyz: bool,
 }
 
 impl MoveState {
@@ -394,6 +399,7 @@ impl MoveState {
             position: [0.0; 3],
             last_e: None,
             absolute_e: true,
+            absolute_xyz: true,
         }
     }
 
@@ -412,9 +418,22 @@ impl MoveState {
                 self.absolute_e = false;
                 return None;
             }
+            "G90" => {
+                self.absolute_xyz = true;
+                return None;
+            }
+            "G91" => {
+                self.absolute_xyz = false;
+                return None;
+            }
             "G92" => {
                 if let Some(e) = word(line, 'E') {
                     self.last_e = Some(e);
+                }
+                for (axis, letter) in ['X', 'Y', 'Z'].into_iter().enumerate() {
+                    if let Some(value) = word(line, letter) {
+                        self.position[axis] = value;
+                    }
                 }
                 return None;
             }
@@ -439,7 +458,11 @@ impl MoveState {
         let mut moved = false;
         for (axis, letter) in ['X', 'Y', 'Z'].into_iter().enumerate() {
             if let Some(value) = word(line, letter) {
-                target[axis] = value;
+                target[axis] = if self.absolute_xyz {
+                    value
+                } else {
+                    self.position[axis] + value
+                };
                 moved = true;
             }
         }
@@ -810,5 +833,46 @@ mod tests {
             .expect("0.2 mm of material 0.02 mm from the nozzle is a strike");
         assert!((height - 0.2).abs() < 1e-9, "height {height}");
         assert!((d - 0.0214).abs() < 0.001, "distance {d}");
+    }
+
+    /// Bambu's nozzle wipe is `G91` then `G1 X-35` from the brush at the back of
+    /// the bed. Reading that word as an absolute coordinate put the travel on
+    /// X = -35, through printed material that is not there.
+    #[test]
+    fn a_relative_wipe_is_not_an_absolute_jump() {
+        let envelope = bambu_a1_envelope();
+        // A column at X = -35, then a park at X = 80, then a relative step of
+        // -35 mm. Absolute parsing flies back through the column. Relative
+        // parsing stops at X = 45, well clear of it.
+        let gcode = "\
+G90
+G1 X-35 Y0 Z0.2 E1
+G1 Z8 E2
+G0 X80 Y0 Z1.3
+G91
+G1 X-35 F30000
+";
+        let hits = find_collisions(gcode, envelope, [0.0, 0.0], 1.0, 4, 4);
+        assert!(
+            hits.is_empty(),
+            "relative wipe was reported at {:?}",
+            hits.iter()
+                .map(|hit| (hit.x, hit.y, hit.z))
+                .collect::<Vec<_>>()
+        );
+
+        // The same travel written in absolute mode really does cross the column.
+        let absolute = "\
+G90
+G1 X-35 Y0 Z0.2 E1
+G1 Z8 E2
+G0 X80 Y0 Z1.3
+G1 X-35
+";
+        let real = find_collisions(absolute, envelope, [0.0, 0.0], 1.0, 4, 4);
+        assert!(
+            !real.is_empty(),
+            "an absolute travel through the column must still be a collision"
+        );
     }
 }
