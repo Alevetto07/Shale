@@ -239,6 +239,8 @@ mod auto_placement {
             limits: crate::MachineLimits {
                 z_max_mm: 256.0,
                 max_feed_mm_per_min: 6000.0,
+                bed_width_mm: 256.0,
+                bed_depth_mm: 256.0,
             },
         })
         .expect("non-strict post-pass never errors");
@@ -358,6 +360,8 @@ mod auto_placement {
             limits: crate::MachineLimits {
                 z_max_mm: 256.0,
                 max_feed_mm_per_min: 6000.0,
+                bed_width_mm: 256.0,
+                bed_depth_mm: 256.0,
             },
         })
         .expect("non-strict fallback is Ok");

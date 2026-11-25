@@ -111,8 +111,15 @@ G0 X20 Y40 Z2
 #[test]
 fn arcs_are_counted_and_sampled_by_endpoint() {
     let gcode = "G2 X10 Y10 Z2 I5 J0 E1\n";
-    let (found, stats) =
-        find_collisions_with_stats(gcode, bambu_a1_envelope(), ORIGIN, STEP, WIDTH, HEIGHT);
+    let (found, stats) = find_collisions_with_stats(
+        gcode,
+        bambu_a1_envelope(),
+        ORIGIN,
+        STEP,
+        WIDTH,
+        HEIGHT,
+        None,
+    );
     assert!(found.is_empty());
     assert_eq!(stats.arc_moves, 1);
     assert_eq!(stats.extruding_moves, 1);

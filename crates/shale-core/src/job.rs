@@ -861,6 +861,8 @@ pub fn slice(
                 limits: shale_nonplanar::MachineLimits {
                     z_max_mm: machine_height,
                     max_feed_mm_per_min: max_feed,
+                    bed_width_mm: resolved.summary.machine_width,
+                    bed_depth_mm: resolved.summary.machine_depth,
                 },
             }) {
                 Ok((mapped, mut report)) => {

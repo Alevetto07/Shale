@@ -481,8 +481,19 @@ impl MoveState {
     }
 }
 
-/// XY bounds of every extruding move: the only places material can exist.
-fn material_bounds(gcode: &str) -> Option<([f64; 2], [f64; 2])> {
+/// Half a millimetre past the nominal plate still counts as on the bed.
+const BED_EDGE_MM: f64 = 0.5;
+
+/// True when `(x, y)` is on the printable rectangle, or when no plate was given.
+fn on_printable_bed(x: f64, y: f64, bed: Option<(f64, f64)>) -> bool {
+    let Some((width, depth)) = bed else {
+        return true;
+    };
+    x >= -BED_EDGE_MM && y >= -BED_EDGE_MM && x <= width + BED_EDGE_MM && y <= depth + BED_EDGE_MM
+}
+
+/// XY bounds of every extruding move that lands on the plate.
+fn material_bounds(gcode: &str, bed: Option<(f64, f64)>) -> Option<([f64; 2], [f64; 2])> {
     let mut state = MoveState::new();
     let mut lo = [f64::INFINITY; 2];
     let mut hi = [f64::NEG_INFINITY; 2];
@@ -495,6 +506,9 @@ fn material_bounds(gcode: &str) -> Option<([f64; 2], [f64; 2])> {
             continue;
         }
         for p in [m.from, m.to] {
+            if !on_printable_bed(p[0], p[1], bed) {
+                continue;
+            }
             lo[0] = lo[0].min(p[0]);
             lo[1] = lo[1].min(p[1]);
             hi[0] = hi[0].max(p[0]);
@@ -540,7 +554,26 @@ pub fn find_collisions(
     width: usize,
     height: usize,
 ) -> Vec<CollisionHit> {
-    find_collisions_with_stats(gcode, envelope, grid_origin, grid_step, width, height).0
+    find_collisions_on_bed(gcode, envelope, grid_origin, grid_step, width, height, None)
+}
+
+/// [`find_collisions`] with the printable rectangle.
+///
+/// `bed` is `(width, depth)` in millimetres, origin at the front-left corner.
+/// Extrusion outside that rectangle is the chute purge and the nozzle wipe, not
+/// a wall: recording it makes a solid column in empty air, and the next travel
+/// at priming height then fails the envelope. `None` keeps every extrusion,
+/// which is what the synthetic collision tests want.
+pub fn find_collisions_on_bed(
+    gcode: &str,
+    envelope: &HeadEnvelope,
+    grid_origin: [f64; 2],
+    grid_step: f64,
+    width: usize,
+    height: usize,
+    bed: Option<(f64, f64)>,
+) -> Vec<CollisionHit> {
+    find_collisions_with_stats(gcode, envelope, grid_origin, grid_step, width, height, bed).0
 }
 
 /// [`find_collisions`] plus the counters needed to describe the sweep in notes.
@@ -551,6 +584,7 @@ pub fn find_collisions_with_stats(
     grid_step: f64,
     width: usize,
     height: usize,
+    bed: Option<(f64, f64)>,
 ) -> (Vec<CollisionHit>, CollisionScanStats) {
     let mut hits = Vec::new();
     let mut stats = CollisionScanStats::default();
@@ -560,7 +594,7 @@ pub fn find_collisions_with_stats(
     }
     // The map covers the material, not the field grid: a bead's distance is a
     // property of the print, not of the deform field's resolution.
-    let Some((lo, hi)) = material_bounds(gcode) else {
+    let Some((lo, hi)) = material_bounds(gcode, bed) else {
         return (hits, stats);
     };
     let (cell, origin, map_width, map_height) = map_geometry(lo, hi);
@@ -615,11 +649,12 @@ pub fn find_collisions_with_stats(
             let raises = ((distance / raise_step).ceil() as usize).clamp(1, 200_000);
             for step in 0..=raises {
                 let t = step as f64 / raises as f64;
-                map.raise(
-                    m.from[0] + delta[0] * t,
-                    m.from[1] + delta[1] * t,
-                    m.from[2] + delta[2] * t,
-                );
+                let x = m.from[0] + delta[0] * t;
+                let y = m.from[1] + delta[1] * t;
+                if !on_printable_bed(x, y, bed) {
+                    continue;
+                }
+                map.raise(x, y, m.from[2] + delta[2] * t);
             }
             stats.extruding_moves += 1;
         } else {
@@ -682,6 +717,7 @@ pub fn flatten_on_collision(
         field.grid.step,
         field.grid.width,
         field.grid.height,
+        None,
     );
     let mut extruding_hits = 0usize;
     for hit in &hits {
@@ -873,6 +909,50 @@ G1 X-35
         assert!(
             !real.is_empty(),
             "an absolute travel through the column must still be a collision"
+        );
+    }
+
+    /// X1 Carbon start G-code lifts with `G91`, purges at the chute (`Y=265`,
+    /// past the 256 mm plate) and later crosses that same spot at Z=5. The
+    /// relative lift is real, so the purge sits at Z=15. It is filament dropped
+    /// off the plate, not a wall, and must not fail the curved pass. A tower
+    /// standing on the plate still has to.
+    #[test]
+    fn chute_purge_outside_the_plate_is_not_a_printed_column() {
+        let envelope = crate::envelope::head_envelope_for_printer("bambu_lab_x1_carbon")
+            .expect("x1c envelope");
+        let bed = Some((256.0, 256.0));
+        let gcode = "\
+G91
+G1 Z5 F300
+G90
+G91
+G0 Z10 F1200
+G90
+G1 X60 Y265 F12000
+G92 E0
+G1 E50 F200
+G0 Z5 F20000
+G1 X60 Y265 F3000
+G1 X120 Y265 F5000
+";
+        let hits = find_collisions_on_bed(gcode, envelope, [0.0, 0.0], 1.0, 4, 4, bed);
+        assert!(
+            hits.is_empty(),
+            "chute wipe was scored as a collision: {hits:?}"
+        );
+
+        let tower = "\
+G90
+G1 X128 Y128 Z0.2 E1
+G1 Z20 E2
+G0 X160 Y128 Z5
+G1 X90 Y128 Z5
+";
+        let struck = find_collisions_on_bed(tower, envelope, [0.0, 0.0], 1.0, 4, 4, bed);
+        assert!(
+            !struck.is_empty(),
+            "a tower on the plate must still stop a low travel"
         );
     }
 }

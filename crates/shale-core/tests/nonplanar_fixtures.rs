@@ -100,6 +100,8 @@ fn limits_from(
     shale_nonplanar::MachineLimits {
         z_max_mm: resolved.summary.machine_height.max(1.0),
         max_feed_mm_per_min: max_feed,
+        bed_width_mm: resolved.summary.machine_width,
+        bed_depth_mm: resolved.summary.machine_depth,
     }
 }
 

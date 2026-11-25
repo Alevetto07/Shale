@@ -1,6 +1,6 @@
 //! Machine-readable G-code safety report after non-planar post-pass.
 
-use crate::collision::find_collisions;
+use crate::collision::find_collisions_on_bed;
 use crate::config::{CollisionAdjustment, PlanarEquivalenceResult, SafetyReport, SafetyViolation};
 use crate::deform::DeformField;
 use crate::envelope::HeadEnvelope;
@@ -16,6 +16,10 @@ const NONPLANAR_FEED_CAP_MULT: f64 = 1.05;
 pub struct MachineLimits {
     pub z_max_mm: f64,
     pub max_feed_mm_per_min: f64,
+    /// Printable width. Zero leaves the collision sweep unclipped.
+    pub bed_width_mm: f64,
+    /// Printable depth. Zero leaves the collision sweep unclipped.
+    pub bed_depth_mm: f64,
 }
 
 fn word_f(line: &str, letter: char) -> Option<f64> {
@@ -124,13 +128,16 @@ pub fn validate_gcode(
     // both endpoints are clear; planar layers take the map's fast path.
     let mut ignored_below_band = 0usize;
     let (mut collisions_extruding, mut collisions_travel) = if envelope.calibrated {
-        let hits = find_collisions(
+        let bed = (limits.bed_width_mm > 0.0 && limits.bed_depth_mm > 0.0)
+            .then_some((limits.bed_width_mm, limits.bed_depth_mm));
+        let hits = find_collisions_on_bed(
             gcode,
             envelope,
             field.grid.origin,
             field.grid.step,
             field.grid.width,
             field.grid.height,
+            bed,
         );
         let (mut extruding, mut travel) = (0usize, 0usize);
         for hit in &hits {
@@ -305,6 +312,8 @@ mod tests {
         let limits = MachineLimits {
             z_max_mm: 256.0,
             max_feed_mm_per_min: 6000.0,
+            bed_width_mm: 256.0,
+            bed_depth_mm: 256.0,
         };
         let equiv = PlanarEquivalenceResult {
             ok: true,
