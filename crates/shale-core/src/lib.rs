@@ -45,6 +45,7 @@ pub mod paint;
 pub mod preset;
 pub mod primitives;
 pub mod project;
+pub mod project_settings;
 pub mod queue;
 pub mod removal;
 pub mod resolver;
@@ -64,8 +65,13 @@ pub use gcode::Toolpath;
 pub use instructions::{CustomInstruction, GcodeFlavour};
 pub use job::{compare_support, slice, PlacedModel, SliceOutcome};
 pub use mesh::{
-    apply_transform, bake, drop_to_bed, load_mesh, load_mesh_reporting, load_mesh_with,
-    load_named_bytes, place_on_bed, Transform, TriangleMesh,
+    apply_transform, assign_plates, bake, drop_to_bed, load_build_objects, load_mesh,
+    load_mesh_reporting, load_mesh_with, load_named_bytes, place_assembly, place_on_bed,
+    read_plate_groups, BuildObject, PlateGroup, Transform, TriangleMesh,
+};
+pub use project_settings::{
+    apply_project_settings, read_project_settings, ImportedSetting, ProjectSettings,
+    ProjectSettingsImport,
 };
 pub use project::{
     forget_recent, load_recents, now_ms, read_project, remember_recent, LoadedProject, ProjectData,

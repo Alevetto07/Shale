@@ -19,7 +19,11 @@ use info_env::{
 use shale_core::catalog::{Catalog, ResourcePaths};
 use shale_core::engine::{CliEngine, EngineProgress};
 use shale_core::job::{slice, PlacedModel};
-use shale_core::mesh::{bed_overflow, load_mesh, place_on_bed};
+use shale_core::mesh::{
+    assign_plates, bed_overflow, load_build_objects, load_mesh, place_assembly, read_plate_groups,
+    BuildObject, PlateGroup,
+};
+use shale_core::project_settings::{apply_project_settings, read_project_settings};
 use shale_core::resolver::{ResolveRequest, UserSettings};
 use shale_core::{NonplanarMode, NonplanarOptions};
 
@@ -44,6 +48,10 @@ slice options
   --nonplanar-strict  fail instead of falling back to a planar print when the curved pass cannot be verified
   --nonplanar-underside  let auto plan underside tilt bands too (unverified: the part is above them)
   --max-angle DEG     clearance limit for curved tops (default 10)
+  --plate N           which plate of a multi-plate 3MF to slice (default 1)
+  --all-plates        slice every plate; writes STEM-plate-N.gcode
+  --ignore-project-settings
+                      do not apply the 3MF's embedded process settings
   -o, --output PATH   where to write the G-code
 
 environment
@@ -253,12 +261,53 @@ fn slice_command(args: &[String]) -> Result<(), String> {
         nonplanar.check_printer(&printer)?;
     }
 
-    let mesh = load_mesh(&model_path).map_err(|err| err.to_string())?;
+    let (groups, project) = load_plates(&model_path)?;
+    let all_plates = has(args, "--all-plates");
+    let plate_number = flag(args, "--plate").and_then(|value| value.parse::<u32>().ok());
+    if all_plates && plate_number.is_some() {
+        return Err("--plate and --all-plates cannot be used together".to_string());
+    }
+    let chosen: Vec<(PlateGroup, Vec<BuildObject>)> = if all_plates {
+        groups.clone()
+    } else {
+        let number = plate_number.unwrap_or(1);
+        let plate = groups
+            .iter()
+            .find(|(plate, _)| plate.number == number)
+            .or_else(|| groups.get(number.saturating_sub(1) as usize))
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "this file has no plate {number} (it has {})",
+                    groups.len()
+                )
+            })?;
+        vec![plate]
+    };
+    if !all_plates && groups.len() > 1 {
+        let number = chosen[0].0.number;
+        eprintln!(
+            "shale: this file has {} plates; slicing plate {number}. Use --plate N or --all-plates for the others.",
+            groups.len()
+        );
+    }
 
     let catalog = catalog()?;
     let printer = flag(args, "--printer").unwrap_or(default_printer(&catalog)?);
     nonplanar.check_printer(&printer)?;
-    let request = resolve_request(args, &printer);
+    let mut request = resolve_request(args, &printer);
+    if has(args, "--ignore-project-settings") {
+        if project.is_some() {
+            eprintln!("shale: embedded project settings ignored");
+        }
+    } else if let Some(project) = &project {
+        apply_project_settings(&mut request.settings, project);
+        eprintln!("shale: project settings");
+        for setting in &project.summary.applied {
+            eprintln!("  {} {}", setting.label.to_lowercase(), setting.detail);
+        }
+        eprintln!("  {}", project.summary.note);
+    }
     let resolved = catalog.resolve(&request).map_err(|err| err.to_string())?;
     let width = resolved
         .global
@@ -270,32 +319,12 @@ fn slice_command(args: &[String]) -> Result<(), String> {
         .get("machine_depth")
         .and_then(|v| v.parse().ok())
         .unwrap_or(220.0);
-
-    let transform = place_on_bed(&mesh, width, depth, false);
     let height = resolved
         .global
         .get("machine_height")
         .and_then(|v| v.parse().ok())
         .unwrap_or(250.0);
-    let overflow = bed_overflow(&mesh, &transform, width, depth, height);
-    if overflow.iter().any(|millimetres| *millimetres > 0.5) {
-        eprintln!(
-            "shale: this model extends outside the build volume (X {x:.1} mm, Y {y:.1} mm, Z {z:.1} mm past the plate). A multi-plate 3MF is sliced as one plate, so parts that belong on another plate are included.",
-            x = overflow[0],
-            y = overflow[1],
-            z = overflow[2]
-        );
-    }
-    let placed = vec![PlacedModel {
-        name: model_path
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().to_string())
-            .unwrap_or_else(|| "model".to_string()),
-        mesh,
-        transform,
-        settings: Vec::new(),
-        slot: None,
-    }];
+    let centre = resolved.summary.machine_center_is_zero;
 
     let output = flag(args, "--output")
         .or_else(|| flag(args, "-o"))
@@ -311,6 +340,49 @@ fn slice_command(args: &[String]) -> Result<(), String> {
         )
     })?;
 
+    for (plate, objects) in &chosen {
+    let meshes: Vec<_> = objects.iter().map(|object| object.mesh.clone()).collect();
+    let transform = place_assembly(&meshes, width, depth, centre);
+    let mut overflow = [0.0_f64; 3];
+    for mesh in &meshes {
+        let part = bed_overflow(mesh, &transform, width, depth, height);
+        for axis in 0..3 {
+            overflow[axis] = overflow[axis].max(part[axis]);
+        }
+    }
+    if overflow.iter().any(|millimetres| *millimetres > 0.5) {
+        eprintln!(
+            "shale: plate {number} extends outside the build volume (X {x:.1} mm, Y {y:.1} mm, Z {z:.1} mm past the plate).",
+            number = plate.number,
+            x = overflow[0],
+            y = overflow[1],
+            z = overflow[2]
+        );
+    }
+    let placed: Vec<PlacedModel> = objects
+        .iter()
+        .map(|object| PlacedModel {
+            name: if object.name.trim().is_empty() {
+                format!("object {}", object.object_id)
+            } else {
+                object.name.clone()
+            },
+            mesh: object.mesh.clone(),
+            transform: transform.clone(),
+            settings: Vec::new(),
+            slot: None,
+        })
+        .collect();
+    let plate_output = if all_plates {
+        let stem = output
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+            .unwrap_or_else(|| "plate".to_string());
+        output.with_file_name(format!("{stem}-plate-{}.gcode", plate.number))
+    } else {
+        output.clone()
+    };
+
     let outcome = slice(
         &catalog,
         &engine,
@@ -323,7 +395,7 @@ fn slice_command(args: &[String]) -> Result<(), String> {
         &[],
         None,
         &[],
-        output.clone(),
+        plate_output.clone(),
         &mut |progress: EngineProgress| {
             if std::env::var_os("SHALE_TRACE").is_some() {
                 eprintln!(
@@ -408,5 +480,51 @@ fn slice_command(args: &[String]) -> Result<(), String> {
             }
         }
     }
+    }
     Ok(())
+}
+
+type LoadedPlates = Vec<(PlateGroup, Vec<BuildObject>)>;
+
+fn load_plates(
+    path: &std::path::Path,
+) -> Result<(LoadedPlates, Option<shale_core::ProjectSettings>), String> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("model");
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if extension == "3mf" {
+        let bytes = std::fs::read(path).map_err(|err| err.to_string())?;
+        let objects = load_build_objects(&bytes).map_err(|err| err.to_string())?;
+        let grouped = assign_plates(objects, read_plate_groups(&bytes));
+        if grouped.is_empty() {
+            return Err("that file held no geometry".to_string());
+        }
+        return Ok((grouped, read_project_settings(&bytes)));
+    }
+    let mesh = load_mesh(path).map_err(|err| err.to_string())?;
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_else(|| name.to_string());
+    Ok((
+        vec![(
+            PlateGroup {
+                number: 1,
+                name: String::new(),
+                object_ids: vec![0],
+            },
+            vec![BuildObject {
+                object_id: 0,
+                name: stem,
+                mesh,
+            }],
+        )],
+        None,
+    ))
 }

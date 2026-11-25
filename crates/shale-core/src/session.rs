@@ -15,7 +15,8 @@ use crate::error::Error;
 use crate::gcode;
 use crate::instructions::CustomInstruction;
 use crate::job::{self, PlacedModel, SliceOutcome};
-use crate::mesh::{self, Transform, TriangleMesh};
+use crate::mesh::{self, BuildObject, PlateGroup, Transform, TriangleMesh};
+use crate::project_settings::{self, ProjectSettings, ProjectSettingsImport};
 use crate::resolver::{ResolveRequest, ResolvedSettings, UserSettings};
 use crate::supports::{self, SupportParams, SupportPlan};
 
@@ -26,6 +27,27 @@ pub struct ModelRecord {
     pub id: u32,
     pub name: String,
     pub transform: Transform,
+}
+
+/// One plate a loaded 3MF can be sliced as.
+#[derive(Clone, Debug, Serialize)]
+pub struct SessionPlate {
+    /// 1-based plate number from the file.
+    pub number: u32,
+    pub name: String,
+    pub objects: usize,
+}
+
+/// What `load_model` put on the bed, plus the plates and project settings of the file.
+#[derive(Clone, Debug, Serialize)]
+pub struct LoadOutcome {
+    pub id: u32,
+    pub name: String,
+    pub transform: Transform,
+    pub models: Vec<ModelRecord>,
+    pub plates: Vec<SessionPlate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedded: Option<ProjectSettingsImport>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -77,6 +99,10 @@ pub struct Session {
     support: Option<SupportPlan>,
     support_model: Option<u32>,
     last: Option<SliceOutcome>,
+    source_path: Option<PathBuf>,
+    source_plates: Vec<PlateGroup>,
+    project_settings: Option<ProjectSettings>,
+    ignore_project_settings: bool,
 }
 
 struct Loaded {
@@ -121,6 +147,10 @@ impl Session {
             support: None,
             support_model: None,
             last: None,
+            source_path: None,
+            source_plates: Vec::new(),
+            project_settings: None,
+            ignore_project_settings: false,
         }
     }
 
@@ -184,6 +214,60 @@ impl Session {
     }
 
     pub fn load_model(&mut self, path: &Path) -> Result<ModelRecord, Error> {
+        let outcome = self.load_on_plate(path, None)?;
+        Ok(ModelRecord {
+            id: outcome.id,
+            name: outcome.name,
+            transform: outcome.transform,
+        })
+    }
+
+    /// Load one plate of a model. `plate` is the 1-based number from the file;
+    /// `None` is plate 1. A 3MF replaces whatever was loaded. An STL is added.
+    pub fn load_on_plate(&mut self, path: &Path, plate: Option<u32>) -> Result<LoadOutcome, Error> {
+        let extension = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if extension == "3mf" {
+            let bytes = std::fs::read(path)?;
+            let objects = mesh::load_build_objects(&bytes)?;
+            let groups = mesh::assign_plates(objects, mesh::read_plate_groups(&bytes));
+            if groups.is_empty() {
+                return Err(Error::message("that file held no geometry"));
+            }
+            let number = plate.unwrap_or(1);
+            let chosen = groups
+                .iter()
+                .find(|(group, _)| group.number == number)
+                .or_else(|| groups.get(number.saturating_sub(1) as usize))
+                .ok_or_else(|| {
+                    Error::message(format!(
+                        "this file has no plate {number} (it has {})",
+                        groups.len()
+                    ))
+                })?;
+            self.models.clear();
+            self.support = None;
+            self.support_model = None;
+            self.last = None;
+            let records = self.push_plate(&chosen.1)?;
+            self.source_path = Some(path.to_path_buf());
+            self.source_plates = groups.iter().map(|(group, _)| group.clone()).collect();
+            self.project_settings = project_settings::read_project_settings(&bytes);
+            let first = records.first().cloned().ok_or_else(|| {
+                Error::message("that plate held no geometry")
+            })?;
+            return Ok(LoadOutcome {
+                id: first.id,
+                name: first.name,
+                transform: first.transform,
+                models: records,
+                plates: self.plate_list(&groups),
+                embedded: self.project_settings.as_ref().map(|project| project.summary.clone()),
+            });
+        }
         let mesh = mesh::load_mesh(path)?;
         let transform = self.placement(&mesh)?;
         let id = self.next_model;
@@ -205,7 +289,79 @@ impl Session {
             transform,
             settings: Vec::new(),
         });
-        Ok(record)
+        self.source_path = Some(path.to_path_buf());
+        self.source_plates.clear();
+        self.project_settings = None;
+        Ok(LoadOutcome {
+            id: record.id,
+            name: record.name.clone(),
+            transform: record.transform.clone(),
+            models: vec![record],
+            plates: vec![SessionPlate {
+                number: 1,
+                name: String::new(),
+                objects: 1,
+            }],
+            embedded: None,
+        })
+    }
+
+    pub fn set_ignore_project_settings(&mut self, ignore: bool) {
+        self.ignore_project_settings = ignore;
+    }
+
+    pub fn project_import(&self) -> Option<&ProjectSettingsImport> {
+        self.project_settings.as_ref().map(|project| &project.summary)
+    }
+
+    fn plate_list(&self, groups: &[(PlateGroup, Vec<BuildObject>)]) -> Vec<SessionPlate> {
+        groups
+            .iter()
+            .map(|(group, objects)| SessionPlate {
+                number: group.number,
+                name: group.name.clone(),
+                objects: objects.len(),
+            })
+            .collect()
+    }
+
+    fn push_plate(&mut self, objects: &[BuildObject]) -> Result<Vec<ModelRecord>, Error> {
+        let meshes: Vec<TriangleMesh> = objects.iter().map(|object| object.mesh.clone()).collect();
+        let transform = if meshes.len() == 1 {
+            self.placement(&meshes[0])?
+        } else {
+            let resolved = self.resolve(None)?;
+            mesh::place_assembly(
+                &meshes,
+                resolved.summary.machine_width,
+                resolved.summary.machine_depth,
+                resolved.summary.machine_center_is_zero,
+            )
+        };
+        let mut records = Vec::new();
+        for object in objects {
+            let id = self.next_model;
+            self.next_model += 1;
+            let name = if object.name.trim().is_empty() {
+                format!("object {}", object.object_id)
+            } else {
+                object.name.clone()
+            };
+            let record = ModelRecord {
+                id,
+                name: name.clone(),
+                transform: transform.clone(),
+            };
+            self.models.push(Loaded {
+                id,
+                name,
+                mesh: object.mesh.clone(),
+                transform: transform.clone(),
+                settings: Vec::new(),
+            });
+            records.push(record);
+        }
+        Ok(records)
     }
 
     pub fn models(&self) -> Vec<ModelRecord> {
@@ -467,6 +623,12 @@ impl Session {
             std::process::id(),
             stamp
         ));
+        let mut settings = self.settings.clone();
+        if !self.ignore_project_settings {
+            if let Some(project) = &self.project_settings {
+                project_settings::apply_project_settings(&mut settings, project);
+            }
+        }
         let outcome = job::slice(
             &self.catalog,
             self.engine.as_ref(),
@@ -474,7 +636,7 @@ impl Session {
             self.variant_name.clone(),
             self.quality_type.clone(),
             std::slice::from_ref(&self.material_id),
-            self.settings.clone(),
+            settings,
             &placed,
             &instructions,
             self.support.as_ref(),
@@ -485,6 +647,36 @@ impl Session {
         let summary = summary_of(&outcome);
         self.last = Some(outcome);
         Ok(summary)
+    }
+
+    /// Slice every plate of the loaded 3MF. A file with one plate slices once.
+    pub fn slice_all_plates(
+        &mut self,
+        on_progress: &mut dyn FnMut(EngineProgress),
+    ) -> Result<Vec<JobSliceSummary>, Error> {
+        if self.source_plates.len() <= 1 {
+            return Ok(vec![self.slice(on_progress)?]);
+        }
+        let path = self
+            .source_path
+            .clone()
+            .ok_or_else(|| Error::message("load a model before slicing"))?;
+        let numbers: Vec<u32> = self.source_plates.iter().map(|plate| plate.number).collect();
+        let mut summaries = Vec::with_capacity(numbers.len());
+        for number in numbers {
+            self.load_on_plate(&path, Some(number))?;
+            summaries.push(self.slice(on_progress)?);
+        }
+        Ok(summaries)
+    }
+
+    /// Replace the loaded models with another plate of the same file.
+    pub fn reload_plate(&mut self, plate: u32) -> Result<LoadOutcome, Error> {
+        let path = self
+            .source_path
+            .clone()
+            .ok_or_else(|| Error::message("load a model before choosing a plate"))?;
+        self.load_on_plate(&path, Some(plate))
     }
 
     pub fn summary(&self) -> Option<JobSliceSummary> {

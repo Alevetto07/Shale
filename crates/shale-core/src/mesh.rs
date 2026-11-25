@@ -771,7 +771,7 @@ pub fn load_objects(
             progress(0.2, "reading 3MF");
             load_3mf_objects(bytes)?
                 .into_iter()
-                .map(|(name, mesh)| NamedObject { name, mesh })
+                .map(|(_, name, mesh)| NamedObject { name, mesh })
                 .collect::<Vec<_>>()
         }
         "step" | "stp" => {
@@ -805,13 +805,172 @@ fn load_3mf(bytes: &[u8]) -> Result<TriangleMesh, Error> {
     Ok(crate::exchange::merge(
         &objects
             .into_iter()
-            .map(|(_, mesh)| mesh)
+            .map(|(_, _, mesh)| mesh)
             .collect::<Vec<_>>(),
     ))
 }
 
+/// One object the 3MF build places, with its transform already in the vertices.
+#[derive(Clone, Debug)]
+pub struct BuildObject {
+    /// The `<item objectid>` this mesh came from.
+    pub object_id: u32,
+    pub name: String,
+    pub mesh: TriangleMesh,
+}
+
+/// One plate named in `Metadata/model_settings.config`.
+///
+/// `number` is the file's `plater_id` (1-based). `object_ids` are build-item
+/// ids, the same numbers as [`BuildObject::object_id`].
+#[derive(Clone, Debug)]
+pub struct PlateGroup {
+    pub number: u32,
+    pub name: String,
+    pub object_ids: Vec<u32>,
+}
+
+/// Every object a 3MF build places, still carrying the id a plate list uses.
+pub fn load_build_objects(bytes: &[u8]) -> Result<Vec<BuildObject>, Error> {
+    let mut objects = load_3mf_objects(bytes)?
+        .into_iter()
+        .map(|(object_id, name, mesh)| BuildObject {
+            object_id,
+            name,
+            mesh,
+        })
+        .collect::<Vec<_>>();
+    for object in &mut objects {
+        right_way_round(&mut object.mesh);
+    }
+    Ok(objects)
+}
+
+/// Plates declared by a Bambu or Orca 3MF. An empty list means the file has
+/// no `model_settings.config` (or it names no plate).
+pub fn read_plate_groups(bytes: &[u8]) -> Vec<PlateGroup> {
+    let Ok(mut archive) = ZipArchive::new(Cursor::new(bytes)) else {
+        return Vec::new();
+    };
+    let Ok(xml) = read_zip_text(&mut archive, "Metadata/model_settings.config") else {
+        return Vec::new();
+    };
+    parse_plate_groups(&xml)
+}
+
+fn parse_plate_groups(xml: &str) -> Vec<PlateGroup> {
+    let mut plates = Vec::new();
+    for chunk in xml.split("<plate").skip(1) {
+        let body = chunk.split("</plate>").next().unwrap_or(chunk);
+        let number = plate_meta(body, "plater_id")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(plates.len() as u32 + 1);
+        let name = plate_meta(body, "plater_name").unwrap_or_default();
+        let mut object_ids = Vec::new();
+        for instance in body.split("<model_instance").skip(1) {
+            if let Some(id) = plate_meta(instance, "object_id").and_then(|value| value.parse().ok())
+            {
+                object_ids.push(id);
+            }
+        }
+        plates.push(PlateGroup {
+            number,
+            name,
+            object_ids,
+        });
+    }
+    plates
+}
+
+fn plate_meta(xml: &str, key: &str) -> Option<String> {
+    let needle = format!("key=\"{key}\"");
+    let rest = xml.split(&needle).nth(1)?;
+    let value = rest.split("value=\"").nth(1)?.split('"').next()?;
+    Some(value.to_string())
+}
+
+/// Hand each build object to the plate that lists its id.
+///
+/// A file with no plate list is one plate holding everything. An object the
+/// plates do not mention stays on the first plate, so a plate split never
+/// drops geometry. Plates that end up empty are left out.
+pub fn assign_plates(
+    objects: Vec<BuildObject>,
+    mut plates: Vec<PlateGroup>,
+) -> Vec<(PlateGroup, Vec<BuildObject>)> {
+    if plates.is_empty() {
+        let object_ids = objects.iter().map(|object| object.object_id).collect();
+        plates.push(PlateGroup {
+            number: 1,
+            name: String::new(),
+            object_ids,
+        });
+    }
+    let mut by_id: HashMap<u32, Vec<BuildObject>> = HashMap::new();
+    for object in objects {
+        by_id.entry(object.object_id).or_default().push(object);
+    }
+    let mut grouped = Vec::new();
+    for plate in plates {
+        let mut items = Vec::new();
+        for id in &plate.object_ids {
+            if let Some(found) = by_id.remove(id) {
+                items.extend(found);
+            }
+        }
+        grouped.push((plate, items));
+    }
+    if !by_id.is_empty() {
+        if let Some((_, first)) = grouped.first_mut() {
+            for items in by_id.into_values() {
+                first.extend(items);
+            }
+        }
+    }
+    grouped.retain(|(_, items)| !items.is_empty());
+    grouped
+}
+
+/// Centre a group of meshes on the bed with one shared translation, and sit
+/// the lowest vertex on Z = 0. Relative positions inside the group stay put.
+pub fn place_assembly(
+    meshes: &[TriangleMesh],
+    width: f64,
+    depth: f64,
+    center_is_zero: bool,
+) -> Transform {
+    let mut min = [f32::MAX; 3];
+    let mut max = [f32::MIN; 3];
+    let mut any = false;
+    for mesh in meshes {
+        if mesh.vertices.is_empty() {
+            continue;
+        }
+        any = true;
+        let (lo, hi) = mesh.bounds();
+        for axis in 0..3 {
+            min[axis] = min[axis].min(lo[axis]);
+            max[axis] = max[axis].max(hi[axis]);
+        }
+    }
+    if !any {
+        return Transform::default();
+    }
+    let centre_x = (min[0] as f64 + max[0] as f64) * 0.5;
+    let centre_y = (min[1] as f64 + max[1] as f64) * 0.5;
+    let (tx, ty) = if center_is_zero {
+        (-centre_x, -centre_y)
+    } else {
+        (width * 0.5 - centre_x, depth * 0.5 - centre_y)
+    };
+    Transform {
+        translation: [tx, ty, -(min[2] as f64)],
+        ..Transform::default()
+    }
+}
+
 /// One mesh per object the build places, with the build's transforms applied.
-fn load_3mf_objects(bytes: &[u8]) -> Result<Vec<(String, TriangleMesh)>, Error> {
+fn load_3mf_objects(bytes: &[u8]) -> Result<Vec<(u32, String, TriangleMesh)>, Error> {
     let mut archive = ZipArchive::new(Cursor::new(bytes))
         .map_err(|err| Error::Mesh(format!("3MF is not a zip archive: {err}")))?;
     let root_path = threemf_root_part(&mut archive)?;
@@ -885,6 +1044,7 @@ fn load_3mf_objects(bytes: &[u8]) -> Result<Vec<(String, TriangleMesh)>, Error> 
             .and_then(|(_, object)| object.name.clone())
             .unwrap_or_else(|| format!("object {id}"));
         objects.push((
+            id,
             name,
             TriangleMesh {
                 vertices,
@@ -956,7 +1116,10 @@ fn resolve_zip_name(archive: &ZipArchive<Cursor<&[u8]>>, path: &str) -> Option<S
         .map(str::to_string)
 }
 
-fn read_zip_text(archive: &mut ZipArchive<Cursor<&[u8]>>, path: &str) -> Result<String, Error> {
+pub(crate) fn read_zip_text(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    path: &str,
+) -> Result<String, Error> {
     let name = resolve_zip_name(archive, path)
         .ok_or_else(|| Error::Mesh(format!("3MF part {path} is missing")))?;
     let mut file = archive
@@ -1823,5 +1986,82 @@ endsolid t
         let baked = bake(&mesh, &transform);
         let (min, _) = baked.bounds();
         assert!(min[2].abs() < 1e-4);
+    }
+
+    #[test]
+    fn plates_keep_their_own_objects_and_centre_as_one() {
+        let model = r#"<?xml version="1.0"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources>
+    <object id="2" name="left" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="0" y="0" z="0"/>
+          <vertex x="10" y="0" z="0"/>
+          <vertex x="0" y="10" z="0"/>
+        </vertices>
+        <triangles><triangle v1="0" v2="1" v3="2"/></triangles>
+      </mesh>
+    </object>
+    <object id="4" name="right" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="400" y="0" z="1"/>
+          <vertex x="410" y="0" z="1"/>
+          <vertex x="400" y="10" z="1"/>
+        </vertices>
+        <triangles><triangle v1="0" v2="1" v3="2"/></triangles>
+      </mesh>
+    </object>
+  </resources>
+  <build>
+    <item objectid="2"/>
+    <item objectid="4"/>
+  </build>
+</model>"#;
+        let settings = r#"<?xml version="1.0"?>
+<config>
+  <plate>
+    <metadata key="plater_id" value="1"/>
+    <metadata key="plater_name" value="Left"/>
+    <model_instance><metadata key="object_id" value="2"/></model_instance>
+  </plate>
+  <plate>
+    <metadata key="plater_id" value="2"/>
+    <metadata key="plater_name" value="Right"/>
+    <model_instance><metadata key="object_id" value="4"/></model_instance>
+  </plate>
+</config>"#;
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut cursor);
+            for (name, body) in [
+                ("3D/3dmodel.model", model),
+                ("Metadata/model_settings.config", settings),
+            ] {
+                writer
+                    .start_file(name, SimpleFileOptions::default())
+                    .unwrap();
+                writer.write_all(body.as_bytes()).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        let bytes = cursor.into_inner();
+        let grouped = assign_plates(load_build_objects(&bytes).unwrap(), read_plate_groups(&bytes));
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].0.name, "Left");
+        assert_eq!(grouped[0].1.len(), 1);
+        assert_eq!(grouped[1].0.number, 2);
+        assert_eq!(grouped[1].1[0].object_id, 4);
+        let transform = place_assembly(
+            &[grouped[1].1[0].mesh.clone()],
+            256.0,
+            256.0,
+            false,
+        );
+        let baked = bake(&grouped[1].1[0].mesh, &transform);
+        let (min, max) = baked.bounds();
+        assert!(min[0] > 0.0 && max[0] < 256.0, "right plate landed at {min:?} {max:?}");
+        assert!(min[2].abs() < 1e-3, "z min {}", min[2]);
     }
 }

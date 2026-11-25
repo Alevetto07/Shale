@@ -96,6 +96,25 @@ struct PrinterArgs {
 struct LoadModelArgs {
     /// Filesystem path to an STL or 3MF file.
     path: String,
+    /// 1-based plate of a multi-plate 3MF. Omit to load plate 1.
+    #[serde(default)]
+    plate: Option<u32>,
+    /// Leave the file's embedded process settings unused.
+    #[serde(default)]
+    ignore_project_settings: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SliceArgs {
+    /// Slice this plate of the loaded 3MF instead of the one currently on the bed.
+    #[serde(default)]
+    plate: Option<u32>,
+    /// Slice every plate. The result is a list of slice summaries.
+    #[serde(default)]
+    all_plates: Option<bool>,
+    /// Leave the file's embedded process settings unused.
+    #[serde(default)]
+    ignore_project_settings: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -301,15 +320,24 @@ impl ShaleMcp {
         ok_json(json!({ "variants": variants, "qualities": qualities }))
     }
 
-    #[tool(description = "Load an STL or 3MF from a filesystem path and place it on the bed.")]
+    #[tool(
+        description = "Load an STL or 3MF. A multi-plate 3MF loads one plate (plate 1 unless `plate` is set) and centres that plate on the bed. The result lists every plate and any process settings read from the file. User settings already set on the job win over those."
+    )]
     fn load_model(
         &self,
-        Parameters(LoadModelArgs { path }): Parameters<LoadModelArgs>,
+        Parameters(LoadModelArgs {
+            path,
+            plate,
+            ignore_project_settings,
+        }): Parameters<LoadModelArgs>,
     ) -> Result<CallToolResult, McpError> {
         let mut session = self.lock()?;
+        if let Some(ignore) = ignore_project_settings {
+            session.set_ignore_project_settings(ignore);
+        }
         ok_json(
             session
-                .load_model(std::path::Path::new(&path))
+                .load_on_plate(std::path::Path::new(&path), plate)
                 .map_err(fail)?,
         )
     }
@@ -510,23 +538,49 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Slice the loaded models with CuraEngine, then compile custom instructions into the G-code. Returns time, filament, layer count, and warnings, plus a `nonplanar` block: mode, planar fallback and its reasons, the safety report (slope, Z range, swept collisions, planar equivalence) and the auto plan's enabled and disabled surfaces."
+        description = "Slice the loaded models with CuraEngine, then compile custom instructions into the G-code. `plate` slices that plate of the loaded 3MF. `all_plates` slices every plate and returns a list. Embedded project settings are applied where the job has not set them, unless `ignore_project_settings` is true. Returns time, filament, layer count, and warnings, plus a `nonplanar` block: mode, planar fallback and its reasons, the safety report (slope, Z range, swept collisions, planar equivalence) and the auto plan's enabled and disabled surfaces."
     )]
-    async fn slice(&self) -> Result<CallToolResult, McpError> {
+    async fn slice(
+        &self,
+        Parameters(SliceArgs {
+            plate,
+            all_plates,
+            ignore_project_settings,
+        }): Parameters<SliceArgs>,
+    ) -> Result<CallToolResult, McpError> {
         let session = Arc::clone(&self.session);
         let summary = tokio::task::spawn_blocking(move || {
             let mut session = session
                 .lock()
                 .map_err(|_| McpError::internal_error("Shale session lock was poisoned", None))?;
-            session
+            if let Some(ignore) = ignore_project_settings {
+                session.set_ignore_project_settings(ignore);
+            }
+            if all_plates == Some(true) {
+                let summaries = session
+                    .slice_all_plates(&mut |progress: EngineProgress| {
+                        tracing::info!(fraction = progress.fraction, "{}", progress.message);
+                    })
+                    .map_err(fail)?;
+                let values = summaries
+                    .iter()
+                    .map(slice_summary_json)
+                    .collect::<Result<Vec<_>, _>>()?;
+                return ok_json(serde_json::Value::Array(values));
+            }
+            if let Some(number) = plate {
+                session.reload_plate(number).map_err(fail)?;
+            }
+            let summary = session
                 .slice(&mut |progress: EngineProgress| {
                     tracing::info!(fraction = progress.fraction, "{}", progress.message);
                 })
-                .map_err(fail)
+                .map_err(fail)?;
+            ok_json(slice_summary_json(&summary)?)
         })
         .await
         .map_err(fail)??;
-        ok_json(slice_summary_json(&summary)?)
+        Ok(summary)
     }
 
     #[tool(description = "Return the summary of the latest slice without slicing again.")]
