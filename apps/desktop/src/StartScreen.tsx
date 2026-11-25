@@ -4,6 +4,7 @@ import { EASE_OUT } from "./ui/motion";
 import type { PrinterInfo, RecentProject } from "./api";
 import { PlateField } from "./field/PlateField";
 import { uiStyleById, type UiStyleId } from "./ui-styles";
+import type { SettingsSectionId } from "./settings/settings-layout";
 import { Button, Input } from "./ui";
 import { HomeLanding } from "./ui/home-landing";
 
@@ -38,6 +39,8 @@ export function StartScreen({
   recents,
   onOpenRecent,
   onDropModel,
+  onDiscover,
+  settingsSection,
 }: {
   live: boolean;
   panel: StartPanel;
@@ -65,6 +68,8 @@ export function StartScreen({
   recents: RecentProject[];
   onOpenRecent: (path: string) => void;
   onDropModel: (path: string | null) => void;
+  onDiscover?: () => void;
+  settingsSection?: SettingsSectionId;
 }) {
   const [printerQuery, setPrinterQuery] = useState("");
   const plate = uiStyleById(uiStyle);
@@ -134,6 +139,7 @@ export function StartScreen({
           onOpenRecent={onOpenRecent}
           onChoosePrinter={onChoosePrinter}
           onDropModel={onDropModel}
+          onDiscover={onDiscover}
         />
       ) : null}
       {panel !== "home" ? (
@@ -168,6 +174,7 @@ export function StartScreen({
                 onBackend={onBackend}
                 onApplyEngine={onApplyEngine}
                 onRerunSetup={onRerunSetup}
+                settingsSection={settingsSection}
                 onBack={() => onPanel("home")}
               />
             ) : null}
@@ -253,6 +260,7 @@ function SettingsOverlay(props: {
   onBackend: (value: string) => void;
   onApplyEngine: () => void;
   onRerunSetup?: () => void;
+  settingsSection?: SettingsSectionId;
   onBack: () => void;
 }) {
   return (
@@ -277,6 +285,7 @@ function SettingsOverlay(props: {
         onBackend={props.onBackend}
         onApplyEngine={props.onApplyEngine}
         onRerunSetup={props.onRerunSetup}
+        initialSection={props.settingsSection}
       />
       </Suspense>
     </>

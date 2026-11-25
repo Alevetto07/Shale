@@ -17,6 +17,7 @@ use shale_core::{
     CustomInstruction, Session, SettingsPatch, SlotQuery, SuggestQuery, SupportParams,
     SupportPlan,
 };
+use shale_host::models::{Library, ModelError, Sort};
 
 use crate::nonplanar::{self, NonplanarSettings};
 use crate::printers::{AccountPrinters, PrinterDirectory};
@@ -75,6 +76,14 @@ fn ok_json(value: impl serde::Serialize) -> Result<CallToolResult, McpError> {
 
 fn fail(err: impl std::fmt::Display) -> McpError {
     McpError::internal_error(err.to_string(), None)
+}
+
+fn model_fail(err: ModelError) -> McpError {
+    let message = match err {
+        ModelError::NeedsBambuSignIn => crate::printers::SIGN_IN.to_string(),
+        other => other.to_string(),
+    };
+    fail(message)
 }
 
 /// How long `slice` waits before telling the caller to poll.
@@ -333,6 +342,33 @@ fn slice_summary_json(
 struct PrinterArgs {
     /// Printer definition id, such as `bambu_lab_a1`. Omit to use the current printer.
     printer_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SearchModelsArgs {
+    /// Words to search for.
+    query: String,
+    /// `makerworld`, `thingiverse`, or `both`. Omit for MakerWorld.
+    #[serde(default)]
+    source: Option<String>,
+    /// Page number, starting at 1.
+    #[serde(default)]
+    page: Option<u32>,
+    /// `relevant`, `popular`, `downloads`, or `newest`.
+    #[serde(default)]
+    sort: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ImportModelUrlArgs {
+    /// A MakerWorld or Thingiverse model page, or `thing:123`.
+    url: String,
+    /// MakerWorld print profile id. Omit for the first profile.
+    #[serde(default)]
+    profile_id: Option<String>,
+    /// Thingiverse file id. Omit for the first STL or 3MF.
+    #[serde(default)]
+    file_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -775,6 +811,80 @@ impl ShaleMcp {
                 .load_on_plate(std::path::Path::new(&path), plate)
                 .map_err(fail)?,
         )
+    }
+
+    #[tool(
+        description = "Search MakerWorld or Thingiverse. source is makerworld, thingiverse, or both. Each hit includes the creator and the licence. Thingiverse needs the user's own app token."
+    )]
+    fn search_models(
+        &self,
+        Parameters(SearchModelsArgs {
+            query,
+            source,
+            page,
+            sort,
+        }): Parameters<SearchModelsArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let page = page.unwrap_or(1);
+        let sort = Sort::parse(sort.as_deref().unwrap_or("relevant")).map_err(model_fail)?;
+        let source = source
+            .unwrap_or_else(|| "makerworld".into())
+            .to_ascii_lowercase();
+        let client = crate::libraries::browser();
+        if source == "both" {
+            let maker = client
+                .search(&query, Library::MakerWorld, page, sort)
+                .map_err(model_fail)?;
+            let thing = client.search(&query, Library::Thingiverse, page, sort);
+            let (thing_hits, thing_total, warning) = match thing {
+                Ok(found) => (found.hits, found.total, None),
+                Err(ModelError::NeedsThingiverseToken) => {
+                    (Vec::new(), 0, Some(ModelError::NeedsThingiverseToken.to_string()))
+                }
+                Err(err) => return Err(model_fail(err)),
+            };
+            let mut hits = maker.hits;
+            hits.extend(thing_hits);
+            return ok_json(json!({
+                "total": maker.total.saturating_add(thing_total),
+                "hits": hits,
+                "warning": warning,
+            }));
+        }
+        let library = Library::parse(&source).map_err(model_fail)?;
+        let found = client.search(&query, library, page, sort).map_err(model_fail)?;
+        ok_json(found)
+    }
+
+    #[tool(
+        description = "Download a MakerWorld or Thingiverse model into a new job. Replaces the models on the current job. MakerWorld files use the Bambu account signed in from Shale. The result names the creator and the licence."
+    )]
+    fn import_model_from_url(
+        &self,
+        Parameters(ImportModelUrlArgs {
+            url,
+            profile_id,
+            file_id,
+        }): Parameters<ImportModelUrlArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let saved = crate::libraries::browser()
+            .import_url(&url, profile_id.as_deref(), file_id.as_deref())
+            .map_err(model_fail)?;
+        self.reset_job()?;
+        let mut session = self.lock()?;
+        let loaded = session
+            .load_on_plate(std::path::Path::new(&saved.path), None)
+            .map_err(fail)?;
+        ok_json(json!({
+            "loaded": loaded,
+            "path": saved.path,
+            "file_name": saved.file_name,
+            "title": saved.title,
+            "creator": saved.creator,
+            "licence": saved.licence,
+            "page_url": saved.page_url,
+            "library": saved.library,
+        }))
     }
 
     #[tool(

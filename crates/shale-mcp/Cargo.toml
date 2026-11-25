@@ -24,6 +24,9 @@ tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
+
 [dev-dependencies]
 tempfile = "3"
 zip = "2.2"

@@ -65,6 +65,62 @@ export interface Transform {
 
 export type Positions = Float32Array | number[];
 
+export type ModelLibrary = "makerworld" | "thingiverse";
+
+export interface ModelCard {
+  library: ModelLibrary;
+  id: string;
+  title: string;
+  creator: string;
+  creator_url: string | null;
+  licence: string;
+  thumbnail_url: string | null;
+  page_url: string;
+  likes: number | null;
+  downloads: number | null;
+  nsfw: boolean;
+}
+
+export interface ModelSearchPage {
+  total: number;
+  hits: ModelCard[];
+}
+
+export interface PrintProfile {
+  id: string;
+  name: string;
+  printer: string | null;
+}
+
+export interface LibraryFile {
+  id: string;
+  name: string;
+  kind: string;
+  bytes: number | null;
+}
+
+export interface ModelListing {
+  card: ModelCard;
+  summary: string;
+  profiles: PrintProfile[];
+  files: LibraryFile[];
+  remote_model_id: string;
+}
+
+export interface SavedModel {
+  path: string;
+  file_name: string;
+  title: string;
+  creator: string;
+  licence: string;
+  page_url: string;
+  library: ModelLibrary;
+}
+
+export interface TokenStatus {
+  configured: boolean;
+}
+
 export interface ModelView {
   id: number;
   name: string;
@@ -749,6 +805,17 @@ export const api = {
   clearJob: () => invoke<void>("clear_job"),
   recents: () => invoke<RecentProject[]>("list_recents"),
   forgetRecent: (path: string) => invoke<RecentProject[]>("forget_recent_project", { path }),
+
+  searchModels: (text: string, library: ModelLibrary, page: number, sort: string) =>
+    invoke<ModelSearchPage>("search_models", { text, library, page, sort }),
+  modelDetail: (library: ModelLibrary, id: string) => invoke<ModelListing>("model_detail", { library, id }),
+  downloadModel: (library: ModelLibrary, id: string, profileId: string | null, fileId: string | null) =>
+    invoke<SavedModel>("download_model", { library, id, profileId, fileId }),
+  importModelUrl: (url: string) => invoke<SavedModel>("import_model_url", { url, profileId: null, fileId: null }),
+  thingiverseTokenStatus: () => invoke<TokenStatus>("thingiverse_token_status"),
+  thingiverseTokenSet: (token: string) => invoke<TokenStatus>("thingiverse_token_set", { token }),
+  thingiverseTokenClear: () => invoke<TokenStatus>("thingiverse_token_clear"),
+  openModelLink: (url: string) => invoke<void>("open_model_link", { url }),
 
   // ---------------------------------------------------------- Bambu cloud
 

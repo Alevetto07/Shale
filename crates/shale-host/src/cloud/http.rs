@@ -106,10 +106,29 @@ impl Url {
 #[derive(Debug, Clone)]
 pub struct Response {
     pub status: u16,
+    /// Header names are stored in lower case.
+    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
 
 impl Response {
+    pub fn from_parts(status: u16, body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            status,
+            headers: Vec::new(),
+            body: body.into(),
+        }
+    }
+
+    /// One header, matched without case. Names are stored in lower case.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        let name = name.to_ascii_lowercase();
+        self.headers
+            .iter()
+            .find(|(key, _)| key == &name)
+            .map(|(_, value)| value.as_str())
+    }
+
     /// The body as JSON, or an error that names the status — a cloud that
     /// answers HTML is a cloud that changed, and the status is the first clue.
     pub fn json(&self) -> Result<serde_json::Value, HttpError> {
@@ -147,6 +166,19 @@ pub fn send(
     url: &str,
     headers: &[(&str, String)],
     body: Option<Vec<u8>>,
+) -> Result<Response, HttpError> {
+    send_limited(method, url, headers, body, None)
+}
+
+/// [`send`], but the read stops once `max_bytes` have arrived. A model file
+/// has a ceiling; an API that starts streaming a gigabyte should not be able
+/// to fill memory before anybody looks at the status.
+pub fn send_limited(
+    method: &str,
+    url: &str,
+    headers: &[(&str, String)],
+    body: Option<Vec<u8>>,
+    max_bytes: Option<usize>,
 ) -> Result<Response, HttpError> {
     let url = Url::parse(url)?;
     let timeout = Duration::from_secs(30);
@@ -193,11 +225,33 @@ pub fn send(
         .flush()
         .map_err(|err| HttpError::Io(format!("cannot flush the request: {err}")))?;
 
-    let mut raw = Vec::new();
-    reader
-        .read_to_end(&mut raw)
-        .map_err(|err| HttpError::Io(format!("cannot read the answer: {err}")))?;
+    let raw = read_limited(&mut reader, max_bytes)?;
     parse(&raw)
+}
+
+fn read_limited(
+    reader: &mut dyn ReadWrite,
+    max_bytes: Option<usize>,
+) -> Result<Vec<u8>, HttpError> {
+    let mut raw = Vec::new();
+    let mut buf = [0u8; 16 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buf)
+            .map_err(|err| HttpError::Io(format!("cannot read the answer: {err}")))?;
+        if read == 0 {
+            break;
+        }
+        if let Some(max) = max_bytes {
+            if raw.len().saturating_add(read) > max {
+                return Err(HttpError::Protocol(format!(
+                    "the answer is larger than {max} bytes"
+                )));
+            }
+        }
+        raw.extend_from_slice(&buf[..read]);
+    }
+    Ok(raw)
 }
 
 fn parse(raw: &[u8]) -> Result<Response, HttpError> {
@@ -218,12 +272,14 @@ fn parse(raw: &[u8]) -> Result<Response, HttpError> {
 
     let mut content_length = None;
     let mut chunked = false;
+    let mut headers = Vec::new();
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             continue;
         };
         let name = name.trim().to_ascii_lowercase();
         let value = value.trim();
+        headers.push((name.clone(), value.to_string()));
         match name.as_str() {
             "content-length" => content_length = value.parse::<usize>().ok(),
             "transfer-encoding" if value.eq_ignore_ascii_case("chunked") => chunked = true,
@@ -237,7 +293,11 @@ fn parse(raw: &[u8]) -> Result<Response, HttpError> {
         body.truncate(length);
     }
 
-    Ok(Response { status, body })
+    Ok(Response {
+        status,
+        headers,
+        body,
+    })
 }
 
 fn dechunk(mut raw: &[u8]) -> Result<Vec<u8>, HttpError> {
@@ -297,6 +357,17 @@ mod tests {
         let response = parse(raw).unwrap();
         assert_eq!(response.status, 200);
         assert_eq!(response.body, b"{\"");
+    }
+
+    #[test]
+    fn a_location_header_is_kept() {
+        let raw = b"HTTP/1.1 302 Found\r\nLocation: https://cdn.example/file.3mf\r\nContent-Length: 0\r\n\r\n";
+        let response = parse(raw).unwrap();
+        assert_eq!(response.status, 302);
+        assert_eq!(
+            response.header("location"),
+            Some("https://cdn.example/file.3mf")
+        );
     }
 
     #[test]

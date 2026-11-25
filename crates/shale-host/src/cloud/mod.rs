@@ -328,6 +328,12 @@ impl<T: Transport> Cloud<T> {
         Ok(())
     }
 
+    /// The access token, for a call the window or a tool asked for. Refreshed
+    /// when it is about to expire. Callers must not log the string.
+    pub fn bearer(&mut self) -> Result<String, CloudError> {
+        self.access_token()
+    }
+
     /// The access token, refreshed if it is about to expire. Five minutes of
     /// slack: a slice takes longer than the round trip, and a token that dies
     /// mid-upload is a print that does not start.

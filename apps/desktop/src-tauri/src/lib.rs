@@ -27,6 +27,7 @@ use shale_core::{
 mod bambu_login;
 mod cloud;
 mod instance;
+mod models;
 mod nonplanar;
 mod secrets;
 #[cfg(windows)]
@@ -5426,7 +5427,15 @@ pub fn run() {
             cloud::cloud_set_region,
             cloud::cloud_sign_out,
             cloud::cloud_devices,
-            cloud::cloud_send
+            cloud::cloud_send,
+            models::search_models,
+            models::model_detail,
+            models::download_model,
+            models::import_model_url,
+            models::thingiverse_token_status,
+            models::thingiverse_token_set,
+            models::thingiverse_token_clear,
+            models::open_model_link
         ]);
 
     // `run` would panic with a bare HRESULT when the window cannot be made, and

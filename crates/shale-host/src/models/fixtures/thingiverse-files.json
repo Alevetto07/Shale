@@ -1,0 +1,15 @@
+[
+  {
+    "id": 55,
+    "name": "octopus.stl",
+    "size": 128,
+    "direct_url": "http://127.0.0.1/octopus.stl",
+    "download_url": "https://api.thingiverse.com/things/763622/files/55/download"
+  },
+  {
+    "id": 56,
+    "name": "photo.jpg",
+    "size": 10,
+    "download_url": "https://api.thingiverse.com/things/763622/files/56/download"
+  }
+]

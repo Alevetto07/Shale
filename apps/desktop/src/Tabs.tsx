@@ -4,10 +4,10 @@ import type { DevicePaneProps, JobFacts, Spool } from "./DevicePane";
 
 export type { DevicePaneProps, JobFacts, Spool };
 
-/// Where the window is pointed. Home is the start screen; the other three are
-/// the three things a slicer does with a plate: set it up, look at the result,
-/// and talk to the machine.
-export type Pane = "home" | "prepare" | "preview" | "device";
+/// Where the window is pointed. Home is the start screen. Models searches
+/// MakerWorld and Thingiverse. The other three set up a plate, look at the
+/// result, and talk to the machine.
+export type Pane = "home" | "models" | "prepare" | "preview" | "device";
 
 export interface DocTab {
   id: number;
@@ -39,6 +39,7 @@ export interface TabBarProps {
 
 const PANES: { id: Pane; label: string; note: string }[] = [
   { id: "home", label: "Home", note: "projects and the machines this copy knows" },
+  { id: "models", label: "Models", note: "search MakerWorld and Thingiverse" },
   { id: "prepare", label: "Prepare", note: "put parts on the plate and choose how to print them" },
   { id: "preview", label: "Preview", note: "the toolpath, layer by layer" },
   { id: "device", label: "Device", note: "the machine, its spools, and the job" },

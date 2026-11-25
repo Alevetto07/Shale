@@ -2,6 +2,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   CheckCircle2,
   Clock,
+  Compass,
   Globe,
   Inbox,
   Layers,
@@ -65,6 +66,8 @@ export interface AppSidebarProps {
   profileVariant?: string | null;
   onProfiles?: () => void;
   onOpenCommandPalette?: () => void;
+  onDiscover?: () => void;
+  discovering?: boolean;
 }
 
 function recentSubtitle(entry: RecentProject): string {
@@ -133,6 +136,18 @@ export function AppSidebar(props: AppSidebarProps) {
           <span className="ui-sidebar__fade">New project</span>
         </Button>
       </div>
+
+      {props.onDiscover ? (
+        <SidebarSection label="Discover" icon={<Compass size={14} strokeWidth={1.5} />}>
+          <SidebarRow
+            title="Models"
+            subtitle="MakerWorld and Thingiverse"
+            selected={props.discovering}
+            indicatorId="sidebar-discover"
+            onClick={props.onDiscover}
+          />
+        </SidebarSection>
+      ) : null}
 
       <SidebarSection label="Recent" icon={<Clock size={14} strokeWidth={1.5} />}>
         {!props.recentsRead ? (

@@ -12,6 +12,7 @@ import {
   type MaterialInfo,
   type MeasureSpan,
   type ModelView,
+  type SavedModel,
   type OverhangPatch,
   type OpenedProject,
   type PlateSwitch,
@@ -35,6 +36,7 @@ import {
 } from "./api";
 import { Suggestions } from "./Suggestions";
 import { worldCentre, translationForCentre } from "./coords";
+import { ModelsView } from "./models/ModelsView";
 import { StartScreen, type StartPanel } from "./StartScreen";
 import { AppSidebar, readSidebarCollapsed, writeSidebarCollapsed } from "./AppSidebar";
 import { TitleBarNav } from "./TitleBarNav";
@@ -58,6 +60,7 @@ import {
 import type { QuickFallbacks } from "./ProcessSheet";
 import { pickQualityType } from "./profile-pick";
 import type { Section } from "./settings-meta";
+import type { SettingsSectionId } from "./settings/settings-layout";
 import { NonPlanarPanel } from "./ui/non-planar-panel";
 import { sliceStage } from "./ui/slice-stage";
 import { TitleBar } from "./TitleBar";
@@ -344,6 +347,7 @@ export function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const plateUndoRef = useRef<{ plates: PlateView[]; models: ModelView[]; selected: number | null } | null>(null);
   const [startPanel, setStartPanel] = useState<StartPanel>("home");
+  const [startSettingsSection, setStartSettingsSection] = useState<SettingsSectionId | undefined>();
   const toggleSidebar = () => {
     setSidebarCollapsed((value) => {
       const next = !value;
@@ -675,7 +679,7 @@ export function App() {
           if (next.demo === "queue") setPane("device");
           if (import.meta.env.VITE_SHALE_MOCK === "1") {
             const mockPane = new URLSearchParams(window.location.search).get("pane");
-            if (mockPane === "prepare" || mockPane === "preview" || mockPane === "device") {
+            if (mockPane === "prepare" || mockPane === "preview" || mockPane === "device" || mockPane === "models") {
               setScreen("slicer");
               setWorkspace(true);
               setPane(mockPane);
@@ -1300,7 +1304,7 @@ export function App() {
     };
   }, [selectedId, models]);
 
-  async function importFromPath(picked: string) {
+  async function importFromPath(picked: string): Promise<boolean> {
     enterSlicer();
     setError(null);
     setImporting(true);
@@ -1326,6 +1330,7 @@ export function App() {
         message: added.length > 1 ? `${added.length} parts, ${triangles} triangles` : `${triangles} triangles`,
       });
       setFrameToken((token) => token + 1);
+      return true;
     } catch (err) {
       const message = messageOf(err);
       // Only a deliberate cancel stays quiet; any other failure is shown.
@@ -1338,6 +1343,7 @@ export function App() {
         setScreen("start");
         setPane("home");
       }
+      return false;
     } finally {
       setImportProgress(null);
       setImporting(false);
@@ -2874,6 +2880,14 @@ export function App() {
     setPane("prepare");
   }
 
+  async function openSavedModel(saved: SavedModel) {
+    await newProject();
+    const opened = await importFromPath(saved.path);
+    if (opened) {
+      setNotice(`Opened ${saved.title} by ${saved.creator}. Licence: ${saved.licence}.`);
+    }
+  }
+
   async function quit() {
     try {
       await getCurrentWindow().close();
@@ -3004,6 +3018,12 @@ export function App() {
     if (next === "home") {
       setPane("home");
       setScreen("start");
+      return;
+    }
+    if (next === "models") {
+      setNotice(null);
+      setScreen("slicer");
+      setPane("models");
       return;
     }
     if (next === "preview" && layerCount === 0) {
@@ -3297,6 +3317,8 @@ export function App() {
           onOpenRecent={(path) => void openProject(path)}
           onForgetRecent={forgetRecentWithUndo}
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+          discovering={pane === "models"}
+          onDiscover={() => selectPane("models")}
           plates={plates}
           activePlate={plates.find((plate) => plate.active)?.index}
           onShowPlate={(index) => void showPlate(index)}
@@ -3380,8 +3402,20 @@ export function App() {
               if (path) void importFromPath(path);
               else void importModel();
             }}
+            onDiscover={() => selectPane("models")}
+            settingsSection={startSettingsSection}
           />
         </div>
+      ) : pane === "models" ? (
+        <ModelsView
+          onOpened={(saved) => openSavedModel(saved)}
+          onOpenAccounts={() => {
+            setStartSettingsSection("accounts");
+            setPane("home");
+            setScreen("start");
+            setStartPanel("settings");
+          }}
+        />
       ) : pane === "device" ? (
         <Suspense fallback={<div className="workspace-skeleton" aria-hidden><div className="ui-sidebar__skeleton"><i style={{ width: "46%" }} /><i style={{ width: "72%" }} /><i style={{ width: "58%" }} /></div></div>}>
         <DevicePane

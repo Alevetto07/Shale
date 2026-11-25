@@ -1,0 +1,24 @@
+{
+  "total": 2,
+  "hits": [
+    {
+      "id": 1400373,
+      "title": "Cable clip",
+      "slug": "cable-clip",
+      "cover": "https://public-cdn.bblmw.com/cover/clip.jpg",
+      "likeCount": 12,
+      "downloadCount": 40,
+      "license": "BY-NC",
+      "nsfw": false,
+      "designCreator": { "name": "Ada Maker", "handle": "ada" }
+    },
+    {
+      "id": 1400374,
+      "title": "Hook",
+      "cover": "https://public-cdn.bblmw.com/cover/hook.jpg",
+      "likeCount": 1,
+      "downloadCount": 2,
+      "designCreator": { "name": "Bo", "handle": "bo" }
+    }
+  ]
+}

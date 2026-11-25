@@ -1,0 +1,16 @@
+{
+  "total": 1,
+  "hits": [
+    {
+      "id": 763622,
+      "name": "Cute octopus",
+      "thumbnail": "https://cdn.thingiverse.com/thumb.jpg",
+      "public_url": "https://www.thingiverse.com/thing:763622",
+      "creator": {
+        "name": "Octo",
+        "public_url": "https://www.thingiverse.com/octo/designs"
+      },
+      "license": "cc-nc-sa"
+    }
+  ]
+}

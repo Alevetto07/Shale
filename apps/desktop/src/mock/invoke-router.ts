@@ -103,6 +103,8 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
     case "preset_delete":
     case "preset_export":
     case "cancel_import":
+    case "import_model":
+      return [mockModel(1)] as T;
     case "clear_job":
     case "secret_set":
     case "secret_clear":
@@ -219,6 +221,64 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
         support: null,
         warnings: [],
       } as T;
+    case "search_models":
+      return {
+        total: 1,
+        hits: [
+          {
+            library: args.library ?? "makerworld",
+            id: "1400373",
+            title: "Cable clip",
+            creator: "Ada Maker",
+            creator_url: "https://makerworld.com/en/@ada",
+            licence: "Creative Commons Attribution-NonCommercial 4.0",
+            thumbnail_url: null,
+            page_url: "https://makerworld.com/en/models/1400373-cable-clip",
+            likes: 12,
+            downloads: 40,
+            nsfw: false,
+          },
+        ],
+      } as T;
+    case "model_detail":
+      return {
+        card: {
+          library: args.library ?? "makerworld",
+          id: "1400373",
+          title: "Cable clip",
+          creator: "Ada Maker",
+          creator_url: "https://makerworld.com/en/@ada",
+          licence: "Creative Commons Attribution-NonCommercial 4.0",
+          thumbnail_url: null,
+          page_url: "https://makerworld.com/en/models/1400373-cable-clip",
+          likes: 12,
+          downloads: 40,
+          nsfw: false,
+        },
+        summary: "A clip for a desk edge, with the print profiles the author published.",
+        profiles: [{ id: "4242", name: "0.20 mm A1", printer: "Bambu Lab A1" }],
+        files: args.library === "thingiverse" ? [{ id: "55", name: "octopus.stl", kind: "stl", bytes: 128 }] : [],
+        remote_model_id: "US300293b2858c3b",
+      } as T;
+    case "download_model":
+    case "import_model_url":
+      return {
+        path: "/tmp/shale-mock-clip.3mf",
+        file_name: "Cable_clip.3mf",
+        title: "Cable clip",
+        creator: "Ada Maker",
+        licence: "Creative Commons Attribution-NonCommercial 4.0",
+        page_url: "https://makerworld.com/en/models/1400373-cable-clip",
+        library: "makerworld",
+      } as T;
+    case "thingiverse_token_status":
+      return { configured: false } as T;
+    case "thingiverse_token_set":
+      return { configured: true } as T;
+    case "thingiverse_token_clear":
+      return { configured: false } as T;
+    case "open_model_link":
+      return undefined as T;
     default:
       return null as T;
   }

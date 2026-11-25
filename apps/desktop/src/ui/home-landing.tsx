@@ -14,6 +14,7 @@ export interface HomeLandingProps {
   onChoosePrinter: (id: string) => void;
   /** A path from a file drop, or null when the drop did not carry one. */
   onDropModel: (path: string | null) => void;
+  onDiscover?: () => void;
 }
 
 function lead(text: string): string {
@@ -73,6 +74,11 @@ export function HomeLanding(props: HomeLandingProps) {
           <Button variant="ghost" size="lg" onClick={props.onOpen}>
             Open project
           </Button>
+          {props.onDiscover ? (
+            <Button variant="secondary" size="lg" onClick={props.onDiscover}>
+              Browse models
+            </Button>
+          ) : null}
         </div>
       </section>
 
