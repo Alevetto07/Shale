@@ -66,6 +66,32 @@ No arguments. The same sign-in error as `list_my_printers` when there is no acco
 
 ## Models
 
+### `search_models`
+
+Use this to search MakerWorld or Thingiverse. Each hit names the creator and the licence.
+
+```json
+{ "query": "cable clip", "source": "makerworld", "page": 1, "sort": "relevant" }
+```
+
+`source` is `makerworld`, `thingiverse`, or `both`. Omit it for MakerWorld. `sort` is `relevant`, `popular`, `downloads`, or `newest`. MakerWorld has no newest sort; that value is treated as relevant there.
+
+Thingiverse needs the user's own app token (`SHALE_THINGIVERSE_TOKEN`, or the token saved in Shale). With `source` `both` and no token, MakerWorld hits still return and `warning` explains the Thingiverse side. A MakerWorld download later needs the Bambu account signed in from Shale. On Windows this process reads the same Credential Manager entry. Search itself does not.
+
+Results are paced and cached under the model-browser cache (`SHALE_CACHE_DIR`, or the app cache directory).
+
+### `import_model_from_url`
+
+Use this to download a model and load it as a new job. The previous models are replaced.
+
+```json
+{ "url": "https://makerworld.com/en/models/1400373-cable-clip", "profile_id": "4242" }
+```
+
+`profile_id` picks a MakerWorld print profile. `file_id` picks a Thingiverse file. Omit either for the first printable file. A MakerWorld 3MF keeps the plates and embedded settings the importer already understands. The result includes `creator` and `licence`.
+
+If the Bambu account is not signed in, the error is exactly `sign in to Bambu in Shale first`.
+
 ### `load_model`
 
 Use this to put a model on the bed. STL, 3MF, and the other formats the app imports.

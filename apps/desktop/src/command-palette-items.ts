@@ -43,10 +43,11 @@ export interface CommandPaletteSources {
   onToggleLiveSlice: () => void;
 }
 
-const PANE_ORDER: Pane[] = ["home", "prepare", "preview", "device"];
+const PANE_ORDER: Pane[] = ["home", "models", "prepare", "preview", "device"];
 
 const paneLabel: Record<Pane, string> = {
   home: "Home",
+  models: "Models",
   prepare: "Prepare",
   preview: "Preview",
   device: "Device",

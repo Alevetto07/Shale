@@ -4,7 +4,7 @@
 
 # Shale
 
-Shale is a **Bambu Lab–focused 3D-printing slicer** built around an unmodified [CuraEngine 5.13](https://github.com/Ultimaker/CuraEngine) process. You get a **Tauri desktop app** for prepare → slice → preview → send, plus a **standalone CLI** (`shale`) and **MCP server** (`shale-mcp`) that drive the same engine without a window.
+Shale is a **Bambu Lab–focused 3D-printing slicer** built around an unmodified [CuraEngine 5.13](https://github.com/Ultimaker/CuraEngine) process. You get a **Tauri desktop app** for prepare → slice → preview → send, plus a **standalone CLI** (`shale`) and **MCP server** (`shale-mcp`) that drive the same engine without a window. The desktop app can also search MakerWorld and Thingiverse and open a model in a new job.
 
 ![Prepare workspace](docs/screens/after/prepare-1280x800.png)
 

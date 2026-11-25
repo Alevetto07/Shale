@@ -7,6 +7,7 @@ export type SettingsSectionId =
   | "profiles"
   | "slicing"
   | "accounts"
+  | "libraries"
   | "import"
   | "advanced"
   | "about";
@@ -52,8 +53,14 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   {
     id: "accounts",
     label: "Bambu Lab account",
-    description: "Cloud sign-in used for remote printers.",
-    keywords: ["cloud", "login", "bambu", "account", "email"],
+    description: "Cloud sign-in used for remote printers and MakerWorld downloads.",
+    keywords: ["cloud", "login", "bambu", "account", "email", "makerworld"],
+  },
+  {
+    id: "libraries",
+    label: "Model libraries",
+    description: "Thingiverse app token for search and download.",
+    keywords: ["thingiverse", "token", "makerworld", "models", "discover", "licence"],
   },
   {
     id: "import",

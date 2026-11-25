@@ -46,10 +46,7 @@ impl Transport for Script {
 }
 
 fn answer(status: u16, json: &str) -> Response {
-    Response {
-        status,
-        body: json.as_bytes().to_vec(),
-    }
+    Response::from_parts(status, json.as_bytes().to_vec())
 }
 
 fn cloud(script: Arc<Script>, store: Arc<MemoryStore>) -> Cloud<Script> {

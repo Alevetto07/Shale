@@ -60,7 +60,7 @@ pub fn state() -> CloudState {
     }
 }
 
-fn lock(state: &CloudState) -> Result<std::sync::MutexGuard<'_, Cloud<HttpTransport>>, String> {
+pub(crate) fn lock(state: &CloudState) -> Result<std::sync::MutexGuard<'_, Cloud<HttpTransport>>, String> {
     let mut cloud = state
         .cloud
         .lock()

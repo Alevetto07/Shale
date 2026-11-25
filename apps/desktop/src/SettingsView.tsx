@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import type { PrinterInfo } from "./api";
 import { CloudPanel } from "./CloudPanel";
+import { ThingiverseToken } from "./models/ThingiverseToken";
 import { SlicerImportPanel } from "./SlicerImportPanel";
 import { filterSections, SETTINGS_SECTIONS, type SettingsSectionId } from "./settings/settings-layout";
 import { resetSetupWizard } from "./setup-wizard";
@@ -28,6 +29,7 @@ export function SettingsView({
   onBackend,
   onApplyEngine,
   onRerunSetup,
+  initialSection,
 }: {
   compact?: boolean;
   version: string;
@@ -44,13 +46,18 @@ export function SettingsView({
   onBackend: (value: string) => void;
   onApplyEngine: () => void;
   onRerunSetup?: () => void;
+  initialSection?: SettingsSectionId;
 }) {
-  const [section, setSection] = useState<SettingsSectionId>("general");
+  const [section, setSection] = useState<SettingsSectionId>(initialSection ?? "general");
   const [query, setQuery] = useState("");
   const [printerQuery, setPrinterQuery] = useState("");
   const reduce = useReducedMotion();
 
   const sections = useMemo(() => filterSections(query), [query]);
+
+  useEffect(() => {
+    if (initialSection) setSection(initialSection);
+  }, [initialSection]);
 
   useEffect(() => {
     if (!sections.some((item) => item.id === section)) {
@@ -185,6 +192,8 @@ export function SettingsView({
             )}
 
             {active.id === "accounts" && <CloudPanel taskName="settings" />}
+
+            {active.id === "libraries" && <ThingiverseToken />}
 
             {active.id === "import" && (
               <div className="settings-group">

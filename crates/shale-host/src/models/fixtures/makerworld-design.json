@@ -1,0 +1,26 @@
+{
+  "id": 1400373,
+  "modelId": "US300293b2858c3b",
+  "title": "Cable clip",
+  "slug": "cable-clip",
+  "summary": "A clip for a desk edge.",
+  "coverUrl": "https://public-cdn.bblmw.com/cover/clip.jpg",
+  "license": "BY-NC",
+  "designCreator": { "name": "Ada Maker", "handle": "ada" },
+  "likeCount": 12,
+  "downloadCount": 40,
+  "instances": [
+    {
+      "id": 9,
+      "profileId": 4242,
+      "title": "0.20 mm A1",
+      "compatibility": { "devModelName": "Bambu Lab A1" }
+    },
+    {
+      "id": 10,
+      "profileId": 4243,
+      "title": "0.16 mm X1",
+      "compatibility": { "devModelName": "Bambu Lab X1 Carbon" }
+    }
+  ]
+}

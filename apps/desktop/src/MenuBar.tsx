@@ -141,6 +141,7 @@ export function MenuBar(props: MenuBarProps) {
   const printer = props.printers.find((entry) => entry.id === props.printerId);
   const panes: { id: Pane; label: string }[] = [
     { id: "home", label: "Home" },
+    { id: "models", label: "Models" },
     { id: "prepare", label: "Prepare" },
     { id: "preview", label: "Preview" },
     { id: "device", label: "Device" },

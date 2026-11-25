@@ -65,6 +65,18 @@ from the repository with `cargo metadata --format-version 1` and
 `cargo license`. This table is the part that is compiled in and worth naming in
 a printed notice; it is not an abridged substitute for those files.
 
+## Model libraries
+
+The Models view talks to MakerWorld (`api.bambulab.com`) and Thingiverse
+(`api.thingiverse.com`). Those services are not compiled into Shale. No
+MakerWorld or Thingiverse client library is linked. Downloaded models stay the
+creator's work under the licence shown on the card. Shale writes that creator
+and licence next to the cached file and does not relicense the model.
+
+The Thingiverse app token is the user's own, pasted in Settings. It is not
+shipped with Shale. MakerWorld downloads reuse the Bambu Cloud sign-in the app
+already stores in Windows Credential Manager (`keyring`, listed above).
+
 ## Home-screen ASCII plate images
 
 Shale's start screen maps public-domain or permissively licensed astronomy
