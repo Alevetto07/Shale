@@ -1631,8 +1631,10 @@ mod tests {
         };
         let fits = bed_overflow(&mesh, &Transform::default(), 256.0, 256.0, 256.0);
         assert_eq!(fits, [0.0, 0.0, 0.0]);
-        let mut parked = Transform::default();
-        parked.translation = [300.0, -4.0, 0.0];
+        let parked = Transform {
+            translation: [300.0, -4.0, 0.0],
+            ..Transform::default()
+        };
         let overflow = bed_overflow(&mesh, &parked, 256.0, 256.0, 256.0);
         assert!((overflow[0] - 54.0).abs() < 1e-6, "x {}", overflow[0]);
         assert!((overflow[1] - 4.0).abs() < 1e-6, "y {}", overflow[1]);
