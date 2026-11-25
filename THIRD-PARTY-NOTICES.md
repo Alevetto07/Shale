@@ -58,12 +58,34 @@ The installer also contains these components, all under permissive licences:
 | [`quick-xml`](https://github.com/tafia/quick-xml), `serde`, `serde_json`, `thiserror`, `toml` | MIT OR Apache-2.0 |
 | The Rust standard library and the `windows-sys` crate | MIT OR Apache-2.0 |
 | [`keyring`](https://github.com/hwchen/keyring-rs) 3.6.3 (Windows Credential Manager) | MIT OR Apache-2.0 |
-| `tokio`, `rustls`, `webpki-roots`, `flate2`, `zip`, `image` | MIT OR Apache-2.0 |
+| `tokio`, `rustls`, `webpki-roots`, `flate2`, `zip`, `image` 0.25 | MIT OR Apache-2.0 |
 
 The full dependency graph, with each crate's declared licence, is reproducible
 from the repository with `cargo metadata --format-version 1` and
 `cargo license`. This table is the part that is compiled in and worth naming in
 a printed notice; it is not an abridged substitute for those files.
+
+## Camera pictures and failure detection
+
+JPEG frames are decoded with the [`image`](https://github.com/image-rs/image) crate,
+version 0.25, default features off, `jpeg` only. Its licence is MIT OR Apache-2.0.
+That is the only new library this camera work links.
+
+The watch for spaghetti, detachment, and blobs is Shale's own grid detector. It
+does not download or link a model. ONNX Runtime is not a dependency of this build.
+
+Obico's failure-detection weights are AGPL-3.0, the same licence as Obico Server,
+and they are **not** shipped here. The file is about 193 MB. A later build may
+download it on first use and must check the checksum before loading it:
+
+| Asset | Size | SHA-256 |
+| --- | --- | --- |
+| [model-weights-5a6b1be1fa.onnx](https://github.com/TheSpaghettiDetective/obico-server/releases/download/ml-models-2026-11-23/model-weights-5a6b1be1fa.onnx) | 202223918 | `0a6ebd8e30dbf6a450c50f9c0a5406f04ba7eb1c99fd5996e888c78bb383b9aa` |
+
+The release `ml-models-2026-11-23` says the weights are licensed under AGPL-3.0,
+like the rest of obico-server. The sample frames the detector is tested against
+are synthetic images drawn in the test, not photographs, so no extra image
+licence is involved.
 
 ## Home-screen ASCII plate images
 

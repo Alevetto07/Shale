@@ -254,8 +254,8 @@ impl<T: Transport> Cloud<T> {
     /// never appear in the error.
     pub fn complete_web_ticket(&mut self, ticket: &str) -> Result<(), CloudError> {
         let response = self.exchange_ticket(ticket)?;
-        let (access, refresh, expires_in) =
-            api::tokens_from_ticket_body(&response.body).ok_or_else(|| CloudError::Shape {
+        let (access, refresh, expires_in) = api::tokens_from_ticket_body(&response.body)
+            .ok_or_else(|| CloudError::Shape {
                 call: "POST /v1/user-service/user/ticket".into(),
                 message: "the answer carried no tokens".into(),
             })?;
@@ -438,6 +438,23 @@ impl<T: Transport> Cloud<T> {
         Ok(list.devices)
     }
 
+    /// Ask the account for a camera still. Bambu's remote camera is a private
+    /// relay, so the usual answer is that no JPEG is available. This does not
+    /// move a printer.
+    pub fn camera_still(&mut self, dev_id: &str) -> Result<Vec<u8>, crate::camera::CameraFault> {
+        if dev_id.trim().is_empty() {
+            return Err(crate::camera::CameraFault::CloudUnavailable);
+        }
+        let token = self
+            .access_token()
+            .map_err(|_| crate::camera::CameraFault::CloudUnavailable)?;
+        let request = crate::camera::snapshot_request(&self.host, dev_id, &token);
+        match self.send(request) {
+            Ok(answer) => crate::camera::interpret_cloud_body(answer.status, &answer.body),
+            Err(_) => Err(crate::camera::CameraFault::CloudUnavailable),
+        }
+    }
+
     /// Recent tasks from `GET /v1/user-service/my/tasks`. Read only.
     pub fn tasks(&mut self) -> Result<Vec<api::CloudTask>, CloudError> {
         let token = self.access_token()?;
@@ -568,7 +585,9 @@ mod tests {
 
     #[test]
     fn a_body_that_contains_an_access_code_is_not_repeated() {
-        let text = redact(r#"{"dev_access_code":"ACCESS-CODE-SECRET","accessToken":"access-secret-token"}"#);
+        let text = redact(
+            r#"{"dev_access_code":"ACCESS-CODE-SECRET","accessToken":"access-secret-token"}"#,
+        );
         assert!(!text.contains("ACCESS-CODE-SECRET"), "{text}");
         assert!(!text.contains("access-secret-token"), "{text}");
     }

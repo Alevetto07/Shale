@@ -28,6 +28,9 @@ rustls-pki-types = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
+# JPEG frames from the chamber camera, and the pictures the failure watch and
+# the plate check compare. MIT OR Apache-2.0. JPEG only: nothing else is used.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # SHA-256 for the certificate pin. Already in the lockfile through rustls.
 sha2 = "0.10"
 
