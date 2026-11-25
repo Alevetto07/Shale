@@ -31,7 +31,9 @@ import {
   DEFAULT_NONPLANAR,
   type NonplanarReportView,
   type NonplanarSettings,
+  type Suggestion,
 } from "./api";
+import { Suggestions } from "./Suggestions";
 import { worldCentre, translationForCentre } from "./coords";
 import { StartScreen, type StartPanel } from "./StartScreen";
 import { AppSidebar, readSidebarCollapsed, writeSidebarCollapsed } from "./AppSidebar";
@@ -219,6 +221,10 @@ export function App() {
   const [bed, setBed] = useState<Bed>(FALLBACK_BED);
   // Cura settings the user changed in the menu; anything absent is the profile's.
   const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<string[]>([]);
+  const [suggestionsShown, setSuggestionsShown] = useState<string[]>([]);
+  const suggestionsSeen = useRef<Set<string>>(new Set());
   useEffect(() => {
     overridesRef.current = overrides;
   }, [overrides]);
@@ -2434,6 +2440,118 @@ export function App() {
     return materials.find((item) => item.id === id)?.label ?? id;
   }
 
+  function dismissSuggestion(item: Suggestion) {
+    setDismissedSuggestions((current) => (current.includes(item.id) ? current : [...current, item.id]));
+    setSuggestions((current) => current.filter((entry) => entry.id !== item.id));
+    markTabDirty();
+  }
+
+  function neverSuggestion(item: Suggestion) {
+    const raw = window.localStorage.getItem("shale.suggestions.never");
+    const list = raw ? (JSON.parse(raw) as string[]) : [];
+    if (!list.includes(item.rule_id)) {
+      list.push(item.rule_id);
+      window.localStorage.setItem("shale.suggestions.never", JSON.stringify(list));
+    }
+    dismissSuggestion(item);
+  }
+
+  async function applySuggestion(item: Suggestion) {
+    const fix = item.fix;
+    if (!fix) return;
+    markTabDirty();
+    if (Object.keys(fix.settings).length > 0) {
+      rememberSettings();
+      setOverrides((current) => ({ ...current, ...fix.settings }));
+    }
+    if (fix.nonplanar_mode === "off" || fix.nonplanar_mode === "auto" || fix.nonplanar_mode === "curved-tops") {
+      setNonplanar((current) => ({ ...current, mode: fix.nonplanar_mode as NonplanarSettings["mode"] }));
+    }
+    for (const [id, patch] of Object.entries(fix.object_settings)) {
+      const model = models.find((entry) => String(entry.id) === id);
+      if (!model) continue;
+      const updated = await api.setModelSettings(model.id, { ...model.settings, ...patch });
+      setModels((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
+    }
+    for (const [id, rotation] of Object.entries(fix.rotations_deg)) {
+      const model = models.find((entry) => String(entry.id) === id);
+      if (model) await commitAroundCentre(model, { rotation_deg: rotation });
+    }
+    for (const [id, slot] of Object.entries(fix.slots)) {
+      const updated = await api.setModelSlot(Number(id), slot);
+      setModels((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
+    }
+    for (const [id, plate] of Object.entries(fix.plates)) {
+      const turned = await api.moveModelToPlate(Number(id), plate);
+      setModels(turned.models);
+      setPlates(turned.plates);
+    }
+    dismissSuggestion(item);
+    forgetSlice();
+  }
+
+  useEffect(() => {
+    if (pane !== "prepare" || !printerId) {
+      setSuggestions([]);
+      return;
+    }
+    let live = true;
+    const timer = window.setTimeout(() => {
+      const settings: Record<string, string> = {};
+      for (const [key, value] of Object.entries(overrides)) {
+        if (value) settings[key] = value;
+      }
+      const slots = [
+        { index: 0, material_id: material ?? "", filament_type: materialLabel(material) },
+        ...ams.map((id, index) => ({
+          index: index + 1,
+          material_id: id,
+          filament_type: materialLabel(id || null),
+        })),
+      ].filter((slot) => slot.material_id);
+      let never: string[] = [];
+      try {
+        const raw = window.localStorage.getItem("shale.suggestions.never");
+        const parsed = raw ? (JSON.parse(raw) as string[]) : [];
+        if (Array.isArray(parsed)) never = parsed;
+      } catch {
+        never = [];
+      }
+      void api
+        .suggestions({
+          printer_id: printerId,
+          variant_name: variant,
+          quality_type: quality,
+          material_id: material,
+          settings,
+          slots,
+          tags: [],
+          dismissed: dismissedSuggestions,
+          global_dismissed: never,
+          shown_once: suggestionsShown.filter((id) => !suggestionsSeen.current.has(id)),
+          nonplanar_mode: nonplanar.mode,
+        })
+        .then((items) => {
+          if (!live) return;
+          for (const item of items) {
+            if (item.once) suggestionsSeen.current.add(item.rule_id);
+          }
+          setSuggestions(items);
+          const fresh = items.filter((item) => item.once && !suggestionsShown.includes(item.rule_id));
+          if (fresh.length > 0) {
+            setSuggestionsShown((current) => [...current, ...fresh.map((item) => item.rule_id)]);
+          }
+        })
+        .catch(() => {
+          if (live) setSuggestions([]);
+        });
+    }, 250);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [pane, printerId, variant, quality, material, ams, overrides, models, nonplanar.mode, dismissedSuggestions, suggestionsShown]);
+
   function materialName(): string {
     return materialLabel(material);
   }
@@ -2470,6 +2588,8 @@ export function App() {
         turn_deg: turn,
         thumbnail: thumbnailJpeg(models),
         quiet: !adopt,
+        dismissed_suggestions: dismissedSuggestions,
+        suggestions_shown: suggestionsShown,
       });
       // A quiet save is a place to put a plate down, not a file to adopt: the
       // tab keeps its name and its (empty) path, and the project does not start
@@ -2625,6 +2745,9 @@ export function App() {
     setSelectedId(opened.models[0]?.id ?? null);
     setInstructions(opened.instructions);
     setSupport(opened.support);
+    setDismissedSuggestions(opened.dismissed_suggestions ?? []);
+    setSuggestionsShown(opened.suggestions_shown ?? []);
+    suggestionsSeen.current = new Set();
     setPreview(false);
     setShowModel(true);
     setPaths([]);
@@ -3480,6 +3603,12 @@ export function App() {
               slice is made from. Preview is a reading of the result and offers
               none of them. */}
           {pane === "prepare" && (<>
+          <Suggestions
+            items={suggestions}
+            onApply={(item) => void applySuggestion(item)}
+            onDismiss={dismissSuggestion}
+            onNever={neverSuggestion}
+          />
           <Frame title="Printer">
             <label>
               Filter

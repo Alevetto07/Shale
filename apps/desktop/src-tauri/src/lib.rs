@@ -3972,6 +3972,10 @@ struct SaveRequest {
     /// projects they opened, and it must not push a real one off that list.
     #[serde(default)]
     quiet: bool,
+    #[serde(default)]
+    dismissed_suggestions: Vec<String>,
+    #[serde(default)]
+    suggestions_shown: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -3991,6 +3995,8 @@ struct OpenedJob {
     instructions: Vec<StoredInstruction>,
     support: Option<SupportView>,
     warnings: Vec<String>,
+    dismissed_suggestions: Vec<String>,
+    suggestions_shown: Vec<String>,
 }
 
 fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -4345,6 +4351,195 @@ fn plate_fit(state: State<AppState>, printer_id: Option<String>) -> Result<FitWa
     })
 }
 
+#[derive(Deserialize)]
+struct SuggestArgs {
+    printer_id: String,
+    #[serde(default)]
+    variant_name: Option<String>,
+    #[serde(default)]
+    quality_type: Option<String>,
+    #[serde(default)]
+    material_id: Option<String>,
+    #[serde(default)]
+    settings: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    slots: Vec<shale_core::SlotQuery>,
+    #[serde(default)]
+    device_slots: Option<Vec<shale_core::SlotQuery>>,
+    #[serde(default)]
+    humidity_percent: Option<f64>,
+    #[serde(default)]
+    hours_since_dry: Option<f64>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    dismissed: Vec<String>,
+    #[serde(default)]
+    global_dismissed: Vec<String>,
+    #[serde(default)]
+    shown_once: Vec<String>,
+    #[serde(default)]
+    nonplanar_mode: String,
+}
+
+#[tauri::command]
+fn suggestions(state: State<AppState>, args: SuggestArgs) -> Result<Vec<shale_core::Suggestion>, String> {
+    let mut inner = lock(&state)?;
+    let resolved = catalog(&mut inner)?
+        .resolve(&shale_core::ResolveRequest {
+            printer_id: args.printer_id.clone(),
+            variant_name: args.variant_name,
+            quality_type: args.quality_type,
+            material_id: args.material_id,
+            intent_category: None,
+            settings: UserSettings::default(),
+        })
+        .map_err(|err| err.to_string())?;
+    let summary = &resolved.summary;
+    let mut settings = std::collections::BTreeMap::new();
+    settings.insert("adhesion_type".into(), summary.adhesion_type.clone());
+    settings.insert("line_width".into(), format!("{:.3}", summary.line_width));
+    settings.insert("speed_print".into(), format!("{:.0}", summary.speed_print));
+    settings.insert(
+        "support_enable".into(),
+        if summary.support_enable { "1" } else { "0" }.into(),
+    );
+    settings.insert(
+        "material_bed_temperature".into(),
+        format!("{:.0}", summary.bed_temperature),
+    );
+    for (key, value) in args.settings {
+        settings.insert(key, value);
+    }
+    let mut objects = Vec::new();
+    for (plate, stash) in inner.plates.iter().enumerate() {
+        let models = if plate == inner.active_plate {
+            &inner.models
+        } else {
+            &stash.models
+        };
+        for model in models.iter().filter(|model| model.visible) {
+            objects.push(shale_core::SceneObject {
+                id: model.id.to_string(),
+                name: model.name.clone(),
+                mesh: model.mesh.clone(),
+                transform: model.transform.clone(),
+                plate,
+                settings: model.settings.clone(),
+                slot: model.slot,
+            });
+        }
+    }
+    let gcode = inner
+        .gcode_path
+        .as_ref()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|text| shale_core::gcode_facts(&text));
+    let slots: Vec<shale_core::FilamentSlot> = if args.slots.is_empty() {
+        vec![shale_core::FilamentSlot {
+            index: 0,
+            material_id: "pla".into(),
+            filament_type: "PLA".into(),
+            colour: String::new(),
+            loaded: true,
+        }]
+    } else {
+        args.slots.into_iter().map(shale_core::SlotQuery::into_slot).collect()
+    };
+    let scene = shale_core::Scene {
+        objects,
+        printer: shale_core::PrinterFacts {
+            id: args.printer_id.clone(),
+            name: summary.printer_name.clone(),
+            bed_width_mm: summary.machine_width,
+            bed_depth_mm: summary.machine_depth,
+            bed_height_mm: summary.machine_height,
+            nozzle_mm: summary.nozzle_size,
+            line_width_mm: summary.line_width,
+            speed_mm_s: summary.speed_print,
+            bed_temperature_c: summary.bed_temperature,
+            enclosed: shale_core::printer_is_enclosed(&args.printer_id),
+            multi_material: slots.iter().filter(|slot| slot.loaded).count() > 1,
+        },
+        slots,
+        device_slots: args
+            .device_slots
+            .map(|slots| slots.into_iter().map(shale_core::SlotQuery::into_slot).collect()),
+        humidity_percent: args.humidity_percent,
+        hours_since_dry: args.hours_since_dry,
+        settings,
+        gcode,
+        nonplanar_mode: if args.nonplanar_mode.is_empty() {
+            "off".into()
+        } else {
+            args.nonplanar_mode
+        },
+        tags: args.tags,
+        dismissed: args.dismissed,
+        global_dismissed: args.global_dismissed,
+        shown_once: args.shown_once,
+    };
+    Ok(shale_core::present_suggestions(&scene, shale_core::suggest::VISIBLE_LIMIT))
+}
+
+fn restore_front(inner: &mut Inner) {
+    let index = inner.active_plate;
+    let Some(slot) = inner.plates.get_mut(index) else {
+        return;
+    };
+    let models = std::mem::take(&mut slot.models);
+    let support = slot.support.take();
+    let support_model_id = slot.support_model_id.take();
+    inner.models = models;
+    inner.support = support;
+    inner.support_model_id = support_model_id;
+}
+
+#[tauri::command]
+fn move_model_to_plate(state: State<AppState>, id: u32, plate: usize) -> Result<PlateSwitch, String> {
+    let mut inner = lock(&state)?;
+    while inner.plates.len() <= plate {
+        let next = inner.plates.len() + 1;
+        inner.plates.push(PlateStash {
+            name: format!("plate {next}"),
+            ..PlateStash::default()
+        });
+    }
+    inner.park_plate();
+    let mut taken = None;
+    for stash in &mut inner.plates {
+        if let Some(position) = stash.models.iter().position(|model| model.id == id) {
+            taken = Some(stash.models.remove(position));
+            break;
+        }
+    }
+    let Some(model) = taken else {
+        restore_front(&mut inner);
+        return Err("That part is not on a plate.".into());
+    };
+    inner.plates[plate].models.push(model);
+    restore_front(&mut inner);
+    inner.toolpath = None;
+    inner.gcode_path = None;
+    let models = inner
+        .models
+        .iter()
+        .filter(|model| model.visible)
+        .map(|model| {
+            view_of(
+                model.id,
+                &model.name,
+                &model.transform,
+                &model.report,
+                &model.settings,
+                model.slot.as_ref(),
+            )
+        })
+        .collect();
+    let plates = inner.plate_views();
+    Ok(PlateSwitch { plates, models })
+}
+
 #[tauri::command]
 fn imported_settings(
     state: State<AppState>,
@@ -4589,6 +4784,8 @@ fn save_project(
         support,
         support_model,
         thumbnail: project.thumbnail,
+        dismissed_suggestions: project.dismissed_suggestions,
+        suggestions_shown: project.suggestions_shown,
     };
     drop(inner);
     let path = PathBuf::from(&project.path);
@@ -4768,6 +4965,8 @@ async fn open_project(
         instructions,
         support,
         warnings,
+        dismissed_suggestions: project.data.dismissed_suggestions,
+        suggestions_shown: project.data.suggestions_shown,
     })
 }
 
@@ -5211,6 +5410,8 @@ pub fn run() {
             clear_job,
             list_plates,
             plate_fit,
+            suggestions,
+            move_model_to_plate,
             imported_settings,
             add_plate,
             switch_plate,

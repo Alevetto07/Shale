@@ -51,6 +51,7 @@ pub mod removal;
 pub mod resolver;
 pub mod session;
 pub mod slicer_import;
+pub mod suggest;
 pub mod supports;
 pub mod template;
 mod value;
@@ -79,6 +80,11 @@ pub use project::{
 };
 pub use resolver::{ProfileSummary, ResolveRequest, ResolvedSettings, UserSettings};
 pub use session::{JobSliceSummary, Session, SettingsPatch, SettingsView, StoredInstruction};
+pub use suggest::{
+    evaluate as evaluate_suggestions, filament_kind, gcode_facts, present as present_suggestions,
+    printer_is_enclosed, FilamentSlot, GcodeFacts, PrinterFacts, Scene, SceneObject, Severity,
+    Suggestion, SuggestionFix, SlotQuery, SuggestQuery,
+};
 pub use supports::{
     analyse, overlays, propose, set_enabled, Analysis, FeatureKind, RegionRole, SupportComparison,
     SupportOverlay, SupportParams, SupportPlan, SupportRegion,

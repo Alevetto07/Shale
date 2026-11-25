@@ -88,6 +88,53 @@ export interface PlateView {
   active: boolean;
 }
 
+export interface SuggestionFix {
+  settings: Record<string, string>;
+  object_settings: Record<string, Record<string, string>>;
+  rotations_deg: Record<string, [number, number, number]>;
+  slots: Record<string, number>;
+  plates: Record<string, number>;
+  nonplanar_mode: string | null;
+  label: string;
+}
+
+export interface Suggestion {
+  id: string;
+  rule_id: string;
+  severity: "tip" | "warning";
+  title: string;
+  reason: string;
+  objects: string[];
+  fix: SuggestionFix | null;
+  dismissible: boolean;
+  score: number;
+  once: boolean;
+}
+
+export interface SuggestionSlot {
+  index: number;
+  material_id: string;
+  filament_type: string;
+  colour?: string;
+}
+
+export interface SuggestionQuery {
+  printer_id: string;
+  variant_name?: string | null;
+  quality_type?: string | null;
+  material_id?: string | null;
+  settings: Record<string, string>;
+  slots: SuggestionSlot[];
+  device_slots?: SuggestionSlot[] | null;
+  humidity_percent?: number | null;
+  hours_since_dry?: number | null;
+  tags: string[];
+  dismissed: string[];
+  global_dismissed: string[];
+  shown_once: string[];
+  nonplanar_mode: string;
+}
+
 export interface FitWarning {
   plate_index: number;
   plate_name: string;
@@ -625,6 +672,9 @@ export const api = {
       ignoreProjectSettings,
     }),
   plateFit: (printerId: string | null) => invoke<FitWarning>("plate_fit", { printerId }),
+  suggestions: (args: SuggestionQuery) => invoke<Suggestion[]>("suggestions", { args }),
+  moveModelToPlate: (id: number, plate: number) =>
+    invoke<PlateSwitch>("move_model_to_plate", { id, plate }),
   importedSettings: () => invoke<ProjectSettingsImport | null>("imported_settings"),
   supportPlan: () => invoke<SupportView | null>("current_support"),
   overhangPatches: (modelId: number) => invoke<OverhangPatch[]>("overhang_patches", { modelId }),
@@ -734,6 +784,8 @@ export interface SaveProject {
   /// Write the file without putting it in the recent list: a draft parked
   /// behind another tab is not a project the person chose to open.
   quiet?: boolean;
+  dismissed_suggestions?: string[];
+  suggestions_shown?: string[];
 }
 
 export interface OpenedProject {
@@ -752,6 +804,8 @@ export interface OpenedProject {
   instructions: StoredInstruction[];
   support: SupportView | null;
   warnings: string[];
+  dismissed_suggestions?: string[];
+  suggestions_shown?: string[];
 }
 
 /** The editable half of the cost estimate: price, power, tariff, currency. */

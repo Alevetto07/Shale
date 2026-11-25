@@ -34,6 +34,7 @@ shale — slice a model without the window
   shale printers [--search TEXT]  printers the catalogue knows
   shale settings --printer ID [--variant NAME] [--quality TYPE] [--material ID]
   shale slice MODEL [options]    write G-code next to the model, or -o PATH
+  shale suggest MODEL [options]  tips for the model, as text or --json
 
 slice options
   --printer ID        printer definition id (default: the first one found)
@@ -53,6 +54,20 @@ slice options
   --ignore-project-settings
                       do not apply the 3MF's embedded process settings
   -o, --output PATH   where to write the G-code
+
+suggest options
+  --json              print the suggestions as JSON
+  --printer ID        bed size and enclosure come from this printer when the catalogue is present
+  --type TEXT         filament on slot 1, for example PLA or PETG
+  --slot TEXT         another loaded spool, repeatable, slots 2, 3, ...
+  --supports          turn supports on for the check
+  --set KEY=VALUE     a plate setting, repeatable
+  --gcode PATH        measure a finished slice (time sinks, purge)
+  --dismiss ID        hide one suggestion id or rule id
+  --humidity N        AMS humidity percent, only when the printer reported it
+  --nonplanar MODE    off, auto, or curved-tops
+  --multi-material    the printer has an AMS or a second extruder
+  --tag TEXT          an explicit tag, for example hot-use
 
 environment
   SHALE_CURA_DIR, SHALE_MATERIALS_DIR   the Cura resource tree
@@ -90,6 +105,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "printers" => printers(flag(args, "--search")),
         "settings" => settings(args),
         "slice" => slice_command(args),
+        "suggest" => suggest_command(args),
         other => Err(format!("unknown command `{other}`. Try `shale help`.")),
     }
 }
@@ -527,4 +543,145 @@ fn load_plates(
         )],
         None,
     ))
+}
+
+fn suggest_command(args: &[String]) -> Result<(), String> {
+    let model = args
+        .iter()
+        .skip(1)
+        .find(|arg| !arg.starts_with('-'))
+        .ok_or("suggest needs a model path")?;
+    let (plates, _) = load_plates(std::path::Path::new(model))?;
+    let mut objects = Vec::new();
+    for (plate_index, (_, builds)) in plates.iter().enumerate() {
+        for build in builds {
+            objects.push(shale_core::SceneObject {
+                id: build.object_id.to_string(),
+                name: build.name.clone(),
+                mesh: build.mesh.clone(),
+                transform: shale_core::Transform::default(),
+                plate: plate_index,
+                settings: std::collections::BTreeMap::new(),
+                slot: None,
+            });
+        }
+    }
+    if objects.is_empty() {
+        return Err("that file held no geometry".into());
+    }
+    let mut settings = std::collections::BTreeMap::new();
+    if has(args, "--supports") {
+        settings.insert("support_enable".into(), "1".into());
+    }
+    for entry in many(args, "--set") {
+        if let Some((key, value)) = entry.split_once('=') {
+            settings.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+    let mut slots = Vec::new();
+    let primary = flag(args, "--type").unwrap_or_else(|| "PLA".into());
+    slots.push(shale_core::FilamentSlot {
+        index: 0,
+        material_id: primary.clone(),
+        filament_type: primary,
+        colour: String::new(),
+        loaded: true,
+    });
+    for (offset, kind) in many(args, "--slot").into_iter().enumerate() {
+        slots.push(shale_core::FilamentSlot {
+            index: offset + 1,
+            material_id: kind.clone(),
+            filament_type: kind,
+            colour: String::new(),
+            loaded: true,
+        });
+    }
+    let (bed_w, bed_d, bed_h, name, enclosed) = printer_bed(flag(args, "--printer").as_deref());
+    let gcode = flag(args, "--gcode")
+        .map(std::fs::read_to_string)
+        .transpose()
+        .map_err(|err| err.to_string())?
+        .map(|text| shale_core::gcode_facts(&text));
+    let scene = shale_core::Scene {
+        objects,
+        printer: shale_core::PrinterFacts {
+            id: flag(args, "--printer").unwrap_or_else(|| "bambu_lab_a1".into()),
+            name,
+            bed_width_mm: bed_w,
+            bed_depth_mm: bed_d,
+            bed_height_mm: bed_h,
+            nozzle_mm: 0.4,
+            line_width_mm: 0.42,
+            speed_mm_s: 200.0,
+            bed_temperature_c: 60.0,
+            enclosed,
+            multi_material: has(args, "--multi-material") || slots.len() > 1,
+        },
+        slots,
+        device_slots: None,
+        humidity_percent: flag(args, "--humidity").and_then(|value| value.parse().ok()),
+        hours_since_dry: None,
+        settings,
+        gcode,
+        nonplanar_mode: flag(args, "--nonplanar").unwrap_or_else(|| "off".into()),
+        tags: many(args, "--tag"),
+        dismissed: many(args, "--dismiss"),
+        global_dismissed: Vec::new(),
+        shown_once: Vec::new(),
+    };
+    let found = shale_core::suggest::evaluate(&scene);
+    if has(args, "--json") {
+        println!("{}", serde_json::to_string_pretty(&found).map_err(|err| err.to_string())?);
+        return Ok(());
+    }
+    if found.is_empty() {
+        println!("no suggestions");
+        return Ok(());
+    }
+    for item in &found {
+        let kind = match item.severity {
+            shale_core::Severity::Tip => "tip",
+            shale_core::Severity::Warning => "warning",
+        };
+        println!("{kind}\t{}\t{}", item.id, item.title);
+        println!("\t{}", item.reason);
+        if let Some(fix) = &item.fix {
+            println!("\tapply\t{}", fix.label);
+        }
+    }
+    Ok(())
+}
+
+fn printer_bed(id: Option<&str>) -> (f64, f64, f64, String, bool) {
+    let fallback = (256.0, 256.0, 256.0, "Bambu Lab A1".to_string(), false);
+    let Ok(catalog) = catalog() else {
+        return fallback;
+    };
+    let id = match id {
+        Some(id) => id.to_string(),
+        None => match catalog.default_printer_id() {
+            Some(id) => id,
+            None => return fallback,
+        },
+    };
+    // The id above may not be a real definition. Ask the catalogue and keep the
+    // fallback bed when it is not.
+    let request = shale_core::resolver::ResolveRequest {
+        printer_id: id.to_string(),
+        variant_name: None,
+        quality_type: None,
+        material_id: None,
+        intent_category: None,
+        settings: shale_core::resolver::UserSettings::default(),
+    };
+    match catalog.resolve(&request) {
+        Ok(resolved) => (
+            resolved.summary.machine_width,
+            resolved.summary.machine_depth,
+            resolved.summary.machine_height,
+            resolved.summary.printer_name,
+            shale_core::printer_is_enclosed(&resolved.printer_id),
+        ),
+        Err(_) => fallback,
+    }
 }

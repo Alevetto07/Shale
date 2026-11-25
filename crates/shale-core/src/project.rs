@@ -72,6 +72,12 @@ pub struct ProjectData {
     /// Index into [`ProjectData::models`] the support plan belongs to.
     pub support_model: Option<usize>,
     pub thumbnail: Vec<u8>,
+    /// Suggestion ids, or rule ids, the project has dismissed.
+    #[serde(default)]
+    pub dismissed_suggestions: Vec<String>,
+    /// Rules that show at most once, recorded the first time they appear.
+    #[serde(default)]
+    pub suggestions_shown: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -110,6 +116,10 @@ struct Document {
     support: Option<SupportPlan>,
     #[serde(default)]
     support_model: Option<usize>,
+    #[serde(default)]
+    dismissed_suggestions: Vec<String>,
+    #[serde(default)]
+    suggestions_shown: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -211,9 +221,11 @@ pub fn write_project(path: &Path, data: &ProjectData) -> Result<(), Error> {
             data.plate_names.clone()
         },
         instructions: data.instructions.clone(),
-        support,
-        support_model: data.support_model,
-    };
+            support,
+            support_model: data.support_model,
+            dismissed_suggestions: data.dismissed_suggestions.clone(),
+            suggestions_shown: data.suggestions_shown.clone(),
+        };
     let json = serde_json::to_vec_pretty(&document).map_err(|source| Error::Json {
         path: path.display().to_string(),
         source,
@@ -323,6 +335,8 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
             support: document.support,
             support_model: document.support_model,
             thumbnail,
+            dismissed_suggestions: document.dismissed_suggestions,
+            suggestions_shown: document.suggestions_shown,
         },
         warnings,
     })
@@ -523,6 +537,8 @@ mod tests {
             support: None,
             support_model: None,
             thumbnail: Vec::new(),
+            dismissed_suggestions: Vec::new(),
+            suggestions_shown: Vec::new(),
         };
         write_project(&path, &saved).unwrap();
         let loaded = read_project(&path).unwrap().data;
@@ -597,6 +613,8 @@ mod tests {
             support: Some(sample_support()),
             support_model: Some(0),
             thumbnail: b"thumbnail-bytes".to_vec(),
+            dismissed_suggestions: vec!["brim_contact:cube".into()],
+            suggestions_shown: vec!["filament_fit".into()],
         };
         write_project(&path, &saved).unwrap();
         let loaded = read_project(&path).unwrap();

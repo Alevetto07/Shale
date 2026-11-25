@@ -243,6 +243,81 @@ mod discover_tests {
     }
 }
 
+/// The closest known setting key. A prefix of at least four characters, with
+/// at most eight extra characters, beats an edit of one or two.
+pub(crate) fn suggest_key<'a>(typed: &str, keys: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    let mut prefix: Option<&str> = None;
+    let mut edited: Option<(usize, &str)> = None;
+    for candidate in keys {
+        if candidate == typed {
+            continue;
+        }
+        if typed.len() >= 4
+            && candidate.starts_with(typed)
+            && candidate.len() <= typed.len() + 8
+        {
+            match prefix {
+                Some(so_far) if so_far.len() <= candidate.len() => {}
+                _ => prefix = Some(candidate),
+            }
+        }
+        let distance = edit_distance(typed, candidate);
+        if (1..=2).contains(&distance) {
+            match edited {
+                Some((so_far, _)) if so_far <= distance => {}
+                _ => edited = Some((distance, candidate)),
+            }
+        }
+    }
+    prefix.or(edited.map(|(_, name)| name))
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let a: Vec<char> = left.chars().collect();
+    let b: Vec<char> = right.chars().collect();
+    if a.len().abs_diff(b.len()) > 2 {
+        return 3;
+    }
+    let mut previous: Vec<usize> = (0..=b.len()).collect();
+    let mut current = vec![0; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        current[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            current[j + 1] = (previous[j + 1] + 1).min(current[j] + 1).min(previous[j] + cost);
+        }
+        std::mem::swap(&mut previous, &mut current);
+        if previous.iter().all(|step| *step > 2) {
+            return 3;
+        }
+    }
+    previous[b.len()]
+}
+
+#[cfg(test)]
+mod suggest_key_tests {
+    use super::suggest_key;
+
+    #[test]
+    fn a_short_prefix_names_adhesion_type_and_a_typo_names_the_neighbour() {
+        let keys = [
+            "adhesion_type",
+            "adhesion_extruder_nr",
+            "brim_width",
+            "support_structure",
+        ];
+        assert_eq!(
+            suggest_key("adhesion", keys.into_iter()),
+            Some("adhesion_type")
+        );
+        assert_eq!(
+            suggest_key("suport_structure", keys.into_iter()),
+            Some("support_structure")
+        );
+        assert_eq!(suggest_key("xyzzy", keys.into_iter()), None);
+    }
+}
+
 fn push_ancestors(out: &mut Vec<PathBuf>, mut dir: Option<PathBuf>) {
     for _ in 0..8 {
         let Some(current) = dir.clone() else {
@@ -492,6 +567,23 @@ impl Catalog {
 
     pub fn printer(&self, id: &str) -> Option<&Definition> {
         self.definitions.get(id)
+    }
+
+    /// Whether any loaded definition declares this Cura setting key.
+    pub fn has_setting(&self, key: &str) -> bool {
+        self.definitions
+            .values()
+            .any(|definition| definition.settings.contains_key(key))
+    }
+
+    /// A close known key, for a typo. A prefix of four or more characters wins
+    /// over a two-edit neighbour, so `adhesion` points at `adhesion_type`.
+    pub fn nearest_setting(&self, key: &str) -> Option<String> {
+        let keys = self
+            .definitions
+            .values()
+            .flat_map(|definition| definition.settings.keys().map(String::as_str));
+        suggest_key(key, keys).map(str::to_string)
     }
 
     /// Label and description for a setting, after definition inheritance.

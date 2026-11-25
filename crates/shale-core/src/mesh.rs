@@ -681,6 +681,36 @@ pub fn place_on_bed(
     }
 }
 
+/// Centre and drop a mesh the way `place_on_bed` does, keeping the rotation
+/// and scale already on the part. Translation is rewritten; the pose is not.
+pub fn centre_keeping_pose(
+    mesh: &TriangleMesh,
+    pose: &Transform,
+    width: f64,
+    depth: f64,
+    center_is_zero: bool,
+) -> Transform {
+    let shaped = Transform {
+        translation: [0.0, 0.0, 0.0],
+        rotation_deg: pose.rotation_deg,
+        scale: pose.scale,
+    };
+    let baked = bake(mesh, &shaped);
+    let (min, max) = baked.bounds();
+    let centre_x = (min[0] as f64 + max[0] as f64) * 0.5;
+    let centre_y = (min[1] as f64 + max[1] as f64) * 0.5;
+    let (tx, ty) = if center_is_zero {
+        (-centre_x, -centre_y)
+    } else {
+        (width * 0.5 - centre_x, depth * 0.5 - centre_y)
+    };
+    Transform {
+        translation: [tx, ty, -(min[2] as f64)],
+        rotation_deg: pose.rotation_deg,
+        scale: pose.scale,
+    }
+}
+
 /// How far a placed mesh sticks out of the bed, in millimetres on X, Y and Z.
 /// Zero means that axis fits. An empty mesh fits. Vertices are transformed
 /// first, so a rotated or scaled part is judged by where it actually lands.
@@ -2063,5 +2093,25 @@ endsolid t
         let (min, max) = baked.bounds();
         assert!(min[0] > 0.0 && max[0] < 256.0, "right plate landed at {min:?} {max:?}");
         assert!(min[2].abs() < 1e-3, "z min {}", min[2]);
+    }
+
+    #[test]
+    fn centring_keeps_a_rotation_and_a_scale() {
+        let mesh = cube_at(0.0, 0.0);
+        let pose = Transform {
+            translation: [40.0, -10.0, 5.0],
+            rotation_deg: [0.0, 0.0, 90.0],
+            scale: [2.0, 2.0, 2.0],
+        };
+        let placed = centre_keeping_pose(&mesh, &pose, 220.0, 220.0, false);
+        assert_eq!(placed.rotation_deg, pose.rotation_deg);
+        assert_eq!(placed.scale, pose.scale);
+        let baked = bake(&mesh, &placed);
+        let (min, max) = baked.bounds();
+        assert!(min[2].abs() < 1e-3, "dropped to the bed, z min {}", min[2]);
+        let centre_x = (min[0] + max[0]) * 0.5;
+        let centre_y = (min[1] + max[1]) * 0.5;
+        assert!((centre_x as f64 - 110.0).abs() < 1.0, "x centre {centre_x}");
+        assert!((centre_y as f64 - 110.0).abs() < 1.0, "y centre {centre_y}");
     }
 }

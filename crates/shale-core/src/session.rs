@@ -101,6 +101,7 @@ pub struct Session {
     last: Option<SliceOutcome>,
     source_path: Option<PathBuf>,
     source_plates: Vec<PlateGroup>,
+    listed_plates: Vec<SessionPlate>,
     project_settings: Option<ProjectSettings>,
     ignore_project_settings: bool,
 }
@@ -149,6 +150,7 @@ impl Session {
             last: None,
             source_path: None,
             source_plates: Vec::new(),
+            listed_plates: Vec::new(),
             project_settings: None,
             ignore_project_settings: false,
         }
@@ -254,6 +256,7 @@ impl Session {
             self.last = None;
             let records = self.push_plate(&chosen.1)?;
             self.source_path = Some(path.to_path_buf());
+            self.listed_plates = self.plate_list(&groups);
             self.source_plates = groups.iter().map(|(group, _)| group.clone()).collect();
             self.project_settings = project_settings::read_project_settings(&bytes);
             let first = records.first().cloned().ok_or_else(|| {
@@ -264,7 +267,7 @@ impl Session {
                 name: first.name,
                 transform: first.transform,
                 models: records,
-                plates: self.plate_list(&groups),
+                plates: self.listed_plates.clone(),
                 embedded: self.project_settings.as_ref().map(|project| project.summary.clone()),
             });
         }
@@ -292,16 +295,17 @@ impl Session {
         self.source_path = Some(path.to_path_buf());
         self.source_plates.clear();
         self.project_settings = None;
+        self.listed_plates = vec![SessionPlate {
+            number: 1,
+            name: String::new(),
+            objects: self.models.len(),
+        }];
         Ok(LoadOutcome {
             id: record.id,
             name: record.name.clone(),
             transform: record.transform.clone(),
             models: vec![record],
-            plates: vec![SessionPlate {
-                number: 1,
-                name: String::new(),
-                objects: 1,
-            }],
+            plates: self.listed_plates.clone(),
             embedded: None,
         })
     }
@@ -399,12 +403,36 @@ impl Session {
         Ok(transform)
     }
 
+    /// Centre the part and drop it onto the bed. Rotation and scale stay as they are.
     pub fn arrange_model(&mut self, id: u32) -> Result<Transform, Error> {
         let mesh = self.model(id)?.mesh.clone();
-        let transform = self.placement(&mesh)?;
+        let pose = self.model(id)?.transform.clone();
+        let resolved = self.resolve(None)?;
+        let transform = mesh::centre_keeping_pose(
+            &mesh,
+            &pose,
+            resolved.summary.machine_width,
+            resolved.summary.machine_depth,
+            resolved.summary.machine_center_is_zero,
+        );
         self.model_mut(id)?.transform = transform.clone();
         self.invalidate_support(id);
         Ok(transform)
+    }
+
+    /// Plates from the last load. `number` is the same 1-based plate `load_on_plate` and `slice` take.
+    pub fn list_plates(&self) -> Vec<SessionPlate> {
+        if !self.listed_plates.is_empty() {
+            return self.listed_plates.clone();
+        }
+        if self.models.is_empty() {
+            return Vec::new();
+        }
+        vec![SessionPlate {
+            number: 1,
+            name: String::new(),
+            objects: self.models.len(),
+        }]
     }
 
     pub fn drop_model(&mut self, id: u32) -> Result<Transform, Error> {
@@ -498,6 +526,56 @@ impl Session {
         if let Some(strict) = patch.nonplanar_strict {
             self.settings.nonplanar.strict = strict;
         }
+        if let Some(kind) = patch.adhesion_type {
+            let kind = kind.trim().to_ascii_lowercase();
+            if !matches!(kind.as_str(), "none" | "skirt" | "brim") {
+                return Err(Error::message(
+                    "adhesion must be none, skirt, or brim".to_string(),
+                ));
+            }
+            self.write_setting("adhesion_type", kind)?;
+        }
+        if let Some(width) = patch.brim_width {
+            if !(0.0..=50.0).contains(&width) {
+                return Err(Error::message(
+                    "brim width must be between 0 and 50 mm".to_string(),
+                ));
+            }
+            self.write_setting("brim_width", format!("{width}"))?;
+        }
+        if let Some(structure) = patch.support_structure {
+            let structure = structure.trim().to_ascii_lowercase();
+            match structure.as_str() {
+                "normal" | "tree" => self.write_setting("support_structure", structure)?,
+                "auto" => {
+                    return Err(Error::message(
+                        "support structure 'auto' is not available on this engine yet. Use normal or tree."
+                            .to_string(),
+                    ));
+                }
+                _ => {
+                    return Err(Error::message(
+                        "support_structure must be normal, tree, or auto".to_string(),
+                    ));
+                }
+            }
+        }
+        for (key, value) in patch.settings {
+            self.write_setting(&key, value)?;
+        }
+        Ok(())
+    }
+
+    fn write_setting(&mut self, key: &str, value: String) -> Result<(), Error> {
+        if !self.catalog.has_setting(key) {
+            let message = match self.catalog.nearest_setting(key) {
+                Some(name) => format!("unknown setting '{key}'. Did you mean '{name}'?"),
+                None => format!("unknown setting '{key}'"),
+            };
+            return Err(Error::message(message));
+        }
+        self.settings.extra.retain(|(existing, _)| existing != key);
+        self.settings.extra.push((key.to_string(), value));
         Ok(())
     }
 
@@ -679,6 +757,100 @@ impl Session {
         self.load_on_plate(&path, Some(plate))
     }
 
+    /// Suggestions for the models on the bed. Rules are pure and do not slice.
+    pub fn suggestions(&self, query: crate::SuggestQuery) -> Result<Vec<crate::Suggestion>, Error> {
+        let resolved = self.resolve(None)?;
+        let summary = &resolved.summary;
+        let mut settings = std::collections::BTreeMap::new();
+        settings.insert("adhesion_type".into(), summary.adhesion_type.clone());
+        settings.insert("line_width".into(), format!("{:.3}", summary.line_width));
+        settings.insert("speed_print".into(), format!("{:.0}", summary.speed_print));
+        settings.insert(
+            "support_enable".into(),
+            if summary.support_enable { "1" } else { "0" }.into(),
+        );
+        settings.insert(
+            "material_bed_temperature".into(),
+            format!("{:.0}", summary.bed_temperature),
+        );
+        if let Some(enabled) = self.settings.support_enable {
+            settings.insert("support_enable".into(), if enabled { "1" } else { "0" }.into());
+        }
+        for (key, value) in &self.settings.extra {
+            settings.insert(key.clone(), value.clone());
+        }
+        let mut slots: Vec<crate::FilamentSlot> = query
+            .slots
+            .iter()
+            .cloned()
+            .map(crate::SlotQuery::into_slot)
+            .collect();
+        if slots.is_empty() {
+            let label = self.material_id.clone().unwrap_or_else(|| "PLA".into());
+            slots.push(crate::FilamentSlot {
+                index: 0,
+                material_id: label.clone(),
+                filament_type: label,
+                colour: String::new(),
+                loaded: true,
+            });
+        }
+        let gcode = self
+            .last
+            .as_ref()
+            .and_then(|outcome| std::fs::read_to_string(&outcome.gcode_path).ok())
+            .map(|text| crate::gcode_facts(&text));
+        let objects = self
+            .models
+            .iter()
+            .map(|model| crate::SceneObject {
+                id: model.id.to_string(),
+                name: model.name.clone(),
+                mesh: model.mesh.clone(),
+                transform: model.transform.clone(),
+                plate: 0,
+                settings: model.settings.iter().cloned().collect(),
+                slot: None,
+            })
+            .collect();
+        let scene = crate::Scene {
+            objects,
+            printer: crate::PrinterFacts {
+                id: resolved.printer_id.clone(),
+                name: summary.printer_name.clone(),
+                bed_width_mm: summary.machine_width,
+                bed_depth_mm: summary.machine_depth,
+                bed_height_mm: summary.machine_height,
+                nozzle_mm: summary.nozzle_size,
+                line_width_mm: summary.line_width,
+                speed_mm_s: summary.speed_print,
+                bed_temperature_c: summary.bed_temperature,
+                enclosed: crate::printer_is_enclosed(&resolved.printer_id),
+                multi_material: query.multi_material.unwrap_or(slots.len() > 1),
+            },
+            slots,
+            device_slots: query
+                .device_slots
+                .map(|slots| slots.into_iter().map(crate::SlotQuery::into_slot).collect()),
+            humidity_percent: query.humidity_percent,
+            hours_since_dry: query.hours_since_dry,
+            settings,
+            gcode,
+            nonplanar_mode: query
+                .nonplanar_mode
+                .unwrap_or_else(|| self.settings.nonplanar.mode.name().to_string()),
+            tags: query.tags,
+            dismissed: query.dismissed,
+            global_dismissed: query.global_dismissed,
+            shown_once: query.shown_once,
+        };
+        let found = crate::suggest::evaluate(&scene);
+        Ok(match query.limit {
+            Some(limit) => found.into_iter().take(limit).collect(),
+            None => found,
+        })
+    }
+
     pub fn summary(&self) -> Option<JobSliceSummary> {
         self.last.as_ref().map(summary_of)
     }
@@ -786,6 +958,16 @@ pub struct SettingsPatch {
     pub nonplanar_max_angle_deg: Option<f64>,
     /// Turn an unverifiable curved slice into an error instead of a planar fallback.
     pub nonplanar_strict: Option<bool>,
+    /// `none`, `skirt`, or `brim`. Written as Cura's `adhesion_type`.
+    pub adhesion_type: Option<String>,
+    /// Brim width in millimetres. Used with `adhesion_type: brim`.
+    pub brim_width: Option<f64>,
+    /// `normal` or `tree`. `auto` is reserved and refused until the engine has it.
+    pub support_structure: Option<String>,
+    /// Any other Cura key, the same as the CLI `--set KEY=VALUE`. Unknown keys
+    /// are an error that names a close match when there is one.
+    #[serde(default)]
+    pub settings: std::collections::BTreeMap<String, String>,
 }
 
 const DEFAULT_KEYS: &[&str] = &[

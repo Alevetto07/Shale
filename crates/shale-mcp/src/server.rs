@@ -13,7 +13,8 @@ use rmcp::{
 use serde::Deserialize;
 use serde_json::json;
 use shale_core::{
-    CustomInstruction, EngineProgress, Session, SettingsPatch, SupportParams, SupportPlan,
+    CustomInstruction, EngineProgress, Session, SettingsPatch, SlotQuery, SuggestQuery, SupportParams,
+    SupportPlan,
 };
 
 use crate::nonplanar::{self, NonplanarSettings};
@@ -170,6 +171,15 @@ struct SettingsArgs {
     /// Error out instead of falling back to a planar slice when the curved
     /// pass cannot be verified.
     nonplanar_strict: Option<bool>,
+    /// Bed adhesion: `none`, `skirt`, or `brim`. Example: { "adhesion_type": "brim", "brim_width": 8 }.
+    adhesion_type: Option<String>,
+    /// Brim width in millimetres, used when adhesion_type is brim.
+    brim_width: Option<f64>,
+    /// Support style: `normal` or `tree`. `auto` is named here and refused until the engine has it.
+    support_structure: Option<String>,
+    /// Any other Cura setting, the same as the CLI `--set KEY=VALUE`. An unknown key is an error that suggests a close key. Example: { "settings": { "draft_shield": "limited" } }.
+    #[serde(default)]
+    settings: std::collections::BTreeMap<String, String>,
 }
 
 impl From<SettingsArgs> for SettingsPatch {
@@ -187,6 +197,10 @@ impl From<SettingsArgs> for SettingsPatch {
             nonplanar_mode: args.nonplanar_mode,
             nonplanar_max_angle_deg: args.nonplanar_max_angle_deg,
             nonplanar_strict: args.nonplanar_strict,
+            adhesion_type: args.adhesion_type,
+            brim_width: args.brim_width,
+            support_structure: args.support_structure,
+            settings: args.settings,
         }
     }
 }
@@ -283,6 +297,87 @@ fn plan_for_tool(plan: &SupportPlan) -> SupportPlan {
     plan
 }
 
+fn slot_loaded() -> bool {
+    true
+}
+
+fn suggest_slot(item: SuggestSlot) -> SlotQuery {
+    SlotQuery {
+        index: item.index,
+        filament_type: item.filament_type,
+        colour: item.colour,
+        material_id: item.material_id,
+        loaded: item.loaded,
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SuggestSlot {
+    /// Zero-based spool index. 0 is the plate material.
+    index: usize,
+    /// PLA, PETG, TPU, ABS, ASA, PA, PVA, or a profile name containing one of those.
+    filament_type: String,
+    #[serde(default)]
+    colour: String,
+    #[serde(default)]
+    material_id: String,
+    /// False for an empty bay.
+    #[serde(default = "slot_loaded")]
+    loaded: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SuggestArgs {
+    /// Spools the project is using. Omit to use the job's material as PLA-or-whatever its id says.
+    #[serde(default)]
+    slots: Vec<SuggestSlot>,
+    /// Spools the connected printer has loaded. Omit when no printer is connected.
+    #[serde(default)]
+    device_slots: Option<Vec<SuggestSlot>>,
+    /// AMS humidity from 0 to 100. Omit when the printer did not report it.
+    humidity_percent: Option<f64>,
+    /// Hours since a dry cycle, from spool data only. Omit when unknown.
+    hours_since_dry: Option<f64>,
+    /// Explicit tags. The only one that changes a suggestion is `hot-use`.
+    #[serde(default)]
+    tags: Vec<String>,
+    /// Suggestion or rule ids dismissed for this project.
+    #[serde(default)]
+    dismissed: Vec<String>,
+    /// Rule ids dismissed for every project.
+    #[serde(default)]
+    global_dismissed: Vec<String>,
+    /// Rule ids already shown once. `filament_fit` is the one that uses this.
+    #[serde(default)]
+    shown_once: Vec<String>,
+    /// One of `off`, `auto`, `curved-tops`.
+    nonplanar_mode: Option<String>,
+    /// True when the printer has an AMS or more than one extruder.
+    multi_material: Option<bool>,
+    /// Maximum suggestions to return. Omit for the full ranked list.
+    limit: Option<usize>,
+}
+
+impl SuggestArgs {
+    fn into_query(self) -> SuggestQuery {
+        SuggestQuery {
+            slots: self.slots.into_iter().map(suggest_slot).collect(),
+            device_slots: self
+                .device_slots
+                .map(|slots| slots.into_iter().map(suggest_slot).collect()),
+            humidity_percent: self.humidity_percent,
+            hours_since_dry: self.hours_since_dry,
+            tags: self.tags,
+            dismissed: self.dismissed,
+            global_dismissed: self.global_dismissed,
+            shown_once: self.shown_once,
+            nonplanar_mode: self.nonplanar_mode,
+            multi_material: self.multi_material,
+            limit: self.limit,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct SlicePromptArgs {
     /// What the part is, in a few words.
@@ -343,6 +438,14 @@ impl ShaleMcp {
     }
 
     #[tool(
+        description = "List plates in the loaded file. `number` is the same 1-based plate you pass to load_model and slice. An STL is a single plate numbered 1. Example: load plate 2 with load_model { path, plate: 2 } after list_plates shows number 2."
+    )]
+    fn list_plates(&self) -> Result<CallToolResult, McpError> {
+        let session = self.lock()?;
+        ok_json(json!({ "plates": session.list_plates() }))
+    }
+
+    #[tool(
         description = "Set translation (mm), XYZ rotation (degrees), or scale for a loaded model. Omitted fields stay as they are."
     )]
     fn transform_model(
@@ -363,7 +466,7 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Centre a model on the build plate and drop it onto Z = 0. Rotation and scale are reset to the identity; set them again afterwards if the part should stay scaled or rotated."
+        description = "Centre a model on the build plate and drop it onto Z = 0. Rotation and scale are kept, so rotate or scale first and then arrange. Only the position changes."
     )]
     fn arrange_model(
         &self,
@@ -389,7 +492,7 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Change the printer, profile, or the key slice settings (layer height, infill, supports, temperatures). Only fields you send are updated. Non-planar values are checked first: an unknown mode, an angle outside 0 < angle <= 10 degrees, or a curved mode on a printer without a toolhead envelope is an error, not a silent planar slice."
+        description = "Change the printer, profile, or slice settings. Only fields you send are updated. adhesion_type is none, skirt, or brim, with brim_width in millimetres. support_structure is normal or tree (auto is refused until the engine has it). settings is a map of any other Cura key, the same as --set KEY=VALUE; a typo names the closest known key. Example: { \"adhesion_type\": \"brim\", \"brim_width\": 8, \"support_structure\": \"tree\", \"settings\": { \"draft_shield\": \"limited\" } }. Non-planar values are checked first: an unknown mode, an angle outside 0 < angle <= 10 degrees, or a curved mode on a printer without a toolhead envelope is an error."
     )]
     fn set_settings(
         &self,
@@ -590,6 +693,18 @@ impl ShaleMcp {
             .summary()
             .ok_or_else(|| fail("nothing has been sliced yet"))?;
         ok_json(slice_summary_json(&summary)?)
+    }
+
+    #[tool(
+        description = "Suggestions for the loaded model. Use after load_model, arrange_model or set_settings, and again after slice: time and purge checks need a slice. Returns id, severity (tip or warning), title, reason, objects, and an optional fix. Example: {\"slots\":[{\"index\":0,\"filament_type\":\"PETG\"},{\"index\":1,\"filament_type\":\"PLA\"}],\"multi_material\":true}. No loaded model returns []."
+    )]
+    fn get_suggestions(
+        &self,
+        Parameters(args): Parameters<SuggestArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let session = self.lock()?;
+        let found = session.suggestions(args.into_query()).map_err(fail)?;
+        ok_json(found)
     }
 
     #[tool(description = "Copy the latest G-code to a filesystem path.")]

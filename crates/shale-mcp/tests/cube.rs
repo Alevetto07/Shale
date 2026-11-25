@@ -111,6 +111,7 @@ async fn slice_cube(
         "list_materials",
         "list_profiles",
         "load_model",
+        "list_plates",
         "transform_model",
         "arrange_model",
         "get_settings",
@@ -188,6 +189,76 @@ async fn slice_cube(
     client.cancel().await.ok();
     server_task.abort();
     summary
+}
+
+#[tokio::test]
+async fn arrange_keeps_a_rotation_and_a_typo_names_the_setting() {
+    ensure_test_cache();
+    let mut session = shale_core::Session::new(fixture_catalog(), Box::new(FakeEngine));
+    let loaded = session.load_model(&cube_path()).expect("cube");
+    session
+        .transform_model(loaded.id, None, Some([0.0, 0.0, 90.0]), Some([2.0, 2.0, 2.0]))
+        .unwrap();
+    let placed = session.arrange_model(loaded.id).unwrap();
+    assert_eq!(placed.rotation_deg[2], 90.0, "arrange dropped the rotation");
+    assert_eq!(placed.scale, [2.0, 2.0, 2.0], "arrange dropped the scale");
+    let plates = session.list_plates();
+    assert_eq!(plates.len(), 1);
+    assert_eq!(plates[0].number, 1, "an STL is plate 1, the same number load_model takes");
+
+    session
+        .set_settings(shale_core::SettingsPatch {
+            adhesion_type: Some("brim".into()),
+            brim_width: Some(8.0),
+            support_structure: Some("tree".into()),
+            settings: [("draft_shield".into(), "limited".into())].into(),
+            ..shale_core::SettingsPatch::default()
+        })
+        .unwrap();
+    let view = session
+        .get_settings(&[
+            "adhesion_type".into(),
+            "brim_width".into(),
+            "support_structure".into(),
+            "draft_shield".into(),
+        ])
+        .unwrap();
+    let value = |key: &str| {
+        view.settings
+            .iter()
+            .find(|item| item.key == key)
+            .map(|item| item.value.clone())
+            .unwrap_or_else(|| panic!("missing {key}"))
+    };
+    assert_eq!(value("adhesion_type"), "brim");
+    assert_eq!(value("brim_width"), "8");
+    assert_eq!(value("support_structure"), "tree");
+    assert_eq!(value("draft_shield"), "limited");
+
+    let typo = session
+        .set_settings(shale_core::SettingsPatch {
+            settings: [("adhesion".into(), "skirt".into())].into(),
+            ..shale_core::SettingsPatch::default()
+        })
+        .expect_err("an unknown key must not be stored");
+    assert!(
+        typo.to_string().contains("adhesion_type"),
+        "expected a suggestion, got {typo}"
+    );
+    let auto = session
+        .set_settings(shale_core::SettingsPatch {
+            support_structure: Some("auto".into()),
+            ..shale_core::SettingsPatch::default()
+        })
+        .expect_err("auto is not in this engine");
+    assert!(auto.to_string().contains("not available"), "{auto}");
+    let bad = session
+        .set_settings(shale_core::SettingsPatch {
+            adhesion_type: Some("raft".into()),
+            ..shale_core::SettingsPatch::default()
+        })
+        .expect_err("raft is outside the adhesion enum");
+    assert!(bad.to_string().contains("none, skirt, or brim"), "{bad}");
 }
 
 #[tokio::test]
