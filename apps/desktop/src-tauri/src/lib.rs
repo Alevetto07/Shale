@@ -25,6 +25,7 @@ use shale_core::{
     Transform, TriangleMesh, UserSettings, VariantInfo,
 };
 mod bambu_login;
+mod chamber;
 mod cloud;
 mod instance;
 mod nonplanar;
@@ -79,6 +80,8 @@ struct Inner {
     /// and are enforced here rather than in the pane, so a screen that forgot
     /// to ask cannot send a second job onto a bed that still holds the first.
     queue_run: shale_core::queue::QueueRun,
+    /// Motion lines for the job the machine is on, sent only by `removal_send`.
+    eject_lines: Vec<String>,
     /// The printer this window is pointed at, when one has been connected.
     host_config: Option<shale_host::HostConfig>,
     /// The printer the plate on screen was last resolved against. A send needs
@@ -2991,6 +2994,12 @@ struct PrinterHost {
     /// the pin that is there now came from a handshake we watched.
     pin_key: Mutex<String>,
     pin_stored: std::sync::atomic::AtomicBool,
+    /// The chamber stream. Dropping the session closes the socket.
+    camera: Mutex<Option<shale_host::camera::CameraSession>>,
+    /// Frames in a row that agreed, so one noisy picture does not notify.
+    watch: Mutex<shale_host::camera::Debounce>,
+    /// The JPEG before the one just judged, for detachment.
+    watch_previous: Mutex<Option<Vec<u8>>>,
 }
 
 impl PrinterHost {
@@ -3358,6 +3367,13 @@ fn queue_add(
     app: AppHandle,
     state: State<'_, AppState>,
     name: Option<String>,
+    cool_c: Option<f64>,
+    center_is_zero: Option<bool>,
+    bed_width: Option<f64>,
+    bed_depth: Option<f64>,
+    bed_height: Option<f64>,
+    adhesion: Option<String>,
+    printer_id: Option<String>,
 ) -> Result<Vec<QueueView>, String> {
     let mut inner = lock(&state)?;
     let source = inner
@@ -3373,15 +3389,45 @@ fn queue_add(
     fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
     let target = dir.join(format!("{id}.gcode"));
     fs::copy(&source, &target).map_err(|err| format!("Could not copy the slice: {err}"))?;
+    let mut sweep_lines = Vec::new();
+    let eject = inner.queue_run.eject();
+    if eject != shale_core::queue::EjectMode::Off {
+        let printer = printer_id
+            .or_else(|| inner.printer_id.clone())
+            .unwrap_or_default();
+        let plan = chamber::plan_sweep(
+            &inner,
+            &printer,
+            cool_c.unwrap_or(28.0),
+            center_is_zero.unwrap_or(false),
+            bed_width.unwrap_or(256.0),
+            bed_depth.unwrap_or(256.0),
+            bed_height.unwrap_or(256.0),
+            adhesion.as_deref().unwrap_or("skirt"),
+        )?;
+        if !plan.accepted {
+            let _ = fs::remove_file(&target);
+            return Err(plan.reasons.join(" "));
+        }
+        if eject == shale_core::queue::EjectMode::InFile {
+            let text = fs::read_to_string(&target)
+                .map_err(|err| format!("Could not read the slice: {err}"))?;
+            let next = shale_core::removal::append_routine(&text, &plan.gcode);
+            fs::write(&target, &next).map_err(|err| format!("Could not write the sweep: {err}"))?;
+        }
+        sweep_lines = plan.lines;
+    }
     let name = name
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| format!("job {id}"));
+    let bytes = fs::metadata(&target).map(|meta| meta.len()).unwrap_or(bytes);
     inner.queue.push(QueuedJob {
         id,
         name,
         path: target,
         bytes,
+        sweep_lines,
     });
     Ok(queue_views(&inner))
 }
@@ -3440,7 +3486,9 @@ async fn queue_start_next(
                     .to_string(),
             );
         }
-        inner.queue.remove(0)
+        let job = inner.queue.remove(0);
+        inner.eject_lines = job.sweep_lines.clone();
+        job
     };
     match send_file(&state, &host, job.path.clone(), bed_type).await {
         Ok(sent) => {
@@ -3470,7 +3518,8 @@ async fn queue_start_next(
 /// What the run is allowed to do next, flattened for the pane.
 #[derive(Serialize)]
 struct QueueRunView {
-    /// idle | armed | printing | waiting_for_plate | stopped
+    /// idle | armed | printing | waiting_for_plate | cooling | sweeping |
+    /// checking_plate | ready | stopped
     state: String,
     note: Option<String>,
 }
@@ -3482,8 +3531,84 @@ fn run_state_name(state: shale_core::queue::RunState) -> &'static str {
         RunState::Armed => "armed",
         RunState::Printing => "printing",
         RunState::WaitingForPlate => "waiting_for_plate",
+        RunState::Cooling => "cooling",
+        RunState::Sweeping => "sweeping",
+        RunState::CheckingPlate => "checking_plate",
+        RunState::Ready => "ready",
         RunState::Stopped => "stopped",
     }
+}
+
+fn parse_eject(mode: &str) -> Result<shale_core::queue::EjectMode, String> {
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "off" | "" => Ok(shale_core::queue::EjectMode::Off),
+        "in_file" | "infile" => Ok(shale_core::queue::EjectMode::InFile),
+        "after_print" | "afterprint" => Ok(shale_core::queue::EjectMode::AfterPrint),
+        other => Err(format!(
+            "{other} is not a removal setting. Use off, in_file, or after_print."
+        )),
+    }
+}
+
+/// Turn experimental removal on or off. This does not move the printer.
+#[tauri::command]
+fn queue_set_eject(state: State<'_, AppState>, mode: String) -> Result<QueueRunView, String> {
+    let mode = parse_eject(&mode)?;
+    let mut inner = lock(&state)?;
+    Ok(run_view(inner.queue_run.set_eject(mode)))
+}
+
+/// A bed-temperature report while the experimental path is waiting to cool.
+#[tauri::command]
+fn queue_cooled(
+    state: State<'_, AppState>,
+    bed_c: f64,
+    target_c: f64,
+) -> Result<QueueRunView, String> {
+    let mut inner = lock(&state)?;
+    Ok(run_view(inner.queue_run.cooled(bed_c, target_c)))
+}
+
+/// The camera's comparison of the plate with the empty-plate picture.
+#[tauri::command]
+fn queue_plate_verdict(state: State<'_, AppState>, clear: bool) -> Result<QueueRunView, String> {
+    let mut inner = lock(&state)?;
+    Ok(run_view(inner.queue_run.plate_verdict(clear)))
+}
+
+/// Publish the stored sweep, one line at a time. Refused unless the bed has
+/// cooled and the person turned the after-print path on before the job.
+#[tauri::command]
+fn removal_send(
+    state: State<'_, AppState>,
+    host: State<'_, PrinterHost>,
+) -> Result<QueueRunView, String> {
+    let lines = {
+        let inner = lock(&state)?;
+        if !inner.queue_run.may_send_sweep() {
+            return Err(
+                "The sweep is not allowed right now. It is sent only after the bed has cooled, \
+                 and only when removal was turned on for this queue."
+                    .into(),
+            );
+        }
+        if inner.eject_lines.is_empty() {
+            return Err("There is no sweep for this job.".into());
+        }
+        inner.eject_lines.clone()
+    };
+    for line in &lines {
+        let sequence = host
+            .sequence
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        host.with(|link| {
+            link.send(shale_host::gcode_line_command(sequence, line))
+                .map_err(|err| err.to_string())
+        })?;
+    }
+    let mut inner = lock(&state)?;
+    Ok(run_view(inner.queue_run.sweep_sent()))
 }
 
 fn run_view(update: shale_core::queue::Update) -> QueueRunView {
@@ -3559,6 +3684,8 @@ struct QueuedJob {
     name: String,
     path: PathBuf,
     bytes: u64,
+    /// Motion lines kept for an after-print sweep. Empty when removal is off.
+    sweep_lines: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -5207,6 +5334,7 @@ pub fn run() {
                         name: format!("Cube plate {id}"),
                         path: path.clone(),
                         bytes,
+                        sweep_lines: Vec::new(),
                     })
                     .collect()
             })
@@ -5243,6 +5371,7 @@ pub fn run() {
             queue: demo_queue,
             queue_next_id: demo_queue_next,
             queue_run: shale_core::queue::QueueRun::new(),
+            eject_lines: Vec::new(),
             printer_id: None,
             queue_running: demo_queue_running,
             slicing: false,
@@ -5386,6 +5515,10 @@ pub fn run() {
             queue_arm,
             queue_observe,
             queue_plate_cleared,
+            queue_set_eject,
+            queue_cooled,
+            queue_plate_verdict,
+            removal_send,
             queue_stop,
             queue_run_state,
             queue_start_next,
@@ -5420,6 +5553,16 @@ pub fn run() {
             list_recents,
             forget_recent_project,
             cloud::cloud_state,
+            cloud::camera_cloud_still,
+            chamber::camera_start,
+            chamber::camera_stop,
+            chamber::camera_status,
+            chamber::camera_frame,
+            chamber::camera_snapshot,
+            chamber::camera_watch,
+            chamber::camera_save_reference,
+            chamber::camera_compare,
+            chamber::removal_preview,
             cloud::cloud_login,
             cloud::cloud_login_web,
             cloud::cloud_verify,

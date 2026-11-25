@@ -164,7 +164,10 @@ pub fn cloud_verify(
 /// Global, or China (`CN` / `China` / `zh-CN`) which uses `api.bambulab.cn`.
 /// Switching region while signed in signs out: the two clouds do not share tokens.
 #[tauri::command]
-pub fn cloud_set_region(state: tauri::State<CloudState>, region: String) -> Result<Session, String> {
+pub fn cloud_set_region(
+    state: tauri::State<CloudState>,
+    region: String,
+) -> Result<Session, String> {
     let mut cloud = lock(&state)?;
     cloud.set_region(&region).map_err(|err| err.to_string())?;
     Ok(Session {
@@ -227,4 +230,18 @@ pub fn cloud_send(
     cloud
         .send_print(&dev_id, &task_name, &gcode)
         .map_err(|err| err.to_string())
+}
+
+/// One still from the cloud account, if the relay will give a JPEG. The usual
+/// answer is that it will not. This does not move a printer.
+#[tauri::command]
+pub fn camera_cloud_still(
+    state: tauri::State<CloudState>,
+    dev_id: String,
+) -> Result<String, String> {
+    let mut cloud = lock(&state)?;
+    match cloud.camera_still(&dev_id) {
+        Ok(bytes) => Ok(shale_host::camera::base64(&bytes)),
+        Err(err) => Err(err.message()),
+    }
 }

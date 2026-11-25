@@ -43,7 +43,7 @@ The first MVP, plus the stacked follow-ups, can:
 5. Drive the same job from an MCP server.
 6. Store custom instructions (pause, temperature, fan, beep, message, park) on the job and compile them into the engine's G-code after the engine finishes. The engine binary is not modified.
 
-Still out of scope, and not built: camera-based print removal, and automatic non-planar placement. The overhang map is shaped so a later non-planar pass can reuse bridge and cantilever spans. `docs/print-removal.md` is the note. `shale_core::removal` stays off unless `SHALE_PRINT_REMOVAL=1`, and even then it does not open a camera or send a move. `will_move_printer` is false.
+Still out of scope: automatic non-planar placement. The overhang map is shaped so a later non-planar pass can reuse bridge and cantilever spans. Camera frames and an experimental A1 removal routine are in `docs/camera.md` and `docs/print-removal.md`. Removal is off unless the Device pane turns it on, it is A1 only, and it is untested on real hardware. The old `SHALE_PRINT_REMOVAL` flag still does not send a move. `will_move_printer` on that stub stays false.
 
 ## Layout
 
@@ -190,7 +190,7 @@ Environment variables:
 | `SHALE_DEMO_MODEL` | Optional model path imported for a screenshot launch. |
 | `SHALE_DEMO_SLICE` | `1` slices that model before the window opens. |
 | `SHALE_DEMO_SUPPORTS` | `1` proposes supports for the preloaded model. |
-| `SHALE_PRINT_REMOVAL` | `1` arms the removal stub. It still does not move a printer. |
+| `SHALE_PRINT_REMOVAL` | `1` arms the old removal stub. It still does not move a printer. The A1 sweep is a separate control in the Device pane, off by default. |
 
 CuraEngine 5.13.0 matches the resource pin. Build it from that tag with Conan and CMake, or point at the binary inside an official AppImage. Do not commit the binary. Leave it unmodified. `CuraEngine help` should print the AGPL banner before you bother with the window.
 
@@ -323,6 +323,6 @@ In this order. Do not start the later items while the earlier acceptance checks 
 
 5. Only after 1–4: the verification the brief asked for. Screenshots of the start screen, the recent list with two saved projects, the slicer with a model, a sliced preview, and a settings panel. One video under 60 seconds: start screen with the pointer lens, open a recent project, slice, back to the start screen. Record the Shale window, not an empty desktop. Pull frames about every 5 seconds and look at them before claiming the video shows the app.
 
-6. Deferred, after the brief above is actually true. Automatic non-planar placement: `analyse` already returns spans with samples a plane can be fitted to. Do not move the printer. Camera-based print removal: keep it behind `SHALE_PRINT_REMOVAL`, default off, and do not send motion until there is a real design beyond `docs/print-removal.md`. Neither of those is started beyond the stub and the support samples.
+6. Deferred, after the brief above is actually true. Automatic non-planar placement: `analyse` already returns spans with samples a plane can be fitted to. Do not move the printer. The A1 removal routine is now a separate, off-by-default control; see `docs/print-removal.md`. It is untested on real hardware. The old `SHALE_PRINT_REMOVAL` flag still does not send a move.
 
 Push further work to `cursor/deep-field-75ee` so it stays on PR #8, unless Alessio asks for a new branch. Do not merge. Do not push to `main`.

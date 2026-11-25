@@ -3406,6 +3406,9 @@ export function App() {
           engineReady={enginePath.length > 0}
           gcodeReady={layerCount > 0}
           plate={docTabs.find((tab) => tab.id === activeTab)?.name ?? "plate"}
+          printerId={printerId}
+          centerIsZero={bed.center_is_zero}
+          adhesion={bed.adhesion_type}
         />
         </Suspense>
       ) : (

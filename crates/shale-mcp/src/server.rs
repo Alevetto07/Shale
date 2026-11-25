@@ -14,8 +14,7 @@ use rmcp::{
 use serde::Deserialize;
 use serde_json::json;
 use shale_core::{
-    CustomInstruction, Session, SettingsPatch, SlotQuery, SuggestQuery, SupportParams,
-    SupportPlan,
+    CustomInstruction, Session, SettingsPatch, SlotQuery, SuggestQuery, SupportParams, SupportPlan,
 };
 
 use crate::nonplanar::{self, NonplanarSettings};
@@ -155,14 +154,7 @@ fn spawn_slice(
     let started = std::thread::Builder::new()
         .name("shale-slice".into())
         .spawn(move || {
-            let result = run_slice(
-                &session,
-                &worker,
-                generation,
-                plate,
-                all_plates,
-                ignore,
-            );
+            let result = run_slice(&session, &worker, generation, plate, all_plates, ignore);
             if let Err(err) = result {
                 if let Ok(mut job) = worker.lock() {
                     if job.generation == generation {
@@ -224,12 +216,7 @@ fn run_slice(
         };
         let outcome = prepared
             .run(&mut |progress| {
-                note_progress(
-                    job,
-                    generation,
-                    progress.fraction as f64,
-                    &progress.message,
-                );
+                note_progress(job, generation, progress.fraction as f64, &progress.message);
             })
             .map_err(|err| err.to_string())?;
         store_outcome(session, job, generation, outcome, true)?;
@@ -384,6 +371,28 @@ struct ExplainArgs {
 struct ExportArgs {
     /// Destination path for the G-code file.
     path: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct CameraArgs {
+    /// Printer address on the LAN.
+    host: String,
+    /// Printer id, such as bambu_lab_a1 or bambu_lab_p2s. This chooses JPEG or RTSPS.
+    model: String,
+    /// LAN access code. It is not repeated in the answer.
+    code: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct FailureArgs {
+    /// Path to a JPEG of the chamber. Do not point this at the catalog cache.
+    path: String,
+    /// An earlier JPEG, so a part that has left the bed can be seen.
+    previous: Option<String>,
+    /// Findings quieter than this are ignored. Omit for 0.6.
+    confidence: Option<f64>,
+    /// low, medium, or high. Omit for medium.
+    sensitivity: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -680,9 +689,10 @@ impl ShaleMcp {
         let models = session.models();
         let printer_id = session.get_settings(&[]).ok().map(|view| view.printer_id);
         {
-            let mut job = self.slice_job.lock().map_err(|_| {
-                McpError::internal_error("slice lock was poisoned", None)
-            })?;
+            let mut job = self
+                .slice_job
+                .lock()
+                .map_err(|_| McpError::internal_error("slice lock was poisoned", None))?;
             job.generation = job.generation.saturating_add(1);
             job.status = "idle";
             job.fraction = 0.0;
@@ -691,9 +701,10 @@ impl ShaleMcp {
             job.error = None;
         }
         drop(session);
-        let mut nonplanar = self.nonplanar.lock().map_err(|_| {
-            McpError::internal_error("non-planar settings lock was poisoned", None)
-        })?;
+        let mut nonplanar = self
+            .nonplanar
+            .lock()
+            .map_err(|_| McpError::internal_error("non-planar settings lock was poisoned", None))?;
         *nonplanar = NonplanarSettings::default();
         ok_json(json!({
             "cleared": true,
@@ -992,9 +1003,10 @@ impl ShaleMcp {
         }): Parameters<SliceArgs>,
     ) -> Result<CallToolResult, McpError> {
         let generation = {
-            let mut job = self.slice_job.lock().map_err(|_| {
-                McpError::internal_error("slice lock was poisoned", None)
-            })?;
+            let mut job = self
+                .slice_job
+                .lock()
+                .map_err(|_| McpError::internal_error("slice lock was poisoned", None))?;
             if job.status == "running" {
                 return ok_json(slice_status(&job));
             }
@@ -1017,9 +1029,10 @@ impl ShaleMcp {
         let deadline = tokio::time::Instant::now() + SLICE_INLINE_WAIT;
         loop {
             {
-                let job = self.slice_job.lock().map_err(|_| {
-                    McpError::internal_error("slice lock was poisoned", None)
-                })?;
+                let job = self
+                    .slice_job
+                    .lock()
+                    .map_err(|_| McpError::internal_error("slice lock was poisoned", None))?;
                 if job.generation != generation || job.status != "running" {
                     return ok_json(slice_status(&job));
                 }
@@ -1035,9 +1048,10 @@ impl ShaleMcp {
         description = "Progress of the slice started by slice. status is running, done, or failed. fraction is 0 to 1."
     )]
     fn slice_progress(&self) -> Result<CallToolResult, McpError> {
-        let job = self.slice_job.lock().map_err(|_| {
-            McpError::internal_error("slice lock was poisoned", None)
-        })?;
+        let job = self
+            .slice_job
+            .lock()
+            .map_err(|_| McpError::internal_error("slice lock was poisoned", None))?;
         ok_json(slice_status(&job))
     }
 
@@ -1045,9 +1059,10 @@ impl ShaleMcp {
         description = "Time, filament, layers, and warnings from the slice started by slice. Errors while it is still running."
     )]
     fn slice_result(&self) -> Result<CallToolResult, McpError> {
-        let job = self.slice_job.lock().map_err(|_| {
-            McpError::internal_error("slice lock was poisoned", None)
-        })?;
+        let job = self
+            .slice_job
+            .lock()
+            .map_err(|_| McpError::internal_error("slice lock was poisoned", None))?;
         match job.status {
             "done" => ok_json(slice_status(&job)),
             "failed" => Err(fail(
@@ -1135,7 +1150,9 @@ impl ShaleMcp {
         ok_json(self.printers.jobs().map_err(fail)?)
     }
 
-    #[tool(description = "Projects opened or saved recently, newest first, from the desktop app's config directory. Each entry has path, name, printer, and whether the file is missing.")]
+    #[tool(
+        description = "Projects opened or saved recently, newest first, from the desktop app's config directory. Each entry has path, name, printer, and whether the file is missing."
+    )]
     fn list_recent_projects(&self) -> Result<CallToolResult, McpError> {
         let session = self.lock()?;
         ok_json(session.list_recent_projects().map_err(fail)?)
@@ -1149,7 +1166,11 @@ impl ShaleMcp {
         Parameters(args): Parameters<ProjectPathArgs>,
     ) -> Result<CallToolResult, McpError> {
         let mut session = self.lock()?;
-        ok_json(session.open_project(std::path::Path::new(&args.path)).map_err(fail)?)
+        ok_json(
+            session
+                .open_project(std::path::Path::new(&args.path))
+                .map_err(fail)?,
+        )
     }
 
     #[tool(
@@ -1160,7 +1181,11 @@ impl ShaleMcp {
         Parameters(args): Parameters<ProjectPathArgs>,
     ) -> Result<CallToolResult, McpError> {
         let mut session = self.lock()?;
-        ok_json(session.save_project(std::path::Path::new(&args.path)).map_err(fail)?)
+        ok_json(
+            session
+                .save_project(std::path::Path::new(&args.path))
+                .map_err(fail)?,
+        )
     }
 
     #[tool(
@@ -1233,6 +1258,106 @@ impl ShaleMcp {
             .map_err(fail)?;
         ok_json(json!({ "path": written }))
     }
+
+    #[tool(
+        description = "Read the printer camera once and return one JPEG. The A1 and P1 series use JPEG on port 6000. The P2S uses RTSPS on port 322 and this build cannot decode H.264, so a P2S still is returned only when the stream carries a JPEG. Does not move the printer. Example: {\"host\":\"192.168.1.42\",\"model\":\"bambu_lab_a1\",\"code\":\"12345678\"}."
+    )]
+    fn get_camera_snapshot(
+        &self,
+        Parameters(args): Parameters<CameraArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let target = shale_host::camera::CameraTarget::new(args.host, &args.model, args.code);
+        let jpeg = shale_host::camera::snapshot_jpeg(&target, Duration::from_secs(8))
+            .map_err(|err| fail(err.message()))?;
+        let note = format!(
+            "{} camera, port {}. One JPEG.",
+            target.path.as_str(),
+            target.port
+        );
+        Ok(CallToolResult::success(vec![
+            ContentBlock::text(note),
+            ContentBlock::image(shale_host::camera::base64(&jpeg), "image/jpeg"),
+        ]))
+    }
+
+    #[tool(
+        description = "Say whether the printer camera can be reached, and the fault if it cannot: wrong access code, LAN-only live view off, or the camera switched off. Does not move the printer and does not return the picture."
+    )]
+    fn camera_status(
+        &self,
+        Parameters(args): Parameters<CameraArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let target = shale_host::camera::CameraTarget::new(args.host, &args.model, args.code);
+        let path = target.path.as_str();
+        let port = target.port;
+        match shale_host::camera::snapshot_jpeg(&target, Duration::from_secs(8)) {
+            Ok(jpeg) => ok_json(json!({
+                "path": path,
+                "port": port,
+                "reachable": true,
+                "jpeg": jpeg.starts_with(&[0xff, 0xd8]),
+                "faultCode": null,
+                "fault": null,
+            })),
+            Err(err) => ok_json(json!({
+                "path": path,
+                "port": port,
+                "reachable": false,
+                "jpeg": false,
+                "faultCode": err.code(),
+                "fault": err.message(),
+            })),
+        }
+    }
+
+    #[tool(
+        description = "Judge one chamber JPEG for spaghetti, a part that has come off the bed, or a blob. One frame does not notify: the desktop watch waits for the same finding over several frames. This does not pause or move a printer. Example: {\"path\":\"/tmp/chamber.jpg\"}."
+    )]
+    fn get_failure_status(
+        &self,
+        Parameters(args): Parameters<FailureArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        if args.path.contains("catalog-cache")
+            || args
+                .previous
+                .as_deref()
+                .is_some_and(|path| path.contains("catalog-cache"))
+        {
+            return Err(fail(
+                "Refusing a path inside the catalog cache. Copy the picture somewhere else.",
+            ));
+        }
+        let current = read_jpeg(&args.path)?;
+        let previous = match args.previous {
+            Some(path) => Some(read_jpeg(&path)?),
+            None => None,
+        };
+        let settings = shale_host::camera::WatchSettings {
+            sample_seconds: 5.0,
+            confidence: args.confidence.unwrap_or(0.6),
+            sensitivity: shale_host::camera::Sensitivity::parse(
+                args.sensitivity.as_deref().unwrap_or("medium"),
+            ),
+            debounce_frames: 3,
+            pause: false,
+        };
+        let finding = shale_host::camera::inspect(&current, previous.as_ref(), &settings);
+        let mut debounce = shale_host::camera::Debounce::new(settings.debounce_frames);
+        let alert = debounce.push(&finding, settings.confidence);
+        ok_json(json!({
+            "kind": finding.kind.as_str(),
+            "confidence": finding.confidence,
+            "note": finding.note,
+            "alert": alert,
+            "action": shale_host::camera::watch_action(alert, false),
+            "boxes": finding.boxes.len(),
+        }))
+    }
+}
+
+fn read_jpeg(path: &str) -> Result<image::RgbImage, McpError> {
+    let bytes = std::fs::read(path).map_err(|err| fail(format!("Could not read {path}: {err}")))?;
+    shale_host::camera::decode_jpeg(&bytes).map_err(fail)
 }
 
 #[prompt_router]

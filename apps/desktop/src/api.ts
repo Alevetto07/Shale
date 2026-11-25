@@ -321,7 +321,27 @@ export interface QueueJob {
   running: boolean;
 }
 
-export const queueAdd = (name?: string) => invoke<QueueJob[]>("queue_add", { name });
+export interface QueueAddOptions {
+  coolC?: number;
+  centerIsZero?: boolean;
+  bedWidth?: number;
+  bedDepth?: number;
+  bedHeight?: number;
+  adhesion?: string;
+  printerId?: string;
+}
+
+export const queueAdd = (name?: string, options: QueueAddOptions = {}) =>
+  invoke<QueueJob[]>("queue_add", {
+    name,
+    coolC: options.coolC ?? null,
+    centerIsZero: options.centerIsZero ?? null,
+    bedWidth: options.bedWidth ?? null,
+    bedDepth: options.bedDepth ?? null,
+    bedHeight: options.bedHeight ?? null,
+    adhesion: options.adhesion ?? null,
+    printerId: options.printerId ?? null,
+  });
 export const queueList = () => invoke<QueueJob[]>("queue_list");
 export const queueRemove = (id: number) => invoke<QueueJob[]>("queue_remove", { id });
 export const queueClear = () => invoke<QueueJob[]>("queue_clear");
@@ -335,11 +355,92 @@ export type QueueRun = { state: string; note: string | null };
 export const queueArm = () => invoke<QueueRun>("queue_arm");
 export const queueObserve = (machine: string) => invoke<QueueRun>("queue_observe", { machine });
 export const queuePlateCleared = () => invoke<QueueRun>("queue_plate_cleared");
+export const queueSetEject = (mode: "off" | "in_file" | "after_print") =>
+  invoke<QueueRun>("queue_set_eject", { mode });
+export const queueCooled = (bedC: number, targetC: number) =>
+  invoke<QueueRun>("queue_cooled", { bedC, targetC });
+export const queuePlateVerdict = (clear: boolean) =>
+  invoke<QueueRun>("queue_plate_verdict", { clear });
+export const removalSend = () => invoke<QueueRun>("removal_send");
 export const queueStop = (why?: string) => invoke<QueueRun>("queue_stop", { why: why ?? null });
 export const queueRunState = () => invoke<QueueRun>("queue_run_state");
 
 export const hostControl = (command: "pause" | "resume" | "stop") =>
   invoke<void>("host_control", { command });
+
+export interface CameraView {
+  running: boolean;
+  path: string;
+  frames: number;
+  fps: number;
+  hasJpeg: boolean;
+  codec: string;
+  faultCode: string | null;
+  fault: string | null;
+}
+
+export interface WatchBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  label: string;
+  confidence: number;
+}
+
+export interface WatchView {
+  kind: string;
+  confidence: number;
+  alert: boolean;
+  action: string;
+  boxes: WatchBox[];
+  heatmap: number[];
+  heatmapCols: number;
+  heatmapRows: number;
+  note: string;
+}
+
+export interface RemovalPreview {
+  offered: boolean;
+  accepted: boolean;
+  reasons: string[];
+  gcode: string;
+}
+
+export interface PlateCompare {
+  clear: boolean;
+  difference: number;
+  note: string;
+}
+
+export const cameraStart = (host: string, model: string, code: string) =>
+  invoke<CameraView>("camera_start", { host, model, code });
+export const cameraStop = () => invoke<CameraView>("camera_stop");
+export const cameraStatus = () => invoke<CameraView>("camera_status");
+export const cameraFrame = () => invoke<string | null>("camera_frame");
+export const cameraSnapshot = (host: string, model: string, code: string) =>
+  invoke<string>("camera_snapshot", { host, model, code });
+export const cameraWatch = (args: {
+  confidence: number;
+  sensitivity: string;
+  debounceFrames: number;
+  pause: boolean;
+}) => invoke<WatchView>("camera_watch", args);
+export const cameraCloudStill = (devId: string) =>
+  invoke<string>("camera_cloud_still", { devId });
+export const cameraSaveReference = (serial: string) =>
+  invoke<void>("camera_save_reference", { serial });
+export const cameraCompare = (serial: string) =>
+  invoke<PlateCompare>("camera_compare", { serial });
+export const removalPreview = (args: {
+  printerId: string;
+  coolC: number;
+  centerIsZero: boolean;
+  bedWidth: number;
+  bedDepth: number;
+  bedHeight: number;
+  adhesion: string;
+}) => invoke<RemovalPreview>("removal_preview", args);
 
 /** Forget this printer's certificate pin. The "trust the new certificate"
  *  action: the next connection accepts and records what it is offered. */
