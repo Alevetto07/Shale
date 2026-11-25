@@ -681,6 +681,41 @@ pub fn place_on_bed(
     }
 }
 
+/// How far a placed mesh sticks out of the bed, in millimetres on X, Y and Z.
+/// Zero means that axis fits. An empty mesh fits. Vertices are transformed
+/// first, so a rotated or scaled part is judged by where it actually lands.
+pub fn bed_overflow(
+    mesh: &TriangleMesh,
+    transform: &Transform,
+    width: f64,
+    depth: f64,
+    height: f64,
+) -> [f64; 3] {
+    if mesh.vertices.is_empty() {
+        return [0.0; 3];
+    }
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    for vertex in &mesh.vertices {
+        let point = apply_transform(
+            [vertex[0] as f64, vertex[1] as f64, vertex[2] as f64],
+            transform,
+        );
+        for axis in 0..3 {
+            min[axis] = min[axis].min(point[axis]);
+            max[axis] = max[axis].max(point[axis]);
+        }
+    }
+    let limit = [width, depth, height];
+    let mut overflow = [0.0; 3];
+    for axis in 0..3 {
+        let below = (-min[axis]).max(0.0);
+        let above = (max[axis] - limit[axis]).max(0.0);
+        overflow[axis] = below.max(above);
+    }
+    overflow
+}
+
 /// Move the mesh along Z so its lowest transformed vertex sits on the plate.
 pub fn drop_to_bed(mesh: &TriangleMesh, transform: &mut Transform) {
     let mut min_z = f64::INFINITY;
@@ -1586,6 +1621,35 @@ mod tests {
             "second kept triangle follows the first"
         );
         assert!((preview[18] - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_part_past_the_plate_reports_how_far_it_sticks_out() {
+        let mesh = TriangleMesh {
+            vertices: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 5.0]],
+            triangles: vec![[0, 1, 2]],
+        };
+        let fits = bed_overflow(&mesh, &Transform::default(), 256.0, 256.0, 256.0);
+        assert_eq!(fits, [0.0, 0.0, 0.0]);
+        let mut parked = Transform::default();
+        parked.translation = [300.0, -4.0, 0.0];
+        let overflow = bed_overflow(&mesh, &parked, 256.0, 256.0, 256.0);
+        assert!((overflow[0] - 54.0).abs() < 1e-6, "x {}", overflow[0]);
+        assert!((overflow[1] - 4.0).abs() < 1e-6, "y {}", overflow[1]);
+        assert_eq!(overflow[2], 0.0);
+        assert_eq!(
+            bed_overflow(
+                &TriangleMesh {
+                    vertices: Vec::new(),
+                    triangles: Vec::new(),
+                },
+                &Transform::default(),
+                180.0,
+                180.0,
+                180.0,
+            ),
+            [0.0; 3]
+        );
     }
 
     #[test]

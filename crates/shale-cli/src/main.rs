@@ -19,7 +19,7 @@ use info_env::{
 use shale_core::catalog::{Catalog, ResourcePaths};
 use shale_core::engine::{CliEngine, EngineProgress};
 use shale_core::job::{slice, PlacedModel};
-use shale_core::mesh::{load_mesh, place_on_bed};
+use shale_core::mesh::{bed_overflow, load_mesh, place_on_bed};
 use shale_core::resolver::{ResolveRequest, UserSettings};
 use shale_core::{NonplanarMode, NonplanarOptions};
 
@@ -272,6 +272,20 @@ fn slice_command(args: &[String]) -> Result<(), String> {
         .unwrap_or(220.0);
 
     let transform = place_on_bed(&mesh, width, depth, false);
+    let height = resolved
+        .global
+        .get("machine_height")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(250.0);
+    let overflow = bed_overflow(&mesh, &transform, width, depth, height);
+    if overflow.iter().any(|millimetres| *millimetres > 0.5) {
+        eprintln!(
+            "shale: this model extends outside the build volume (X {x:.1} mm, Y {y:.1} mm, Z {z:.1} mm past the plate). A multi-plate 3MF is sliced as one plate, so parts that belong on another plate are included.",
+            x = overflow[0],
+            y = overflow[1],
+            z = overflow[2]
+        );
+    }
     let placed = vec![PlacedModel {
         name: model_path
             .file_stem()
