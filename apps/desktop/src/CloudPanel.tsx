@@ -51,6 +51,20 @@ export function CloudPanel({ taskName }: { taskName: string }) {
     }
   }
 
+  async function signInWithBambu() {
+    setBusy(true);
+    setNote(null);
+    try {
+      setSession(await api.cloudLoginWeb());
+      setStage("form");
+      await loadDevices();
+    } catch (err) {
+      setNote(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function signIn() {
     if (!email.trim() || !password) return;
     setBusy(true);
@@ -167,6 +181,12 @@ export function CloudPanel({ taskName }: { taskName: string }) {
             The same account Bambu Studio uses: the printers in it, whether or not they are on this
             network.
           </p>
+          <div className="cloud-actions">
+            <Button type="button" variant="secondary" disabled={busy} onClick={() => void signInWithBambu()}>
+              Sign in with Bambu Lab (Google, Apple, email)
+            </Button>
+          </div>
+          <p className="cloud-line dim">Or use email and password here.</p>
           {stage === "form" ? (
             <div className="cloud-form">
               <label>

@@ -24,6 +24,7 @@ use shale_core::{
     StoredInstruction, SupportOverlay, SupportParams, SupportPlan, TessellationTolerance, Toolpath,
     Transform, TriangleMesh, UserSettings, VariantInfo,
 };
+mod bambu_login;
 mod cloud;
 mod instance;
 mod nonplanar;
@@ -3985,30 +3986,59 @@ fn preset_import(app: AppHandle, source: String) -> Result<shale_core::preset::P
 }
 
 #[tauri::command]
-fn slicer_detect() -> Vec<shale_core::slicer_import::SlicerInstall> {
-    shale_core::slicer_import::detect_installs()
+async fn slicer_detect() -> Vec<shale_core::slicer_import::SlicerInstall> {
+    tauri::async_runtime::spawn_blocking(shale_core::slicer_import::detect_installs)
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
-fn slicer_list_presets(slicer_id: String) -> Result<Vec<shale_core::slicer_import::PresetOffer>, String> {
-    shale_core::slicer_import::list_preset_offers(&slicer_id)
+async fn slicer_list_presets(
+    slicer_id: String,
+) -> Result<Vec<shale_core::slicer_import::PresetOffer>, String> {
+    tauri::async_runtime::spawn_blocking(move || shale_core::slicer_import::list_preset_offers(&slicer_id))
+        .await
+        .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
-fn slicer_import_presets(
+async fn slicer_scan_presets(
+    app: AppHandle,
+    slicer_id: String,
+) -> Result<shale_core::slicer_import::ScanSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        shale_core::slicer_import::scan_presets(&slicer_id, &mut |counts| {
+            let _ = app.emit("slicer-scan-progress", counts);
+        })
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+async fn slicer_import_presets(
     app: AppHandle,
     slicer_id: String,
     paths: Vec<String>,
 ) -> Result<shale_core::slicer_import::SlicerImportReport, String> {
     let imported = config_dir(&app)?.join("imported-profiles");
     std::fs::create_dir_all(&imported).map_err(|e| e.to_string())?;
-    std::env::set_var("SHALE_IMPORTED_PROFILES", &imported);
-    let report = shale_core::slicer_import::import_presets(
-        &slicer_id,
-        &paths,
-        &imported,
-        &preset_dir(&app)?,
-    )?;
+    let presets = preset_dir(&app)?;
+    let app_for_progress = app.clone();
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        std::env::set_var("SHALE_IMPORTED_PROFILES", &imported);
+        shale_core::slicer_import::import_presets_with_progress(
+            &slicer_id,
+            &paths,
+            &imported,
+            &presets,
+            &mut |counts| {
+                let _ = app_for_progress.emit("slicer-import-progress", counts);
+            },
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())??;
     shale_core::bambu::invalidate_session_library();
     let _ = app.emit("catalogue", ());
     Ok(report)
@@ -4922,6 +4952,7 @@ pub fn run() {
             preset_import,
             slicer_detect,
             slicer_list_presets,
+            slicer_scan_presets,
             slicer_import_presets,
             cost_settings,
             set_cost_settings,
@@ -5014,6 +5045,7 @@ pub fn run() {
             forget_recent_project,
             cloud::cloud_state,
             cloud::cloud_login,
+            cloud::cloud_login_web,
             cloud::cloud_verify,
             cloud::cloud_sign_out,
             cloud::cloud_devices,

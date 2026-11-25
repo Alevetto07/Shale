@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
-use crate::bambu::{flatten_preset_from_dirs, profiles_root};
+use crate::bambu::{flatten_presets_shared, profiles_root};
 use crate::preset::{self, Preset};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -45,6 +45,33 @@ pub struct SlicerImportReport {
     pub skipped: u32,
     pub unsupported: u32,
     pub lines: Vec<ImportLine>,
+}
+
+/// Counts shown while a check or an import is running. `total` is 0 until the
+/// walk knows how many files it will look at.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ScanCounts {
+    pub seen: u32,
+    pub total: u32,
+    pub printers: u32,
+    pub filaments: u32,
+    pub processes: u32,
+    pub warnings: u32,
+}
+
+/// Compact result of a check. Paths stay here so the import can run without
+/// another walk; the window shows the counts, not this list.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ScanSummary {
+    pub slicer: String,
+    pub label: String,
+    pub found: bool,
+    pub printers: u32,
+    pub filaments: u32,
+    pub processes: u32,
+    pub warnings: u32,
+    pub warning_notes: Vec<String>,
+    pub paths: Vec<String>,
 }
 
 const PRINTER_DIRS: &[&str] = &["machine", "printer", "printers", "snapshots"];
@@ -95,19 +122,20 @@ pub fn imported_profiles_tree(dest: &Path) -> PathBuf {
     dest.join("imported-profiles")
 }
 
+/// Which slicers have a config directory. This only checks that the directory
+/// exists. Counting and reading profiles waits until the user asks.
 pub fn detect_installs() -> Vec<SlicerInstall> {
     let mut out = Vec::new();
     for (id, label, paths) in candidate_paths() {
         if let Some(root) = paths.into_iter().find(|path| path.is_dir()) {
-            let (printers, filaments, processes) = summarise_tree(&root);
             out.push(SlicerInstall {
                 id,
                 label,
                 found: true,
                 config_root: Some(root.display().to_string()),
-                printers,
-                filaments,
-                processes,
+                printers: 0,
+                filaments: 0,
+                processes: 0,
             });
         } else {
             out.push(SlicerInstall {
@@ -124,42 +152,21 @@ pub fn detect_installs() -> Vec<SlicerInstall> {
     out
 }
 
-fn summarise_tree(root: &Path) -> (u32, u32, u32) {
-    let mut printers = 0u32;
-    let mut filaments = 0u32;
-    let mut processes = 0u32;
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(read) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in read.flatten() {
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            if path.is_dir() {
-                if stack.len() < 16 {
-                    stack.push(path);
-                }
-                continue;
-            }
-            if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                continue;
-            }
-            let parent = path
-                .parent()
-                .and_then(|p| p.file_name())
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-            if dir_matches(&parent, PRINTER_DIRS) || dir_matches(&name, PRINTER_DIRS) {
-                printers += 1;
-            } else if dir_matches(&parent, FILAMENT_DIRS) || dir_matches(&name, FILAMENT_DIRS) {
-                filaments += 1;
-            } else if dir_matches(&parent, PROCESS_DIRS) || dir_matches(&name, PROCESS_DIRS) {
-                processes += 1;
-            }
-        }
-    }
-    (printers, filaments, processes)
+/// Walk one install and classify its profiles. Does not resolve inheritance.
+pub fn scan_presets(slicer_id: &str, progress: &mut dyn FnMut(&ScanCounts)) -> Result<ScanSummary, String> {
+    let Some((_, label, _)) = candidate_paths().into_iter().find(|(id, _, _)| id == slicer_id) else {
+        return Err(format!("unknown slicer id `{slicer_id}`"));
+    };
+    let Some(root) = resolve_config_root(slicer_id) else {
+        progress(&ScanCounts::default());
+        return Ok(ScanSummary {
+            slicer: slicer_id.to_string(),
+            label,
+            found: false,
+            ..ScanSummary::default()
+        });
+    };
+    scan_config_root(slicer_id, &label, &root, progress)
 }
 
 fn dir_matches(name: &str, allowed: &[&str]) -> bool {
@@ -216,24 +223,6 @@ fn discover_user_json(config_root: &Path) -> Vec<(String, PathBuf)> {
     found
 }
 
-fn display_name_from_json(path: &Path, kind: &str) -> String {
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("preset")
-        .to_string();
-    if let Ok(text) = std::fs::read_to_string(path) {
-        if let Ok(value) = serde_json::from_str::<Json>(&text) {
-            if let Some(name) = value.get("name").and_then(|v| v.as_str()) {
-                if !name.trim().is_empty() {
-                    return format!("{name} ({kind})");
-                }
-            }
-        }
-    }
-    format!("{stem} ({kind})")
-}
-
 pub fn list_preset_offers(slicer_id: &str) -> Result<Vec<PresetOffer>, String> {
     let Some(config_root) = resolve_config_root(slicer_id) else {
         return Ok(Vec::new());
@@ -241,24 +230,21 @@ pub fn list_preset_offers(slicer_id: &str) -> Result<Vec<PresetOffer>, String> {
     let mut offers = Vec::new();
     match slicer_id {
         "bambu" | "orca" => {
-            let bundled = bundled_vendor_dirs();
-            let user_dirs = vec![config_root.clone()];
+            // Names come from the file name. Resolving inheritance here used to
+            // re-read the whole library for every file, which froze the window.
             for (kind, path) in discover_user_json(&config_root) {
-                let lookup = orca_family_lookup_dirs(&bundled, &user_dirs, &kind);
-                let (supported, note) = match flatten_preset_from_dirs(&path, &lookup) {
-                    Ok(_) => (true, None),
-                    Err(err) => (false, Some(err)),
-                };
-                let id = format!("{slicer_id}:{kind}:{}", path.display());
-                let label = display_name_from_json(&path, &kind);
+                let stem = path
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("preset");
                 offers.push(PresetOffer {
-                    id,
+                    id: format!("{slicer_id}:{kind}:{}", path.display()),
                     path: path.display().to_string(),
                     kind: kind.clone(),
-                    name: label,
+                    name: format!("{stem} ({kind})"),
                     slicer: slicer_id.to_string(),
-                    supported,
-                    note,
+                    supported: true,
+                    note: None,
                 });
             }
         }
@@ -361,7 +347,7 @@ fn write_merged_json(target: &Path, merged: &Json) -> Result<(), String> {
     if let Json::Object(map) = &mut flat {
         map.remove("inherits");
     }
-    let text = serde_json::to_string_pretty(&flat).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string(&flat).map_err(|e| e.to_string())?;
     std::fs::write(target, text).map_err(|e| e.to_string())
 }
 
@@ -371,11 +357,22 @@ pub fn import_presets(
     imported_tree: &Path,
     shale_preset_dir: &Path,
 ) -> Result<SlicerImportReport, String> {
+    import_presets_with_progress(slicer_id, selected_paths, imported_tree, shale_preset_dir, &mut |_| {})
+}
+
+pub fn import_presets_with_progress(
+    slicer_id: &str,
+    selected_paths: &[String],
+    imported_tree: &Path,
+    shale_preset_dir: &Path,
+    progress: &mut dyn FnMut(&ScanCounts),
+) -> Result<SlicerImportReport, String> {
     let Some(config_root) = resolve_config_root(slicer_id) else {
         return Err(format!("`{slicer_id}` is not installed on this machine"));
     };
-    let bundled = bundled_vendor_dirs();
-    let user_dirs = vec![config_root];
+    if slicer_id == "bambu" || slicer_id == "orca" {
+        return import_bambu_family(&config_root, selected_paths, imported_tree, progress);
+    }
     let mut report = SlicerImportReport::default();
 
     for path_str in selected_paths {
@@ -391,45 +388,6 @@ pub fn import_presets(
             continue;
         }
         match slicer_id {
-            "bambu" | "orca" => {
-                let kind = infer_json_kind(&path).unwrap_or_else(|| "process".to_string());
-                let lookup = orca_family_lookup_dirs(&bundled, &user_dirs, &kind);
-                match flatten_preset_from_dirs(&path, &lookup) {
-                    Ok(merged) => {
-                        let stem = safe_file_stem(&path);
-                        let dest = imported_tree
-                            .join("BBL")
-                            .join(&kind)
-                            .join(format!("imported_{stem}.json"));
-                        if let Err(err) = write_merged_json(&dest, &merged) {
-                            report.skipped += 1;
-                            report.lines.push(ImportLine {
-                                path: path_str.clone(),
-                                name: display_name_from_json(&path, &kind),
-                                outcome: "skipped".into(),
-                                detail: Some(err),
-                            });
-                            continue;
-                        }
-                        report.imported += 1;
-                        report.lines.push(ImportLine {
-                            path: path_str.clone(),
-                            name: display_name_from_json(&path, &kind),
-                            outcome: "imported".into(),
-                            detail: Some(dest.display().to_string()),
-                        });
-                    }
-                    Err(err) => {
-                        report.skipped += 1;
-                        report.lines.push(ImportLine {
-                            path: path_str.clone(),
-                            name: path.display().to_string(),
-                            outcome: "skipped".into(),
-                            detail: Some(err),
-                        });
-                    }
-                }
-            }
             "prusa" => match map_prusa_ini(&path) {
                 Ok(values) => match save_process_preset(shale_preset_dir, &path, values) {
                     Ok(name) => {
@@ -505,6 +463,221 @@ pub fn import_presets(
     }
 
     Ok(report)
+}
+
+fn scan_config_root(
+    slicer_id: &str,
+    label: &str,
+    root: &Path,
+    progress: &mut dyn FnMut(&ScanCounts),
+) -> Result<ScanSummary, String> {
+    let files = match slicer_id {
+        "bambu" | "orca" => discover_user_json(root),
+        "prusa" => discover_prusa_presets(root),
+        "cura" => discover_cura_presets(root),
+        _ => return Err(format!("unknown slicer id `{slicer_id}`")),
+    };
+    let total = files.len() as u32;
+    let mut counts = ScanCounts {
+        total,
+        ..ScanCounts::default()
+    };
+    progress(&counts);
+    let known = if slicer_id == "bambu" || slicer_id == "orca" {
+        known_profile_stems(root)
+    } else {
+        std::collections::HashSet::new()
+    };
+    let mut notes = Vec::new();
+    let mut paths = Vec::with_capacity(files.len());
+    for (index, (kind, path)) in files.iter().enumerate() {
+        match kind.as_str() {
+            "machine" => counts.printers += 1,
+            "filament" => counts.filaments += 1,
+            _ => counts.processes += 1,
+        }
+        paths.push(path.display().to_string());
+        if slicer_id == "bambu" || slicer_id == "orca" {
+            if let Some(parent) = peek_inherits(path) {
+                if !known.contains(&parent.to_ascii_lowercase()) {
+                    counts.warnings += 1;
+                    if notes.len() < 12 {
+                        let stem = path
+                            .file_stem()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or("preset");
+                        notes.push(format!("{stem}: parent `{parent}` is not on this machine"));
+                    }
+                }
+            }
+        }
+        counts.seen = index as u32 + 1;
+        if counts.seen == total || counts.seen.is_multiple_of(40) {
+            progress(&counts);
+        }
+    }
+    Ok(ScanSummary {
+        slicer: slicer_id.to_string(),
+        label: label.to_string(),
+        found: true,
+        printers: counts.printers,
+        filaments: counts.filaments,
+        processes: counts.processes,
+        warnings: counts.warnings,
+        warning_notes: notes,
+        paths,
+    })
+}
+
+fn known_profile_stems(root: &Path) -> std::collections::HashSet<String> {
+    let bundled = bundled_vendor_dirs();
+    let user = vec![root.to_path_buf()];
+    let mut stems = std::collections::HashSet::new();
+    for kind in ["machine", "filament", "process"] {
+        for dir in orca_family_lookup_dirs(&bundled, &user, kind) {
+            let Ok(read) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            for entry in read.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                    continue;
+                }
+                if let Some(stem) = path.file_stem().and_then(|name| name.to_str()) {
+                    stems.insert(stem.to_ascii_lowercase());
+                }
+            }
+        }
+    }
+    stems
+}
+
+/// The parent name, if the first 4 KiB of the file names one. A full parse is
+/// not needed to decide whether the parent exists.
+fn peek_inherits(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut buf = [0u8; 4096];
+    let read = file.read(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf[..read]);
+    let key_at = text.find("\"inherits\"")?;
+    let rest = &text[key_at + "\"inherits\"".len()..];
+    let colon = rest.find(':')?;
+    let after = rest[colon + 1..].trim_start();
+    if after.starts_with("null") || after.starts_with('}') {
+        return None;
+    }
+    let open = after.find('"')?;
+    let body = &after[open + 1..];
+    let close = body.find('"')?;
+    let name = &body[..close];
+    if name.trim().is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+fn import_bambu_family(
+    config_root: &Path,
+    selected_paths: &[String],
+    imported_tree: &Path,
+    progress: &mut dyn FnMut(&ScanCounts),
+) -> Result<SlicerImportReport, String> {
+    use std::collections::HashMap;
+    let bundled = bundled_vendor_dirs();
+    let user_dirs = vec![config_root.to_path_buf()];
+    let mut by_kind: HashMap<String, Vec<(String, PathBuf)>> = HashMap::new();
+    let mut report = SlicerImportReport::default();
+    for path_str in selected_paths {
+        let path = PathBuf::from(path_str);
+        if !path.is_file() {
+            report.skipped += 1;
+            push_note(
+                &mut report,
+                path_str,
+                path_str,
+                "skipped",
+                Some("file not found".into()),
+            );
+            continue;
+        }
+        let kind = infer_json_kind(&path).unwrap_or_else(|| "process".to_string());
+        by_kind.entry(kind).or_default().push((path_str.clone(), path));
+    }
+    let total: u32 = by_kind.values().map(|files| files.len() as u32).sum();
+    let mut seen = 0u32;
+    let mut imported_printers = 0u32;
+    let mut imported_filaments = 0u32;
+    let mut imported_processes = 0u32;
+    progress(&ScanCounts {
+        seen,
+        total,
+        ..ScanCounts::default()
+    });
+    for (kind, files) in &by_kind {
+        let lookup = orca_family_lookup_dirs(&bundled, &user_dirs, kind);
+        for chunk in files.chunks(40) {
+            let paths: Vec<PathBuf> = chunk.iter().map(|(_, path)| path.clone()).collect();
+            let resolved = flatten_presets_shared(&paths, &lookup);
+            for ((path_str, path), merged) in chunk.iter().zip(resolved) {
+                seen += 1;
+                match merged {
+                    Ok(merged) => {
+                        let stem = safe_file_stem(path);
+                        let dest = imported_tree
+                            .join("BBL")
+                            .join(kind)
+                            .join(format!("imported_{stem}.json"));
+                        if let Err(err) = write_merged_json(&dest, &merged) {
+                            report.skipped += 1;
+                            push_note(&mut report, path_str, path_str, "skipped", Some(err));
+                        } else {
+                            report.imported += 1;
+                            match kind.as_str() {
+                                "machine" => imported_printers += 1,
+                                "filament" => imported_filaments += 1,
+                                _ => imported_processes += 1,
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        report.skipped += 1;
+                        push_note(&mut report, path_str, path_str, "skipped", Some(err));
+                    }
+                }
+                if seen == total || seen.is_multiple_of(40) {
+                    progress(&ScanCounts {
+                        seen,
+                        total,
+                        printers: imported_printers,
+                        filaments: imported_filaments,
+                        processes: imported_processes,
+                        warnings: report.skipped,
+                    });
+                }
+            }
+        }
+    }
+    Ok(report)
+}
+
+fn push_note(
+    report: &mut SlicerImportReport,
+    path: &str,
+    name: &str,
+    outcome: &str,
+    detail: Option<String>,
+) {
+    if report.lines.len() >= 40 {
+        return;
+    }
+    report.lines.push(ImportLine {
+        path: path.to_string(),
+        name: name.to_string(),
+        outcome: outcome.to_string(),
+        detail,
+    });
 }
 
 fn infer_json_kind(path: &Path) -> Option<String> {
@@ -698,6 +871,7 @@ pub fn parse_import_manifest(text: &str) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bambu::flatten_preset_from_dirs;
     use crate::bambu::set_test_profiles_root;
 
     fn fixture_root() -> PathBuf {
@@ -785,6 +959,129 @@ mod tests {
             "process",
         );
         assert!(flatten_preset_from_dirs(&preset, &lookup).is_err());
+        set_test_profiles_root(None);
+    }
+
+    fn write_profile_tree(root: &std::path::Path, count: usize) {
+        let dir = root.join("user").join("default").join("process");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("base.json"),
+            r#"{"name":"Base","layer_height":"0.2"}"#,
+        )
+        .unwrap();
+        for index in 0..count {
+            std::fs::write(
+                dir.join(format!("child_{index}.json")),
+                format!(
+                    r#"{{"name":"Child {index}","inherits":"base","layer_height":"0.16"}}"#
+                ),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn scan_of_two_thousand_profiles_streams_progress() {
+        let root = std::env::temp_dir().join(format!("shale-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        write_profile_tree(&root, 2000);
+        let started = std::time::Instant::now();
+        let mut ticks = 0u32;
+        let summary = scan_config_root("bambu", "Bambu Studio", &root, &mut |_| ticks += 1).unwrap();
+        let elapsed = started.elapsed();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(summary.processes >= 2000, "counted {}", summary.processes);
+        assert!(ticks >= 2, "progress ticks {ticks}");
+        assert!(
+            elapsed.as_secs() < 3,
+            "scan of 2000 profiles took {elapsed:?}"
+        );
+        eprintln!("scan after (2000 profiles): {elapsed:?}, ticks {ticks}");
+    }
+
+    #[test]
+    fn shared_index_import_beats_per_file_flatten() {
+        let root = std::env::temp_dir().join(format!("shale-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let count = 120usize;
+        write_profile_tree(&root, count);
+        let dir = root.join("user").join("default").join("process");
+        let paths: Vec<std::path::PathBuf> = (0..count)
+            .map(|index| dir.join(format!("child_{index}.json")))
+            .collect();
+        let lookup = vec![dir.clone()];
+        let started = std::time::Instant::now();
+        for path in &paths {
+            flatten_preset_from_dirs(path, &lookup).unwrap();
+        }
+        let before = started.elapsed();
+        let started = std::time::Instant::now();
+        let resolved = flatten_presets_shared(&paths, &lookup);
+        let after = started.elapsed();
+        assert_eq!(resolved.len(), count);
+        assert!(resolved.iter().all(|item| item.is_ok()));
+        let dest = root.join("out");
+        let selected: Vec<String> = paths.iter().map(|path| path.display().to_string()).collect();
+        let started = std::time::Instant::now();
+        let report = import_bambu_family(&root, &selected, &dest, &mut |_| {}).unwrap();
+        let written = started.elapsed();
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(report.imported, count as u32);
+        assert!(
+            after.as_millis() * 4 < before.as_millis().max(1),
+            "shared index {after:?} was not faster than per-file flatten {before:?}"
+        );
+        eprintln!("import before (per-file flatten, n={count}): {before:?}");
+        eprintln!("import after (shared index, n={count}): {after:?}");
+        eprintln!("import after including writes (n={count}): {written:?}");
+    }
+
+    /// Opt-in timing against the real bundled profile library. Not part of CI:
+    /// `cargo test -p shale-core --lib profile_against_bundled_library -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn profile_against_bundled_library() {
+        let profiles = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../vendor/BambuStudio/resources/profiles");
+        if !profiles.join("BBL/process").is_dir() {
+            eprintln!("bundled profiles not present, skipping");
+            return;
+        }
+        set_test_profiles_root(Some(profiles));
+        let root = std::env::temp_dir().join(format!("shale-real-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let count = 40usize;
+        write_profile_tree(&root, count);
+        let dir = root.join("user").join("default").join("process");
+        let paths: Vec<PathBuf> = (0..count)
+            .map(|index| dir.join(format!("child_{index}.json")))
+            .collect();
+        let lookup = orca_family_lookup_dirs(&bundled_vendor_dirs(), std::slice::from_ref(&root), "process");
+        let started = std::time::Instant::now();
+        for path in &paths {
+            let _ = flatten_preset_from_dirs(path, &lookup);
+        }
+        let before = started.elapsed();
+        let started = std::time::Instant::now();
+        let _ = flatten_presets_shared(&paths, &lookup);
+        let after = started.elapsed();
+        eprintln!(
+            "real library, n={count}, lookup dirs {}: before {before:?}, after {after:?}",
+            lookup.len()
+        );
+        let wide = 2000usize;
+        write_profile_tree(&root, wide);
+        let wide_paths: Vec<PathBuf> = (0..wide)
+            .map(|index| dir.join(format!("child_{index}.json")))
+            .collect();
+        let lookup = orca_family_lookup_dirs(&bundled_vendor_dirs(), std::slice::from_ref(&root), "process");
+        let started = std::time::Instant::now();
+        let resolved = flatten_presets_shared(&wide_paths, &lookup);
+        let wide_after = started.elapsed();
+        let ok = resolved.iter().filter(|item| item.is_ok()).count();
+        eprintln!("real library shared index, n={wide}: {wide_after:?}, resolved {ok}");
+        let _ = std::fs::remove_dir_all(&root);
         set_test_profiles_root(None);
     }
 }

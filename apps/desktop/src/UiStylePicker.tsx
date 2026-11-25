@@ -28,10 +28,11 @@ export function UiStylePicker({
                 onClick={() => onChange(style.id)}
               >
                 <span
-                  className="ui-style-swatch-chip"
+                  className="ui-style-preview"
                   aria-hidden="true"
                   style={
                     {
+                      backgroundImage: `url(${style.plateImage})`,
                       "--swatch-bg": style.swatch.bg,
                       "--swatch-panel": style.swatch.panel,
                       "--swatch-accent": style.swatch.accent,
@@ -39,8 +40,11 @@ export function UiStylePicker({
                     } as CSSProperties
                   }
                 >
-                  <span className="ui-style-swatch-bar" />
-                  <span className="ui-style-swatch-dot" />
+                  <span className="ui-style-preview-scrim" />
+                  <span className="ui-style-preview-card">
+                    <span className="ui-style-preview-title" />
+                    <span className="ui-style-preview-line" />
+                  </span>
                 </span>
                 <span className="ui-style-swatch-name">{style.label}</span>
               </button>

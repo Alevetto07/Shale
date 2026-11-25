@@ -1,169 +1,114 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Select } from "./ui";
+import { useState, useSyncExternalStore } from "react";
 import {
-  detectSlicerInstalls,
-  importSlicerPresets,
-  listSlicerPresets,
-  type PresetOffer,
-  type SlicerImportReport,
-  type SlicerInstall,
+  currentImportJob,
+  resetImportJob,
+  startSettingsCheck,
+  startSettingsImport,
+  subscribeImportJob,
 } from "./slicer-import";
+import { Button } from "./ui";
+
+const SOURCES = [
+  { id: "bambu", label: "Bambu Studio" },
+  { id: "orca", label: "OrcaSlicer" },
+  { id: "prusa", label: "PrusaSlicer" },
+  { id: "cura", label: "UltiMaker Cura" },
+] as const;
 
 export function SlicerImportPanel({
-  defaultSlicerId,
-  compact,
   onImported,
+  compact = false,
+  defaultSlicerId = "bambu",
 }: {
-  defaultSlicerId?: string;
+  onImported?: () => void;
+  /** Kept so the wizard and Settings share this panel. */
   compact?: boolean;
-  onImported?: (report: SlicerImportReport) => void;
+  defaultSlicerId?: string;
 }) {
-  const [installs, setInstalls] = useState<SlicerInstall[] | null>(null);
-  const [slicerId, setSlicerId] = useState(defaultSlicerId ?? "bambu");
-  const [offers, setOffers] = useState<PresetOffer[] | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [busy, setBusy] = useState(false);
-  const [report, setReport] = useState<SlicerImportReport | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadInstalls = useCallback(async () => {
-    try {
-      const rows = await detectSlicerInstalls();
-      setInstalls(rows);
-      if (!defaultSlicerId) {
-        const first = rows.find((row) => row.found);
-        if (first) setSlicerId(first.id);
-      }
-    } catch (err) {
-      setError(String(err));
-    }
-  }, [defaultSlicerId]);
-
-  const loadOffers = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const rows = await listSlicerPresets(slicerId);
-      setOffers(rows);
-      setSelected(new Set(rows.filter((row) => row.supported).map((row) => row.path)));
-    } catch (err) {
-      setError(String(err));
-      setOffers(null);
-    } finally {
-      setBusy(false);
-    }
-  }, [slicerId]);
-
-  useEffect(() => {
-    void loadInstalls();
-  }, [loadInstalls]);
-
-  useEffect(() => {
-    if (slicerId) void loadOffers();
-  }, [slicerId, loadOffers]);
-
-  const supportedOffers = useMemo(
-    () => (offers ?? []).filter((row) => row.supported),
-    [offers],
-  );
-
-  async function runImport() {
-    if (selected.size === 0) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await importSlicerPresets(slicerId, Array.from(selected));
-      setReport(result);
-      onImported?.(result);
-      await loadOffers();
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function toggle(path: string, on: boolean) {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (on) next.add(path);
-      else next.delete(path);
-      return next;
-    });
-  }
+  const job = useSyncExternalStore(subscribeImportJob, currentImportJob, currentImportJob);
+  const [slicerId, setSlicerId] = useState(defaultSlicerId);
+  const running = job.phase === "scanning" || job.phase === "importing";
+  const summary = job.summary;
+  const total = job.counts.total;
+  const seen = job.counts.seen;
+  const notes = summary?.warning_notes ?? job.report?.lines.map((line) => line.detail).filter(Boolean) ?? [];
 
   return (
     <div className={compact ? "slicer-import slicer-import--compact" : "slicer-import"}>
-      <label className="ui-field">
-        <span className="ui-field__label">Source slicer</span>
-        <Select
-          label="Source slicer"
+      <p className="slicer-import-note">
+        Nothing is read until you choose a slicer and press Check for settings. You can leave this step while a check runs.
+      </p>
+      <label className="slicer-import-source">
+        <span>Source</span>
+        <select
+          aria-label="Source"
           value={slicerId}
-          options={(installs ?? []).map((row) => ({
-            value: row.id,
-            label: `${row.label}${row.found ? "" : " (not found)"}`,
-          }))}
-          onChange={setSlicerId}
-        />
+          disabled={running}
+          onChange={(event) => setSlicerId(event.target.value)}
+        >
+          {SOURCES.map((source) => (
+            <option key={source.id} value={source.id}>
+              {source.label}
+            </option>
+          ))}
+        </select>
       </label>
       <div className="slicer-import-actions">
-        <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={() => void loadOffers()}>
-          Refresh list
+        <Button type="button" variant="secondary" disabled={running} onClick={() => startSettingsCheck(slicerId)}>
+          Check for settings
         </Button>
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          disabled={busy || selected.size === 0}
-          onClick={() => void runImport()}
-        >
-          Import selected ({selected.size})
-        </Button>
+        {summary && summary.found && job.phase !== "done" ? (
+          <Button type="button" variant="primary" disabled={running || summary.paths.length === 0} onClick={() => startSettingsImport(onImported)}>
+            Import these settings
+          </Button>
+        ) : null}
+        {job.phase !== "idle" && !running ? (
+          <Button type="button" variant="ghost" onClick={() => resetImportJob()}>
+            Check another
+          </Button>
+        ) : null}
       </div>
-      {error ? <p className="hint error">{error}</p> : null}
-      {offers && (
-        <ul className="slicer-import-list">
-          {offers.map((row) => (
-            <li key={row.id} className={row.supported ? undefined : "dim"}>
-              <label>
-                <input
-                  type="checkbox"
-                  disabled={!row.supported}
-                  checked={selected.has(row.path)}
-                  onChange={(event) => toggle(row.path, event.target.checked)}
-                />
-                <span>
-                  <strong>{row.name}</strong> <span className="dim">({row.kind})</span>
-                </span>
-              </label>
-              {!row.supported && row.note ? <p className="hint">{row.note}</p> : null}
-            </li>
-          ))}
-          {offers.length === 0 ? <li className="dim">No user presets found in this install.</li> : null}
-        </ul>
-      )}
-      {supportedOffers.length > 0 ? (
-        <p className="hint">
-          {supportedOffers.length} supported preset{supportedOffers.length === 1 ? "" : "s"}.
-          Prusa/Cura process settings become Shale named presets; Bambu/Orca JSON is stored for the
-          catalogue.
-        </p>
-      ) : null}
-      {report && (
-        <div className="slicer-import-report">
+
+      {running ? (
+        <div className="slicer-import-progress" aria-live="polite">
+          <progress value={seen} max={Math.max(total, 1)} />
           <p>
-            Imported {report.imported}, skipped {report.skipped}, unsupported {report.unsupported}
+            {total > 0 ? `${seen} of ${total} files` : "Looking through the settings folder…"}
           </p>
-          <ul>
-            {report.lines.map((line) => (
-              <li key={`${line.path}-${line.outcome}`}>
-                <strong>{line.name}</strong> — {line.outcome}
-                {line.detail ? `: ${line.detail}` : null}
-              </li>
-            ))}
-          </ul>
+          <p className="dim">
+            Printers {job.counts.printers} · Filaments {job.counts.filaments} · Processes {job.counts.processes}
+          </p>
         </div>
-      )}
+      ) : null}
+
+      {job.error ? <p className="slicer-import-error">{job.error}</p> : null}
+
+      {summary && summary.found && !running ? (
+        <div className="slicer-import-summary">
+          <p>
+            {summary.label}: {summary.printers} printers, {summary.filaments} filaments, {summary.processes} processes
+            {summary.warnings > 0 ? `, ${summary.warnings} warnings` : ""}.
+          </p>
+          {job.report ? (
+            <p>
+              Imported {job.report.imported}
+              {job.report.skipped > 0 ? `, skipped ${job.report.skipped}` : ""}.
+            </p>
+          ) : (
+            <p className="dim">The list stays here. Continue whenever you like.</p>
+          )}
+          {notes.length > 0 ? (
+            <details>
+              <summary>Show details</summary>
+              <ul>
+                {notes.slice(0, 12).map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

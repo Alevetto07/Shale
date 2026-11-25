@@ -525,6 +525,46 @@ pub fn flatten_preset_from_dirs(
         .ok_or_else(|| format!("could not resolve inherits for `{stem}`"))
 }
 
+/// Resolve many presets against one shared library index.
+///
+/// `flatten_preset_from_dirs` rebuilds that index for every file. On a Bambu
+/// Studio tree that is thousands of JSON files, so a full import re-reads the
+/// library once per preset. This reads each lookup directory once, then
+/// resolves the selected files in parallel. Each file keeps its own memo: the
+/// index is shared and never mutated.
+pub fn flatten_presets_shared(
+    paths: &[PathBuf],
+    lookup_dirs: &[PathBuf],
+) -> Vec<Result<Json, String>> {
+    let raw = raw_profile_index(lookup_dirs);
+    paths
+        .par_iter()
+        .map(|path| {
+            let stem = path
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| "preset file has no name".to_string())?;
+            let lower = stem.to_ascii_lowercase();
+            if !raw.contains_key(&lower) {
+                return Err(format!("preset `{stem}` was not in the profile index"));
+            }
+            if let Some(parent) = raw
+                .get(&lower)
+                .and_then(|value| value.get("inherits"))
+                .and_then(|value| value.as_str())
+            {
+                let parent_key = parent.to_ascii_lowercase();
+                if !raw.contains_key(&parent_key) {
+                    return Err(format!("missing inherits parent `{parent}` for `{stem}`"));
+                }
+            }
+            let mut memo = HashMap::new();
+            resolve_chain(&raw, &mut memo, &lower, 0)
+                .ok_or_else(|| format!("could not resolve inherits for `{stem}`"))
+        })
+        .collect()
+}
+
 /// Optional overlay tree written by slicer import (`…/imported-profiles`).
 pub fn imported_profiles_root() -> Option<PathBuf> {
     std::env::var_os("SHALE_IMPORTED_PROFILES").map(PathBuf::from)

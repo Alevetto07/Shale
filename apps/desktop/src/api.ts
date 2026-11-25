@@ -204,6 +204,7 @@ export const secretGet = (key: string) => invoke<string | null>("secret_get", { 
 export const cloudState = () => invoke<CloudSession>("cloud_state");
 export const cloudLogin = (email: string, password: string) =>
   invoke<CloudLoginStep>("cloud_login", { email, password });
+export const cloudLoginWeb = () => invoke<CloudSession>("cloud_login_web");
 export const cloudVerify = (email: string, tfaKey: string, code: string) =>
   invoke<void>("cloud_verify", { email, tfaKey, code });
 export const cloudSignOut = () => invoke<void>("cloud_sign_out");
@@ -676,6 +677,7 @@ export const api = {
 
   cloudState,
   cloudLogin,
+  cloudLoginWeb,
   cloudVerify,
   cloudSignOut,
   cloudDevices,

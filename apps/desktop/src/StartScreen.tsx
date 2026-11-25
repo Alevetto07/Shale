@@ -113,9 +113,12 @@ export function StartScreen({
 
   return (
     <div className="start start--hero" aria-label="Start">
+      {panel === "home" ? (
+        <div className="home-hero" aria-hidden="true" style={{ backgroundImage: `url(${plate.plateImage})` }} />
+      ) : null}
       <PlateField
-        live={fieldLive}
-        comet={fieldLive}
+        live={fieldLive && panel !== "home"}
+        comet={fieldLive && panel !== "home"}
         imageUrl={plate.plateImage}
         backgroundRgb={plate.plateBackground}
         plateTune={plate.plateTune}

@@ -110,6 +110,110 @@ pub fn send_code(email: &str) -> Call {
 
 /// The code, with the `tfaKey` the first answer carried. The key is what ties
 /// the code to the attempt that asked for it.
+/// Bambu Studio exchanges the ticket from its localhost callback here. The
+/// ticket is in the URL, never in the call name, so an error cannot echo it.
+pub fn ticket_exchange_request(host: &str, ticket: &str) -> HttpRequest {
+    HttpRequest {
+        name: "POST /v1/user-service/user/ticket",
+        method: "POST",
+        url: format!(
+            "{host}/v1/user-service/user/ticket/{}",
+            path_segment(ticket)
+        ),
+        headers: vec![
+            ("Accept".to_string(), "application/json".to_string()),
+            ("Content-Type".to_string(), "application/json".to_string()),
+        ],
+        body: Some(b"{}".to_vec()),
+    }
+}
+
+/// The same exchange with the ticket in the body, used when the path form is
+/// refused. The call name still does not contain the ticket.
+pub fn ticket_exchange_body_request(host: &str, ticket: &str) -> HttpRequest {
+    HttpRequest {
+        name: "POST /v1/user-service/user/ticket",
+        method: "POST",
+        url: format!("{host}/v1/user-service/user/ticket"),
+        headers: vec![
+            ("Accept".to_string(), "application/json".to_string()),
+            ("Content-Type".to_string(), "application/json".to_string()),
+        ],
+        body: Some(serde_json::json!({ "ticket": ticket }).to_string().into_bytes()),
+    }
+}
+
+pub fn my_profile_request(host: &str, access: &str) -> HttpRequest {
+    HttpRequest {
+        name: "GET /v1/user-service/my/profile",
+        method: "GET",
+        url: format!("{host}/v1/user-service/my/profile"),
+        headers: vec![
+            ("Accept".to_string(), "application/json".to_string()),
+            ("Authorization".to_string(), format!("Bearer {access}")),
+        ],
+        body: None,
+    }
+}
+
+fn path_segment(raw: &str) -> String {
+    let mut out = String::new();
+    for byte in raw.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(byte as char),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// Tokens from a ticket answer. Looks at the object and at `data`, and never
+/// logs the body.
+pub fn tokens_from_ticket_body(body: &[u8]) -> Option<(String, String, i64)> {
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    tokens_from_value(&value)
+}
+
+pub fn tokens_from_value(value: &serde_json::Value) -> Option<(String, String, i64)> {
+    let object = value.as_object()?;
+    let nested = object.get("data").and_then(|item| item.as_object());
+    let source = nested.unwrap_or(object);
+    let access = source
+        .get("accessToken")
+        .or_else(|| source.get("token"))
+        .and_then(|item| item.as_str())
+        .filter(|text| !text.is_empty())?;
+    let refresh = source
+        .get("refreshToken")
+        .or_else(|| source.get("refresh_token"))
+        .and_then(|item| item.as_str())
+        .filter(|text| !text.is_empty())
+        .unwrap_or(access);
+    let expires = source
+        .get("expiresIn")
+        .and_then(|item| {
+            item.as_i64()
+                .or_else(|| item.as_str().and_then(|text| text.parse().ok()))
+        })
+        .unwrap_or(86_400);
+    Some((access.to_string(), refresh.to_string(), expires))
+}
+
+pub fn account_from_profile(body: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let object = value.as_object()?;
+    let nested = object.get("data").and_then(|item| item.as_object());
+    let source = nested.unwrap_or(object);
+    for key in ["account", "email", "name"] {
+        if let Some(text) = source.get(key).and_then(|item| item.as_str()) {
+            if !text.trim().is_empty() {
+                return Some(text.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
 pub fn login_with_code(account: &str, code: &str, tfa_key: &str) -> Call {
     json(
         "POST /v1/user-service/user/login (code)",
@@ -367,5 +471,23 @@ mod tests {
         assert!(body.contains("\"dev_id\":\"01P00\""));
         assert!(body.contains("filename=\"plate.gcode\""));
         assert!(body.contains("G28\n"));
+    }
+
+    #[test]
+    fn a_ticket_exchange_keeps_the_ticket_out_of_the_call_name() {
+        let ticket = "ticket-secret-value";
+        let request = ticket_exchange_request(GLOBAL_HOST, ticket);
+        assert_eq!(request.name, "POST /v1/user-service/user/ticket");
+        assert!(request.url.contains(ticket));
+        assert!(!request.name.contains(ticket));
+        let body = br#"{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresIn":3600}"#;
+        let (access, refresh, expires) = tokens_from_ticket_body(body).unwrap();
+        assert_eq!(access, "access-secret");
+        assert_eq!(refresh, "refresh-secret");
+        assert_eq!(expires, 3600);
+        let wrapped = br#"{"code":0,"data":{"accessToken":"access-secret","refreshToken":"refresh-secret","expiresIn":"120"}}"#;
+        assert_eq!(tokens_from_ticket_body(wrapped).unwrap().2, 120);
+        let profile = br#"{"data":{"account":"a@b.c","name":"Ada"}}"#;
+        assert_eq!(account_from_profile(profile).as_deref(), Some("a@b.c"));
     }
 }

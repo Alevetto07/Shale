@@ -199,6 +199,69 @@ impl<T: Transport> Cloud<T> {
         self.tokens.is_some()
     }
 
+    /// Store tokens from Bambu's web sign-in the same way a password sign-in does.
+    pub fn adopt_web_login(
+        &mut self,
+        access: &str,
+        refresh: &str,
+        expires_in: i64,
+        account: &str,
+    ) -> Result<(), CloudError> {
+        let expires_at = now_unix() + expires_in.max(60);
+        self.remember(Tokens::new(access, refresh, expires_at), account)
+    }
+
+    /// Exchange the ticket Bambu's login page sends to the localhost callback.
+    /// A failed answer is reported by status only, so the ticket and the tokens
+    /// never appear in the error.
+    pub fn complete_web_ticket(&mut self, ticket: &str) -> Result<(), CloudError> {
+        let response = self.exchange_ticket(ticket)?;
+        let (access, refresh, expires_in) =
+            api::tokens_from_ticket_body(&response.body).ok_or_else(|| CloudError::Shape {
+                call: "POST /v1/user-service/user/ticket".into(),
+                message: "the answer carried no tokens".into(),
+            })?;
+        let account = match self
+            .transport
+            .send(api::my_profile_request(&self.host, &access))
+        {
+            Ok(profile) if (200..300).contains(&profile.status) => {
+                api::account_from_profile(&profile.body).unwrap_or_else(|| "Bambu account".into())
+            }
+            _ => "Bambu account".into(),
+        };
+        self.adopt_web_login(&access, &refresh, expires_in, &account)
+    }
+
+    fn exchange_ticket(&self, ticket: &str) -> Result<http::Response, CloudError> {
+        let call = "POST /v1/user-service/user/ticket";
+        let first = self
+            .transport
+            .send(api::ticket_exchange_request(&self.host, ticket))
+            .map_err(|message| CloudError::Unreachable {
+                call: call.into(),
+                message,
+            })?;
+        if (200..300).contains(&first.status) {
+            return Ok(first);
+        }
+        match self
+            .transport
+            .send(api::ticket_exchange_body_request(&self.host, ticket))
+        {
+            Ok(second) if (200..300).contains(&second.status) => Ok(second),
+            Ok(second) => Err(CloudError::Status {
+                call: call.into(),
+                status: second.status,
+                message: "Bambu did not accept the sign-in".into(),
+            }),
+            Err(message) => Err(CloudError::Unreachable {
+                call: call.into(),
+                message,
+            }),
+        }
+    }
+
     fn remember(&mut self, tokens: Tokens, account: &str) -> Result<(), CloudError> {
         self.store
             .set(KEY_ACCESS, &tokens.access)
@@ -431,5 +494,22 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("vault is locked"));
         assert!(!err.to_string().contains("a@b.c"));
+    }
+
+    #[test]
+    fn web_login_is_stored_like_a_password_login() {
+        let mut cloud = Cloud::new(
+            api::GLOBAL_HOST,
+            Arc::new(HttpTransport),
+            Arc::new(MemoryStore::default()),
+        );
+        cloud
+            .adopt_web_login("access-secret", "refresh-secret", 3600, "a@b.c")
+            .unwrap();
+        assert!(cloud.signed_in());
+        assert_eq!(cloud.account(), Some("a@b.c"));
+        let text = format!("{:?}", cloud.tokens);
+        assert!(!text.contains("access-secret"), "{text}");
+        assert!(!text.contains("refresh-secret"), "{text}");
     }
 }

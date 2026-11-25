@@ -15,7 +15,7 @@ const STEPS: { id: SetupWizardStep; title: string; blurb: string }[] = [
   { id: "welcome", title: "Welcome", blurb: "Set up Shale in a minute — or skip and finish later in Settings." },
   { id: "theme", title: "Theme", blurb: "Pick an interface style with a live plate preview." },
   { id: "printers", title: "Printers", blurb: "Choose your default Bambu machine from the catalogue." },
-  { id: "import", title: "Import", blurb: "See presets from Bambu Studio, Orca, Prusa, or Cura on this PC." },
+  { id: "import", title: "Import", blurb: "Check this PC for Bambu Studio, Orca, Prusa, or Cura settings when you are ready." },
   { id: "account", title: "Bambu account", blurb: "Sign in for cloud printers — optional." },
   { id: "done", title: "Done", blurb: "You are ready to slice." },
 ];
