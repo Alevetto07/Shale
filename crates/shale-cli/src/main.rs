@@ -35,6 +35,13 @@ shale — slice a model without the window
   shale settings --printer ID [--variant NAME] [--quality TYPE] [--material ID]
   shale slice MODEL [options]    write G-code next to the model, or -o PATH
   shale suggest MODEL [options]  tips for the model, as text or --json
+  shale projects                 recently opened or saved projects
+  shale open PROJECT.shale       print a project and remember it
+  shale save MODEL -o PROJECT.shale
+                                 store a model as a project
+  shale stats --gcode FILE       time and filament from a finished slice
+  shale compare MODEL --patch KEY=VALUE [--patch KEY=VALUE]
+                                 slice a few setting patches and compare them
 
 slice options
   --printer ID        printer definition id (default: the first one found)
@@ -68,6 +75,19 @@ suggest options
   --nonplanar MODE    off, auto, or curved-tops
   --multi-material    the printer has an AMS or a second extruder
   --tag TEXT          an explicit tag, for example hot-use
+
+stats options
+  --gcode PATH        the finished G-code file
+  --price N           filament price per kilogram (default 20)
+  --layers            print one duration per layer
+  --json              print the stats as JSON
+
+compare options
+  --patch KEY=VALUE   one slice. Repeat the flag for another slice. Commas
+                      separate extra keys: --patch infill_sparse_density=15,layer_height=0.2
+  --concurrency N     how many slices run at once (1 to 3, default 2)
+  --price N           filament price per kilogram
+  plus the slice flags --printer, --variant, --quality, --material
 
 environment
   SHALE_CURA_DIR, SHALE_MATERIALS_DIR   the Cura resource tree
@@ -106,6 +126,11 @@ fn run(args: &[String]) -> Result<(), String> {
         "settings" => settings(args),
         "slice" => slice_command(args),
         "suggest" => suggest_command(args),
+        "projects" => projects_command(),
+        "open" => open_command(args),
+        "save" => save_command(args),
+        "stats" => stats_command(args),
+        "compare" => compare_command(args),
         other => Err(format!("unknown command `{other}`. Try `shale help`.")),
     }
 }
@@ -684,4 +709,220 @@ fn printer_bed(id: Option<&str>) -> (f64, f64, f64, String, bool) {
         ),
         Err(_) => fallback,
     }
+}
+
+fn positional(args: &[String]) -> Option<String> {
+    args.iter().skip(1).find(|arg| !arg.starts_with('-')).cloned()
+}
+
+fn projects_command() -> Result<(), String> {
+    let entries = shale_core::load_recents(&shale_core::config_dir()).map_err(|err| err.to_string())?;
+    if entries.is_empty() {
+        println!("no recent projects");
+        return Ok(());
+    }
+    for entry in entries {
+        let missing = if entry.missing { " missing" } else { "" };
+        println!("{}\t{}{missing}", entry.path, entry.name);
+    }
+    Ok(())
+}
+
+fn open_command(args: &[String]) -> Result<(), String> {
+    let path = positional(args).ok_or("open needs a .shale path")?;
+    let loaded = shale_core::read_project(std::path::Path::new(&path)).map_err(|err| err.to_string())?;
+    println!(
+        "{}\t{}\t{} model(s)",
+        loaded.data.name,
+        loaded.data.printer_id,
+        loaded.data.models.len()
+    );
+    let _ = shale_core::remember_recent(
+        &shale_core::config_dir(),
+        &shale_core::RecentEntry {
+            path: path.clone(),
+            name: loaded.data.name,
+            saved_at_ms: shale_core::now_ms(),
+            printer: loaded.data.printer_id,
+            missing: false,
+        },
+    );
+    Ok(())
+}
+
+fn save_command(args: &[String]) -> Result<(), String> {
+    let model = positional(args).ok_or("save needs a model path")?;
+    let output = flag(args, "-o")
+        .or_else(|| flag(args, "--output"))
+        .ok_or("save needs -o PROJECT.shale")?;
+    let bytes = std::fs::read(&model).map_err(|err| err.to_string())?;
+    let name = std::path::Path::new(&model)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("model")
+        .to_string();
+    let catalog = catalog()?;
+    let printer = flag(args, "--printer")
+        .or_else(|| catalog.default_printer_id())
+        .unwrap_or_else(|| "unknown".into());
+    let data = shale_core::ProjectData {
+        name: std::path::Path::new(&output)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("project")
+            .to_string(),
+        printer_id: printer.clone(),
+        printer_label: printer.clone(),
+        variant_name: flag(args, "--variant"),
+        quality_type: flag(args, "--quality"),
+        material_id: flag(args, "--material"),
+        ams: Vec::new(),
+        settings: UserSettings::default(),
+        chord_mm: 0.1,
+        turn_deg: 15.0,
+        models: vec![shale_core::ProjectModel {
+            name,
+            bytes,
+            transform: shale_core::Transform::default(),
+            settings: std::collections::BTreeMap::new(),
+            slot: None,
+            plate: 0,
+            painted: Vec::new(),
+            blocked: Vec::new(),
+        }],
+        plate_names: vec!["plate 1".into()],
+        instructions: Vec::new(),
+        support: None,
+        support_model: None,
+        thumbnail: Vec::new(),
+        dismissed_suggestions: Vec::new(),
+        suggestions_shown: Vec::new(),
+    };
+    shale_core::write_project(std::path::Path::new(&output), &data).map_err(|err| err.to_string())?;
+    let _ = shale_core::remember_recent(
+        &shale_core::config_dir(),
+        &shale_core::RecentEntry {
+            path: output.clone(),
+            name: data.name,
+            saved_at_ms: shale_core::now_ms(),
+            printer,
+            missing: false,
+        },
+    );
+    println!("{output}");
+    Ok(())
+}
+
+fn stats_command(args: &[String]) -> Result<(), String> {
+    let path = flag(args, "--gcode")
+        .or_else(|| positional(args))
+        .ok_or("stats needs --gcode PATH")?;
+    let text = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    let price = flag(args, "--price")
+        .map(|value| value.parse::<f64>())
+        .transpose()
+        .map_err(|_| "price must be a number".to_string())?
+        .unwrap_or(0.0);
+    let stats = shale_core::slice_stats_from_gcode(&text, 1.75, price, has(args, "--layers"), Vec::new());
+    if has(args, "--json") {
+        println!("{}", serde_json::to_string_pretty(&stats).map_err(|err| err.to_string())?);
+        return Ok(());
+    }
+    println!("time {:.0}s", stats.print_time_seconds);
+    println!("filament {:.2} m  {:.1} g  {:.2} {}", stats.filament_metres, stats.grams, stats.cost, stats.currency);
+    println!(
+        "walls {:.0}s  infill {:.0}s  supports {:.0}s  travel {:.0}s",
+        stats.walls_seconds, stats.infill_seconds, stats.support_seconds, stats.travel_seconds
+    );
+    println!("layers {}  purge {:.1} g", stats.layers, stats.purge_grams);
+    Ok(())
+}
+
+fn compare_command(args: &[String]) -> Result<(), String> {
+    let model = positional(args).ok_or("compare needs a model path")?;
+    let texts = many(args, "--patch");
+    if texts.is_empty() {
+        return Err("compare needs at least one --patch KEY=VALUE".into());
+    }
+    let patches = texts
+        .iter()
+        .map(|text| parse_patch(text))
+        .collect::<Result<Vec<_>, _>>()?;
+    let catalog = catalog()?;
+    let engine = CliEngine::from_env();
+    let mut session = shale_core::Session::new(catalog, Box::new(engine));
+    if let Some(printer) = flag(args, "--printer") {
+        session
+            .set_printer(
+                &printer,
+                flag(args, "--variant"),
+                flag(args, "--quality"),
+                flag(args, "--material"),
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    session
+        .load_model(std::path::Path::new(&model))
+        .map_err(|err| err.to_string())?;
+    let concurrency = flag(args, "--concurrency")
+        .map(|value| value.parse::<usize>())
+        .transpose()
+        .map_err(|_| "concurrency must be a number".to_string())?;
+    let price = flag(args, "--price")
+        .map(|value| value.parse::<f64>())
+        .transpose()
+        .map_err(|_| "price must be a number".to_string())?;
+    let rows = session
+        .slice_variants(patches, concurrency, price)
+        .map_err(|err| err.to_string())?;
+    println!("index  time_s  metres  grams  cost  support_s  label");
+    for row in rows {
+        if let Some(error) = row.error {
+            println!("{}\tfailed\t{error}", row.index);
+            continue;
+        }
+        println!(
+            "{}\t{:.0}\t{:.2}\t{:.1}\t{:.2}\t{:.0}\t{}",
+            row.index,
+            row.print_time_seconds.unwrap_or(0.0),
+            row.filament_metres,
+            row.grams,
+            row.cost,
+            row.support_seconds,
+            row.label
+        );
+    }
+    Ok(())
+}
+
+fn parse_patch(text: &str) -> Result<shale_core::SettingsPatch, String> {
+    let mut patch = shale_core::SettingsPatch::default();
+    for piece in text.split(',') {
+        let piece = piece.trim();
+        if piece.is_empty() {
+            continue;
+        }
+        let (key, value) = piece
+            .split_once('=')
+            .ok_or_else(|| format!("patch entry '{piece}' needs KEY=VALUE"))?;
+        let number = |value: &str| {
+            value
+                .parse::<f64>()
+                .map_err(|_| format!("'{value}' is not a number"))
+        };
+        match key.trim() {
+            "layer_height" => patch.layer_height = Some(number(value)?),
+            "infill" | "infill_sparse_density" => patch.infill_sparse_density = Some(number(value)?),
+            "supports" | "support_enable" => {
+                patch.support_enable = Some(!matches!(value, "0" | "false" | "off"));
+            }
+            "support_structure" => patch.support_structure = Some(value.to_string()),
+            "adhesion_type" => patch.adhesion_type = Some(value.to_string()),
+            "brim_width" => patch.brim_width = Some(number(value)?),
+            other => {
+                patch.settings.insert(other.to_string(), value.to_string());
+            }
+        }
+    }
+    Ok(patch)
 }

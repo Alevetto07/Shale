@@ -124,6 +124,18 @@ async fn slice_cube(
         "apply_supports",
         "slice",
         "slice_summary",
+        "slice_stats",
+        "slice_variants",
+        "apply_variant",
+        "get_suggestions",
+        "apply_suggestion",
+        "dismiss_suggestion",
+        "list_my_printers",
+        "printer_status",
+        "list_print_jobs",
+        "list_recent_projects",
+        "open_project",
+        "save_project",
         "export_gcode",
     ] {
         assert!(
@@ -284,6 +296,78 @@ async fn an_unknown_printer_is_an_error_not_an_empty_profile_list() {
         .list_materials(Some("not_a_printer"))
         .expect_err("materials for an unknown printer should fail the same way");
     assert!(materials.to_string().contains("not_a_printer"));
+}
+
+#[test]
+fn variants_stats_and_a_saved_project_round_trip() {
+    ensure_test_cache();
+    let dir = tempfile::tempdir().expect("config dir");
+    std::env::set_var("SHALE_CONFIG_DIR", dir.path());
+    let mut session = shale_core::Session::new(fixture_catalog(), Box::new(FakeEngine));
+    session
+        .load_model(&cube_path())
+        .expect("cube");
+    session.slice(&mut |_| {}).expect("slice");
+    let stats = session.slice_stats(Some(20.0), true).expect("stats");
+    assert!(stats.layers > 0, "{stats:?}");
+    assert!(stats.layer_seconds.as_ref().is_some_and(|rows| !rows.is_empty()));
+    let rows = session
+        .slice_variants(
+            vec![
+                shale_core::SettingsPatch {
+                    infill_sparse_density: Some(15.0),
+                    ..shale_core::SettingsPatch::default()
+                },
+                shale_core::SettingsPatch {
+                    infill_sparse_density: Some(30.0),
+                    ..shale_core::SettingsPatch::default()
+                },
+            ],
+            Some(2),
+            Some(20.0),
+        )
+        .expect("variants");
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.error.is_none()), "{rows:?}");
+    assert!(rows.iter().all(|row| row.print_time_seconds == Some(120.0)));
+    session.apply_variant(1).expect("apply the second patch");
+    let missing = session
+        .apply_suggestion("missing", shale_core::SuggestQuery::default())
+        .expect_err("an unknown suggestion is an error");
+    assert!(missing.to_string().contains("no suggestion"));
+    session
+        .dismiss_suggestion("not-a-real-tip", false)
+        .expect("dismiss");
+    let saved = dir.path().join("cube.shale");
+    session.save_project(&saved).expect("save");
+    let opened = session.open_project(&saved).expect("open");
+    assert_eq!(opened.models, 1);
+    assert!(opened.dismissed.iter().any(|id| id == "not-a-real-tip"));
+    let recent = session.list_recent_projects().expect("recents");
+    assert!(recent.iter().any(|entry| entry.path == saved.display().to_string()));
+}
+
+#[tokio::test]
+async fn printer_tools_ask_for_a_sign_in() {
+    ensure_test_cache();
+    let session = shale_core::Session::new(fixture_catalog(), Box::new(FakeEngine));
+    let server = ShaleMcp::new(session);
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server_task = tokio::spawn(async move {
+        let running = server.serve(server_io).await.expect("server handshake");
+        let _ = running.waiting().await;
+    });
+    let client = ().serve(client_io).await.expect("client handshake");
+    let err = client
+        .call_tool(CallToolRequestParams::new("list_my_printers".to_string()))
+        .await
+        .expect_err("a signed-out account is an error");
+    assert!(
+        err.to_string().contains("sign in to Bambu in Shale first"),
+        "{err}"
+    );
+    drop(client);
+    let _ = server_task.await;
 }
 
 #[tokio::test]

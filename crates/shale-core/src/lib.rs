@@ -48,6 +48,7 @@ pub mod project;
 pub mod project_settings;
 pub mod queue;
 pub mod removal;
+pub mod stats;
 pub mod resolver;
 pub mod session;
 pub mod slicer_import;
@@ -75,11 +76,15 @@ pub use project_settings::{
     ProjectSettingsImport,
 };
 pub use project::{
-    forget_recent, load_recents, now_ms, read_project, remember_recent, LoadedProject, ProjectData,
-    ProjectModel, RecentEntry,
+    config_dir, forget_recent, load_recents, now_ms, read_project, remember_recent, write_project,
+    LoadedProject, ProjectData, ProjectModel, RecentEntry,
 };
+pub use stats::{from_gcode as slice_stats_from_gcode, ExtruderUse, SliceStats};
 pub use resolver::{ProfileSummary, ResolveRequest, ResolvedSettings, UserSettings};
-pub use session::{JobSliceSummary, Session, SettingsPatch, SettingsView, StoredInstruction};
+pub use session::{
+    AppliedSuggestion, DismissedSuggestion, JobSliceSummary, ProjectOutline, Session,
+    SettingsPatch, SettingsView, StoredInstruction, VariantComparison,
+};
 pub use suggest::{
     evaluate as evaluate_suggestions, filament_kind, gcode_facts, present as present_suggestions,
     printer_is_enclosed, FilamentSlot, GcodeFacts, PrinterFacts, Scene, SceneObject, Severity,

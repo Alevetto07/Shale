@@ -6,6 +6,7 @@
 //! loopback interface.
 
 mod nonplanar;
+mod printers;
 mod server;
 
 use std::net::SocketAddr;
@@ -18,6 +19,7 @@ use rmcp::ServiceExt;
 use shale_core::{Engine, ResourcePaths, Session};
 use tokio_util::sync::CancellationToken;
 
+pub use printers::{AmsSlot, PrintJob, PrinterDirectory, PrinterView};
 pub use server::ShaleMcp;
 
 pub fn session_from_env() -> anyhow::Result<Session> {

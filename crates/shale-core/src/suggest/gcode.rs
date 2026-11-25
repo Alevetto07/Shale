@@ -15,6 +15,12 @@ pub struct GcodeFacts {
     pub max_speed_mm_s: f64,
     pub average_speed_mm_s: f64,
     pub layer_count: u32,
+    /// Filament length per extruder, in millimetres. Index 0 is T0.
+    pub per_tool_mm: Vec<f64>,
+    /// Filament spent on a prime, wipe, or purge feature.
+    pub purge_mm: f64,
+    /// Seconds spent on each `;LAYER:` block, in order.
+    pub layer_seconds: Vec<f64>,
 }
 
 pub fn facts(gcode: &str) -> GcodeFacts {
@@ -27,6 +33,8 @@ pub fn facts(gcode: &str) -> GcodeFacts {
     let mut kind = String::new();
     let mut speed_sum = 0.0;
     let mut speed_n = 0.0;
+    let mut tool = 0usize;
+    let mut layer_open = false;
     for raw in gcode.lines() {
         let line = raw.split(';').next().unwrap_or("").trim();
         let comment = raw
@@ -38,6 +46,8 @@ pub fn facts(gcode: &str) -> GcodeFacts {
         }
         if comment.starts_with("LAYER:") {
             out.layer_count = out.layer_count.saturating_add(1);
+            out.layer_seconds.push(0.0);
+            layer_open = true;
         }
         if line.is_empty() {
             continue;
@@ -62,6 +72,9 @@ pub fn facts(gcode: &str) -> GcodeFacts {
         if head.starts_with('T') && head[1..].chars().all(|c| c.is_ascii_digit()) && head.len() > 1
         {
             out.tool_changes = out.tool_changes.saturating_add(1);
+            if let Ok(index) = head[1..].parse::<usize>() {
+                tool = index;
+            }
             continue;
         }
         if head == "G92" {
@@ -105,6 +118,11 @@ pub fn facts(gcode: &str) -> GcodeFacts {
             out.max_speed_mm_s = out.max_speed_mm_s.max(speed);
             speed_sum += speed;
             speed_n += 1.0;
+            if layer_open {
+                if let Some(bucket) = out.layer_seconds.last_mut() {
+                    *bucket += seconds;
+                }
+            }
             if !extruding {
                 out.travel_seconds += seconds;
             } else if kind.contains("SUPPORT") {
@@ -118,7 +136,16 @@ pub fn facts(gcode: &str) -> GcodeFacts {
             }
         }
         if extruding {
-            out.extrude_mm += next_e - e;
+            let length = next_e - e;
+            out.extrude_mm += length;
+            if out.per_tool_mm.len() <= tool {
+                out.per_tool_mm.resize(tool + 1, 0.0);
+            }
+            out.per_tool_mm[tool] += length;
+            let purge = kind.contains("PRIME") || kind.contains("WIPE") || kind.contains("PURGE");
+            if purge {
+                out.purge_mm += length;
+            }
         }
         pos = next;
         if moved_e {

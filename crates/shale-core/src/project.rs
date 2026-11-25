@@ -342,6 +342,25 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
     })
 }
 
+/// Where recents and "don't suggest this again" live.
+///
+/// `SHALE_CONFIG_DIR` wins. Otherwise this is `$HOME/.config/shale`.
+pub fn config_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("SHALE_CONFIG_DIR") {
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let home = home.trim();
+        if !home.is_empty() {
+            return PathBuf::from(home).join(".config").join("shale");
+        }
+    }
+    std::env::temp_dir().join("shale-config")
+}
+
 pub fn load_recents(dir: &Path) -> Result<Vec<RecentEntry>, Error> {
     let path = recent_path(dir);
     if !path.is_file() {

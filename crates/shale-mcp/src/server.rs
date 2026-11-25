@@ -18,10 +18,12 @@ use shale_core::{
 };
 
 use crate::nonplanar::{self, NonplanarSettings};
+use crate::printers::{AccountPrinters, PrinterDirectory};
 
 #[derive(Clone)]
 pub struct ShaleMcp {
     session: Arc<Mutex<Session>>,
+    printers: Arc<dyn PrinterDirectory>,
     /// Non-planar options last set through `set_settings`. `shale_core` has no
     /// getter for them, and a tool must be able to report what the job will do.
     nonplanar: Arc<Mutex<NonplanarSettings>>,
@@ -34,8 +36,13 @@ pub struct ShaleMcp {
 
 impl ShaleMcp {
     pub fn new(session: Session) -> Self {
+        Self::with_printers(session, Arc::new(AccountPrinters))
+    }
+
+    pub fn with_printers(session: Session, printers: Arc<dyn PrinterDirectory>) -> Self {
         Self {
             session: Arc::new(Mutex::new(session)),
+            printers,
             nonplanar: Arc::new(Mutex::new(NonplanarSettings::default())),
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
@@ -356,6 +363,52 @@ struct SuggestArgs {
     multi_material: Option<bool>,
     /// Maximum suggestions to return. Omit for the full ranked list.
     limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SuggestionActionArgs {
+    /// Suggestion id or rule id from get_suggestions.
+    id: String,
+    /// dismiss_suggestion only. true remembers the rule for every project.
+    #[serde(default)]
+    forever: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct PrinterIdArgs {
+    /// Printer id from list_my_printers.
+    id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ProjectPathArgs {
+    /// Absolute path to a .shale project.
+    path: String,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+struct StatsArgs {
+    /// Filament price per kilogram. Omit for 20 EUR.
+    price_per_kg: Option<f64>,
+    /// Include one duration per layer.
+    #[serde(default)]
+    layers: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct VariantArgs {
+    /// Each patch is sliced on its own. At most 8.
+    patches: Vec<SettingsArgs>,
+    /// How many slices run at once. Omit for 2, or 3 when the machine has the memory. Never more than 3.
+    concurrency: Option<usize>,
+    /// Filament price per kilogram, used in the comparison. Omit for 20 EUR.
+    price_per_kg: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct VariantIndexArgs {
+    /// Row index from slice_variants, starting at 0.
+    index: usize,
 }
 
 impl SuggestArgs {
@@ -705,6 +758,131 @@ impl ShaleMcp {
         let session = self.lock()?;
         let found = session.suggestions(args.into_query()).map_err(fail)?;
         ok_json(found)
+    }
+
+    #[tool(
+        description = "Apply one suggestion's fix to the open project, then hide that suggestion. Pass the suggestion id from get_suggestions. Example: {\"id\": \"brim_contact:model-1\"}."
+    )]
+    fn apply_suggestion(
+        &self,
+        Parameters(args): Parameters<SuggestionActionArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut session = self.lock()?;
+        let applied = session
+            .apply_suggestion(&args.id, SuggestQuery::default())
+            .map_err(fail)?;
+        ok_json(applied)
+    }
+
+    #[tool(
+        description = "Hide a suggestion. forever true stores the rule for every project. Example: {\"id\": \"brim\", \"forever\": false}."
+    )]
+    fn dismiss_suggestion(
+        &self,
+        Parameters(args): Parameters<SuggestionActionArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut session = self.lock()?;
+        let dismissed = session
+            .dismiss_suggestion(&args.id, args.forever.unwrap_or(false))
+            .map_err(fail)?;
+        ok_json(dismissed)
+    }
+
+    #[tool(
+        description = "List printers on the signed-in Bambu account. Read only. If this process is not signed in, the error is exactly: sign in to Bambu in Shale first."
+    )]
+    fn list_my_printers(&self) -> Result<CallToolResult, McpError> {
+        ok_json(self.printers.printers().map_err(fail)?)
+    }
+
+    #[tool(
+        description = "Read one printer: state, current job, progress, time left, temperatures, and AMS slots (material, colour, humidity) when the report has them. Example: {\"id\": \"01P00C000000000\"}. Read only."
+    )]
+    fn printer_status(
+        &self,
+        Parameters(args): Parameters<PrinterIdArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        ok_json(self.printers.status(&args.id).map_err(fail)?)
+    }
+
+    #[tool(
+        description = "Recent and current print jobs from the signed-in account. Read only. Does not start, pause, or stop a print."
+    )]
+    fn list_print_jobs(&self) -> Result<CallToolResult, McpError> {
+        ok_json(self.printers.jobs().map_err(fail)?)
+    }
+
+    #[tool(description = "Projects opened or saved recently, newest first. Each entry has path, name, printer, and whether the file is missing.")]
+    fn list_recent_projects(&self) -> Result<CallToolResult, McpError> {
+        let session = self.lock()?;
+        ok_json(session.list_recent_projects().map_err(fail)?)
+    }
+
+    #[tool(
+        description = "Open a .shale project into this session, replacing the models that are loaded now. Example: {\"path\": \"/home/me/bracket.shale\"}."
+    )]
+    fn open_project(
+        &self,
+        Parameters(args): Parameters<ProjectPathArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut session = self.lock()?;
+        ok_json(session.open_project(std::path::Path::new(&args.path)).map_err(fail)?)
+    }
+
+    #[tool(
+        description = "Save the open models as a .shale project. Meshes are stored as STL. Example: {\"path\": \"/home/me/bracket.shale\"}."
+    )]
+    fn save_project(
+        &self,
+        Parameters(args): Parameters<ProjectPathArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut session = self.lock()?;
+        ok_json(session.save_project(std::path::Path::new(&args.path)).map_err(fail)?)
+    }
+
+    #[tool(
+        description = "Time and filament from the last slice: walls, infill, supports, travel, grams per extruder, purge waste, layer count, speeds, and cost. Set layers true for per-layer seconds. Example: {\"price_per_kg\": 20, \"layers\": false}."
+    )]
+    fn slice_stats(
+        &self,
+        Parameters(args): Parameters<StatsArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let session = self.lock()?;
+        ok_json(
+            session
+                .slice_stats(args.price_per_kg, args.layers.unwrap_or(false))
+                .map_err(fail)?,
+        )
+    }
+
+    #[tool(
+        description = "Slice up to 8 setting patches of the same model and compare time, filament, grams, cost, and support time. Patches run a few at a time, each in its own engine process. Does not change the current settings. Example: {\"patches\": [{\"infill_sparse_density\": 15}, {\"infill_sparse_density\": 30}]}."
+    )]
+    fn slice_variants(
+        &self,
+        Parameters(args): Parameters<VariantArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut session = self.lock()?;
+        ok_json(
+            session
+                .slice_variants(
+                    args.patches.into_iter().map(SettingsPatch::from).collect(),
+                    args.concurrency,
+                    args.price_per_kg,
+                )
+                .map_err(fail)?,
+        )
+    }
+
+    #[tool(
+        description = "Make one compared patch the current settings. index is the row from slice_variants. Example: {\"index\": 0}."
+    )]
+    fn apply_variant(
+        &self,
+        Parameters(args): Parameters<VariantIndexArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut session = self.lock()?;
+        ok_json(session.apply_variant(args.index).map_err(fail)?)
     }
 
     #[tool(description = "Copy the latest G-code to a filesystem path.")]
