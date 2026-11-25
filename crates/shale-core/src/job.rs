@@ -868,7 +868,13 @@ pub fn slice(
                 }
                 // Strict mode: the caller asked for a guarantee, so a curved file that
                 // cannot be verified is an error instead of a silent planar print.
-                Err(err) => return Err(Error::message(err)),
+                // The engine has already written its raw file, still carrying the
+                // 6666 s / 0 m placeholder. Leaving that at the caller's path looks
+                // like a finished print.
+                Err(err) => {
+                    discard_rejected_output(&output.gcode_path);
+                    return Err(Error::message(err));
+                }
             }
         }
     }
@@ -984,9 +990,50 @@ pub fn compare_support(
     Ok(comparison)
 }
 
+/// Remove the engine's raw file after a strict rejection.
+///
+/// The post-pass runs after CuraEngine has written `output_path`. On the
+/// success path that file is replaced with the annotated G-code. On a strict
+/// rejection nothing replaces it, so the placeholder header (`;TIME:6666`,
+/// `;Filament used: 0m`, unset bounds) would stay where the caller asked to
+/// save a print.
+fn discard_rejected_output(output_path: &std::path::Path) {
+    let _ = fs::remove_file(output_path);
+    let _ = fs::remove_dir_all(output_path.with_extension("models"));
+}
+
 fn force_setting(resolved: &mut ResolvedSettings, key: &str, value: &str) {
     resolved.global.insert(key.to_string(), value.to_string());
     for extruder in &mut resolved.extruders {
         extruder.insert(key.to_string(), value.to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::discard_rejected_output;
+    use std::fs;
+
+    #[test]
+    fn a_rejected_strict_slice_does_not_leave_the_engine_file() {
+        let dir = std::env::temp_dir().join(format!("shale-reject-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let output = dir.join("part.gcode");
+        fs::write(&output, b";TIME:6666\n;Filament used: 0m\n").unwrap();
+        let models = output.with_extension("models");
+        fs::create_dir_all(&models).unwrap();
+        fs::write(models.join("part.stl"), b"solid").unwrap();
+
+        discard_rejected_output(&output);
+
+        assert!(
+            !output.exists(),
+            "the placeholder gcode must not remain at the output path"
+        );
+        assert!(
+            !models.exists(),
+            "the baked meshes must not remain beside a rejected slice"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }
