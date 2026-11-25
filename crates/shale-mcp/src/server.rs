@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use rmcp::{
     handler::server::{
@@ -13,7 +14,7 @@ use rmcp::{
 use serde::Deserialize;
 use serde_json::json;
 use shale_core::{
-    CustomInstruction, EngineProgress, Session, SettingsPatch, SlotQuery, SuggestQuery, SupportParams,
+    CustomInstruction, Session, SettingsPatch, SlotQuery, SuggestQuery, SupportParams,
     SupportPlan,
 };
 
@@ -27,6 +28,8 @@ pub struct ShaleMcp {
     /// Non-planar options last set through `set_settings`. `shale_core` has no
     /// getter for them, and a tool must be able to report what the job will do.
     nonplanar: Arc<Mutex<NonplanarSettings>>,
+    /// Progress for the slice running outside the session lock.
+    slice_job: Arc<Mutex<SliceJob>>,
     // The handler macros read these. Derived Clone hides that from dead-code analysis.
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
@@ -44,6 +47,7 @@ impl ShaleMcp {
             session: Arc::new(Mutex::new(session)),
             printers,
             nonplanar: Arc::new(Mutex::new(NonplanarSettings::default())),
+            slice_job: Arc::new(Mutex::new(SliceJob::default())),
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
         }
@@ -71,6 +75,237 @@ fn ok_json(value: impl serde::Serialize) -> Result<CallToolResult, McpError> {
 
 fn fail(err: impl std::fmt::Display) -> McpError {
     McpError::internal_error(err.to_string(), None)
+}
+
+/// How long `slice` waits before telling the caller to poll.
+///
+/// A cube usually finishes inside this. The aerospike takes about ten minutes,
+/// which is longer than a client's 600 second tool timeout, so the call returns
+/// `running` and the caller polls.
+const SLICE_INLINE_WAIT: Duration = Duration::from_secs(2);
+
+struct SliceJob {
+    generation: u64,
+    status: &'static str,
+    fraction: f64,
+    message: String,
+    summary: Option<serde_json::Value>,
+    error: Option<String>,
+}
+
+impl Default for SliceJob {
+    fn default() -> Self {
+        Self {
+            generation: 0,
+            status: "idle",
+            fraction: 0.0,
+            message: String::new(),
+            summary: None,
+            error: None,
+        }
+    }
+}
+
+fn slice_status(job: &SliceJob) -> serde_json::Value {
+    if job.status == "done" {
+        if let Some(summary) = &job.summary {
+            if summary.is_object() {
+                let mut value = summary.clone();
+                if let Some(object) = value.as_object_mut() {
+                    object.insert("status".into(), json!("done"));
+                    object.insert("fraction".into(), json!(job.fraction));
+                    object.insert("message".into(), json!(job.message));
+                }
+                return value;
+            }
+            return json!({
+                "status": "done",
+                "fraction": 1.0,
+                "message": job.message,
+                "plates": summary,
+            });
+        }
+    }
+    json!({
+        "status": job.status,
+        "fraction": job.fraction,
+        "message": job.message,
+        "error": job.error,
+    })
+}
+
+fn note_progress(job: &Mutex<SliceJob>, generation: u64, fraction: f64, message: &str) {
+    if let Ok(mut job) = job.lock() {
+        if job.generation == generation && job.status == "running" {
+            job.fraction = fraction;
+            job.message = message.to_string();
+        }
+    }
+}
+
+fn spawn_slice(
+    session: Arc<Mutex<shale_core::Session>>,
+    job: Arc<Mutex<SliceJob>>,
+    generation: u64,
+    plate: Option<u32>,
+    all_plates: bool,
+    ignore: Option<bool>,
+) {
+    let worker = Arc::clone(&job);
+    let started = std::thread::Builder::new()
+        .name("shale-slice".into())
+        .spawn(move || {
+            let result = run_slice(
+                &session,
+                &worker,
+                generation,
+                plate,
+                all_plates,
+                ignore,
+            );
+            if let Err(err) = result {
+                if let Ok(mut job) = worker.lock() {
+                    if job.generation == generation {
+                        job.status = "failed";
+                        job.error = Some(err);
+                    }
+                }
+            }
+        });
+    if started.is_err() {
+        if let Ok(mut job) = job.lock() {
+            if job.generation == generation {
+                job.status = "failed";
+                job.error = Some("could not start the slice".into());
+            }
+        }
+    }
+}
+
+/// Lock order is the session, then the slice job. Progress updates take only
+/// the slice job, so a poll does not wait for the engine.
+fn run_slice(
+    session: &Arc<Mutex<shale_core::Session>>,
+    job: &Arc<Mutex<SliceJob>>,
+    generation: u64,
+    plate: Option<u32>,
+    all_plates: bool,
+    ignore: Option<bool>,
+) -> Result<(), String> {
+    let plates = {
+        let mut session = session
+            .lock()
+            .map_err(|_| "Shale session lock was poisoned".to_string())?;
+        if let Some(ignore) = ignore {
+            session.set_ignore_project_settings(ignore);
+        }
+        if all_plates {
+            let listed = session.list_plates();
+            if listed.len() > 1 {
+                listed.into_iter().map(|plate| plate.number).collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            if let Some(number) = plate {
+                session
+                    .reload_plate(number)
+                    .map_err(|err| err.to_string())?;
+            }
+            Vec::new()
+        }
+    };
+    if plates.is_empty() {
+        let prepared = {
+            let session = session
+                .lock()
+                .map_err(|_| "Shale session lock was poisoned".to_string())?;
+            session.prepare_slice().map_err(|err| err.to_string())?
+        };
+        let outcome = prepared
+            .run(&mut |progress| {
+                note_progress(
+                    job,
+                    generation,
+                    progress.fraction as f64,
+                    &progress.message,
+                );
+            })
+            .map_err(|err| err.to_string())?;
+        store_outcome(session, job, generation, outcome, true)?;
+        return Ok(());
+    }
+    let count = plates.len();
+    let mut summaries = Vec::with_capacity(count);
+    for (index, number) in plates.into_iter().enumerate() {
+        if !still_current(job, generation)? {
+            return Ok(());
+        }
+        let prepared = {
+            let mut session = session
+                .lock()
+                .map_err(|_| "Shale session lock was poisoned".to_string())?;
+            session
+                .reload_plate(number)
+                .map_err(|err| err.to_string())?;
+            session.prepare_slice().map_err(|err| err.to_string())?
+        };
+        let outcome = prepared
+            .run(&mut |progress| {
+                let fraction = (index as f64 + f64::from(progress.fraction)) / count as f64;
+                note_progress(job, generation, fraction, &progress.message);
+            })
+            .map_err(|err| err.to_string())?;
+        if let Some(summary) = store_outcome(session, job, generation, outcome, false)? {
+            summaries.push(summary);
+        } else {
+            return Ok(());
+        }
+    }
+    let mut job = job
+        .lock()
+        .map_err(|_| "slice lock was poisoned".to_string())?;
+    if job.generation == generation {
+        job.summary = Some(serde_json::Value::Array(summaries));
+        job.status = "done";
+        job.fraction = 1.0;
+        job.message = "done".into();
+    }
+    Ok(())
+}
+
+fn still_current(job: &Mutex<SliceJob>, generation: u64) -> Result<bool, String> {
+    let job = job
+        .lock()
+        .map_err(|_| "slice lock was poisoned".to_string())?;
+    Ok(job.generation == generation)
+}
+
+fn store_outcome(
+    session: &Arc<Mutex<shale_core::Session>>,
+    job: &Arc<Mutex<SliceJob>>,
+    generation: u64,
+    outcome: shale_core::SliceOutcome,
+    publish: bool,
+) -> Result<Option<serde_json::Value>, String> {
+    let mut session = session
+        .lock()
+        .map_err(|_| "Shale session lock was poisoned".to_string())?;
+    let mut job = job
+        .lock()
+        .map_err(|_| "slice lock was poisoned".to_string())?;
+    if job.generation != generation {
+        return Ok(None);
+    }
+    let summary = session.commit_slice(outcome);
+    let value = slice_summary_json(&summary).map_err(|err| err.to_string())?;
+    if publish {
+        job.summary = Some(value.clone());
+        job.status = "done";
+        job.fraction = 1.0;
+        job.message = "done".into();
+    }
+    Ok(Some(value))
 }
 
 /// Slice summary plus the non-planar digest, `null` for a purely planar slice.
@@ -439,6 +674,34 @@ struct SlicePromptArgs {
 
 #[tool_router]
 impl ShaleMcp {
+    fn reset_job(&self) -> Result<CallToolResult, McpError> {
+        let mut session = self.lock()?;
+        session.clear_job();
+        let models = session.models();
+        let printer_id = session.get_settings(&[]).ok().map(|view| view.printer_id);
+        {
+            let mut job = self.slice_job.lock().map_err(|_| {
+                McpError::internal_error("slice lock was poisoned", None)
+            })?;
+            job.generation = job.generation.saturating_add(1);
+            job.status = "idle";
+            job.fraction = 0.0;
+            job.message.clear();
+            job.summary = None;
+            job.error = None;
+        }
+        drop(session);
+        let mut nonplanar = self.nonplanar.lock().map_err(|_| {
+            McpError::internal_error("non-planar settings lock was poisoned", None)
+        })?;
+        *nonplanar = NonplanarSettings::default();
+        ok_json(json!({
+            "cleared": true,
+            "models": models,
+            "printer_id": printer_id,
+        }))
+    }
+
     #[tool(description = "List printers available from the fetched Cura definitions.")]
     fn list_printers(&self) -> Result<CallToolResult, McpError> {
         let session = self.lock()?;
@@ -469,7 +732,31 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Load an STL or 3MF. A multi-plate 3MF loads one plate (plate 1 unless `plate` is set) and centres that plate on the bed. The result lists every plate and any process settings read from the file. User settings already set on the job win over those."
+        description = "Start a fresh job. Clears models, printer, settings, and non-planar mode. This process keeps one job until new_job or clear_job."
+    )]
+    fn new_job(&self) -> Result<CallToolResult, McpError> {
+        self.reset_job()
+    }
+
+    #[tool(
+        description = "Clear the current job. Same as new_job: printer, settings, models, and non-planar mode do not carry into the next task."
+    )]
+    fn clear_job(&self) -> Result<CallToolResult, McpError> {
+        self.reset_job()
+    }
+
+    #[tool(description = "Remove one loaded model by id. Other models stay.")]
+    fn remove_model(
+        &self,
+        Parameters(ModelIdArgs { id }): Parameters<ModelIdArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut session = self.lock()?;
+        let models = session.remove_model(id).map_err(fail)?;
+        ok_json(json!({ "removed": id, "models": models }))
+    }
+
+    #[tool(
+        description = "Load an STL or 3MF onto the current job. Call new_job first so the previous model is not kept. A multi-plate file loads plate 1 unless plate is set; call list_plates first. Embedded process settings show up in get_settings unless you set them yourself."
     )]
     fn load_model(
         &self,
@@ -491,7 +778,7 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "List plates in the loaded file. `number` is the same 1-based plate you pass to load_model and slice. An STL is a single plate numbered 1. Example: load plate 2 with load_model { path, plate: 2 } after list_plates shows number 2."
+        description = "List plates in the loaded file. Call this before slice with plate. number is the 1-based plate. An STL is plate 1."
     )]
     fn list_plates(&self) -> Result<CallToolResult, McpError> {
         let session = self.lock()?;
@@ -519,7 +806,7 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Centre a model on the build plate and drop it onto Z = 0. Rotation and scale are kept, so rotate or scale first and then arrange. Only the position changes."
+        description = "Keeps rotation and scale. Centres the model on the bed and drops it to Z = 0. Only the position changes."
     )]
     fn arrange_model(
         &self,
@@ -530,7 +817,7 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Resolved setting values for the current job, with Cura's label and description where the definition has them. The `nonplanar` block repeats the job's non-planar mode, angle and strict flag, and whether this printer has a toolhead envelope."
+        description = "Settings for the current job, including process settings embedded in a 3MF. User values win over the file. The nonplanar block is the job's mode, angle, and strict flag."
     )]
     fn get_settings(
         &self,
@@ -545,7 +832,7 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Change the printer, profile, or slice settings. Only fields you send are updated. adhesion_type is none, skirt, or brim, with brim_width in millimetres. support_structure is normal or tree (auto is refused until the engine has it). settings is a map of any other Cura key, the same as --set KEY=VALUE; a typo names the closest known key. Example: { \"adhesion_type\": \"brim\", \"brim_width\": 8, \"support_structure\": \"tree\", \"settings\": { \"draft_shield\": \"limited\" } }. Non-planar values are checked first: an unknown mode, an angle outside 0 < angle <= 10 degrees, or a curved mode on a printer without a toolhead envelope is an error."
+        description = "Change printer, profile, or settings on the current job. They persist until new_job. adhesion_type is none, skirt, or brim. support_structure is normal or tree (auto is refused). settings is any other Cura key; a typo names the closest key. Non-planar mode is off, auto, or curved-tops, angle 0 < degrees <= 10."
     )]
     fn set_settings(
         &self,
@@ -694,7 +981,7 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Slice the loaded models with CuraEngine, then compile custom instructions into the G-code. `plate` slices that plate of the loaded 3MF. `all_plates` slices every plate and returns a list. Embedded project settings are applied where the job has not set them, unless `ignore_project_settings` is true. Returns time, filament, layer count, and warnings, plus a `nonplanar` block: mode, planar fallback and its reasons, the safety report (slope, Z range, swept collisions, planar equivalence) and the auto plan's enabled and disabled surfaces."
+        description = "Start a slice and return within a couple of seconds. If status is running, poll slice_progress, then slice_result. A cube is under a minute; the aerospike is about 10 minutes. Call list_plates before plate. To compare layer height or infill, use compare_slices instead of slicing each one."
     )]
     async fn slice(
         &self,
@@ -704,39 +991,75 @@ impl ShaleMcp {
             ignore_project_settings,
         }): Parameters<SliceArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let session = Arc::clone(&self.session);
-        let summary = tokio::task::spawn_blocking(move || {
-            let mut session = session
-                .lock()
-                .map_err(|_| McpError::internal_error("Shale session lock was poisoned", None))?;
-            if let Some(ignore) = ignore_project_settings {
-                session.set_ignore_project_settings(ignore);
+        let generation = {
+            let mut job = self.slice_job.lock().map_err(|_| {
+                McpError::internal_error("slice lock was poisoned", None)
+            })?;
+            if job.status == "running" {
+                return ok_json(slice_status(&job));
             }
-            if all_plates == Some(true) {
-                let summaries = session
-                    .slice_all_plates(&mut |progress: EngineProgress| {
-                        tracing::info!(fraction = progress.fraction, "{}", progress.message);
-                    })
-                    .map_err(fail)?;
-                let values = summaries
-                    .iter()
-                    .map(slice_summary_json)
-                    .collect::<Result<Vec<_>, _>>()?;
-                return ok_json(serde_json::Value::Array(values));
+            job.generation = job.generation.saturating_add(1);
+            job.status = "running";
+            job.fraction = 0.0;
+            job.message = "Starting".into();
+            job.summary = None;
+            job.error = None;
+            job.generation
+        };
+        spawn_slice(
+            Arc::clone(&self.session),
+            Arc::clone(&self.slice_job),
+            generation,
+            plate,
+            all_plates == Some(true),
+            ignore_project_settings,
+        );
+        let deadline = tokio::time::Instant::now() + SLICE_INLINE_WAIT;
+        loop {
+            {
+                let job = self.slice_job.lock().map_err(|_| {
+                    McpError::internal_error("slice lock was poisoned", None)
+                })?;
+                if job.generation != generation || job.status != "running" {
+                    return ok_json(slice_status(&job));
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return ok_json(slice_status(&job));
+                }
             }
-            if let Some(number) = plate {
-                session.reload_plate(number).map_err(fail)?;
-            }
-            let summary = session
-                .slice(&mut |progress: EngineProgress| {
-                    tracing::info!(fraction = progress.fraction, "{}", progress.message);
-                })
-                .map_err(fail)?;
-            ok_json(slice_summary_json(&summary)?)
-        })
-        .await
-        .map_err(fail)??;
-        Ok(summary)
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[tool(
+        description = "Progress of the slice started by slice. status is running, done, or failed. fraction is 0 to 1."
+    )]
+    fn slice_progress(&self) -> Result<CallToolResult, McpError> {
+        let job = self.slice_job.lock().map_err(|_| {
+            McpError::internal_error("slice lock was poisoned", None)
+        })?;
+        ok_json(slice_status(&job))
+    }
+
+    #[tool(
+        description = "Time, filament, layers, and warnings from the slice started by slice. Errors while it is still running."
+    )]
+    fn slice_result(&self) -> Result<CallToolResult, McpError> {
+        let job = self.slice_job.lock().map_err(|_| {
+            McpError::internal_error("slice lock was poisoned", None)
+        })?;
+        match job.status {
+            "done" => ok_json(slice_status(&job)),
+            "failed" => Err(fail(
+                job.error
+                    .clone()
+                    .unwrap_or_else(|| "slice failed".to_string()),
+            )),
+            "running" => Err(fail(
+                "the slice is still running; poll slice_progress, then slice_result",
+            )),
+            _ => Err(fail("nothing has been sliced yet")),
+        }
     }
 
     #[tool(description = "Return the summary of the latest slice without slicing again.")]
@@ -812,7 +1135,7 @@ impl ShaleMcp {
         ok_json(self.printers.jobs().map_err(fail)?)
     }
 
-    #[tool(description = "Projects opened or saved recently, newest first. Each entry has path, name, printer, and whether the file is missing.")]
+    #[tool(description = "Projects opened or saved recently, newest first, from the desktop app's config directory. Each entry has path, name, printer, and whether the file is missing.")]
     fn list_recent_projects(&self) -> Result<CallToolResult, McpError> {
         let session = self.lock()?;
         ok_json(session.list_recent_projects().map_err(fail)?)
@@ -841,7 +1164,7 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Time and filament from the last slice: walls, infill, supports, travel, grams per extruder, purge waste, layer count, speeds, and cost. Set layers true for per-layer seconds. Example: {\"price_per_kg\": 20, \"layers\": false}."
+        description = "Breakdown of the last slice: walls, infill, supports, skirt, travel, other, grams per extruder, purge, layers, speeds, and cost. layers true adds per-layer seconds."
     )]
     fn slice_stats(
         &self,
@@ -856,12 +1179,26 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Slice up to 8 setting patches of the same model and compare time, filament, grams, cost, and support time. Patches run a few at a time, each in its own engine process. Does not change the current settings. Example: {\"patches\": [{\"infill_sparse_density\": 15}, {\"infill_sparse_density\": 30}]}."
+        description = "Compare settings in one call, such as layer height 0.12 vs 0.20 or infill 15 vs 30. Do not slice each one yourself. Up to 8 patches. Does not change the current settings. Same as slice_variants."
+    )]
+    fn compare_slices(
+        &self,
+        Parameters(args): Parameters<VariantArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.compare_patches(args)
+    }
+
+    #[tool(
+        description = "Compare settings in one call, such as layer height 0.12 vs 0.20 or infill 15 vs 30. Do not slice each one yourself. Up to 8 patches. Does not change the current settings. Same as compare_slices."
     )]
     fn slice_variants(
         &self,
         Parameters(args): Parameters<VariantArgs>,
     ) -> Result<CallToolResult, McpError> {
+        self.compare_patches(args)
+    }
+
+    fn compare_patches(&self, args: VariantArgs) -> Result<CallToolResult, McpError> {
         let mut session = self.lock()?;
         ok_json(
             session
@@ -908,7 +1245,7 @@ impl ShaleMcp {
         _ctx: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, McpError> {
         let text = format!(
-            "Slice \"{part}\" with Shale. Use list_printers, list_profiles, and list_materials, then set_settings. load_model from a filesystem path, arrange_model, add any pause or temperature instructions, then slice. Read slice_summary before export_gcode. Do not edit the G-code by hand; custom instructions are the way to pause, change temperature, beep, or park."
+            "Slice \"{part}\" with Shale. Call new_job first so a previous printer, setting, or model is not reused. Use list_printers and set_settings, then load_model. Call list_plates before slice with a plate number. arrange_model keeps rotation and scale. If slice returns status running, poll slice_progress and then slice_result; a large model takes about 10 minutes. To compare layer heights or infill, call compare_slices once instead of slicing each setting. export_gcode writes the file. Do not edit the G-code by hand."
         );
         Ok(GetPromptResult::new(vec![PromptMessage::new_text(
             Role::User,
@@ -930,7 +1267,7 @@ impl ServerHandler for ShaleMcp {
         )
         .with_server_info(Implementation::from_build_env())
         .with_instructions(
-            "Shale drives CuraEngine. Tools share the desktop app's core: printers, materials, profiles, models, resolved settings, custom instructions, slice, and G-code export. The engine binary is configured with SHALE_CURAENGINE.".to_string(),
+            "One Shale process keeps one job. Printer, settings, models, and non-planar mode stay until new_job or clear_job. slice returns within a couple of seconds: if status is running, poll slice_progress, then slice_result. A large model takes about 10 minutes. To compare layer height or infill, call compare_slices, not several slice calls. Call list_plates before slice with a plate number. arrange_model keeps rotation and scale.".to_string(),
         )
     }
 

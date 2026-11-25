@@ -10,6 +10,10 @@ pub struct GcodeFacts {
     pub ironing_seconds: f64,
     pub wall_seconds: f64,
     pub infill_seconds: f64,
+    /// Skirt, brim, and raft. Separate so the feature buckets add up to `seconds`.
+    pub skirt_seconds: f64,
+    /// Extrusion that is not a wall, infill, support, ironing pass, or skirt.
+    pub other_seconds: f64,
     pub tool_changes: u32,
     pub extrude_mm: f64,
     pub max_speed_mm_s: f64,
@@ -69,12 +73,14 @@ pub fn facts(gcode: &str) -> GcodeFacts {
             absolute_e = false;
             continue;
         }
-        if head.starts_with('T') && head[1..].chars().all(|c| c.is_ascii_digit()) && head.len() > 1
-        {
+        if let Some(index) = tool_index(head) {
             out.tool_changes = out.tool_changes.saturating_add(1);
-            if let Ok(index) = head[1..].parse::<usize>() {
-                tool = index;
-            }
+            tool = index;
+            continue;
+        }
+        if head.starts_with('T') && head.len() > 1 && head[1..].chars().all(|c| c.is_ascii_digit())
+        {
+            // T255 and T1000 are Bambu control codes, not extruders.
             continue;
         }
         if head == "G92" {
@@ -97,7 +103,14 @@ pub fn facts(gcode: &str) -> GcodeFacts {
                 continue;
             };
             match axis {
-                'F' => feed = value.max(1.0),
+                // `G0 F0 Z…` is a Bambu hop. F0 means "keep the last speed";
+                // the printer fills it in. Treating it as 1 mm/min turns a
+                // fraction of a millimetre into minutes of travel.
+                'F' => {
+                    if value > 0.0 {
+                        feed = value;
+                    }
+                }
                 'X' => next[0] = if absolute_xyz { value } else { pos[0] + value },
                 'Y' => next[1] = if absolute_xyz { value } else { pos[1] + value },
                 'Z' => next[2] = if absolute_xyz { value } else { pos[2] + value },
@@ -129,10 +142,14 @@ pub fn facts(gcode: &str) -> GcodeFacts {
                 out.support_seconds += seconds;
             } else if kind.contains("IRON") {
                 out.ironing_seconds += seconds;
+            } else if kind.contains("SKIRT") || kind.contains("BRIM") || kind.contains("RAFT") {
+                out.skirt_seconds += seconds;
             } else if kind.contains("WALL") || kind.contains("SKIN") || kind.contains("TOP") {
                 out.wall_seconds += seconds;
             } else if kind.contains("FILL") || kind.contains("INFILL") {
                 out.infill_seconds += seconds;
+            } else {
+                out.other_seconds += seconds;
             }
         }
         if extruding {
@@ -158,6 +175,22 @@ pub fn facts(gcode: &str) -> GcodeFacts {
     out
 }
 
+/// Real tool indexes. Bambu writes `T255` for a flush and `T1000` to restore
+/// the active tool; those are not extruders, and treating `T1000` as tool 1000
+/// pads the extruder list with a thousand empty entries.
+fn tool_index(head: &str) -> Option<usize> {
+    let rest = head.strip_prefix('T')?;
+    if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let index = rest.parse::<usize>().ok()?;
+    if index > 15 {
+        None
+    } else {
+        Some(index)
+    }
+}
+
 fn apply_word(word: &str, absolute_xyz: bool, absolute_e: bool, pos: &mut [f64; 3], e: &mut f64) {
     let Some(axis) = word.chars().next() else {
         return;
@@ -171,5 +204,73 @@ fn apply_word(word: &str, absolute_xyz: bool, absolute_e: bool, pos: &mut [f64; 
         'Z' => pos[2] = if absolute_xyz { value } else { pos[2] + value },
         'E' => *e = if absolute_e { value } else { *e + value },
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bambu_z_hop_with_f0_keeps_the_previous_feed() {
+        let gcode = "\
+G1 F18000 X10 Y0
+G0 F0 Z0.4
+G0 F0 Z0.8
+";
+        let facts = facts(gcode);
+        // 10 mm at 18 000 mm/min is a third of a second. At 1 mm/min the two
+        // hops alone would be nearly a minute.
+        assert!(
+            facts.travel_seconds < 1.0,
+            "travel {} s",
+            facts.travel_seconds
+        );
+        assert!(facts.seconds < 1.0, "total {} s", facts.seconds);
+    }
+
+    #[test]
+    fn skirt_is_counted_and_the_buckets_sum_to_the_total() {
+        let gcode = "\
+;TYPE:SKIRT
+G1 F1200 X10 Y0 E1
+;TYPE:WALL-OUTER
+G1 X20 Y0 E2
+;TYPE:FILL
+G1 X30 Y0 E3
+G0 X40 Y0
+";
+        let facts = facts(gcode);
+        let sum = facts.wall_seconds
+            + facts.infill_seconds
+            + facts.support_seconds
+            + facts.travel_seconds
+            + facts.ironing_seconds
+            + facts.skirt_seconds
+            + facts.other_seconds;
+        assert!(
+            (sum - facts.seconds).abs() < 1e-6,
+            "buckets {sum} total {}",
+            facts.seconds
+        );
+        assert!(facts.skirt_seconds > 0.0);
+        assert!(facts.wall_seconds > 0.0);
+        assert!(facts.infill_seconds > 0.0);
+        assert!(facts.travel_seconds > 0.0);
+    }
+
+    #[test]
+    fn bambu_t1000_and_t255_are_not_extruders() {
+        let gcode = "\
+T0
+G1 F1200 X10 Y0 E1
+T1000
+G0 X20 Y0
+T255
+G1 X30 Y0 E2
+";
+        let facts = facts(gcode);
+        assert_eq!(facts.per_tool_mm.len(), 1);
+        assert!(facts.per_tool_mm[0] > 0.0);
     }
 }

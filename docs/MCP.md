@@ -10,7 +10,11 @@ SHALE_CURA_DIR=... SHALE_MATERIALS_DIR=... SHALE_CURAENGINE=... shale-mcp
 
 Add `--http 127.0.0.1:7337` to listen on localhost. Any other address is refused.
 
-Projects and "don't suggest this again" are stored under `SHALE_CONFIG_DIR`, or `$HOME/.config/shale` when that is unset.
+One process keeps one job. Printer, settings, models, and non-planar mode stay until `new_job` or `clear_job`. `remove_model` drops one model.
+
+`slice` returns within a couple of seconds. If `status` is `running`, poll `slice_progress`, then read `slice_result`. A cube is under a minute. The aerospike is about 10 minutes, which is longer than a 600 second tool call. To compare layer height or infill, call `compare_slices` (the same tool as `slice_variants`) once. Call `list_plates` before `slice` with a plate number. `arrange_model` keeps rotation and scale.
+
+Projects and "don't suggest this again" are stored under `SHALE_CONFIG_DIR`. When that is unset, they use the desktop app's config directory (`dev.shale.desktop`: `%APPDATA%\dev.shale.desktop` on Windows, `$XDG_CONFIG_HOME/dev.shale.desktop` or `$HOME/.config/dev.shale.desktop` on Linux). That is the folder the window writes `recents.json` into. It is not the catalogue cache.
 
 ## Printers and materials
 
@@ -100,7 +104,7 @@ Use this to centre a model on the bed and drop it down. Rotation and scale are k
 
 ### `get_settings`
 
-Use this to read the resolved plate: printer, quality, temperatures, and the settings a person would see.
+Use this to read the resolved plate: printer, quality, temperatures, and the settings a person would see. Process settings embedded in a 3MF are included. A value you set yourself wins over the file.
 
 ```json
 { "printer_id": "bambu_lab_a1" }
@@ -171,15 +175,56 @@ Use this to hide a suggestion without changing settings. This is a different too
 
 ## Slicing
 
+### `new_job` and `clear_job`
+
+Use either one at the start of a task. Both clear models, the printer, settings, and non-planar mode. Without this, the next task inherits the previous job.
+
+No arguments.
+
+### `remove_model`
+
+Use this to drop one model and keep the rest.
+
+```json
+{ "id": 1 }
+```
+
 ### `slice`
 
-Use this to slice the loaded models.
+Use this to start a slice. It returns within a couple of seconds. A finished slice includes the summary. A running slice needs `slice_progress`, then `slice_result`.
 
 ```json
 { "plate": 1, "all_plates": false }
 ```
 
-`all_plates` true slices every plate of a 3MF. This can take a while. The result is the same summary as `slice_summary`.
+Call `list_plates` before `plate`. `all_plates` true slices every plate. A cube is under a minute. The aerospike is about 10 minutes.
+
+### `slice_progress`
+
+Use this while `slice` says `running`. `status` is `running`, `done`, or `failed`. `fraction` is 0 to 1.
+
+No arguments.
+
+### `slice_result`
+
+Use this for the summary once `slice_progress` says `done`: time, filament, layers, warnings.
+
+No arguments. Errors while the slice is still running.
+
+### `compare_slices`
+
+Use this to compare settings in one call, such as 0.12 mm against 0.20 mm, or 15% infill against 30%. Do not call `slice` once per setting. `slice_variants` is the same tool.
+
+```json
+{
+  "patches": [
+    { "layer_height": 0.12 },
+    { "layer_height": 0.20 }
+  ]
+}
+```
+
+Up to 8 patches. The current settings are not changed. `apply_variant` makes one row current.
 
 ### `slice_summary`
 
@@ -195,11 +240,11 @@ Use this for a breakdown of the last slice. Nothing is sliced again.
 { "price_per_kg": 20, "layers": false }
 ```
 
-Returns time, filament metres, grams, cost, layer count, max and average speed, seconds in walls, infill, supports, travel, and ironing, grams per extruder, and purge waste. `layers` true adds one duration per layer. Omit `price_per_kg` for 20 EUR.
+Returns time, filament metres, grams, cost, layer count, max and average speed, seconds in walls, infill, supports, skirt, travel, ironing, and anything else, grams per extruder (only the tools that were selected), and purge waste. `layers` true adds one duration per layer. Omit `price_per_kg` for 20 EUR.
 
 ### `slice_variants`
 
-Use this to compare a few setting patches of the same model. The current settings are not changed.
+Same tool as `compare_slices`. Use it to compare patches, not to slice one setting at a time. The current settings are not changed.
 
 ```json
 {
@@ -292,7 +337,7 @@ Use this to delete one instruction by id.
 
 ### `list_recent_projects`
 
-Use this to see projects opened or saved recently, newest first.
+Use this to see projects opened or saved recently, newest first. This is the desktop app's list when `SHALE_CONFIG_DIR` is unset.
 
 No arguments. Each entry has `path`, `name`, `printer`, `saved_at_ms`, and `missing`.
 

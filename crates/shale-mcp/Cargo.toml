@@ -26,4 +26,5 @@ tracing-subscriber = "0.3"
 
 [dev-dependencies]
 tempfile = "3"
+zip = "2.2"
 tokio = { version = "1", features = ["full"] }

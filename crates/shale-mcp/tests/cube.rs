@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rmcp::model::{CallToolRequestParams, CallToolResult, ContentBlock};
+use rmcp::model::{CallToolRequestParams, CallToolResult, ContentBlock, GetPromptRequestParams};
 use rmcp::ServiceExt;
 use serde_json::{json, Value};
 use shale_core::engine::{EngineOutput, EngineProgress, EngineRequest, SlicingEngine};
@@ -74,6 +74,25 @@ fn tool_json(result: CallToolResult) -> Value {
     })
 }
 
+async fn await_slice(
+    client: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
+    summary: Value,
+) -> Value {
+    if summary.get("status").and_then(|status| status.as_str()) != Some("running") {
+        return summary;
+    }
+    for _ in 0..600 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let progress = call(client, "slice_progress", json!({})).await;
+        match progress["status"].as_str() {
+            Some("done") => return progress,
+            Some("failed") => panic!("slice failed: {progress}"),
+            _ => {}
+        }
+    }
+    panic!("slice did not finish: {summary}");
+}
+
 async fn call(
     client: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
     name: &str,
@@ -123,9 +142,15 @@ async fn slice_cube(
         "propose_supports",
         "apply_supports",
         "slice",
+        "slice_progress",
+        "slice_result",
         "slice_summary",
         "slice_stats",
         "slice_variants",
+        "compare_slices",
+        "new_job",
+        "clear_job",
+        "remove_model",
         "apply_variant",
         "get_suggestions",
         "apply_suggestion",
@@ -143,6 +168,41 @@ async fn slice_cube(
             "missing tool {name}"
         );
     }
+    let text = |name: &str| {
+        tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .and_then(|tool| tool.description.as_ref().map(|text| text.to_string()))
+            .unwrap_or_default()
+    };
+    assert!(
+        text("arrange_model").contains("Keeps rotation and scale"),
+        "{}",
+        text("arrange_model")
+    );
+    assert!(text("compare_slices").contains("0.12"));
+    assert!(text("compare_slices").contains("Do not slice each one yourself"));
+    assert!(text("slice").contains("slice_progress"));
+    assert!(text("slice").contains("10 minutes"));
+    assert!(text("slice").contains("list_plates"));
+    assert!(text("new_job").contains("persist") || text("new_job").contains("until"));
+    let prompts = client
+        .list_prompts(None)
+        .await
+        .expect("list prompts")
+        .prompts;
+    assert!(prompts.iter().any(|prompt| prompt.name == "slice_a_model"));
+    let mut prompt_args = GetPromptRequestParams::new("slice_a_model");
+    prompt_args.arguments = json!({ "part": "cube" }).as_object().cloned();
+    let prompt = client
+        .get_prompt(prompt_args)
+        .await
+        .expect("slice_a_model prompt");
+    let prompt_text = format!("{prompt:?}");
+    assert!(
+        prompt_text.contains("list_plates"),
+        "slice_a_model should say to list plates first: {prompt_text}"
+    );
 
     let printers = call(&client, "list_printers", json!({})).await;
     assert!(
@@ -184,6 +244,7 @@ async fn slice_cube(
     assert!(added["summary"].as_str().unwrap().contains("layer 40"));
 
     let summary = call(&client, "slice", json!({})).await;
+    let summary = await_slice(&client, summary).await;
     assert_eq!(summary["layer_count"], 100, "{summary}");
     assert_eq!(summary["flavour"], "marlin");
 
@@ -400,4 +461,199 @@ async fn real_engine_slices_the_20mm_cube_when_configured() {
     let catalog = Catalog::open(ResourcePaths::discover().expect("resources")).expect("catalog");
     let summary = slice_cube(catalog, Box::new(engine), destination.path()).await;
     assert_eq!(summary["layer_count"], 100, "{summary}");
+}
+
+#[test]
+fn embedded_project_settings_show_in_get_settings() {
+    ensure_test_cache();
+    let dir = tempfile::tempdir().expect("temp");
+    let path = write_project_3mf(dir.path());
+    let mut session = shale_core::Session::new(fixture_catalog(), Box::new(FakeEngine));
+    session.load_on_plate(&path, None).expect("3mf");
+    let height = setting_number(&session, "layer_height");
+    assert!(
+        (height - 0.12).abs() < 1e-6,
+        "embedded layer height was {height}"
+    );
+    session
+        .set_settings(shale_core::SettingsPatch {
+            layer_height: Some(0.28),
+            ..shale_core::SettingsPatch::default()
+        })
+        .unwrap();
+    let height = setting_number(&session, "layer_height");
+    assert!(
+        (height - 0.28).abs() < 1e-6,
+        "a user layer height must win, got {height}"
+    );
+}
+
+fn setting_number(session: &shale_core::Session, key: &str) -> f64 {
+    let view = session.get_settings(&[key.to_string()]).unwrap();
+    view.settings
+        .iter()
+        .find(|item| item.key == key)
+        .unwrap_or_else(|| panic!("missing {key}"))
+        .value
+        .parse()
+        .unwrap()
+}
+
+fn write_project_3mf(dir: &std::path::Path) -> PathBuf {
+    let xml = r#"<?xml version="1.0"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources>
+    <object id="1" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="0" y="0" z="0"/>
+          <vertex x="10" y="0" z="0"/>
+          <vertex x="0" y="10" z="4"/>
+        </vertices>
+        <triangles>
+          <triangle v1="0" v2="1" v3="2"/>
+        </triangles>
+      </mesh>
+    </object>
+  </resources>
+  <build>
+    <item objectid="1"/>
+  </build>
+</model>"#;
+    let settings = r#"{"layer_height": 0.12, "sparse_infill_density": "15"}"#;
+    let path = dir.join("embedded.3mf");
+    let file = std::fs::File::create(&path).unwrap();
+    let mut writer = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default();
+    writer
+        .start_file("3D/3dmodel.model", options)
+        .unwrap();
+    use std::io::Write;
+    writer.write_all(xml.as_bytes()).unwrap();
+    writer
+        .start_file("Metadata/project_settings.config", options)
+        .unwrap();
+    writer.write_all(settings.as_bytes()).unwrap();
+    writer.finish().unwrap();
+    path
+}
+
+struct GateEngine {
+    release: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl SlicingEngine for GateEngine {
+    fn slice(
+        &self,
+        request: &EngineRequest,
+        on_progress: &mut dyn FnMut(EngineProgress),
+    ) -> Result<EngineOutput, Error> {
+        on_progress(EngineProgress::new(0.25, "waiting"));
+        while !self
+            .release
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        on_progress(EngineProgress::new(0.9, "finishing"));
+        if let Some(parent) = request.output_gcode.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&request.output_gcode, ";TIME:6666\n;LAYER:0\nG1 X1 Y1 E0.01\n")?;
+        Ok(EngineOutput {
+            gcode_path: request.output_gcode.clone(),
+            log_tail: String::new(),
+            print_time_seconds: Some(120.0),
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_slow_slice_returns_before_the_engine_finishes() {
+    ensure_test_cache();
+    let release = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let session = shale_core::Session::new(
+        fixture_catalog(),
+        Box::new(GateEngine {
+            release: std::sync::Arc::clone(&release),
+        }),
+    );
+    let server = ShaleMcp::new(session);
+    let (server_io, client_io) = tokio::io::duplex(1024 * 1024);
+    let server_task = tokio::spawn(async move {
+        let running = server.serve(server_io).await.expect("server handshake");
+        let _ = running.waiting().await;
+    });
+    let client = ().serve(client_io).await.expect("client handshake");
+    call(&client, "load_model", json!({ "path": cube_path() })).await;
+    let started = call(&client, "slice", json!({})).await;
+    assert_eq!(started["status"], "running", "{started}");
+    assert!(started.get("layer_count").is_none(), "{started}");
+    let progress = call(&client, "slice_progress", json!({})).await;
+    assert_eq!(progress["status"], "running");
+    assert!(progress["message"].as_str().unwrap_or("").contains("waiting") || progress["fraction"].as_f64().unwrap_or(0.0) > 0.0);
+    // The engine is still blocked. Reading settings must not wait for it.
+    let settings = call(&client, "get_settings", json!({})).await;
+    assert!(settings.get("printer_id").is_some(), "{settings}");
+    release.store(true, std::sync::atomic::Ordering::SeqCst);
+    let done = await_slice(&client, started).await;
+    assert_eq!(done["status"], "done", "{done}");
+    let result = call(&client, "slice_result", json!({})).await;
+    assert_eq!(result["layer_count"], 1, "{result}");
+    client.cancel().await.ok();
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn a_new_job_forgets_the_previous_task() {
+    ensure_test_cache();
+    let session = shale_core::Session::new(fixture_catalog(), Box::new(FakeEngine));
+    let server = ShaleMcp::new(session);
+    let (server_io, client_io) = tokio::io::duplex(1024 * 1024);
+    let server_task = tokio::spawn(async move {
+        let running = server.serve(server_io).await.expect("server handshake");
+        let _ = running.waiting().await;
+    });
+    let client = ().serve(client_io).await.expect("client handshake");
+    let first = call(&client, "load_model", json!({ "path": cube_path() })).await;
+    let second = call(&client, "load_model", json!({ "path": cube_path() })).await;
+    assert_eq!(second["plates"][0]["objects"], 2, "{second}");
+    let removed = call(
+        &client,
+        "remove_model",
+        json!({ "id": first["id"].as_u64().unwrap() }),
+    )
+    .await;
+    assert_eq!(removed["models"].as_array().unwrap().len(), 1);
+    call(
+        &client,
+        "set_settings",
+        json!({
+            "layer_height": 0.28,
+            "nonplanar_strict": true,
+            "nonplanar_max_angle_deg": 8
+        }),
+    )
+    .await;
+    let cleared = call(&client, "new_job", json!({})).await;
+    assert_eq!(cleared["cleared"], true);
+    assert_eq!(cleared["models"].as_array().unwrap().len(), 0);
+    let settings = call(&client, "get_settings", json!({})).await;
+    let layer = settings["settings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["key"] == "layer_height")
+        .expect("layer_height");
+    let height: f64 = layer["value"].as_str().unwrap().parse().unwrap();
+    assert!(
+        (height - 0.28).abs() > 1e-6,
+        "layer height survived new_job: {height}"
+    );
+    assert_eq!(settings["nonplanar"]["mode"], "off", "{settings}");
+    assert_eq!(settings["nonplanar"]["strict"], false, "{settings}");
+    let angle = settings["nonplanar"]["max_angle_deg"].as_f64().unwrap();
+    assert!((angle - 8.0).abs() > 1e-6, "angle survived new_job: {angle}");
+    client.cancel().await.ok();
+    server_task.abort();
 }

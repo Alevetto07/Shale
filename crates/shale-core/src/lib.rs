@@ -82,8 +82,8 @@ pub use project::{
 pub use stats::{from_gcode as slice_stats_from_gcode, ExtruderUse, SliceStats};
 pub use resolver::{ProfileSummary, ResolveRequest, ResolvedSettings, UserSettings};
 pub use session::{
-    AppliedSuggestion, DismissedSuggestion, JobSliceSummary, ProjectOutline, Session,
-    SettingsPatch, SettingsView, StoredInstruction, VariantComparison,
+    AppliedSuggestion, DismissedSuggestion, JobSliceSummary, PreparedSlice, ProjectOutline,
+    Session, SettingsPatch, SettingsView, StoredInstruction, VariantComparison,
 };
 pub use suggest::{
     evaluate as evaluate_suggestions, filament_kind, gcode_facts, present as present_suggestions,

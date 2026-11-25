@@ -34,6 +34,8 @@ pub struct SliceStats {
     pub support_seconds: f64,
     pub travel_seconds: f64,
     pub ironing_seconds: f64,
+    pub skirt_seconds: f64,
+    pub other_seconds: f64,
     pub extruders: Vec<ExtruderUse>,
     pub purge_grams: f64,
     /// One entry per `;LAYER:` when the caller asked for them.
@@ -82,6 +84,8 @@ pub fn from_gcode(
         support_seconds: facts.support_seconds,
         travel_seconds: facts.travel_seconds,
         ironing_seconds: facts.ironing_seconds,
+        skirt_seconds: facts.skirt_seconds,
+        other_seconds: facts.other_seconds,
         extruders,
         purge_grams,
         layer_seconds: include_layers.then_some(facts.layer_seconds),
@@ -94,6 +98,7 @@ fn extruders_of(facts: &GcodeFacts, diameter: f64) -> Vec<ExtruderUse> {
         .per_tool_mm
         .iter()
         .enumerate()
+        .filter(|(_, mm)| **mm > 1e-6)
         .map(|(index, mm)| {
             let metres = mm / 1000.0;
             ExtruderUse {
@@ -131,5 +136,31 @@ G1 X30 Y0 E4
         assert!(stats.cost > 0.0);
         assert!(stats.walls_seconds > 0.0);
         assert!(stats.infill_seconds > 0.0);
+    }
+
+    #[test]
+    fn a_bambu_header_does_not_invent_a_thousand_extruders() {
+        let gcode = "\
+T0
+;TYPE:SKIRT
+G1 F1200 X10 Y0 E1
+T1000
+G0 F0 Z0.4
+T255
+;TYPE:WALL-OUTER
+G1 X20 Y0 E2
+";
+        let stats = from_gcode(gcode, 1.75, 20.0, false, Vec::new());
+        assert_eq!(stats.extruders.len(), 1);
+        assert!(stats.skirt_seconds > 0.0);
+        assert!(stats.travel_seconds < 1.0, "{}", stats.travel_seconds);
+        let sum = stats.walls_seconds
+            + stats.infill_seconds
+            + stats.support_seconds
+            + stats.travel_seconds
+            + stats.ironing_seconds
+            + stats.skirt_seconds
+            + stats.other_seconds;
+        assert!((sum - stats.print_time_seconds).abs() < 1e-6);
     }
 }

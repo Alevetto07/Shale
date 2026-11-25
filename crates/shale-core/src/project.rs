@@ -344,19 +344,62 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
 
 /// Where recents and "don't suggest this again" live.
 ///
-/// `SHALE_CONFIG_DIR` wins. Otherwise this is `$HOME/.config/shale`.
+/// `SHALE_CONFIG_DIR` wins. Otherwise this is the desktop app's config
+/// directory (`dev.shale.desktop`), the same folder the window writes
+/// `recents.json` into. It is not the catalogue cache.
 pub fn config_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("SHALE_CONFIG_DIR") {
-        let dir = dir.trim();
-        if !dir.is_empty() {
-            return PathBuf::from(dir);
+    config_dir_from(&ConfigEnv::from_process())
+}
+
+struct ConfigEnv {
+    shale: Option<String>,
+    appdata: Option<String>,
+    xdg: Option<String>,
+    home: Option<String>,
+    macos: bool,
+}
+
+impl ConfigEnv {
+    fn from_process() -> Self {
+        Self {
+            shale: std::env::var("SHALE_CONFIG_DIR").ok(),
+            appdata: std::env::var("APPDATA").ok(),
+            xdg: std::env::var("XDG_CONFIG_HOME").ok(),
+            home: std::env::var("HOME").ok(),
+            macos: cfg!(target_os = "macos"),
         }
     }
-    if let Ok(home) = std::env::var("HOME") {
-        let home = home.trim();
-        if !home.is_empty() {
-            return PathBuf::from(home).join(".config").join("shale");
+}
+
+fn nonempty(value: Option<&String>) -> Option<&str> {
+    value
+        .map(|text| text.trim())
+        .filter(|text| !text.is_empty())
+}
+
+fn config_dir_from(env: &ConfigEnv) -> PathBuf {
+    if let Some(dir) = nonempty(env.shale.as_ref()) {
+        return PathBuf::from(dir);
+    }
+    // Tauri's app_config_dir for identifier `dev.shale.desktop`.
+    if let Some(appdata) = nonempty(env.appdata.as_ref()) {
+        return PathBuf::from(appdata).join("dev.shale.desktop");
+    }
+    if env.macos {
+        if let Some(home) = nonempty(env.home.as_ref()) {
+            return PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("dev.shale.desktop");
         }
+    }
+    if let Some(xdg) = nonempty(env.xdg.as_ref()) {
+        return PathBuf::from(xdg).join("dev.shale.desktop");
+    }
+    if let Some(home) = nonempty(env.home.as_ref()) {
+        return PathBuf::from(home)
+            .join(".config")
+            .join("dev.shale.desktop");
     }
     std::env::temp_dir().join("shale-config")
 }
@@ -473,6 +516,43 @@ fn read_zip(zip: &mut ZipArchive<File>, name: &str) -> Result<Vec<u8>, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unset_config_dir_is_the_desktop_app_dir() {
+        let windows = config_dir_from(&ConfigEnv {
+            shale: None,
+            appdata: Some(r"C:\Users\Alessio\AppData\Roaming".into()),
+            xdg: None,
+            home: Some(r"C:\Users\Alessio".into()),
+            macos: false,
+        });
+        assert_eq!(
+            windows,
+            PathBuf::from(r"C:\Users\Alessio\AppData\Roaming").join("dev.shale.desktop")
+        );
+
+        let linux = config_dir_from(&ConfigEnv {
+            shale: None,
+            appdata: None,
+            xdg: None,
+            home: Some("/home/alessio".into()),
+            macos: false,
+        });
+        assert_eq!(
+            linux,
+            PathBuf::from("/home/alessio/.config/dev.shale.desktop")
+        );
+
+        let forced = config_dir_from(&ConfigEnv {
+            shale: Some("/tmp/shale-cfg".into()),
+            appdata: Some(r"C:\Users\Alessio\AppData\Roaming".into()),
+            xdg: None,
+            home: Some("/home/alessio".into()),
+            macos: false,
+        });
+        assert_eq!(forced, PathBuf::from("/tmp/shale-cfg"));
+        assert!(!windows.ends_with("catalog-cache"));
+    }
     use crate::instructions::CustomInstruction;
     use crate::mesh::{write_binary_stl, TriangleMesh};
     use crate::supports::{

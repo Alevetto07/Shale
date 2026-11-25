@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -85,8 +86,8 @@ pub struct JobSliceSummary {
 }
 
 pub struct Session {
-    catalog: Catalog,
-    engine: Box<dyn SlicingEngine + Send + Sync>,
+    catalog: Arc<Catalog>,
+    engine: Arc<dyn SlicingEngine + Send + Sync>,
     printer_id: Option<String>,
     variant_name: Option<String>,
     quality_type: Option<String>,
@@ -122,26 +123,11 @@ struct Loaded {
 
 impl Session {
     pub fn new(catalog: Catalog, engine: Box<dyn SlicingEngine + Send + Sync>) -> Self {
-        let printer_id = catalog.default_printer_id().or_else(|| {
-            catalog
-                .printer("demo_ender")
-                .map(|_| "demo_ender".to_string())
-                .or_else(|| catalog.printers().first().map(|printer| printer.id.clone()))
-        });
-        let (variant_name, quality_type, material_id) = printer_id
-            .as_deref()
-            .and_then(|id| catalog.printer(id))
-            .map(|printer| {
-                (
-                    printer.preferred_variant_name.clone(),
-                    printer.preferred_quality_type.clone(),
-                    printer.preferred_material.clone(),
-                )
-            })
-            .unwrap_or((None, None, None));
+        let catalog = Arc::new(catalog);
+        let (printer_id, variant_name, quality_type, material_id) = printer_defaults(&catalog);
         Self {
             catalog,
-            engine,
+            engine: Arc::from(engine),
             printer_id,
             variant_name,
             quality_type,
@@ -390,6 +376,53 @@ impl Session {
             .collect()
     }
 
+    /// Drop models, settings, and the printer choice. The catalogue stays.
+    ///
+    /// One MCP process keeps one job until this is called, so a later task
+    /// does not inherit the previous printer, non-planar mode, or mesh.
+    pub fn clear_job(&mut self) {
+        let (printer_id, variant_name, quality_type, material_id) =
+            printer_defaults(&self.catalog);
+        self.printer_id = printer_id;
+        self.variant_name = variant_name;
+        self.quality_type = quality_type;
+        self.material_id = material_id;
+        self.settings = UserSettings::default();
+        self.models.clear();
+        self.next_model = 1;
+        self.instructions.clear();
+        self.next_instruction = 1;
+        self.support = None;
+        self.support_model = None;
+        self.last = None;
+        self.source_path = None;
+        self.source_plates.clear();
+        self.listed_plates.clear();
+        self.project_settings = None;
+        self.ignore_project_settings = false;
+        self.dismissed.clear();
+        self.variant_patches.clear();
+        self.project_path = None;
+    }
+
+    /// Remove one loaded model. The others stay, with their rotation and scale.
+    pub fn remove_model(&mut self, id: u32) -> Result<Vec<ModelRecord>, Error> {
+        let before = self.models.len();
+        self.models.retain(|model| model.id != id);
+        if self.models.len() == before {
+            return Err(Error::message(format!("no model with id {id}")));
+        }
+        self.invalidate_support(id);
+        if self.models.is_empty() {
+            self.listed_plates.clear();
+        } else if let Some(plate) = self.listed_plates.first_mut() {
+            if self.source_plates.is_empty() {
+                plate.objects = self.models.len();
+            }
+        }
+        Ok(self.models())
+    }
+
     pub fn transform_model(
         &mut self,
         id: u32,
@@ -613,56 +646,61 @@ impl Session {
         &mut self,
         on_progress: &mut dyn FnMut(EngineProgress),
     ) -> Result<JobSliceSummary, Error> {
+        let prepared = self.prepare_slice()?;
+        let outcome = prepared.run(on_progress)?;
+        Ok(self.commit_slice(outcome))
+    }
+
+    /// Copy what a slice needs so the engine can run without holding the session.
+    ///
+    /// Embedded 3MF settings are already merged. A key the user set wins.
+    pub fn prepare_slice(&self) -> Result<PreparedSlice, Error> {
         let printer_id = self
             .printer_id
             .clone()
             .ok_or_else(|| Error::message("choose a printer before slicing"))?;
-        let placed: Vec<PlacedModel> = self
-            .models
-            .iter()
-            .map(|model| PlacedModel {
-                slot: model.slot,
-                name: model.name.clone(),
-                mesh: model.mesh.clone(),
-                transform: model.transform.clone(),
-                settings: model.settings.clone(),
-            })
-            .collect();
-        let instructions: Vec<CustomInstruction> = self
-            .instructions
-            .iter()
-            .map(|(_, instruction)| instruction.clone())
-            .collect();
+        if self.models.is_empty() {
+            return Err(Error::message("import a model before slicing"));
+        }
         let stamp = SLICE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let output = std::env::temp_dir().join("shale").join(format!(
             "mcp-{}-{}.gcode",
             std::process::id(),
             stamp
         ));
-        let mut settings = self.settings.clone();
-        if !self.ignore_project_settings {
-            if let Some(project) = &self.project_settings {
-                project_settings::apply_project_settings(&mut settings, project);
-            }
-        }
-        let outcome = job::slice(
-            &self.catalog,
-            self.engine.as_ref(),
-            &printer_id,
-            self.variant_name.clone(),
-            self.quality_type.clone(),
-            std::slice::from_ref(&self.material_id),
-            settings,
-            &placed,
-            &instructions,
-            self.support.as_ref(),
-            &[],
+        Ok(PreparedSlice {
+            catalog: Arc::clone(&self.catalog),
+            engine: Arc::clone(&self.engine),
+            printer_id,
+            variant_name: self.variant_name.clone(),
+            quality_type: self.quality_type.clone(),
+            material_id: self.material_id.clone(),
+            settings: self.effective_settings(),
+            models: self
+                .models
+                .iter()
+                .map(|model| PlacedModel {
+                    slot: model.slot,
+                    name: model.name.clone(),
+                    mesh: model.mesh.clone(),
+                    transform: model.transform.clone(),
+                    settings: model.settings.clone(),
+                })
+                .collect(),
+            instructions: self
+                .instructions
+                .iter()
+                .map(|(_, instruction)| instruction.clone())
+                .collect(),
+            support: self.support.clone(),
             output,
-            on_progress,
-        )?;
+        })
+    }
+
+    pub fn commit_slice(&mut self, outcome: SliceOutcome) -> JobSliceSummary {
         let summary = summary_of(&outcome);
         self.last = Some(outcome);
-        Ok(summary)
+        summary
     }
 
     /// Slice every plate of the loaded 3MF. A file with one plate slices once.
@@ -1085,7 +1123,7 @@ impl Session {
             Some(id) => id,
             None => return failed("choose a printer before slicing".into()),
         };
-        let settings = match settings_from_patch(&self.catalog, &self.settings, patch) {
+        let settings = match settings_from_patch(&self.catalog, &self.effective_settings(), patch) {
             Ok(settings) => settings,
             Err(err) => return failed(err.to_string()),
         };
@@ -1177,10 +1215,11 @@ impl Session {
             "material_bed_temperature".into(),
             format!("{:.0}", summary.bed_temperature),
         );
-        if let Some(enabled) = self.settings.support_enable {
+        let user = self.effective_settings();
+        if let Some(enabled) = user.support_enable {
             settings.insert("support_enable".into(), if enabled { "1" } else { "0" }.into());
         }
-        for (key, value) in &self.settings.extra {
+        for (key, value) in &user.extra {
             settings.insert(key.clone(), value.clone());
         }
         let mut slots: Vec<crate::FilamentSlot> = query
@@ -1308,8 +1347,19 @@ impl Session {
             quality_type: self.quality_type.clone(),
             material_id: self.material_id.clone(),
             intent_category: None,
-            settings: self.settings.clone(),
+            settings: self.effective_settings(),
         })
+    }
+
+    /// User overrides, then the 3MF's embedded process settings, then the profile.
+    fn effective_settings(&self) -> UserSettings {
+        let mut settings = self.settings.clone();
+        if !self.ignore_project_settings {
+            if let Some(project) = &self.project_settings {
+                project_settings::apply_project_settings(&mut settings, project);
+            }
+        }
+        settings
     }
 
     fn printer<'a>(&'a self, override_id: Option<&'a str>) -> Result<&'a str, Error> {
@@ -1412,6 +1462,67 @@ pub struct ProjectOutline {
     pub printer_id: String,
     pub models: usize,
     pub dismissed: Vec<String>,
+}
+
+/// One slice, detached from the session lock so a long engine run can be polled.
+pub struct PreparedSlice {
+    catalog: Arc<Catalog>,
+    engine: Arc<dyn SlicingEngine + Send + Sync>,
+    printer_id: String,
+    variant_name: Option<String>,
+    quality_type: Option<String>,
+    material_id: Option<String>,
+    settings: UserSettings,
+    models: Vec<PlacedModel>,
+    instructions: Vec<CustomInstruction>,
+    support: Option<SupportPlan>,
+    output: PathBuf,
+}
+
+impl PreparedSlice {
+    pub fn run(
+        &self,
+        on_progress: &mut dyn FnMut(EngineProgress),
+    ) -> Result<SliceOutcome, Error> {
+        job::slice(
+            &self.catalog,
+            self.engine.as_ref(),
+            &self.printer_id,
+            self.variant_name.clone(),
+            self.quality_type.clone(),
+            std::slice::from_ref(&self.material_id),
+            self.settings.clone(),
+            &self.models,
+            &self.instructions,
+            self.support.as_ref(),
+            &[],
+            self.output.clone(),
+            on_progress,
+        )
+    }
+}
+
+fn printer_defaults(
+    catalog: &Catalog,
+) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+    let printer_id = catalog.default_printer_id().or_else(|| {
+        catalog
+            .printer("demo_ender")
+            .map(|_| "demo_ender".to_string())
+            .or_else(|| catalog.printers().first().map(|printer| printer.id.clone()))
+    });
+    let (variant_name, quality_type, material_id) = printer_id
+        .as_deref()
+        .and_then(|id| catalog.printer(id))
+        .map(|printer| {
+            (
+                printer.preferred_variant_name.clone(),
+                printer.preferred_quality_type.clone(),
+                printer.preferred_material.clone(),
+            )
+        })
+        .unwrap_or((None, None, None));
+    (printer_id, variant_name, quality_type, material_id)
 }
 
 fn settings_from_patch(
