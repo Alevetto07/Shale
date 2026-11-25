@@ -48,7 +48,8 @@ pub use pipeline::{
     apply_post_pass, deform_with_field, gcode_respects_envelope, in_layer_slope_histogram,
     max_extrusion_slope_above_z, max_top_layer_slope_deg, max_top_shell_slope_across_layers_deg,
     max_top_shell_slope_deg, max_underside_band_slope_deg, merge_meshes as merge_plate_meshes,
-    plan_field, prepare_pre_pass, rebuild_field, top_layer_z_variation, top_shell_z_variation,
+    plan_field, plan_field_reporting, prepare_pre_pass, rebuild_field, top_layer_z_variation,
+    top_shell_z_variation,
     NonplanarContext, PostPassArgs,
 };
 pub use safety::{

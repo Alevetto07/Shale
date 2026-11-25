@@ -104,15 +104,44 @@ impl HeightGrid {
     }
 }
 
-/// Build a height grid from `mesh` using downward rays. Odd hit counts along a
-/// column mark material; the highest upward-facing hit within the slope limit
-/// is kept as the top surface.
+/// A finished height grid, and whether the pre-pass stopped on its time budget.
+pub struct HeightFieldBuild {
+    pub grid: HeightGrid,
+    pub timed_out: bool,
+}
+
+/// Build a height grid from `mesh` using downward rays. The highest
+/// upward-facing hit within the slope limit is kept as the top surface.
 pub fn build_height_field(
     mesh: &Mesh,
     step: f64,
     max_angle_deg: f64,
     band_thickness: f64,
 ) -> HeightGrid {
+    build_height_field_timed(
+        mesh,
+        step,
+        max_angle_deg,
+        band_thickness,
+        None,
+        &mut |_| {},
+    )
+    .grid
+}
+
+/// Same as [`build_height_field`], but stops when `deadline` has passed.
+///
+/// A stopped build is an empty grid of the same size (`timed_out` is set) so
+/// the caller can print the plate planar instead of sitting in the ray cast.
+/// `progress` is called with the fraction of rows finished.
+pub fn build_height_field_timed(
+    mesh: &Mesh,
+    step: f64,
+    max_angle_deg: f64,
+    band_thickness: f64,
+    deadline: Option<std::time::Instant>,
+    progress: &mut dyn FnMut(f32),
+) -> HeightFieldBuild {
     let (min, max) = mesh.bounds();
     let step = step.max(0.1);
     let pad = step * 2.0;
@@ -124,16 +153,31 @@ pub fn build_height_field(
     let detection_angle_deg = max_angle_deg.clamp(55.0, 89.0);
     let detect_slope = detection_angle_deg.to_radians().tan();
     let cos_limit = (1.0 / (1.0 + detect_slope * detect_slope).sqrt()).max(0.0);
+    let cos_fallback = (max_angle_deg + 5.0).to_radians().cos();
 
     let mut z_top = vec![None; width * height];
     let ray_top = max[2] + 1.0;
+    // Each ray only tests the triangles whose XY box covers its cell. Walking
+    // every triangle for every cell is what stalled a many-object plate: a
+    // 450 mm mesh at 0.35 mm is over a million cells.
+    let bins = TriangleBins::build(mesh, step.max(2.0) * 8.0);
+    let mut timed_out = false;
 
-    for iy in 0..height {
+    'rows: for iy in 0..height {
+        if deadline.is_some_and(|limit| std::time::Instant::now() >= limit) {
+            timed_out = true;
+            z_top.fill(None);
+            break 'rows;
+        }
+        if iy % 8 == 0 {
+            progress(iy as f32 / height.max(1) as f32);
+        }
         for ix in 0..width {
             let x = origin[0] + ix as f64 * step;
             let y = origin[1] + iy as f64 * step;
             let mut hits: Vec<(f64, [f64; 3])> = Vec::new();
-            for triangle in &mesh.triangles {
+            for &index in bins.candidates(x, y) {
+                let triangle = &mesh.triangles[index];
                 if let Some((z, normal)) = ray_triangle_z(x, y, ray_top, mesh, triangle) {
                     if normal[2] >= cos_limit {
                         hits.push((z, normal));
@@ -141,10 +185,10 @@ pub fn build_height_field(
                 }
             }
             if hits.is_empty() {
-                // Relax slope filter slightly so 12° ramps still register as tops, but
-                // ignore near-vertical walls that would otherwise pin every column to max Z.
-                let cos_fallback = (max_angle_deg + 5.0).to_radians().cos();
-                for triangle in &mesh.triangles {
+                // Relax the slope filter so a 12° ramp still registers as a top,
+                // but ignore near-vertical walls that would pin every column to max Z.
+                for &index in bins.candidates(x, y) {
+                    let triangle = &mesh.triangles[index];
                     if let Some((z, normal)) = ray_triangle_z(x, y, ray_top, mesh, triangle) {
                         if normal[2] >= cos_fallback {
                             hits.push((z, normal));
@@ -155,32 +199,100 @@ pub fn build_height_field(
             if hits.is_empty() {
                 continue;
             }
-            let count_all = count_ray_hits(x, y, ray_top, mesh);
-            if count_all % 2 == 1 || !hits.is_empty() {
-                z_top[iy * width + ix] =
-                    select_exterior_top_hit(&hits, max_angle_deg, band_thickness);
-            }
+            z_top[iy * width + ix] = select_exterior_top_hit(&hits, max_angle_deg, band_thickness);
         }
     }
+    progress(1.0);
 
     let mut z_top_smooth = gaussian_blur_optional(&z_top, width, height, 1.0);
-    clamp_top_surface_slopes(&mut z_top_smooth, width, height, step, max_angle_deg);
+    if !timed_out {
+        clamp_top_surface_slopes(&mut z_top_smooth, width, height, step, max_angle_deg);
+    }
     let mut z_band_start = vec![None; width * height];
     for (top, start) in z_top_smooth.iter().zip(z_band_start.iter_mut()) {
         *start = top.map(|z| z - band_thickness);
     }
     let len = width * height;
 
-    HeightGrid {
-        origin,
-        step,
-        width,
-        height,
-        z_top,
-        z_top_smooth,
-        z_band_start,
-        z_deform_cap: vec![None; len],
-        z_deform_flat: vec![None; len],
+    HeightFieldBuild {
+        timed_out,
+        grid: HeightGrid {
+            origin,
+            step,
+            width,
+            height,
+            z_top,
+            z_top_smooth,
+            z_band_start,
+            z_deform_cap: vec![None; len],
+            z_deform_flat: vec![None; len],
+        },
+    }
+}
+
+/// Triangles bucketed by the XY cells they overlap, so a ray tests a handful
+/// of candidates instead of the whole mesh.
+struct TriangleBins {
+    origin_x: f64,
+    origin_y: f64,
+    bin: f64,
+    nx: usize,
+    ny: usize,
+    lists: Vec<Vec<usize>>,
+}
+
+impl TriangleBins {
+    fn build(mesh: &Mesh, bin: f64) -> Self {
+        let bin = bin.max(0.5);
+        let (min, max) = mesh.bounds();
+        let origin_x = min[0];
+        let origin_y = min[1];
+        let nx = (((max[0] - min[0]) / bin).ceil() as usize).clamp(1, 4096);
+        let ny = (((max[1] - min[1]) / bin).ceil() as usize).clamp(1, 4096);
+        let mut lists = vec![Vec::new(); nx * ny];
+        for (index, triangle) in mesh.triangles.iter().enumerate() {
+            let mut lo_x = f64::INFINITY;
+            let mut lo_y = f64::INFINITY;
+            let mut hi_x = f64::NEG_INFINITY;
+            let mut hi_y = f64::NEG_INFINITY;
+            for &vertex in triangle {
+                let point = mesh.vertices[vertex as usize];
+                lo_x = lo_x.min(point[0]);
+                lo_y = lo_y.min(point[1]);
+                hi_x = hi_x.max(point[0]);
+                hi_y = hi_y.max(point[1]);
+            }
+            let ix0 = ((lo_x - origin_x) / bin).floor() as isize;
+            let iy0 = ((lo_y - origin_y) / bin).floor() as isize;
+            let ix1 = ((hi_x - origin_x) / bin).floor() as isize;
+            let iy1 = ((hi_y - origin_y) / bin).floor() as isize;
+            let ix0 = ix0.clamp(0, nx as isize - 1) as usize;
+            let iy0 = iy0.clamp(0, ny as isize - 1) as usize;
+            let ix1 = ix1.clamp(0, nx as isize - 1) as usize;
+            let iy1 = iy1.clamp(0, ny as isize - 1) as usize;
+            for iy in iy0..=iy1 {
+                for ix in ix0..=ix1 {
+                    lists[iy * nx + ix].push(index);
+                }
+            }
+        }
+        Self {
+            origin_x,
+            origin_y,
+            bin,
+            nx,
+            ny,
+            lists,
+        }
+    }
+
+    fn candidates(&self, x: f64, y: f64) -> &[usize] {
+        let ix = ((x - self.origin_x) / self.bin).floor() as isize;
+        let iy = ((y - self.origin_y) / self.bin).floor() as isize;
+        if ix < 0 || iy < 0 || ix >= self.nx as isize || iy >= self.ny as isize {
+            return &[];
+        }
+        &self.lists[iy as usize * self.nx + ix as usize]
     }
 }
 
@@ -227,20 +339,6 @@ fn select_exterior_top_hit(
         }
     }
     Some(layers[0].0)
-}
-
-fn count_ray_hits(x: f64, y: f64, z_high: f64, mesh: &Mesh) -> usize {
-    let mut count = 0usize;
-    for triangle in &mesh.triangles {
-        if ray_triangle_any(x, y, z_high, mesh, triangle) {
-            count += 1;
-        }
-    }
-    count
-}
-
-fn ray_triangle_any(x: f64, y: f64, z_high: f64, mesh: &Mesh, tri: &[u32; 3]) -> bool {
-    ray_triangle_z(x, y, z_high, mesh, tri).is_some()
 }
 
 fn ray_triangle_z(
@@ -517,5 +615,50 @@ mod tests {
         let centre = grid.z_top_smooth[grid.height / 2 * grid.width + grid.width / 2];
         assert!(centre.unwrap() > 25.0);
         assert!(count_top_islands(&grid) >= 1);
+    }
+
+    /// Many separate facets over a wide bed. The old per-cell walk of every
+    /// triangle does not finish this in two seconds; the binned walk does.
+    #[test]
+    fn many_separate_facets_finish_quickly() {
+        let tiles = 50usize;
+        let tile = 2.0f64;
+        let mut vertices = Vec::with_capacity(tiles * tiles * 4);
+        let mut triangles = Vec::with_capacity(tiles * tiles * 2);
+        for iy in 0..tiles {
+            for ix in 0..tiles {
+                let x0 = ix as f64 * tile;
+                let y0 = iy as f64 * tile;
+                let z = 4.0 + ((ix + iy) % 5) as f64 * 0.05;
+                let base = vertices.len() as u32;
+                vertices.push([x0, y0, z]);
+                vertices.push([x0 + tile * 0.8, y0, z]);
+                vertices.push([x0, y0 + tile * 0.8, z + 0.04]);
+                vertices.push([x0 + tile * 0.8, y0 + tile * 0.8, z + 0.04]);
+                triangles.push([base, base + 1, base + 2]);
+                triangles.push([base + 1, base + 3, base + 2]);
+            }
+        }
+        let mesh = crate::mesh::Mesh { vertices, triangles };
+        let started = std::time::Instant::now();
+        let grid = build_height_field(&mesh, 0.5, 10.0, 0.8);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "height field took {elapsed:?} for {} triangles",
+            mesh.triangles.len()
+        );
+        assert!(grid.width > 100, "grid {}", grid.width);
+        let samples = grid.z_top_smooth.iter().filter(|z| z.is_some()).count();
+        assert!(samples > 100, "only {samples} columns were hit");
+    }
+
+    #[test]
+    fn a_passed_deadline_stops_the_pre_pass() {
+        let mesh = box_mesh(20.0, 20.0, 8.0);
+        let past = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let built = build_height_field_timed(&mesh, 1.0, 10.0, 1.0, Some(past), &mut |_| {});
+        assert!(built.timed_out);
+        assert!(built.grid.z_top.iter().all(|z| z.is_none()));
     }
 }

@@ -8,7 +8,7 @@ use crate::config::{NonplanarMode, NonplanarOptions, NonplanarReport, SlopeLimit
 use crate::deform::{build_deform_field, deform_mesh, subdivide_long_edges, DeformField};
 use crate::envelope::{require_head_envelope, COLLISION_TOLERANCE_MM};
 use crate::equivalence::{check_grafted_planar_equivalence, graft_planar_shell_below_band};
-use crate::height_field::build_height_field;
+use crate::height_field::build_height_field_timed;
 use crate::inverse::{map_gcode_inverse_counted, MAX_INVERSE_CLAMP_MM};
 use crate::mesh::{merge_meshes as merge_meshes_internal, Mesh};
 use crate::safety::{
@@ -54,6 +54,13 @@ impl NonplanarContext {
     }
 }
 
+/// How long the curved pre-pass may spend building the height field.
+///
+/// Past this the plate is printed planar. The field is binned, so a normal
+/// plate finishes well inside the budget; the limit is what stops a mesh the
+/// bins cannot shrink.
+const PREPASS_BUDGET: std::time::Duration = std::time::Duration::from_secs(45);
+
 /// Build the single field every model in the job is deformed with.
 ///
 /// `reference_mesh` must be the merged **machine-space** mesh of all models: the
@@ -66,14 +73,57 @@ pub fn plan_field(
     nominal_layer_height: f64,
     support_spans: &[SupportSpanInput],
 ) -> NonplanarContext {
+    plan_field_reporting(
+        reference_mesh,
+        options,
+        nominal_layer_height,
+        support_spans,
+        &mut |_, _| {},
+    )
+}
+
+/// [`plan_field`] with progress. `on_progress` receives a fraction in `0..=1`
+/// and a short stage name while the height field is built.
+pub fn plan_field_reporting(
+    reference_mesh: &Mesh,
+    options: &NonplanarOptions,
+    nominal_layer_height: f64,
+    support_spans: &[SupportSpanInput],
+    on_progress: &mut dyn FnMut(f32, &str),
+) -> NonplanarContext {
     let band = options.effective_band_thickness(nominal_layer_height);
     let ramp = options.effective_ramp_thickness(nominal_layer_height);
-    let grid = build_height_field(
+    on_progress(0.0, "Planning curved layers");
+    let built = build_height_field_timed(
         reference_mesh,
         options.grid_step_mm,
         options.max_angle_deg,
         band,
+        Some(std::time::Instant::now() + PREPASS_BUDGET),
+        &mut |fraction| on_progress(fraction, "Planning curved layers"),
     );
+    if built.timed_out {
+        let field = build_deform_field(
+            built.grid,
+            band,
+            ramp,
+            nominal_layer_height,
+            options.max_angle_deg,
+        );
+        return NonplanarContext {
+            nominal_layer_height,
+            max_angle_deg: options.max_angle_deg,
+            top_islands: field.top_islands,
+            auto_placement: None,
+            slope_limiting: None,
+            planar_collapsed: Some(
+                "curved pre-pass stopped after 45 s before it reached the slicer; this plate is printed planar"
+                    .to_string(),
+            ),
+            field,
+        };
+    }
+    let grid = built.grid;
     let mut field = build_deform_field(
         grid,
         band,

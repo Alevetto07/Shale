@@ -675,11 +675,15 @@ pub fn slice(
         } else {
             Vec::new()
         };
-        nonplanar_ctx = Some(shale_nonplanar::plan_field(
+        on_progress(EngineProgress::new(0.05, "Planning curved layers"));
+        nonplanar_ctx = Some(shale_nonplanar::plan_field_reporting(
             &reference,
             &settings.nonplanar,
             layer_height,
             &support_spans,
+            &mut |fraction, message| {
+                on_progress(EngineProgress::new(0.05 + fraction * 0.1, message));
+            },
         ));
     }
     for (index, model) in models.iter().enumerate() {
