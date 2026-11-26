@@ -14,6 +14,7 @@
   --line: rgba(20, 24, 32, 0.14);
   --line-strong: rgba(20, 24, 32, 0.28);
   --accent: #1d5fd6;
+  --accent-ink: #ffffff;
   --accent-soft: rgba(29, 95, 214, 0.12);
   --accent-muted: rgba(29, 95, 214, 0.55);
   --danger: #b42318;
@@ -32,7 +33,7 @@
   --shadow-sheet: 0 16px 40px rgba(20, 24, 32, 0.12);
   --shadow-float: 0 28px 72px rgba(20, 24, 32, 0.16);
 
-  font-family: var(--mono);
+  font-family: var(--prose);
   font-weight: 400;
   background: var(--bg);
   color: var(--ink);
@@ -42,6 +43,13 @@
 
 [data-ui-theme="lunar"] .titlebar-buttons .titlebar-close:hover {
   color: #fff;
+}
+
+[data-ui-theme="lunar"] .brand-mark--dark {
+  display: none;
+}
+[data-ui-theme="lunar"] .brand-mark--light {
+  display: block;
 }
 
 [data-ui-theme="lunar"] .plate-field {

@@ -1,0 +1,26 @@
+{
+  "printer_id": "bambu_lab_a1",
+  "calibrated": true,
+  "calibration_tier": "conservative",
+  "note": "Conservative envelope for collision checks until duct and sock are measured on your machine.",
+  "needs_measurement": [
+    "sock_outer_radius_mm",
+    "sock_top_z_mm",
+    "duct_x_offset_mm",
+    "body_radius_mm"
+  ],
+  "sources": [
+    "Bambu Lab BambuStudio machine profile Bambu Lab A1 0.4 nozzle (nozzle_height 4.76 mm, clearance_x/y 25 mm, distance_y_to_bar 56.5 mm, head_max_radius 73 mm)",
+    "Alpaca Engineering non-planar video: ~11.6 deg each way on A1 mini (shared toolhead with A1); default limit set to 10 deg until measured on this machine"
+  ],
+  "nozzle_height_mm": 4.76,
+  "tip_land_radius_mm": 0.3,
+  "nozzle_cone_half_angle_deg": 17.5,
+  "body_radius_mm": 12.0,
+  "body_top_z_mm": 4.76,
+  "sock_outer_radius_mm": 4.5,
+  "sock_top_z_mm": 6.5,
+  "duct_x_offset_mm": [8.0, 26.0],
+  "duct_z_mm": 6.0,
+  "default_max_clearance_angle_deg": 10.0
+}

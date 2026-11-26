@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 #[cfg(windows)]
 /// The mutex handle, so a retry can let go of the name before it re-execs.
+#[cfg(windows)]
 static MUTEX: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Claim the single-instance mutex. `true` if this process is the only Shale.
@@ -213,6 +214,12 @@ pub fn release() {}
 #[cfg(not(windows))]
 pub fn focus_existing(_title: &str) -> bool {
     false
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+pub fn say(caption: &str, message: &str) {
+    eprintln!("{caption}: {message}");
 }
 
 #[cfg(not(windows))]

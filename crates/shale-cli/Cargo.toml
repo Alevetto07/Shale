@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 shale-core = { path = "../shale-core" }
+serde_json = "1"
 
 [dev-dependencies]
 shale-core = { path = "../shale-core" }

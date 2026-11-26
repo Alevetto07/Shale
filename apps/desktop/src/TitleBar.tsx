@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "./platform/window";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import mark from "./brand/shale-mark-dark.svg";
+import markDark from "./brand/shale-mark-dark.svg";
+import markLight from "./brand/shale-mark-light.svg";
 
 function TitleBarIcon({ kind }: { kind: "minimize" | "maximize" | "restore" | "close" }) {
   if (kind === "close") {
@@ -35,17 +36,20 @@ function TitleBarIcon({ kind }: { kind: "minimize" | "maximize" | "restore" | "c
 /**
  * Shale's own title bar.
  *
- * The window is undecorated, so this strip is the frame. The empty runs carry
- * `data-tauri-drag-region`, which is what makes the OS treat them as the
- * caption: dragging moves the window, double-click maximises, and Aero snap
- * still works because the window keeps its resize styles. The menu bar lives
- * here rather than in a second strip, so the window has one line of chrome.
+ * The window is undecorated, so this strip is the frame. Dragging is opt-in on
+ * the brand and the empty gap only. A drag region on an ancestor of the window
+ * buttons makes Windows treat those buttons as the caption, so the click never
+ * arrives. Minimise, maximise and close also need their own Tauri permissions;
+ * `allow-close` on its own rejects the other two and the promise was ignored.
  */
 export function TitleBar({
   projectName,
+  leading,
   children,
 }: {
   projectName: string;
+  /// Pills to the left of the menus (sidebar toggle, back / forward).
+  leading?: ReactNode;
   /// The menu bar, dropped between the wordmark and the window buttons.
   children: ReactNode;
 }) {
@@ -75,9 +79,10 @@ export function TitleBar({
   }, [win]);
 
   return (
-    <header className="titlebar" data-tauri-drag-region>
+    <header className="titlebar">
       <div className="brand" data-tauri-drag-region onDoubleClick={onCaptionDoubleClick}>
-        <img className="brand-mark" src={mark} alt="" data-tauri-drag-region draggable={false} />
+        <img className="brand-mark brand-mark--dark" src={markDark} alt="" data-tauri-drag-region draggable={false} />
+        <img className="brand-mark brand-mark--light" src={markLight} alt="" data-tauri-drag-region draggable={false} />
         <p className="wordmark" data-tauri-drag-region>
           Shale
         </p>
@@ -87,11 +92,12 @@ export function TitleBar({
           </p>
         )}
       </div>
-      <div className="titlebar-menus" data-tauri-drag-region onDoubleClick={onCaptionDoubleClick}>
+      {leading ? <div className="titlebar-leading">{leading}</div> : null}
+      <div className="titlebar-menus" onDoubleClick={onCaptionDoubleClick}>
         {children}
       </div>
       <span className="titlebar-gap" data-tauri-drag-region onDoubleClick={onCaptionDoubleClick} />
-      <div className="titlebar-buttons">
+      <div className="titlebar-buttons" onMouseDown={(event) => event.stopPropagation()}>
         <button
           type="button"
           className="titlebar-minimize"

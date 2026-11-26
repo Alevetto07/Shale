@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/shale-core",
+    "crates/shale-nonplanar",
     "crates/shale-host",
     "crates/shale-mcp",
     "crates/shale-cli",
@@ -20,6 +21,12 @@ license = "AGPL-3.0-or-later"
 opt-level = 1
 
 [profile.dev.package."*"]
+opt-level = 3
+
+# The non-planar pass runs per-vertex deformation and a full height-grid scan
+# during every test; naming it keeps the optimisation even if the wildcard above
+# is ever relaxed.
+[profile.dev.package.shale-nonplanar]
 opt-level = 3
 
 # Tests and benchmarks run the same code paths as the app, so they use the same

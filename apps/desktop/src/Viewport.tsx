@@ -1,31 +1,21 @@
 import { Html, OrbitControls, TransformControls } from "@react-three/drei";
 import { Canvas, useThree } from "@react-three/fiber";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { PreviewPath, SupportOverlay, Transform } from "./api";
 import { localCentre, rotateScale, translationForCentre, worldCentre } from "./coords";
 import { canFrameBed, modelsToFrame, shouldFrameModels } from "./framer";
+import {
+  CURVED_SLOPE_MIN_DEG,
+  KIND_COLOR,
+  speedColour,
+  verticesThroughLayer,
+  type ColourMode,
+  type TransformMode,
+  type ViewStyle,
+} from "./viewport-style";
 
-export type TransformMode = "translate" | "rotate" | "scale";
-export type ViewStyle = "solid" | "wire" | "ascii";
-
-/// What the toolpath is coloured by. "type" is what the lines are (wall, skin,
-/// infill); "speed" is how fast they are laid down, which is the question a
-/// print that looks wrong actually asks. Bambu's preview offers the same choice.
-export type ColourMode = "type" | "speed";
-
-/// Slow to fast in one hue: the theme has a single accent, so the ramp runs
-/// from a dim grey to that accent rather than through a thermal camera's
-/// colours. Five stops is enough for a line to be placed by eye.
-export const SPEED_STOPS = ["#474a5e", "#625d7e", "#7b74a3", "#9a93d2", "#b9b3ff"];
-
-export function speedColour(feed: number, low: number, high: number): string {
-  if (!(high > low)) return SPEED_STOPS[SPEED_STOPS.length - 1];
-  const span = high - low;
-  const place = Math.min(1, Math.max(0, (feed - low) / span));
-  const index = Math.min(SPEED_STOPS.length - 1, Math.floor(place * SPEED_STOPS.length));
-  return SPEED_STOPS[index];
-}
+export type { ColourMode, TransformMode, ViewStyle } from "./viewport-style";
 
 interface SceneModel {
   id: number;
@@ -52,8 +42,13 @@ interface ViewportProps {
   showToolpaths: boolean;
   viewStyle: ViewStyle;
   colour?: ColourMode;
+  /** Theme accent and ink, so a curved segment is coloured with the active theme. */
+  slopeAccent?: string;
+  slopeDim?: string;
   mode: TransformMode;
   frameToken: number;
+  cameraPreset?: "iso" | "top" | "front";
+  cameraToken?: number;
   /// Measuring is a mode of its own: clicks pick points instead of selecting.
   measuring: boolean;
   marks: Array<[number, number, number]>;
@@ -71,27 +66,6 @@ interface ViewportProps {
   paintRadius: number;
   onBrush: (id: number, points: Array<[number, number, number]>) => void;
 }
-
-/// The colour each kind of line is drawn in. Exported because the
-/// preview's legend has to name the same colour the plate is painted with.
-/// Nine kinds have to be told apart at a glance on a dark plate, which one
-/// accent cannot do on its own: these are muted hues at the same lightness, so
-/// they read as one palette and still differ. Travel is deliberately almost
-/// invisible and is hidden until asked for.
-export const KIND_COLOR: Record<string, string> = {
-  "wall-outer": "#e9e8f2",
-  "wall-inner": "#b9b3ff",
-  skin: "#7fb0c6",
-  infill: "#6f9a7c",
-  support: "#c08a5a",
-  "support-interface": "#e0b07a",
-  skirt: "#8d7fbb",
-  brim: "#b98fae",
-  raft: "#6b6f7e",
-  "prime-tower": "#9c9a6a",
-  travel: "#23252c",
-  extrusion: "#a39fb4",
-};
 
 function MockPlateFallback({
   width,
@@ -121,8 +95,21 @@ function MockPlateFallback({
   );
 }
 
-export function Viewport(props: ViewportProps) {
-  if (import.meta.env.VITE_SHALE_MOCK === "1") {
+function noteViewportPerf(kind: "render" | "camera") {
+  if (typeof window === "undefined") return;
+  if (new URLSearchParams(window.location.search).get("perf") !== "1") return;
+  const host = window as Window & { __shalePerf?: { renders: number; cameraMoves: number } };
+  const record = host.__shalePerf ?? { renders: 0, cameraMoves: 0 };
+  if (kind === "render") record.renders += 1;
+  else record.cameraMoves += 1;
+  host.__shalePerf = record;
+}
+
+export const Viewport = memo(function Viewport(props: ViewportProps) {
+  noteViewportPerf("render");
+  const measure =
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("perf") === "1";
+  if (import.meta.env.VITE_SHALE_MOCK === "1" && !measure) {
     return (
       <MockPlateFallback
         width={props.width}
@@ -140,6 +127,7 @@ export function Viewport(props: ViewportProps) {
   const cx = props.centerIsZero ? 0 : props.width / 2;
   const cy = props.centerIsZero ? 0 : props.depth / 2;
   return (
+    <div className="viewport-host">
     <Canvas
       frameloop="demand"
       shadows={false}
@@ -151,9 +139,10 @@ export function Viewport(props: ViewportProps) {
       }}
     >
       <color attach="background" args={[sceneBg]} />
-      <ambientLight intensity={0.55} />
-      <directionalLight position={[120, -80, 220]} intensity={0.9} color="#e9e8f2" />
-      <directionalLight position={[-80, 140, 40]} intensity={0.18} color="#8a8798" />
+      <hemisphereLight args={["#d9d6ea", "#1c1e28", 0.72]} />
+      <ambientLight intensity={0.22} />
+      <directionalLight position={[140, -90, 260]} intensity={1.15} color="#f6f4ff" />
+      <directionalLight position={[-180, 120, 90]} intensity={0.38} color="#7d7a90" />
       <Framer
         width={props.width}
         depth={props.depth}
@@ -174,6 +163,7 @@ export function Viewport(props: ViewportProps) {
             key={model.id}
             model={model}
             viewStyle={props.viewStyle}
+            accent={props.slopeAccent}
             mode={props.mode}
             measuring={props.measuring}
             onMeasure={props.onMeasure}
@@ -195,13 +185,22 @@ export function Viewport(props: ViewportProps) {
           colour={props.colour ?? "type"}
           layer={props.layer}
           hidden={props.hiddenKinds}
+          accent={props.slopeAccent ?? "#b9b3ff"}
+          dim={props.slopeDim ?? "#6f7390"}
         />
       )}
       <MeasureMarks marks={props.marks} label={props.measureLabel} />
-      <OrbitControls makeDefault enableDamping dampingFactor={0.12} />
+      <CameraRig />
+      <CameraAim
+        preset={props.cameraPreset ?? "iso"}
+        token={props.cameraToken ?? 0}
+        cx={cx}
+        cy={cy}
+      />
     </Canvas>
+    </div>
   );
-}
+});
 
 function SupportVolume({ overlay }: { overlay: SupportOverlay }) {
   const geometry = useMemo(() => {
@@ -380,7 +379,6 @@ function Bed({
 }) {
   const cx = centerIsZero ? 0 : width / 2;
   const cy = centerIsZero ? 0 : depth / 2;
-  const divisions = Math.max(4, Math.round(Math.max(width, depth) / 10));
   const outline = useMemo(() => new THREE.EdgesGeometry(new THREE.PlaneGeometry(width, depth)), [width, depth]);
   return (
     <group>
@@ -398,13 +396,7 @@ function Bed({
           depthWrite={false}
         />
       </mesh>
-      <gridHelper
-        args={[Math.max(width, depth), divisions, "#34343e", "#1e1f28"]}
-        rotation={[Math.PI / 2, 0, 0]}
-        position={[cx, cy, 0.04]}
-      >
-        <lineBasicMaterial attach="material" vertexColors transparent opacity={0.7} depthWrite={false} />
-      </gridHelper>
+      <FadingGrid width={width} depth={depth} cx={cx} cy={cy} />
       <lineSegments geometry={outline} position={[cx, cy, 0.08]}>
         <lineBasicMaterial color="#4a4856" transparent opacity={0.9} depthWrite={false} />
       </lineSegments>
@@ -463,10 +455,95 @@ function Axes({ width, depth, cx, cy }: { width: number; depth: number; cx: numb
   );
 }
 
+function FadingGrid({ width, depth, cx, cy }: { width: number; depth: number; cx: number; cy: number }) {
+  const geometry = useMemo(() => {
+    const positions: number[] = [];
+    const alphas: number[] = [];
+    const step = 10;
+    const x0 = cx - width / 2;
+    const y0 = cy - depth / 2;
+    const x1 = cx + width / 2;
+    const y1 = cy + depth / 2;
+    const maxR = Math.hypot(width, depth) * 0.62;
+    const push = (ax: number, ay: number, bx: number, by: number) => {
+      const fade = (x: number, y: number) => Math.max(0, 1 - Math.hypot(x - cx, y - cy) / maxR);
+      positions.push(ax, ay, 0.05, bx, by, 0.05);
+      alphas.push(fade(ax, ay), fade(bx, by));
+    };
+    for (let x = x0; x <= x1 + 0.01; x += step) push(x, y0, x, y1);
+    for (let y = y0; y <= y1 + 0.01; y += step) push(x0, y, x1, y);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute("alpha", new THREE.Float32BufferAttribute(alphas, 1));
+    return geo;
+  }, [width, depth, cx, cy]);
+  const light =
+    typeof document !== "undefined" && document.documentElement.getAttribute("data-ui-theme") === "lunar";
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        uniforms: { uColor: { value: new THREE.Color(light ? "#7d8796" : "#8d8aa0") } },
+        vertexShader: `
+          attribute float alpha;
+          varying float vAlpha;
+          void main() {
+            vAlpha = alpha;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 uColor;
+          varying float vAlpha;
+          void main() {
+            gl_FragColor = vec4(uColor, vAlpha * 0.72);
+          }
+        `,
+      }),
+    [light],
+  );
+  return <lineSegments geometry={geometry} material={material} />;
+}
+
+function CameraAim({
+  preset,
+  token,
+  cx,
+  cy,
+}: {
+  preset: "iso" | "top" | "front";
+  token: number;
+  cx: number;
+  cy: number;
+}) {
+  const camera = useThree((state) => state.camera);
+  const controls = useThree((state) => state.controls);
+  const invalidate = useThree((state) => state.invalidate);
+  useLayoutEffect(() => {
+    if (token === 0) return;
+    const next =
+      preset === "top"
+        ? ([cx, cy - 0.01, 460] as const)
+        : preset === "front"
+          ? ([cx, cy - 380, 70] as const)
+          : ([cx + 80, cy - 220, 180] as const);
+    camera.position.set(next[0], next[1], next[2]);
+    camera.up.set(0, 0, 1);
+    camera.lookAt(cx, cy, 12);
+    const orbit = controls as { target?: THREE.Vector3; update?: () => void } | null;
+    orbit?.target?.set(cx, cy, 12);
+    orbit?.update?.();
+    invalidate();
+  }, [token, preset, cx, cy, camera, controls, invalidate]);
+  return null;
+}
+
 function PrintModel({
   model,
   mode,
   viewStyle,
+  accent,
   measuring,
   onMeasure,
   onSelect,
@@ -490,6 +567,7 @@ function PrintModel({
   paintArmed: boolean;
   paintRadius: number;
   onBrush: (id: number, points: Array<[number, number, number]>) => void;
+  accent?: string;
 }) {
   const geometry = useMemo(() => {
     const geo = new THREE.BufferGeometry();
@@ -664,10 +742,9 @@ function PrintModel({
             <meshBasicMaterial color={model.selected ? "#b9b3ff" : "#a39fb4"} wireframe />
           ) : (
             <meshStandardMaterial
-              color={model.selected ? "#b9b3ff" : "#a39fb4"}
-              roughness={0.62}
-              metalness={0.02}
-              flatShading
+              color={model.selected ? accent || "#b9b3ff" : "#c8c4d4"}
+              roughness={0.4}
+              metalness={0.14}
             />
           )}
         </mesh>
@@ -711,7 +788,12 @@ interface KindBuffer {
   lastLayer: number;
 }
 
-function buildKinds(paths: PreviewPath[], colour: ColourMode): KindBuffer[] {
+function slopeTint(slope: number, maxSlope: number, dim: THREE.Color, accent: THREE.Color, out: THREE.Color) {
+  const place = maxSlope > CURVED_SLOPE_MIN_DEG ? Math.min(1, Math.max(0, slope / maxSlope)) : 1;
+  out.copy(dim).lerp(accent, 0.25 + place * 0.75);
+}
+
+function buildKinds(paths: PreviewPath[], colour: ColourMode, accentHex: string, dimHex: string): KindBuffer[] {
   if (paths.length === 0) return [];
   let low = Infinity;
   let high = -Infinity;
@@ -727,30 +809,55 @@ function buildKinds(paths: PreviewPath[], colour: ColourMode): KindBuffer[] {
       }
     }
   }
-  const colour_of = (path: PreviewPath): string =>
-    colour === "speed"
-      ? path.kind === "travel"
-        ? "#26282f"
-        : (path.feed ?? 0) > 0
-          ? speedColour(path.feed as number, low, high)
-          : KIND_COLOR[path.kind] ?? "#9c9aab"
-      : KIND_COLOR[path.kind] ?? "#9c9aab";
+  let maxSlope = CURVED_SLOPE_MIN_DEG;
+  for (const path of paths) {
+    if (!path.slopes) continue;
+    for (const slope of path.slopes) {
+      if (slope > maxSlope) maxSlope = slope;
+    }
+  }
+  const accent = new THREE.Color(accentHex);
+  const dim = new THREE.Color(dimHex);
+  const tint = new THREE.Color();
+  const colourOf = (path: PreviewPath, slope: number): void => {
+    const curved = slope > CURVED_SLOPE_MIN_DEG;
+    if (colour === "slope" && path.kind !== "travel") {
+      slopeTint(slope, maxSlope, dim, accent, tint);
+      return;
+    }
+    if (colour === "type" && curved) {
+      slopeTint(slope, maxSlope, dim, accent, tint);
+      return;
+    }
+    if (colour === "speed") {
+      tint.set(
+        path.kind === "travel"
+          ? "#26282f"
+          : (path.feed ?? 0) > 0
+            ? speedColour(path.feed as number, low, high)
+            : KIND_COLOR[path.kind] ?? "#9c9aab",
+      );
+      return;
+    }
+    tint.set(KIND_COLOR[path.kind] ?? "#9c9aab");
+  };
 
   let maxLayer = 0;
   for (const path of paths) maxLayer = Math.max(maxLayer, path.layer ?? 0);
 
-  const groups = new Map<string, { positions: number[]; colors: number[]; counts: Int32Array }>();
-  const tint = new THREE.Color();
+  const groups = new Map<string, { positions: number[]; colors: number[] }>();
   for (const path of paths) {
     let group = groups.get(path.kind);
     if (!group) {
-      group = { positions: [], colors: [], counts: new Int32Array(maxLayer + 1) };
+      group = { positions: [], colors: [] };
       groups.set(path.kind, group);
     }
-    tint.set(colour_of(path));
     for (let index = 1; index < path.points.length; index += 1) {
       const from = path.points[index - 1];
       const to = path.points[index];
+      // Z is the G-code's own Z. A curved move is not flattened onto the layer.
+      const slope = path.slopes?.[index - 1] ?? 0;
+      colourOf(path, slope);
       group.positions.push(from[0], from[1], from[2], to[0], to[1], to[2]);
       group.colors.push(tint.r, tint.g, tint.b, tint.r, tint.g, tint.b);
     }
@@ -774,6 +881,7 @@ function buildKinds(paths: PreviewPath[], colour: ColourMode): KindBuffer[] {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(group.positions, 3));
     geometry.setAttribute("color", new THREE.Float32BufferAttribute(group.colors, 3));
+    geometry.computeBoundingSphere();
     out.push({ kind, geometry, counts: perLayer, lastLayer: maxLayer });
   }
   return out;
@@ -783,7 +891,7 @@ function KindLines({ buffer, layer, hidden }: { buffer: KindBuffer; layer: numbe
   const invalidate = useThree((state) => state.invalidate);
   useLayoutEffect(() => {
     const at = Math.min(buffer.lastLayer, Math.max(0, layer));
-    buffer.geometry.setDrawRange(0, buffer.counts[at] ?? 0);
+    buffer.geometry.setDrawRange(0, verticesThroughLayer(buffer.counts, at));
     // The canvas draws on demand; a draw-range change is not a React prop, so
     // nothing would repaint without this.
     invalidate();
@@ -792,9 +900,29 @@ function KindLines({ buffer, layer, hidden }: { buffer: KindBuffer; layer: numbe
     invalidate();
   }, [hidden, invalidate]);
   return (
-    <lineSegments geometry={buffer.geometry} visible={!hidden}>
+    <lineSegments geometry={buffer.geometry} visible={!hidden} frustumCulled>
       <lineBasicMaterial vertexColors />
     </lineSegments>
+  );
+}
+
+/** Orbit without writing the camera into React state, so a drag does not re-render the plate. */
+function CameraRig() {
+  const [damping, setDamping] = useState(true);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const apply = () => setDamping(!media.matches);
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, []);
+  return (
+    <OrbitControls
+      makeDefault
+      enableDamping={damping}
+      dampingFactor={0.12}
+      onChange={() => noteViewportPerf("camera")}
+    />
   );
 }
 
@@ -803,13 +931,17 @@ function Toolpaths({
   colour,
   layer,
   hidden,
+  accent,
+  dim,
 }: {
   paths: PreviewPath[];
   colour: ColourMode;
   layer: number;
   hidden: Set<string>;
+  accent: string;
+  dim: string;
 }) {
-  const buffers = useMemo(() => buildKinds(paths, colour), [paths, colour]);
+  const buffers = useMemo(() => buildKinds(paths, colour, accent, dim), [paths, colour, accent, dim]);
   if (buffers.length === 0) return null;
   return (
     <group>

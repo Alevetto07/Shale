@@ -1,11 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import * as Popover from "@radix-ui/react-popover";
+import { Check } from "lucide-react";
 
-import type { MaterialInfo, PrinterInfo, QualityInfo, VariantInfo } from "./api";
+import type { MaterialInfo, NonplanarReportView, NonplanarSettings, PrinterInfo, QualityInfo, VariantInfo } from "./api";
+import type { Section } from "./settings-meta";
 import { variantOptionLabel } from "./profile-labels";
 import { ProcessSheet, type QuickFallbacks } from "./ProcessSheet";
-import type { ViewStyle } from "./Viewport";
+import type { ViewStyle } from "./viewport-style";
 import { UiStylePicker } from "./UiStylePicker";
 import type { UiStyleId } from "./ui-styles";
+import type { Pane } from "./Tabs";
+import { Button, Select, Sheet } from "./ui";
 
 export interface MenuBarProps {
   screen: "start" | "slicer";
@@ -73,85 +79,182 @@ export interface MenuBarProps {
   onScope: (scope: string) => void;
   onResetOverrides: () => void;
   onSlice: () => void;
+  /** Stage name while a slice is running, so the button is not a spinner. */
+  sliceStage?: string | null;
   uiStyle: UiStyleId;
   onUiStyle: (id: UiStyleId) => void;
+  nonplanar: NonplanarSettings;
+  onNonplanar: (next: NonplanarSettings) => void;
+  nonplanarReport: NonplanarReportView | null;
+  nonplanarSupported: boolean;
+  liveSlice: boolean;
+  onLiveSlice: (next: boolean) => void;
+  /** Bumps when the command palette asks the sheet to open on a tab. */
+  settingsNonce: number;
+  settingsSection: Section | null;
+  pane: Pane;
+  onPane: (pane: Pane) => void;
+  onOpenPalette: () => void;
 }
 
-type Menu = "file" | "edit" | "view" | "printer" | "settings";
+function Item({
+  onSelect,
+  disabled,
+  kbd,
+  checked,
+  children,
+}: {
+  onSelect: () => void;
+  disabled?: boolean;
+  kbd?: string;
+  checked?: boolean;
+  children: string;
+}) {
+  return (
+    <DropdownMenu.Item className="ui-dropdown__item" disabled={disabled} onSelect={onSelect}>
+      <span>{children}</span>
+      {kbd ? <kbd>{kbd}</kbd> : null}
+      {checked ? <Check size={14} strokeWidth={1.5} aria-hidden /> : null}
+    </DropdownMenu.Item>
+  );
+}
 
 export function MenuBar(props: MenuBarProps) {
-  const [open, setOpen] = useState<Menu | null>(props.demo === "presets" ? "settings" : null);
-  const bar = useRef<HTMLDivElement | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(props.demo === "presets");
 
-  // The demo flag arrives with the status, one render after this component
-  // mounts, so the sheet cannot be opened in the initial state alone.
   useEffect(() => {
-    if (props.demo === "presets") setOpen("settings");
+    if (props.demo === "presets") setSettingsOpen(true);
   }, [props.demo]);
 
-  // The presets panel sits at the foot of a long sheet; the clip has to show
-  // it, so the sheet scrolls itself there once it has opened.
   useEffect(() => {
-    if (props.demo !== "presets" || open !== "settings") return;
+    if (props.settingsNonce > 0) setSettingsOpen(true);
+  }, [props.settingsNonce]);
+
+  useEffect(() => {
+    if (props.demo !== "presets" || !settingsOpen) return;
     const timer = window.setTimeout(() => {
       document.querySelector(".presets")?.scrollIntoView({ block: "center" });
     }, 1200);
     return () => window.clearTimeout(timer);
-  }, [props.demo, open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: MouseEvent) => {
-      if (bar.current && !bar.current.contains(event.target as Node)) {
-        setOpen(null);
-      }
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setOpen(null);
-      const active = document.activeElement;
-      if (active instanceof HTMLElement) active.blur();
-    };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [open]);
-
-  const pick = (action: () => void) => () => {
-    setOpen(null);
-    action();
-  };
+  }, [props.demo, settingsOpen]);
 
   const printer = props.printers.find((entry) => entry.id === props.printerId);
+  const panes: { id: Pane; label: string }[] = [
+    { id: "home", label: "Home" },
+    { id: "prepare", label: "Prepare" },
+    { id: "preview", label: "Preview" },
+    { id: "device", label: "Device" },
+  ];
 
   return (
-    <div className="menubar" ref={bar}>
-      <div className="menu-group">
-        <button
-          type="button"
-          className={open === "file" ? "menu-title open" : "menu-title"}
-          onClick={() => setOpen(open === "file" ? null : "file")}
-        >
-          File
-        </button>
-        {open === "file" && (
-          <div className="menu-sheet" role="menu">
-            <button type="button" onClick={pick(props.onNew)}>
-              <span>New project</span>
-              <kbd>Ctrl N</kbd>
+    <div className="menubar">
+      <nav className="studio-nav" aria-label="Workspace">
+        {panes.map((item) => {
+          const waiting = item.id === "preview" && !props.sliced;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className="studio-nav__item"
+              aria-pressed={props.pane === item.id}
+              data-waiting={waiting ? "1" : undefined}
+              title={waiting ? "Slice the plate first. There is no toolpath to show yet." : undefined}
+              onClick={() => props.onPane(item.id)}
+            >
+              {item.label}
             </button>
-            <button type="button" onClick={pick(props.onOpen)}>
-              <span>Open project…</span>
-              <kbd>Ctrl O</kbd>
-            </button>
-            <button type="button" onClick={pick(props.onImport)}>
-              <span>Import model…</span>
-              <kbd>Ctrl I</kbd>
-            </button>
-            <hr />
+          );
+        })}
+      </nav>
+      <span className="studio-spacer" data-tauri-drag-region />
+      <Popover.Root>
+        <Popover.Trigger className="studio-printer">
+          {printer ? `${printer.manufacturer} ${printer.name}` : "No printer"}
+        </Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content
+            className="ui-dropdown ui-popover"
+            sideOffset={6}
+            align="end"
+            collisionPadding={8}
+            onInteractOutside={(event) => {
+              const target = event.target as HTMLElement | null;
+              if (target?.closest(".ui-dropdown, .ui-select__menu")) event.preventDefault();
+            }}
+          >
+            <label className="ui-field">
+              <span className="ui-field__label">Machine</span>
+              <Select
+                label="Machine"
+                value={props.printerId}
+                options={props.printers.map((entry) => ({
+                  value: entry.id,
+                  label: `${entry.manufacturer} ${entry.name}${entry.source === "bambu" ? " · Bambu" : ""}`,
+                }))}
+                onChange={props.onPrinter}
+              />
+            </label>
+            <label className="ui-field">
+              <span className="ui-field__label">Nozzle</span>
+              <Select
+                label="Nozzle"
+                value={props.variant ?? ""}
+                options={[
+                  { value: "", label: "Default" },
+                  ...props.variants.map((entry) => ({ value: entry.name, label: variantOptionLabel(entry) })),
+                ]}
+                onChange={(next) => props.onVariant(next || null)}
+              />
+            </label>
+            <label className="ui-field">
+              <span className="ui-field__label">Process</span>
+              <Select
+                label="Process"
+                value={props.quality ?? ""}
+                options={props.qualities.map((entry) => ({ value: entry.quality_type, label: entry.name }))}
+                onChange={(next) => props.onQuality(next || null)}
+              />
+            </label>
+            <label className="ui-field">
+              <span className="ui-field__label">Filament</span>
+              <Select
+                label="Filament"
+                value={props.material ?? ""}
+                options={[
+                  { value: "", label: "Default" },
+                  ...props.materials.map((entry) => ({ value: entry.id, label: entry.label })),
+                ]}
+                onChange={(next) => props.onMaterial(next || null)}
+              />
+            </label>
+            {props.materials.length > 0 && (
+              <p className="menu-note">{props.materials.length} filaments for this machine</p>
+            )}
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
+      <button type="button" className="studio-search" onClick={props.onOpenPalette}>
+        Search
+        <kbd>Ctrl K</kbd>
+      </button>
+      <Button
+        type="button"
+        variant="primary"
+        size="sm"
+        className="menu-slice"
+        disabled={props.busy || !props.hasModels}
+        onClick={props.onSlice}
+      >
+        {props.busy ? props.sliceStage || "Slicing layers" : "Slice"}
+      </Button>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger className="menu-title">Menu</DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content className="ui-dropdown" sideOffset={6} align="end" collisionPadding={8}>
+            <Item onSelect={props.onNew} kbd="Ctrl N">New project</Item>
+            <Item onSelect={props.onOpen} kbd="Ctrl O">Open project…</Item>
+            <Item onSelect={props.onImport} kbd="Ctrl I">Import model…</Item>
+            <DropdownMenu.Separator className="ui-dropdown__sep" />
             <p className="menu-label">Add a part</p>
             {(
               [
@@ -161,298 +264,100 @@ export function MenuBar(props: MenuBarProps) {
                 ["sphere", "Sphere"],
               ] as const
             ).map(([kind, title]) => (
-              <button key={kind} type="button" onClick={pick(() => props.onAddPart(kind))}>
-                <span>{title}</span>
-                <kbd>20 mm</kbd>
-              </button>
+              <Item key={kind} onSelect={() => props.onAddPart(kind)} kbd="20 mm">
+                {title}
+              </Item>
             ))}
-            <hr />
-            <button type="button" onClick={pick(props.onSave)}>
-              <span>Save</span>
-              <kbd>Ctrl S</kbd>
-            </button>
-            <button type="button" onClick={pick(props.onSaveAs)}>
-              <span>Save as…</span>
-              <kbd>Ctrl ⇧ S</kbd>
-            </button>
-            <hr />
-            <button type="button" disabled={!props.modelCount} onClick={() => pick(() => props.onExportGeometry("stl"))}>
-              <span>Export plate as STL…</span>
-            </button>
-            <button type="button" disabled={!props.modelCount} onClick={() => pick(() => props.onExportGeometry("3mf"))}>
-              <span>Export plate as 3MF…</span>
-            </button>
-            <hr />
-            <button type="button" disabled={!props.sliced} onClick={pick(props.onExport)}>
-              <span>Export G-code…</span>
-              <kbd>Ctrl E</kbd>
-            </button>
-            <hr />
-            <button type="button" onClick={pick(props.onStart)}>
-              <span>Start screen</span>
-            </button>
-            <button type="button" onClick={pick(props.onQuit)}>
-              <span>Quit</span>
-            </button>
-          </div>
-        )}
-      </div>
-
-      <div className="menu-group">
-        <button
-          type="button"
-          className={open === "edit" ? "menu-title open" : "menu-title"}
-          onClick={() => setOpen(open === "edit" ? null : "edit")}
-        >
-          Edit
-        </button>
-        {open === "edit" && (
-          <div className="menu-sheet" role="menu">
-            <button type="button" disabled={!props.canUndo} onClick={pick(props.onUndo)}>
-              <span>Undo</span>
-              <kbd>Ctrl Z</kbd>
-            </button>
-            <button type="button" disabled={!props.canRedo} onClick={pick(props.onRedo)}>
-              <span>Redo</span>
-              <kbd>Ctrl ⇧ Z</kbd>
-            </button>
-            <hr />
-            <button type="button" disabled={!props.hasSelection} onClick={pick(props.onDuplicate)}>
-              <span>Duplicate</span>
-              <kbd>Ctrl D</kbd>
-            </button>
-            <button type="button" disabled={!props.hasSelection} onClick={pick(props.onSplit)}>
-              <span>Split to objects</span>
-            </button>
-            <button type="button" disabled={!props.hasSelection} onClick={pick(props.onFillPlate)}>
-              <span>Fill the plate</span>
-            </button>
-            <button type="button" disabled={!props.hasSelection} onClick={pick(props.onDrop)}>
-              <span>Drop to plate</span>
-              <kbd>D</kbd>
-            </button>
-            <button
-              type="button"
-              disabled={props.modelCount < 2}
-              onClick={pick(props.onArrange)}
-            >
-              <span>Arrange on plate</span>
-              <kbd>Ctrl ⇧ A</kbd>
-            </button>
-            <hr />
-            <button type="button" disabled={!props.hasSelection} onClick={pick(props.onDelete)}>
-              <span>Delete</span>
-              <kbd>Del</kbd>
-            </button>
-          </div>
-        )}
-      </div>
-
-      <div className="menu-group">
-        <button
-          type="button"
-          className={open === "view" ? "menu-title open" : "menu-title"}
-          onClick={() => setOpen(open === "view" ? null : "view")}
-        >
-          View
-        </button>
-        {open === "view" && (
-          <div className="menu-sheet" role="menu">
+            <DropdownMenu.Separator className="ui-dropdown__sep" />
+            <Item onSelect={props.onSave} kbd="Ctrl S">Save</Item>
+            <Item onSelect={props.onSaveAs} kbd="Ctrl ⇧ S">Save as…</Item>
+            <Item onSelect={() => props.onExportGeometry("stl")} disabled={!props.modelCount}>
+              Export plate as STL…
+            </Item>
+            <Item onSelect={() => props.onExportGeometry("3mf")} disabled={!props.modelCount}>
+              Export plate as 3MF…
+            </Item>
+            <Item onSelect={props.onExport} disabled={!props.sliced} kbd="Ctrl E">
+              Export G-code…
+            </Item>
+            <DropdownMenu.Separator className="ui-dropdown__sep" />
+            <Item onSelect={props.onUndo} disabled={!props.canUndo} kbd="Ctrl Z">Undo</Item>
+            <Item onSelect={props.onRedo} disabled={!props.canRedo} kbd="Ctrl ⇧ Z">Redo</Item>
+            <Item onSelect={props.onDuplicate} disabled={!props.hasSelection} kbd="Ctrl D">Duplicate</Item>
+            <Item onSelect={props.onSplit} disabled={!props.hasSelection}>Split to objects</Item>
+            <Item onSelect={props.onFillPlate} disabled={!props.hasSelection}>Fill the plate</Item>
+            <Item onSelect={props.onDrop} disabled={!props.hasSelection} kbd="D">Drop to plate</Item>
+            <Item onSelect={props.onArrange} disabled={props.modelCount < 2} kbd="Ctrl ⇧ A">
+              Arrange on plate
+            </Item>
+            <Item onSelect={props.onDelete} disabled={!props.hasSelection} kbd="Del">Delete</Item>
+            <DropdownMenu.Separator className="ui-dropdown__sep" />
             {(
               [
                 ["solid", "Solid"],
                 ["wire", "Wireframe"],
-                ["ascii", "ASCII"],
               ] as [ViewStyle, string][]
             ).map(([value, label]) => (
-              <button
-                type="button"
-                key={value}
-                className={props.viewStyle === value ? "checked" : ""}
-                onClick={pick(() => props.onViewStyle(value))}
-              >
-                <span>{label}</span>
-              </button>
+              <Item key={value} checked={props.viewStyle === value} onSelect={() => props.onViewStyle(value)}>
+                {label}
+              </Item>
             ))}
-            <hr />
-            <button
-              type="button"
-              className={props.showModel ? "checked" : ""}
-              onClick={pick(() => props.onShowModel(!props.showModel))}
-            >
-              <span>Show model</span>
-            </button>
-            <button
-              type="button"
-              className={props.preview ? "checked" : ""}
-              disabled={!props.sliced}
-              onClick={pick(() => props.onPreview(!props.preview))}
-            >
-              <span>Show toolpaths</span>
-            </button>
-            <hr />
-            <button type="button" onClick={pick(props.onFrame)}>
-              <span>Frame model</span>
-              <kbd>F</kbd>
-            </button>
-            <hr />
-            <UiStylePicker compact value={props.uiStyle} onChange={props.onUiStyle} />
-          </div>
-        )}
-      </div>
-
-      <div className="menu-group">
-        <button
-          type="button"
-          className={open === "printer" ? "menu-title open" : "menu-title"}
-          onClick={() => setOpen(open === "printer" ? null : "printer")}
-        >
-          Printer
-        </button>
-        {open === "printer" && (
-          <div className="menu-sheet wide" role="menu">
-            <label className="menu-label" htmlFor="menu-printer">
-              Machine
-            </label>
-            <select
-              id="menu-printer"
-              value={props.printerId}
-              onChange={(event) => props.onPrinter(event.target.value)}
-            >
-              {props.printers.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.manufacturer} {entry.name}
-                  {entry.source === "bambu" ? " · Bambu" : ""}
-                </option>
-              ))}
-            </select>
-
-            <label className="menu-label" htmlFor="menu-nozzle">
-              Nozzle
-            </label>
-            <select
-              id="menu-nozzle"
-              value={props.variant ?? ""}
-              onChange={(event) => props.onVariant(event.target.value || null)}
-            >
-              <option value="">Default</option>
-              {props.variants.map((entry) => (
-                <option key={entry.name} value={entry.name}>
-                  {variantOptionLabel(entry)}
-                </option>
-              ))}
-            </select>
-
-            <label className="menu-label" htmlFor="menu-quality">
-              Process
-            </label>
-            <select
-              id="menu-quality"
-              value={props.quality ?? ""}
-              onChange={(event) => props.onQuality(event.target.value || null)}
-            >
-              {props.qualities.map((entry) => (
-                <option key={entry.quality_type} value={entry.quality_type}>
-                  {entry.name}
-                </option>
-              ))}
-            </select>
-
-            <label className="menu-label" htmlFor="menu-material">
-              Filament
-            </label>
-            <select
-              id="menu-material"
-              value={props.material ?? ""}
-              onChange={(event) => props.onMaterial(event.target.value || null)}
-            >
-              <option value="">Default</option>
-              {props.materials.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.label}
-                </option>
-              ))}
-            </select>
-            {props.materials.length > 0 && (
-              <p className="menu-note">{props.materials.length} filaments for this machine</p>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="menu-group">
-        <button
-          type="button"
-          className={open === "settings" ? "menu-title open" : "menu-title"}
-          onClick={() => setOpen(open === "settings" ? null : "settings")}
-        >
-          Slice settings
-        </button>
-        {open === "settings" && (
-          <div
-            className="menu-sheet wide settings-sheet"
-            role="menu"
-          >
-            <div className="settings-scope">
-              <span>Applies to</span>
-              <select
-                value={props.scope}
-                onChange={(event) => props.onScope(event.currentTarget.value)}
-              >
-                <option value="all">Every part</option>
-                {props.parts.map((part) => (
-                  <option key={part.id} value={String(part.id)}>
-                    {part.name}
-                  </option>
-                ))}
-              </select>
-              {props.scope !== "all" && (
-                <span className="settings-scope-note">
-                  {Object.keys(props.overrides).length} override
-                  {Object.keys(props.overrides).length === 1 ? "" : "s"} for this part
-                </span>
-              )}
+            <Item checked={props.showModel} onSelect={() => props.onShowModel(!props.showModel)}>
+              Show model
+            </Item>
+            <Item checked={props.preview} disabled={!props.sliced} onSelect={() => props.onPreview(!props.preview)}>
+              Show toolpaths
+            </Item>
+            <Item onSelect={props.onFrame} kbd="F">Frame model</Item>
+            <DropdownMenu.Separator className="ui-dropdown__sep" />
+            <Item onSelect={() => setSettingsOpen(true)}>Slice settings</Item>
+            <Item onSelect={props.onStart}>Home</Item>
+            <Item onSelect={props.onQuit}>Quit</Item>
+            <div className="ui-dropdown__block">
+              <UiStylePicker compact value={props.uiStyle} onChange={props.onUiStyle} />
             </div>
-            <ProcessSheet
-              fallbacks={props.quickFallbacks}
-              overrides={props.overrides}
-              profileValues={props.profileValues}
-              onOverride={props.onOverride}
-              onResetOverrides={props.onResetOverrides}
-              qualities={props.qualities}
-              qualityType={props.quality}
-              onQuality={(next) => props.onQuality(next)}
-              printerLabel={
-                printer ? `${printer.manufacturer} ${printer.name}` : "machine"
-              }
-            />
-          </div>
-        )}
-      </div>
-
-      <div className="menu-status">
-        {printer ? (
-          <>
-            <span className="menu-printer-name">
-              {printer.manufacturer} {printer.name}
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+      <Sheet open={settingsOpen} onOpenChange={setSettingsOpen} title="Slice settings">
+        <div className="settings-scope">
+          <span>Applies to</span>
+          <Select
+            label="Applies to"
+            value={props.scope}
+            options={[
+              { value: "all", label: "Every part" },
+              ...props.parts.map((part) => ({ value: String(part.id), label: part.name })),
+            ]}
+            onChange={props.onScope}
+          />
+          {props.scope !== "all" && (
+            <span className="settings-scope-note">
+              {Object.keys(props.overrides).length} override
+              {Object.keys(props.overrides).length === 1 ? "" : "s"} for this part
             </span>
-            {/* The name already says Bambu Lab; the chip said it twice. The
-                fact that the machine is a Bambu is still visible where it
-                matters — the Device pane and the printer list. */}
-          </>
-        ) : (
-          <span className="menu-printer-name">No printer</span>
-        )}
-        {props.importing && <span className="menu-note">importing…</span>}
-        <button
-          type="button"
-          className="primary menu-slice"
-          disabled={props.busy || !props.hasModels}
-          onClick={props.onSlice}
-        >
-          {props.busy ? "Slicing…" : "Slice"}
-        </button>
-      </div>
+          )}
+        </div>
+        <ProcessSheet
+          fallbacks={props.quickFallbacks}
+          overrides={props.overrides}
+          profileValues={props.profileValues}
+          onOverride={props.onOverride}
+          onResetOverrides={props.onResetOverrides}
+          qualities={props.qualities}
+          qualityType={props.quality}
+          onQuality={(next) => props.onQuality(next)}
+          printerLabel={printer ? `${printer.manufacturer} ${printer.name}` : "machine"}
+          nonplanar={props.nonplanar}
+          onNonplanar={props.onNonplanar}
+          nonplanarReport={props.nonplanarReport}
+          nonplanarSupported={props.nonplanarSupported}
+          liveSlice={props.liveSlice}
+          onLiveSlice={props.onLiveSlice}
+          sectionRequest={props.settingsSection}
+          focusNonce={props.settingsNonce}
+        />
+      </Sheet>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { KIND_COLOR, SPEED_STOPS, type ColourMode } from "./Viewport";
+import { KIND_COLOR, SPEED_STOPS, type ColourMode } from "./viewport-style";
 import type { PreviewPath } from "./api";
 
 /**
@@ -70,6 +70,17 @@ export function FeatureLegend(props: FeatureLegendProps) {
   }
   const speeds = props.colour === "speed" && Number.isFinite(low) && high > low;
   const bySpeed = props.colour === "speed";
+  let slopeLow = Infinity;
+  let slopeHigh = 0;
+  for (const path of props.paths) {
+    for (const slope of path.slopes ?? []) {
+      if (slope > 0.05) {
+        slopeLow = Math.min(slopeLow, slope);
+        slopeHigh = Math.max(slopeHigh, slope);
+      }
+    }
+  }
+  const showSlope = props.colour === "slope" || (Number.isFinite(slopeLow) && slopeHigh > 0.05);
 
   return (
     <aside className="legend" aria-label="Features in the toolpath">
@@ -84,6 +95,16 @@ export function FeatureLegend(props: FeatureLegendProps) {
           none
         </button>
       </header>
+      {showSlope && (
+        <div className="legend-scale">
+          <span className="legend-scale-title">curved slope °</span>
+          <div className="legend-ramp legend-ramp--slope" />
+          <div className="legend-scale-ends">
+            <span>{Number.isFinite(slopeLow) ? slopeLow.toFixed(1) : "0.1"}</span>
+            <span>{slopeHigh > 0 ? slopeHigh.toFixed(1) : "10"}</span>
+          </div>
+        </div>
+      )}
       {bySpeed && (
         <div className="legend-scale">
           <span className="legend-scale-title">speed mm/s</span>

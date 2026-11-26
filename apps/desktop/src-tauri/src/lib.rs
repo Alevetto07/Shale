@@ -24,8 +24,10 @@ use shale_core::{
     StoredInstruction, SupportOverlay, SupportParams, SupportPlan, TessellationTolerance, Toolpath,
     Transform, TriangleMesh, UserSettings, VariantInfo,
 };
+mod bambu_login;
 mod cloud;
 mod instance;
+mod nonplanar;
 mod secrets;
 #[cfg(windows)]
 mod windows_chrome;
@@ -84,11 +86,17 @@ struct Inner {
     /// G-code may go out at all.
     printer_id: Option<String>,
     slicing: bool,
+    /// The last curved-layer report, so a plate reopened in this window can
+    /// show it again without slicing twice.
+    nonplanar_view: Option<nonplanar::NonplanarView>,
     cancel_import: Arc<AtomicBool>,
     engine_message: String,
     /// Set after the background CuraEngine probe finishes (avoids probing on every `status`).
     engine_checked: bool,
     engine_ok: bool,
+    /// Process settings read from the last imported 3MF, applied on slice
+    /// where the user has not set the key.
+    project_settings: Option<shale_core::ProjectSettings>,
 }
 
 #[derive(Default)]
@@ -195,6 +203,9 @@ struct SliceSummary {
     /// The slice was started by the machine's own sequence rather than Cura's
     /// generic Marlin one. A Bambu machine may only be sent the former.
     machine_gcode: bool,
+    /// Present when the job asked for curved layers. `None` when non-planar is off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nonplanar: Option<nonplanar::NonplanarView>,
 }
 
 #[derive(Serialize)]
@@ -213,6 +224,10 @@ struct PreviewPath {
     /// and scrubs by draw range, which needs the layer on the vertex data
     /// rather than a fresh IPC call per slider step.
     layer: i32,
+    /// Slope of each segment, in degrees above horizontal. Empty for travel.
+    /// The points themselves keep the G-code Z; this only colours the curve.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    slopes: Vec<f32>,
 }
 
 pub(crate) fn lock(state: &AppState) -> Result<std::sync::MutexGuard<'_, Inner>, String> {
@@ -622,27 +637,54 @@ async fn import_model(
     let app_progress = app.clone();
     let loaded = tauri::async_runtime::spawn_blocking(move || {
         let source_bytes = fs::read(&load_path)?;
-        let objects = shale_core::mesh::load_objects(
-            load_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("model"),
-            &source_bytes,
-            &tolerance,
-            &mut |fraction, message| {
-                let _ = app_progress.emit(
-                    "import-progress",
-                    serde_json::json!({ "fraction": fraction, "message": message }),
-                );
-            },
-            &cancel,
-        )?;
-        Ok::<_, shale_core::Error>((source_bytes, objects))
+        let file_name = load_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("model");
+        let extension = load_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let (groups, project) = if extension == "3mf" {
+            let _ = app_progress.emit(
+                "import-progress",
+                serde_json::json!({ "fraction": 0.2, "message": "reading 3MF" }),
+            );
+            let objects = shale_core::load_build_objects(&source_bytes)?;
+            let groups = shale_core::assign_plates(objects, shale_core::read_plate_groups(&source_bytes));
+            let project = shale_core::read_project_settings(&source_bytes);
+            (groups, project)
+        } else {
+            let objects = shale_core::mesh::load_objects(
+                file_name,
+                &source_bytes,
+                &tolerance,
+                &mut |fraction, message| {
+                    let _ = app_progress.emit(
+                        "import-progress",
+                        serde_json::json!({ "fraction": fraction, "message": message }),
+                    );
+                },
+                &cancel,
+            )?;
+            let built = objects
+                .into_iter()
+                .enumerate()
+                .map(|(index, object)| shale_core::BuildObject {
+                    object_id: index as u32,
+                    name: object.name,
+                    mesh: object.mesh,
+                })
+                .collect();
+            (shale_core::assign_plates(built, Vec::new()), None)
+        };
+        Ok::<_, shale_core::Error>((source_bytes, groups, project))
     })
     .await
     .map_err(|err| format!("import task failed: {err}"))?
     .map_err(|err| err.to_string())?;
-    let (source_bytes, objects) = loaded;
+    let (source_bytes, groups, project) = loaded;
     let mut inner = lock(&state)?;
     let placed = printer_id.and_then(|printer_id| {
         catalog(&mut inner)
@@ -662,80 +704,139 @@ async fn import_model(
         .and_then(|name| name.to_str())
         .unwrap_or("model")
         .to_string();
-    // A file of one object is dropped in the middle of the plate. A file of
-    // several is an assembly: the parts keep the places the file gave them, or
-    // the model would come apart.
-    let assembly = objects.len() > 1;
-    let mut views = Vec::with_capacity(objects.len());
-    for (index, object) in objects.into_iter().enumerate() {
-        let transform = if assembly {
-            let mut transform = Transform::default();
-            drop_to_bed(&object.mesh, &mut transform);
-            transform
+    if groups.is_empty() {
+        return Err("That file held no geometry".to_string());
+    }
+    inner.project_settings = project;
+    // A file with several plates takes a fresh plate for each, so parts that
+    // belong beside each other stay together and the others are not piled on.
+    let busy = inner.models.iter().any(|model| model.visible);
+    let first_plate = if groups.len() > 1 && busy {
+        inner.park_plate();
+        inner.plates.push(PlateStash::default());
+        inner.active_plate = inner.plates.len() - 1;
+        inner.models.clear();
+        inner.support = None;
+        inner.support_model_id = None;
+        inner.active_plate
+    } else {
+        inner.active_plate
+    };
+    for (offset, (group, objects)) in groups.into_iter().enumerate() {
+        if offset > 0 {
+            inner.park_plate();
+            inner.plates.push(PlateStash::default());
+            inner.active_plate = inner.plates.len() - 1;
+            inner.models.clear();
+            inner.support = None;
+            inner.support_model_id = None;
+        }
+        let active = inner.active_plate;
+        if let Some(slot) = inner.plates.get_mut(active) {
+            let label = if group.name.trim().is_empty() {
+                format!("plate {}", active + 1)
+            } else {
+                group.name.clone()
+            };
+            slot.name = label;
+        }
+        let meshes: Vec<TriangleMesh> = objects.iter().map(|object| object.mesh.clone()).collect();
+        let transform = if meshes.len() <= 1 {
+            match (&placed, meshes.first()) {
+                (Some(resolved), Some(mesh)) => place_on_bed(
+                    mesh,
+                    resolved.summary.machine_width,
+                    resolved.summary.machine_depth,
+                    resolved.summary.machine_center_is_zero,
+                ),
+                (None, Some(mesh)) => {
+                    let mut transform = Transform::default();
+                    drop_to_bed(mesh, &mut transform);
+                    transform
+                }
+                _ => Transform::default(),
+            }
         } else {
             match &placed {
-                Some(resolved) => place_on_bed(
-                    &object.mesh,
+                Some(resolved) => shale_core::place_assembly(
+                    &meshes,
                     resolved.summary.machine_width,
                     resolved.summary.machine_depth,
                     resolved.summary.machine_center_is_zero,
                 ),
                 None => {
                     let mut transform = Transform::default();
-                    drop_to_bed(&object.mesh, &mut transform);
+                    if let Some(mesh) = meshes.first() {
+                        drop_to_bed(mesh, &mut transform);
+                    }
                     transform
                 }
             }
         };
-        let mut name = if assembly {
-            let wanted = object.name.trim().to_string();
-            if wanted.is_empty() || wanted.starts_with("object ") {
-                format!("{file_name} part {}", index + 1)
+        let several = objects.len() > 1;
+        for (index, object) in objects.into_iter().enumerate() {
+            let mut name = if several {
+                let wanted = object.name.trim().to_string();
+                if wanted.is_empty() || wanted.starts_with("object ") {
+                    format!("{file_name} part {}", index + 1)
+                } else {
+                    wanted
+                }
             } else {
-                wanted
+                file_name.clone()
+            };
+            let mut suffix = 2;
+            while inner
+                .models
+                .iter()
+                .any(|model| model.visible && model.name == name)
+            {
+                name = format!("{} ({suffix})", name.split(" (").next().unwrap_or(&name));
+                suffix += 1;
             }
-        } else {
-            file_name.clone()
-        };
-        // Two objects in one file can share a name; the plate cannot. Only the
-        // parts on the plate count: a part that was deleted is still held, so
-        // that undo can bring it back.
-        let mut suffix = 2;
-        while inner
-            .models
-            .iter()
-            .any(|model| model.visible && model.name == name)
-        {
-            name = format!("{} ({suffix})", name.split(" (").next().unwrap_or(&name));
-            suffix += 1;
+            let triangles = object.mesh.triangles.len();
+            let report = ImportReport {
+                triangles,
+                max_deviation_mm: None,
+                max_turning_deg: None,
+                milliseconds: 0,
+                source: "3mf".to_string(),
+                chordal_mm: None,
+                angular_deg: None,
+            };
+            let id = inner.next_id;
+            inner.next_id += 1;
+            inner.models.push(LoadedModel {
+                id,
+                name,
+                mesh: object.mesh,
+                transform: transform.clone(),
+                report,
+                source_bytes: source_bytes.clone(),
+                visible: true,
+                settings: std::collections::BTreeMap::new(),
+                slot: None,
+            });
         }
-        let triangles = object.mesh.triangles.len();
-        let report = ImportReport {
-            triangles,
-            max_deviation_mm: None,
-            max_turning_deg: None,
-            milliseconds: 0,
-            source: "3mf".to_string(),
-            chordal_mm: None,
-            angular_deg: None,
-        };
-        let id = inner.next_id;
-        inner.next_id += 1;
-        let settings = std::collections::BTreeMap::new();
-        let view = view_of(id, &name, &transform, &report, &settings, None);
-        inner.models.push(LoadedModel {
-            id,
-            name,
-            mesh: object.mesh,
-            transform,
-            report,
-            source_bytes: source_bytes.clone(),
-            visible: true,
-            settings: std::collections::BTreeMap::new(),
-            slot: None,
-        });
-        views.push(view);
     }
+    if inner.active_plate != first_plate {
+        inner.resume_plate(first_plate);
+    }
+    let views: Vec<ModelView> = inner
+        .models
+        .iter()
+        .filter(|model| model.visible)
+        .map(|model| {
+            view_of(
+                model.id,
+                &model.name,
+                &model.transform,
+                &model.report,
+                &model.settings,
+                model.slot.as_ref(),
+            )
+        })
+        .collect();
     if views.is_empty() {
         return Err("That file held no geometry".to_string());
     }
@@ -2561,11 +2662,21 @@ async fn slice_model(
     quality_type: Option<String>,
     material_id: Option<String>,
     ams: Option<Vec<String>>,
-    settings: UserSettings,
+    mut settings: UserSettings,
+    ignore_project_settings: Option<bool>,
 ) -> Result<SliceSummary, String> {
     if std::env::var_os("SHALE_TRACE").is_some() {
         eprintln!("[shale] slice_model extra: {:?}", settings.extra);
     }
+    // Same checks the MCP tools apply, before any engine work. `off` is a no-op.
+    if ignore_project_settings != Some(true) {
+        let project = lock(&state)?.project_settings.clone();
+        if let Some(project) = project {
+            shale_core::apply_project_settings(&mut settings, &project);
+        }
+    }
+    nonplanar::prepare_slice(&settings, &printer_id)?;
+    let nonplanar_options = settings.nonplanar.clone();
     let (catalog_paths, engine, placed, painted, output) = {
         let mut inner = lock(&state)?;
         inner.printer_id = Some(printer_id.clone());
@@ -2724,6 +2835,14 @@ async fn slice_model(
     // `;TIME_ELAPSED:` markers. When the first is missing the second is the
     // truth, and the file is what the person will actually print.
     let facts = shale_core::gcode::header_facts(&read_head(&outcome.gcode_path, 64 * 1024));
+    let nonplanar_view = if nonplanar_options.mode.active() {
+        outcome.nonplanar_report.as_ref().map(|report| {
+            let gcode = fs::read_to_string(&outcome.gcode_path).unwrap_or_default();
+            nonplanar::shape_report(report, &gcode, &nonplanar_options)
+        })
+    } else {
+        None
+    };
     let summary = SliceSummary {
         layer_count: outcome.toolpath.layers.len(),
         layers: outcome
@@ -2747,10 +2866,29 @@ async fn slice_model(
             .map(|model| u64::from(model.id))
             .collect(),
         machine_gcode: outcome.machine_gcode,
+        nonplanar: nonplanar_view.clone(),
     };
     inner.gcode_path = Some(outcome.gcode_path);
     inner.toolpath = Some(outcome.toolpath);
+    inner.nonplanar_view = nonplanar_view;
     Ok(summary)
+}
+
+fn preview_path(kind: &str, points: &[[f32; 3]], feed: f32, layer: i32) -> PreviewPath {
+    // Travel hops are not curved extrusions. Feature lines keep their own Z;
+    // `slopes` only decides which of them take the slope colour.
+    let slopes = if kind == "travel" {
+        Vec::new()
+    } else {
+        nonplanar::segment_slopes(points)
+    };
+    PreviewPath {
+        kind: kind.to_string(),
+        points: points.to_vec(),
+        feed,
+        layer,
+        slopes,
+    }
 }
 
 #[tauri::command]
@@ -2762,12 +2900,12 @@ fn preview_until(state: State<AppState>, layer: i32) -> Result<Vec<PreviewPath>,
     let mut paths = Vec::new();
     for item in toolpath.layers.iter().filter(|item| item.index <= layer) {
         for polyline in &item.polylines {
-            paths.push(PreviewPath {
-                kind: polyline.kind.clone(),
-                points: polyline.points.clone(),
-                feed: polyline.feed,
-                layer: item.index,
-            });
+            paths.push(preview_path(
+                &polyline.kind,
+                &polyline.points,
+                polyline.feed,
+                item.index,
+            ));
         }
     }
     Ok(paths)
@@ -2785,15 +2923,21 @@ fn preview_all(state: State<AppState>) -> Result<Vec<PreviewPath>, String> {
     let mut paths = Vec::new();
     for item in &toolpath.layers {
         for polyline in &item.polylines {
-            paths.push(PreviewPath {
-                kind: polyline.kind.clone(),
-                points: polyline.points.clone(),
-                feed: polyline.feed,
-                layer: item.index,
-            });
+            paths.push(preview_path(
+                &polyline.kind,
+                &polyline.points,
+                polyline.feed,
+                item.index,
+            ));
         }
     }
     Ok(paths)
+}
+
+/// Whether this printer has a head envelope, so the panel can say so before a slice.
+#[tauri::command]
+fn nonplanar_supported(printer_id: String) -> bool {
+    nonplanar::printer_supports(&printer_id)
 }
 
 #[tauri::command]
@@ -3472,6 +3616,7 @@ fn existing_slice(state: State<AppState>) -> Result<Option<SliceSummary>, String
             .map(|model| u64::from(model.id))
             .collect(),
         machine_gcode: starts_with_machine_sequence(path),
+        nonplanar: inner.nonplanar_view.clone(),
     }))
 }
 
@@ -3764,6 +3909,7 @@ fn preload_demo(
                 } else {
                     Vec::new()
                 },
+                ..UserSettings::default()
             },
             &placed,
             &[pause],
@@ -3826,6 +3972,10 @@ struct SaveRequest {
     /// projects they opened, and it must not push a real one off that list.
     #[serde(default)]
     quiet: bool,
+    #[serde(default)]
+    dismissed_suggestions: Vec<String>,
+    #[serde(default)]
+    suggestions_shown: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -3845,6 +3995,8 @@ struct OpenedJob {
     instructions: Vec<StoredInstruction>,
     support: Option<SupportView>,
     warnings: Vec<String>,
+    dismissed_suggestions: Vec<String>,
+    suggestions_shown: Vec<String>,
 }
 
 fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -3936,30 +4088,59 @@ fn preset_import(app: AppHandle, source: String) -> Result<shale_core::preset::P
 }
 
 #[tauri::command]
-fn slicer_detect() -> Vec<shale_core::slicer_import::SlicerInstall> {
-    shale_core::slicer_import::detect_installs()
+async fn slicer_detect() -> Vec<shale_core::slicer_import::SlicerInstall> {
+    tauri::async_runtime::spawn_blocking(shale_core::slicer_import::detect_installs)
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
-fn slicer_list_presets(slicer_id: String) -> Result<Vec<shale_core::slicer_import::PresetOffer>, String> {
-    shale_core::slicer_import::list_preset_offers(&slicer_id)
+async fn slicer_list_presets(
+    slicer_id: String,
+) -> Result<Vec<shale_core::slicer_import::PresetOffer>, String> {
+    tauri::async_runtime::spawn_blocking(move || shale_core::slicer_import::list_preset_offers(&slicer_id))
+        .await
+        .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
-fn slicer_import_presets(
+async fn slicer_scan_presets(
+    app: AppHandle,
+    slicer_id: String,
+) -> Result<shale_core::slicer_import::ScanSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        shale_core::slicer_import::scan_presets(&slicer_id, &mut |counts| {
+            let _ = app.emit("slicer-scan-progress", counts);
+        })
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+async fn slicer_import_presets(
     app: AppHandle,
     slicer_id: String,
     paths: Vec<String>,
 ) -> Result<shale_core::slicer_import::SlicerImportReport, String> {
     let imported = config_dir(&app)?.join("imported-profiles");
     std::fs::create_dir_all(&imported).map_err(|e| e.to_string())?;
-    std::env::set_var("SHALE_IMPORTED_PROFILES", &imported);
-    let report = shale_core::slicer_import::import_presets(
-        &slicer_id,
-        &paths,
-        &imported,
-        &preset_dir(&app)?,
-    )?;
+    let presets = preset_dir(&app)?;
+    let app_for_progress = app.clone();
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        std::env::set_var("SHALE_IMPORTED_PROFILES", &imported);
+        shale_core::slicer_import::import_presets_with_progress(
+            &slicer_id,
+            &paths,
+            &imported,
+            &presets,
+            &mut |counts| {
+                let _ = app_for_progress.emit("slicer-import-progress", counts);
+            },
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())??;
     shale_core::bambu::invalidate_session_library();
     let _ = app.emit("catalogue", ());
     Ok(report)
@@ -4103,6 +4284,271 @@ impl Inner {
         self.toolpath = None;
         self.gcode_path = None;
     }
+}
+
+#[derive(serde::Serialize)]
+struct FitWarning {
+    plate_index: usize,
+    plate_name: String,
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+/// How far the active plate's parts stick out of the printer's bed.
+///
+/// The printer is the one on screen. A slice remembers its own printer, and
+/// that is the fallback when the window has not chosen one yet.
+#[tauri::command]
+fn plate_fit(state: State<AppState>, printer_id: Option<String>) -> Result<FitWarning, String> {
+    let mut inner = lock(&state)?;
+    let printer_id = printer_id.filter(|id| !id.is_empty()).or_else(|| inner.printer_id.clone());
+    let resolved = printer_id.and_then(|printer_id| {
+        catalog(&mut inner)
+            .ok()?
+            .resolve(&shale_core::ResolveRequest {
+                printer_id,
+                variant_name: None,
+                quality_type: None,
+                material_id: None,
+                intent_category: None,
+                settings: UserSettings::default(),
+            })
+            .ok()
+    });
+    let (width, depth, height) = match &resolved {
+        Some(resolved) => (
+            resolved.summary.machine_width,
+            resolved.summary.machine_depth,
+            resolved.summary.machine_height,
+        ),
+        None => (256.0, 256.0, 256.0),
+    };
+    let mut overflow = [0.0_f64; 3];
+    for model in inner.models.iter().filter(|model| model.visible) {
+        let part = shale_core::mesh::bed_overflow(&model.mesh, &model.transform, width, depth, height);
+        for axis in 0..3 {
+            overflow[axis] = overflow[axis].max(part[axis]);
+        }
+    }
+    let plate_name = inner
+        .plates
+        .get(inner.active_plate)
+        .map(|plate| {
+            if plate.name.is_empty() {
+                format!("plate {}", inner.active_plate + 1)
+            } else {
+                plate.name.clone()
+            }
+        })
+        .unwrap_or_else(|| format!("plate {}", inner.active_plate + 1));
+    Ok(FitWarning {
+        plate_index: inner.active_plate,
+        plate_name,
+        x: overflow[0],
+        y: overflow[1],
+        z: overflow[2],
+    })
+}
+
+#[derive(Deserialize)]
+struct SuggestArgs {
+    printer_id: String,
+    #[serde(default)]
+    variant_name: Option<String>,
+    #[serde(default)]
+    quality_type: Option<String>,
+    #[serde(default)]
+    material_id: Option<String>,
+    #[serde(default)]
+    settings: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    slots: Vec<shale_core::SlotQuery>,
+    #[serde(default)]
+    device_slots: Option<Vec<shale_core::SlotQuery>>,
+    #[serde(default)]
+    humidity_percent: Option<f64>,
+    #[serde(default)]
+    hours_since_dry: Option<f64>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    dismissed: Vec<String>,
+    #[serde(default)]
+    global_dismissed: Vec<String>,
+    #[serde(default)]
+    shown_once: Vec<String>,
+    #[serde(default)]
+    nonplanar_mode: String,
+}
+
+#[tauri::command]
+fn suggestions(state: State<AppState>, args: SuggestArgs) -> Result<Vec<shale_core::Suggestion>, String> {
+    let mut inner = lock(&state)?;
+    let resolved = catalog(&mut inner)?
+        .resolve(&shale_core::ResolveRequest {
+            printer_id: args.printer_id.clone(),
+            variant_name: args.variant_name,
+            quality_type: args.quality_type,
+            material_id: args.material_id,
+            intent_category: None,
+            settings: UserSettings::default(),
+        })
+        .map_err(|err| err.to_string())?;
+    let summary = &resolved.summary;
+    let mut settings = std::collections::BTreeMap::new();
+    settings.insert("adhesion_type".into(), summary.adhesion_type.clone());
+    settings.insert("line_width".into(), format!("{:.3}", summary.line_width));
+    settings.insert("speed_print".into(), format!("{:.0}", summary.speed_print));
+    settings.insert(
+        "support_enable".into(),
+        if summary.support_enable { "1" } else { "0" }.into(),
+    );
+    settings.insert(
+        "material_bed_temperature".into(),
+        format!("{:.0}", summary.bed_temperature),
+    );
+    for (key, value) in args.settings {
+        settings.insert(key, value);
+    }
+    let mut objects = Vec::new();
+    for (plate, stash) in inner.plates.iter().enumerate() {
+        let models = if plate == inner.active_plate {
+            &inner.models
+        } else {
+            &stash.models
+        };
+        for model in models.iter().filter(|model| model.visible) {
+            objects.push(shale_core::SceneObject {
+                id: model.id.to_string(),
+                name: model.name.clone(),
+                mesh: model.mesh.clone(),
+                transform: model.transform.clone(),
+                plate,
+                settings: model.settings.clone(),
+                slot: model.slot,
+            });
+        }
+    }
+    let gcode = inner
+        .gcode_path
+        .as_ref()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|text| shale_core::gcode_facts(&text));
+    let slots: Vec<shale_core::FilamentSlot> = if args.slots.is_empty() {
+        vec![shale_core::FilamentSlot {
+            index: 0,
+            material_id: "pla".into(),
+            filament_type: "PLA".into(),
+            colour: String::new(),
+            loaded: true,
+        }]
+    } else {
+        args.slots.into_iter().map(shale_core::SlotQuery::into_slot).collect()
+    };
+    let scene = shale_core::Scene {
+        objects,
+        printer: shale_core::PrinterFacts {
+            id: args.printer_id.clone(),
+            name: summary.printer_name.clone(),
+            bed_width_mm: summary.machine_width,
+            bed_depth_mm: summary.machine_depth,
+            bed_height_mm: summary.machine_height,
+            nozzle_mm: summary.nozzle_size,
+            line_width_mm: summary.line_width,
+            speed_mm_s: summary.speed_print,
+            bed_temperature_c: summary.bed_temperature,
+            enclosed: shale_core::printer_is_enclosed(&args.printer_id),
+            multi_material: slots.iter().filter(|slot| slot.loaded).count() > 1,
+        },
+        slots,
+        device_slots: args
+            .device_slots
+            .map(|slots| slots.into_iter().map(shale_core::SlotQuery::into_slot).collect()),
+        humidity_percent: args.humidity_percent,
+        hours_since_dry: args.hours_since_dry,
+        settings,
+        gcode,
+        nonplanar_mode: if args.nonplanar_mode.is_empty() {
+            "off".into()
+        } else {
+            args.nonplanar_mode
+        },
+        tags: args.tags,
+        dismissed: args.dismissed,
+        global_dismissed: args.global_dismissed,
+        shown_once: args.shown_once,
+    };
+    Ok(shale_core::present_suggestions(&scene, shale_core::suggest::VISIBLE_LIMIT))
+}
+
+fn restore_front(inner: &mut Inner) {
+    let index = inner.active_plate;
+    let Some(slot) = inner.plates.get_mut(index) else {
+        return;
+    };
+    let models = std::mem::take(&mut slot.models);
+    let support = slot.support.take();
+    let support_model_id = slot.support_model_id.take();
+    inner.models = models;
+    inner.support = support;
+    inner.support_model_id = support_model_id;
+}
+
+#[tauri::command]
+fn move_model_to_plate(state: State<AppState>, id: u32, plate: usize) -> Result<PlateSwitch, String> {
+    let mut inner = lock(&state)?;
+    while inner.plates.len() <= plate {
+        let next = inner.plates.len() + 1;
+        inner.plates.push(PlateStash {
+            name: format!("plate {next}"),
+            ..PlateStash::default()
+        });
+    }
+    inner.park_plate();
+    let mut taken = None;
+    for stash in &mut inner.plates {
+        if let Some(position) = stash.models.iter().position(|model| model.id == id) {
+            taken = Some(stash.models.remove(position));
+            break;
+        }
+    }
+    let Some(model) = taken else {
+        restore_front(&mut inner);
+        return Err("That part is not on a plate.".into());
+    };
+    inner.plates[plate].models.push(model);
+    restore_front(&mut inner);
+    inner.toolpath = None;
+    inner.gcode_path = None;
+    let models = inner
+        .models
+        .iter()
+        .filter(|model| model.visible)
+        .map(|model| {
+            view_of(
+                model.id,
+                &model.name,
+                &model.transform,
+                &model.report,
+                &model.settings,
+                model.slot.as_ref(),
+            )
+        })
+        .collect();
+    let plates = inner.plate_views();
+    Ok(PlateSwitch { plates, models })
+}
+
+#[tauri::command]
+fn imported_settings(
+    state: State<AppState>,
+) -> Result<Option<shale_core::ProjectSettingsImport>, String> {
+    let inner = lock(&state)?;
+    Ok(inner
+        .project_settings
+        .as_ref()
+        .map(|project| project.summary.clone()))
 }
 
 #[tauri::command]
@@ -4338,6 +4784,8 @@ fn save_project(
         support,
         support_model,
         thumbnail: project.thumbnail,
+        dismissed_suggestions: project.dismissed_suggestions,
+        suggestions_shown: project.suggestions_shown,
     };
     drop(inner);
     let path = PathBuf::from(&project.path);
@@ -4517,6 +4965,8 @@ async fn open_project(
         instructions,
         support,
         warnings,
+        dismissed_suggestions: project.data.dismissed_suggestions,
+        suggestions_shown: project.data.suggestions_shown,
     })
 }
 
@@ -4796,10 +5246,12 @@ pub fn run() {
             printer_id: None,
             queue_running: demo_queue_running,
             slicing: false,
+            nonplanar_view: None,
             cancel_import: import_cancel,
             engine_message,
             engine_checked: false,
             engine_ok: false,
+            project_settings: None,
             host_config: None,
         })))
         .manage(PrinterHost::default())
@@ -4872,6 +5324,7 @@ pub fn run() {
             preset_import,
             slicer_detect,
             slicer_list_presets,
+            slicer_scan_presets,
             slicer_import_presets,
             cost_settings,
             set_cost_settings,
@@ -4916,6 +5369,7 @@ pub fn run() {
             current_support,
             compare_supports,
             slice_model,
+            nonplanar_supported,
             host_defaults,
             host_connect,
             host_disconnect,
@@ -4955,6 +5409,10 @@ pub fn run() {
             open_project,
             clear_job,
             list_plates,
+            plate_fit,
+            suggestions,
+            move_model_to_plate,
+            imported_settings,
             add_plate,
             switch_plate,
             delete_plate,
@@ -4963,7 +5421,9 @@ pub fn run() {
             forget_recent_project,
             cloud::cloud_state,
             cloud::cloud_login,
+            cloud::cloud_login_web,
             cloud::cloud_verify,
+            cloud::cloud_set_region,
             cloud::cloud_sign_out,
             cloud::cloud_devices,
             cloud::cloud_send

@@ -179,6 +179,40 @@ impl From<bool> for Value {
     }
 }
 
+/// Scalar defaults for identifiers referenced in `{…}` expressions Bambu Studio
+/// normally injects at slice time (after lists are filled from Orca profiles).
+pub fn ensure_runtime_scalar_defaults(template: &str, values: &mut Values) -> Result<(), Error> {
+    for piece in split(template)? {
+        match piece {
+            Piece::If(condition) => fill_runtime_names(values, &condition, true)?,
+            Piece::Expression(body) if body != "else" && body != "endif" => {
+                fill_runtime_names(values, &body, false)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn fill_runtime_names(
+    values: &mut Values,
+    expression: &str,
+    bare_flag: bool,
+) -> Result<(), Error> {
+    let tokens = tokenize(expression)?;
+    if !bare_flag && tokens.len() <= 1 {
+        return Ok(());
+    }
+    for token in tokens {
+        if let Token::Name(name) = token {
+            if values.get(&name).is_none() {
+                values.set(&name, 0.0);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Fill in every placeholder in `template`.
 pub fn render(template: &str, values: &Values) -> Result<String, Error> {
     let mut out = String::with_capacity(template.len() + 256);
@@ -306,7 +340,11 @@ fn split(template: &str) -> Result<Vec<Piece>, Error> {
 }
 
 fn classify(body: &str) -> Piece {
+    let body = body.trim();
     if let Some(condition) = body.strip_prefix("if ") {
+        Piece::If(condition.trim().to_string())
+    } else if let Some(condition) = body.strip_prefix("if(") {
+        let condition = condition.strip_suffix(')').unwrap_or(condition);
         Piece::If(condition.trim().to_string())
     } else if body == "endif" {
         Piece::Endif
@@ -355,7 +393,7 @@ fn eval(expression: &str, values: &Values) -> Result<Value, Error> {
         values,
         expression,
     };
-    let value = parser.or_expression()?;
+    let value = parser.ternary_expression()?;
     if parser.at != parser.tokens.len() {
         return Err(parser.error("could not read the rest of the expression"));
     }
@@ -375,6 +413,7 @@ enum Token {
     Minus,
     Star,
     Slash,
+    Percent,
     Eq,
     Ne,
     Lt,
@@ -384,6 +423,9 @@ enum Token {
     And,
     Or,
     Not,
+    Comma,
+    Question,
+    Colon,
 }
 
 fn tokenize(expression: &str) -> Result<Vec<Token>, Error> {
@@ -444,6 +486,10 @@ fn tokenize(expression: &str) -> Result<Vec<Token>, Error> {
             '-' => tokens.push(Token::Minus),
             '*' => tokens.push(Token::Star),
             '/' => tokens.push(Token::Slash),
+            '%' => tokens.push(Token::Percent),
+            ',' => tokens.push(Token::Comma),
+            '?' => tokens.push(Token::Question),
+            ':' => tokens.push(Token::Colon),
             '=' => {
                 if chars.peek() == Some(&'=') {
                     chars.next();
@@ -531,6 +577,27 @@ impl<'a> Parser<'a> {
 
     fn peek_is(&self, token: &Token) -> bool {
         self.tokens.get(self.at) == Some(token)
+    }
+
+    fn ternary_expression(&mut self) -> Result<Value, Error> {
+        let condition = self.or_expression()?;
+        if self.peek_is(&Token::Question) {
+            self.at += 1;
+            let then_branch = self.ternary_expression()?;
+            if self.next() != Some(Token::Colon) {
+                return Err(self.error("expected `:` in a ternary expression"));
+            }
+            let else_branch = self.ternary_expression()?;
+            let holds = condition.as_flag()
+                || self.number(&condition).unwrap_or(0.0) != 0.0;
+            if holds {
+                Ok(then_branch)
+            } else {
+                Ok(else_branch)
+            }
+        } else {
+            Ok(condition)
+        }
     }
 
     fn or_expression(&mut self) -> Result<Value, Error> {
@@ -638,17 +705,22 @@ impl<'a> Parser<'a> {
         loop {
             let token = self.tokens.get(self.at).cloned();
             let number = match token {
-                Some(Token::Star) | Some(Token::Slash) => {
+                Some(Token::Star) | Some(Token::Slash) | Some(Token::Percent) => {
                     self.at += 1;
                     let right = self.unary_expression()?;
                     let left_number = self.number(&left)?;
                     let right_number = self.number(&right)?;
                     if token == Some(Token::Star) {
                         left_number * right_number
-                    } else if right_number == 0.0 {
-                        return Err(self.error("a division by zero"));
-                    } else {
+                    } else if token == Some(Token::Slash) {
+                        if right_number == 0.0 {
+                            return Err(self.error("a division by zero"));
+                        }
                         left_number / right_number
+                    } else if right_number == 0.0 {
+                        return Err(self.error("a modulo by zero"));
+                    } else {
+                        left_number % right_number
                     }
                 }
                 _ => return Ok(left),
@@ -682,26 +754,25 @@ impl<'a> Parser<'a> {
             Some(Token::Number(number)) => Ok(Value::Num(number)),
             Some(Token::Text(text)) => Ok(Value::Text(text)),
             Some(Token::Open) => {
-                let value = self.or_expression()?;
+                let value = self.ternary_expression()?;
                 if self.next() != Some(Token::Close) {
                     return Err(self.error("a bracket was not closed"));
                 }
                 Ok(value)
             }
             Some(Token::Name(name)) => {
+                if self.peek_is(&Token::Open) {
+                    return self.function_call(&name);
+                }
                 let Some(mut value) = self.values.get(&name).cloned() else {
                     return Err(Error::message(format!(
                         "the machine G-code template asks for `{name}`, which this slice has no value for"
                     )));
                 };
-                // `name[index]`, where the index is itself an expression.
+                // `name[index]`, where the index may nest further subscripts.
                 if self.peek_is(&Token::OpenIndex) {
                     self.at += 1;
-                    let index = self.or_expression()?;
-                    if !self.peek_is(&Token::CloseIndex) {
-                        return Err(self.error("a `[` was not closed"));
-                    }
-                    self.at += 1;
+                    let index = self.balanced_index_expression()?;
                     let at = self.index_of(&index)?;
                     value = match value {
                         Value::List(items) => items.get(at).cloned().unwrap_or(Value::Num(0.0)),
@@ -711,6 +782,66 @@ impl<'a> Parser<'a> {
                 Ok(value)
             }
             other => Err(self.error(&format!("unexpected {other:?}"))),
+        }
+    }
+
+    fn balanced_index_expression(&mut self) -> Result<Value, Error> {
+        let start = self.at;
+        let mut index_depth = 0i32;
+        while self.at < self.tokens.len() {
+            match self.tokens[self.at].clone() {
+                Token::OpenIndex => {
+                    index_depth += 1;
+                    self.at += 1;
+                }
+                Token::CloseIndex if index_depth == 0 => break,
+                Token::CloseIndex => {
+                    index_depth -= 1;
+                    self.at += 1;
+                }
+                _ => self.at += 1,
+            }
+        }
+        if self.at >= self.tokens.len() {
+            return Err(self.error("a `[` was not closed"));
+        }
+        let slice = self.tokens[start..self.at].to_vec();
+        self.at += 1;
+        let mut nested = Parser {
+            tokens: slice,
+            at: 0,
+            values: self.values,
+            expression: self.expression,
+        };
+        nested.ternary_expression()
+    }
+
+    fn function_call(&mut self, name: &str) -> Result<Value, Error> {
+        self.at += 1;
+        let mut args = Vec::new();
+        if !self.peek_is(&Token::Close) {
+            loop {
+                args.push(self.or_expression()?);
+                if self.peek_is(&Token::Close) {
+                    break;
+                }
+                if self.next() != Some(Token::Comma) {
+                    return Err(self.error("expected `,` between function arguments"));
+                }
+            }
+        }
+        if self.next() != Some(Token::Close) {
+            return Err(self.error("a function call was not closed"));
+        }
+        match name {
+            "max" => {
+                let mut best = f64::NEG_INFINITY;
+                for arg in args {
+                    best = best.max(self.number(&arg)?);
+                }
+                Ok(Value::Num(best))
+            }
+            other => Err(self.error(&format!("unknown function `{other}`"))),
         }
     }
 }
@@ -799,6 +930,17 @@ mod tests {
     }
 
     #[test]
+    fn if_without_a_space_after_if_is_still_a_branch() {
+        let mut values = Values::new();
+        values.set("cooling_filter_enabled", true);
+        let on = render("{if(cooling_filter_enabled)}on{endif}", &values).unwrap();
+        assert_eq!(on, "on");
+        values.set("cooling_filter_enabled", false);
+        let off = render("{if(cooling_filter_enabled)}on{endif}", &values).unwrap();
+        assert_eq!(off, "");
+    }
+
+    #[test]
     fn a_branch_inside_a_branch_needs_both() {
         let both = render(
             "{if bed_temp > 50}{if layer_height == 0.2}fine{endif}{endif}",
@@ -812,6 +954,72 @@ mod tests {
         )
         .unwrap();
         assert_eq!(neither, "");
+    }
+
+    #[test]
+    fn parenthesized_ternary_with_subscripts() {
+        let mut values = Values::new();
+        values.set_list("first_filaments", vec![Value::Num(2.0)]);
+        let text = render(
+            "{(first_filaments[0] != -1 ? first_filaments[0] : 0)}",
+            &values,
+        )
+        .unwrap();
+        assert_eq!(text, "2");
+    }
+
+    #[test]
+    fn nested_subscripts_in_index_expressions() {
+        let mut values = Values::new();
+        values.set_list("first_filaments", vec![Value::Num(0.0)]);
+        values.set_list("first_non_support_filaments", vec![Value::Num(-1.0)]);
+        values.set_list("nozzle_temperature_initial_layer", vec![Value::Num(220.0)]);
+        let text = render(
+            "{nozzle_temperature_initial_layer[(first_non_support_filaments[0] != -1 ? first_non_support_filaments[0] : (first_filaments[0] != -1 ? first_filaments[0] : 0))]}",
+            &values,
+        )
+        .unwrap();
+        assert_eq!(text, "220");
+    }
+
+    #[test]
+    fn ternary_expressions_work() {
+        let mut values = Values::new();
+        values.set_list(
+            "first_filaments",
+            vec![Value::Num(-1.0), Value::Num(2.0)],
+        );
+        let text = render(
+            "{first_filaments[0] != -1 ? first_filaments[0] : 0}",
+            &values,
+        )
+        .unwrap();
+        assert_eq!(text, "0");
+        let text = render(
+            "{first_filaments[1] != -1 ? first_filaments[1] : 0}",
+            &values,
+        )
+        .unwrap();
+        assert_eq!(text, "2");
+    }
+
+    #[test]
+    fn max_function_is_supported_in_expressions() {
+        let text =
+            render("{max((10/2), 200)}", &Values::new()).unwrap();
+        assert_eq!(text, "200");
+    }
+
+    #[test]
+    fn modulo_is_supported_in_expressions() {
+        let mut values = Values::new();
+        values.set("initial_no_support_filament_id", 1.0);
+        values.set_list(
+            "filament_map",
+            vec![Value::Num(3.0), Value::Num(5.0)],
+        );
+        let text = render("{filament_map[initial_no_support_filament_id] % 2}", &values).unwrap();
+        assert_eq!(text, "1");
     }
 
     #[test]

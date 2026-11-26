@@ -5,6 +5,8 @@
 //! `--http` serves streamable HTTP and refuses any address that is not a
 //! loopback interface.
 
+mod nonplanar;
+mod printers;
 mod server;
 
 use std::net::SocketAddr;
@@ -17,6 +19,7 @@ use rmcp::ServiceExt;
 use shale_core::{Engine, ResourcePaths, Session};
 use tokio_util::sync::CancellationToken;
 
+pub use printers::{AmsSlot, PrintJob, PrinterDirectory, PrinterView};
 pub use server::ShaleMcp;
 
 pub fn session_from_env() -> anyhow::Result<Session> {
@@ -33,7 +36,9 @@ pub async fn serve_stdio(server: ShaleMcp) -> anyhow::Result<()> {
         .serve(rmcp::transport::stdio())
         .await
         .context("stdio transport failed")?;
-    running.waiting().await?;
+    let stopped = running.waiting().await;
+    shale_core::cancel_engine_children();
+    stopped?;
     Ok(())
 }
 
@@ -59,6 +64,7 @@ pub async fn serve_http(server: ShaleMcp, address: SocketAddr) -> anyhow::Result
             token.cancel();
         })
         .await?;
+    shale_core::cancel_engine_children();
     Ok(())
 }
 

@@ -5,6 +5,8 @@
 //! slicer beside it.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,15 +16,39 @@ use crate::error::Error;
 use crate::gcode;
 use crate::instructions::CustomInstruction;
 use crate::job::{self, PlacedModel, SliceOutcome};
-use crate::mesh::{self, Transform, TriangleMesh};
+use crate::mesh::{self, BuildObject, PlateGroup, Transform, TriangleMesh};
+use crate::project_settings::{self, ProjectSettings, ProjectSettingsImport};
 use crate::resolver::{ResolveRequest, ResolvedSettings, UserSettings};
 use crate::supports::{self, SupportParams, SupportPlan};
+
+static SLICE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ModelRecord {
     pub id: u32,
     pub name: String,
     pub transform: Transform,
+}
+
+/// One plate a loaded 3MF can be sliced as.
+#[derive(Clone, Debug, Serialize)]
+pub struct SessionPlate {
+    /// 1-based plate number from the file.
+    pub number: u32,
+    pub name: String,
+    pub objects: usize,
+}
+
+/// What `load_model` put on the bed, plus the plates and project settings of the file.
+#[derive(Clone, Debug, Serialize)]
+pub struct LoadOutcome {
+    pub id: u32,
+    pub name: String,
+    pub transform: Transform,
+    pub models: Vec<ModelRecord>,
+    pub plates: Vec<SessionPlate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedded: Option<ProjectSettingsImport>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -49,11 +75,19 @@ pub struct JobSliceSummary {
     pub warnings: Vec<String>,
     pub gcode_path: String,
     pub flavour: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonplanar_safety_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonplanar_planar_equivalence_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonplanar_collision_fixes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonplanar_report: Option<shale_nonplanar::NonplanarReport>,
 }
 
 pub struct Session {
-    catalog: Catalog,
-    engine: Box<dyn SlicingEngine + Send + Sync>,
+    catalog: Arc<Catalog>,
+    engine: Arc<dyn SlicingEngine + Send + Sync>,
     printer_id: Option<String>,
     variant_name: Option<String>,
     quality_type: Option<String>,
@@ -66,6 +100,18 @@ pub struct Session {
     support: Option<SupportPlan>,
     support_model: Option<u32>,
     last: Option<SliceOutcome>,
+    source_path: Option<PathBuf>,
+    source_plates: Vec<PlateGroup>,
+    listed_plates: Vec<SessionPlate>,
+    project_settings: Option<ProjectSettings>,
+    ignore_project_settings: bool,
+    /// Suggestion ids hidden for this open project.
+    dismissed: Vec<String>,
+    /// Patches from the last `slice_variants`, so one of them can be applied.
+    variant_patches: Vec<SettingsPatch>,
+    /// G-code from the last comparison, addressed by the row index.
+    variant_outputs: Vec<VariantOutput>,
+    project_path: Option<PathBuf>,
 }
 
 struct Loaded {
@@ -74,30 +120,16 @@ struct Loaded {
     mesh: TriangleMesh,
     transform: Transform,
     settings: Vec<(String, String)>,
+    slot: Option<usize>,
 }
 
 impl Session {
     pub fn new(catalog: Catalog, engine: Box<dyn SlicingEngine + Send + Sync>) -> Self {
-        let printer_id = catalog.default_printer_id().or_else(|| {
-            catalog
-                .printer("demo_ender")
-                .map(|_| "demo_ender".to_string())
-                .or_else(|| catalog.printers().first().map(|printer| printer.id.clone()))
-        });
-        let (variant_name, quality_type, material_id) = printer_id
-            .as_deref()
-            .and_then(|id| catalog.printer(id))
-            .map(|printer| {
-                (
-                    printer.preferred_variant_name.clone(),
-                    printer.preferred_quality_type.clone(),
-                    printer.preferred_material.clone(),
-                )
-            })
-            .unwrap_or((None, None, None));
+        let catalog = Arc::new(catalog);
+        let (printer_id, variant_name, quality_type, material_id) = printer_defaults(&catalog);
         Self {
             catalog,
-            engine,
+            engine: Arc::from(engine),
             printer_id,
             variant_name,
             quality_type,
@@ -110,6 +142,15 @@ impl Session {
             support: None,
             support_model: None,
             last: None,
+            source_path: None,
+            source_plates: Vec::new(),
+            listed_plates: Vec::new(),
+            project_settings: None,
+            ignore_project_settings: false,
+            dismissed: Vec::new(),
+            variant_patches: Vec::new(),
+            variant_outputs: Vec::new(),
+            project_path: None,
         }
     }
 
@@ -173,6 +214,81 @@ impl Session {
     }
 
     pub fn load_model(&mut self, path: &Path) -> Result<ModelRecord, Error> {
+        let outcome = self.load_on_plate(path, None)?;
+        Ok(ModelRecord {
+            id: outcome.id,
+            name: outcome.name,
+            transform: outcome.transform,
+        })
+    }
+
+    /// Load one plate of a model. `plate` is the 1-based number from the file;
+    /// `None` is plate 1. A 3MF replaces whatever was loaded. An STL is added.
+    pub fn load_on_plate(&mut self, path: &Path, plate: Option<u32>) -> Result<LoadOutcome, Error> {
+        self.load_model_with(path, plate, false)
+    }
+
+    /// Like [`Self::load_on_plate`]. `add_to_plate` keeps models already on the
+    /// bed and appends the file. Without it, a 3MF replaces the plate.
+    pub fn load_model_with(
+        &mut self,
+        path: &Path,
+        plate: Option<u32>,
+        add_to_plate: bool,
+    ) -> Result<LoadOutcome, Error> {
+        let extension = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if extension == "3mf" {
+            let bytes = std::fs::read(path)?;
+            let objects = mesh::load_build_objects(&bytes)?;
+            let groups = mesh::assign_plates(objects, mesh::read_plate_groups(&bytes));
+            if groups.is_empty() {
+                return Err(Error::message("that file held no geometry"));
+            }
+            let number = plate.unwrap_or(1);
+            let chosen = groups
+                .iter()
+                .find(|(group, _)| group.number == number)
+                .or_else(|| groups.get(number.saturating_sub(1) as usize))
+                .ok_or_else(|| {
+                    Error::message(format!(
+                        "this file has no plate {number} (it has {})",
+                        groups.len()
+                    ))
+                })?;
+            let appending = add_to_plate && !self.models.is_empty();
+            if !appending {
+                self.models.clear();
+                self.support = None;
+                self.support_model = None;
+            }
+            self.last = None;
+            let records = self.push_plate(&chosen.1)?;
+            if appending {
+                if let Some(plate) = self.listed_plates.first_mut() {
+                    plate.objects = self.models.len();
+                }
+            } else {
+                self.source_path = Some(path.to_path_buf());
+                self.listed_plates = self.plate_list(&groups);
+                self.source_plates = groups.iter().map(|(group, _)| group.clone()).collect();
+                self.project_settings = project_settings::read_project_settings(&bytes);
+            }
+            let first = records.first().cloned().ok_or_else(|| {
+                Error::message("that plate held no geometry")
+            })?;
+            return Ok(LoadOutcome {
+                id: first.id,
+                name: first.name,
+                transform: first.transform,
+                models: records,
+                plates: self.listed_plates.clone(),
+                embedded: self.project_settings.as_ref().map(|project| project.summary.clone()),
+            });
+        }
         let mesh = mesh::load_mesh(path)?;
         let transform = self.placement(&mesh)?;
         let id = self.next_model;
@@ -193,8 +309,83 @@ impl Session {
             mesh,
             transform,
             settings: Vec::new(),
+            slot: None,
         });
-        Ok(record)
+        self.source_path = Some(path.to_path_buf());
+        self.source_plates.clear();
+        self.project_settings = None;
+        self.listed_plates = vec![SessionPlate {
+            number: 1,
+            name: String::new(),
+            objects: self.models.len(),
+        }];
+        Ok(LoadOutcome {
+            id: record.id,
+            name: record.name.clone(),
+            transform: record.transform.clone(),
+            models: vec![record],
+            plates: self.listed_plates.clone(),
+            embedded: None,
+        })
+    }
+
+    pub fn set_ignore_project_settings(&mut self, ignore: bool) {
+        self.ignore_project_settings = ignore;
+    }
+
+    pub fn project_import(&self) -> Option<&ProjectSettingsImport> {
+        self.project_settings.as_ref().map(|project| &project.summary)
+    }
+
+    fn plate_list(&self, groups: &[(PlateGroup, Vec<BuildObject>)]) -> Vec<SessionPlate> {
+        groups
+            .iter()
+            .map(|(group, objects)| SessionPlate {
+                number: group.number,
+                name: group.name.clone(),
+                objects: objects.len(),
+            })
+            .collect()
+    }
+
+    fn push_plate(&mut self, objects: &[BuildObject]) -> Result<Vec<ModelRecord>, Error> {
+        let meshes: Vec<TriangleMesh> = objects.iter().map(|object| object.mesh.clone()).collect();
+        let transform = if meshes.len() == 1 {
+            self.placement(&meshes[0])?
+        } else {
+            let resolved = self.resolve(None)?;
+            mesh::place_assembly(
+                &meshes,
+                resolved.summary.machine_width,
+                resolved.summary.machine_depth,
+                resolved.summary.machine_center_is_zero,
+            )
+        };
+        let mut records = Vec::new();
+        for object in objects {
+            let id = self.next_model;
+            self.next_model += 1;
+            let name = if object.name.trim().is_empty() {
+                format!("object {}", object.object_id)
+            } else {
+                object.name.clone()
+            };
+            let record = ModelRecord {
+                id,
+                name: name.clone(),
+                transform: transform.clone(),
+            };
+            self.models.push(Loaded {
+                id,
+                name,
+                mesh: object.mesh.clone(),
+                transform: transform.clone(),
+                settings: Vec::new(),
+                slot: None,
+            });
+            records.push(record);
+        }
+        Ok(records)
     }
 
     pub fn models(&self) -> Vec<ModelRecord> {
@@ -206,6 +397,54 @@ impl Session {
                 transform: model.transform.clone(),
             })
             .collect()
+    }
+
+    /// Drop models, settings, and the printer choice. The catalogue stays.
+    ///
+    /// One MCP process keeps one job until this is called, so a later task
+    /// does not inherit the previous printer, non-planar mode, or mesh.
+    pub fn clear_job(&mut self) {
+        let (printer_id, variant_name, quality_type, material_id) =
+            printer_defaults(&self.catalog);
+        self.printer_id = printer_id;
+        self.variant_name = variant_name;
+        self.quality_type = quality_type;
+        self.material_id = material_id;
+        self.settings = UserSettings::default();
+        self.models.clear();
+        self.next_model = 1;
+        self.instructions.clear();
+        self.next_instruction = 1;
+        self.support = None;
+        self.support_model = None;
+        self.last = None;
+        self.source_path = None;
+        self.source_plates.clear();
+        self.listed_plates.clear();
+        self.project_settings = None;
+        self.ignore_project_settings = false;
+        self.dismissed.clear();
+        self.variant_patches.clear();
+        self.variant_outputs.clear();
+        self.project_path = None;
+    }
+
+    /// Remove one loaded model. The others stay, with their rotation and scale.
+    pub fn remove_model(&mut self, id: u32) -> Result<Vec<ModelRecord>, Error> {
+        let before = self.models.len();
+        self.models.retain(|model| model.id != id);
+        if self.models.len() == before {
+            return Err(Error::message(format!("no model with id {id}")));
+        }
+        self.invalidate_support(id);
+        if self.models.is_empty() {
+            self.listed_plates.clear();
+        } else if let Some(plate) = self.listed_plates.first_mut() {
+            if self.source_plates.is_empty() {
+                plate.objects = self.models.len();
+            }
+        }
+        Ok(self.models())
     }
 
     pub fn transform_model(
@@ -232,12 +471,36 @@ impl Session {
         Ok(transform)
     }
 
+    /// Centre the part and drop it onto the bed. Rotation and scale stay as they are.
     pub fn arrange_model(&mut self, id: u32) -> Result<Transform, Error> {
         let mesh = self.model(id)?.mesh.clone();
-        let transform = self.placement(&mesh)?;
+        let pose = self.model(id)?.transform.clone();
+        let resolved = self.resolve(None)?;
+        let transform = mesh::centre_keeping_pose(
+            &mesh,
+            &pose,
+            resolved.summary.machine_width,
+            resolved.summary.machine_depth,
+            resolved.summary.machine_center_is_zero,
+        );
         self.model_mut(id)?.transform = transform.clone();
         self.invalidate_support(id);
         Ok(transform)
+    }
+
+    /// Plates from the last load. `number` is the same 1-based plate `load_on_plate` and `slice` take.
+    pub fn list_plates(&self) -> Vec<SessionPlate> {
+        if !self.listed_plates.is_empty() {
+            return self.listed_plates.clone();
+        }
+        if self.models.is_empty() {
+            return Vec::new();
+        }
+        vec![SessionPlate {
+            number: 1,
+            name: String::new(),
+            objects: self.models.len(),
+        }]
     }
 
     pub fn drop_model(&mut self, id: u32) -> Result<Transform, Error> {
@@ -288,6 +551,7 @@ impl Session {
     }
 
     pub fn set_settings(&mut self, patch: SettingsPatch) -> Result<(), Error> {
+        let settings = settings_from_patch(&self.catalog, &self.settings, &patch)?;
         if let Some(id) = patch.printer_id {
             self.set_printer(
                 &id,
@@ -306,21 +570,7 @@ impl Session {
                 self.material_id = patch.material_id;
             }
         }
-        if let Some(value) = patch.layer_height {
-            self.settings.layer_height = Some(value);
-        }
-        if let Some(value) = patch.infill_sparse_density {
-            self.settings.infill_sparse_density = Some(value);
-        }
-        if let Some(value) = patch.support_enable {
-            self.settings.support_enable = Some(value);
-        }
-        if let Some(value) = patch.material_print_temperature {
-            self.settings.material_print_temperature = Some(value);
-        }
-        if let Some(value) = patch.material_bed_temperature {
-            self.settings.material_bed_temperature = Some(value);
-        }
+        self.settings = settings;
         Ok(())
     }
 
@@ -366,6 +616,27 @@ impl Session {
         Ok(supports::analyse(&baked, &params))
     }
 
+    /// Detect features and plan non-planar surface bands without slicing. Returns
+    /// preview geometry for UI overlays plus an explainable placement report.
+    pub fn plan_nonplanar_auto(
+        &self,
+        model_id: u32,
+    ) -> Result<shale_nonplanar::AutoPlacementReport, Error> {
+        let model = self.model(model_id)?;
+        let baked = mesh::bake(&model.mesh, &model.transform);
+        let np = crate::nonplanar_bridge::to_nonplanar(&baked);
+        let layer_height = self.settings.layer_height.unwrap_or(0.2);
+        let options = self.settings.nonplanar.clone();
+        let analysis = crate::auto_spans::analyse_for_nonplanar(&baked);
+        let spans = crate::auto_spans::spans_for_auto(&analysis.spans);
+        Ok(shale_nonplanar::plan_auto_placement(
+            &np,
+            &spans,
+            &options,
+            layer_height,
+        ))
+    }
+
     pub fn propose_supports(
         &mut self,
         model_id: u32,
@@ -399,15 +670,611 @@ impl Session {
         &mut self,
         on_progress: &mut dyn FnMut(EngineProgress),
     ) -> Result<JobSliceSummary, Error> {
+        let prepared = self.prepare_slice()?;
+        let outcome = prepared.run(on_progress)?;
+        Ok(self.commit_slice(outcome))
+    }
+
+    /// Copy what a slice needs so the engine can run without holding the session.
+    ///
+    /// Embedded 3MF settings are already merged. A key the user set wins.
+    pub fn prepare_slice(&self) -> Result<PreparedSlice, Error> {
         let printer_id = self
             .printer_id
             .clone()
             .ok_or_else(|| Error::message("choose a printer before slicing"))?;
+        if self.models.is_empty() {
+            return Err(Error::message("import a model before slicing"));
+        }
+        let stamp = SLICE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let output = std::env::temp_dir().join("shale").join(format!(
+            "mcp-{}-{}.gcode",
+            std::process::id(),
+            stamp
+        ));
+        Ok(PreparedSlice {
+            catalog: Arc::clone(&self.catalog),
+            engine: Arc::clone(&self.engine),
+            printer_id,
+            variant_name: self.variant_name.clone(),
+            quality_type: self.quality_type.clone(),
+            material_id: self.material_id.clone(),
+            settings: self.effective_settings(),
+            models: self
+                .models
+                .iter()
+                .map(|model| PlacedModel {
+                    slot: model.slot,
+                    name: model.name.clone(),
+                    mesh: model.mesh.clone(),
+                    transform: model.transform.clone(),
+                    settings: model.settings.clone(),
+                })
+                .collect(),
+            instructions: self
+                .instructions
+                .iter()
+                .map(|(_, instruction)| instruction.clone())
+                .collect(),
+            support: self.support.clone(),
+            output,
+        })
+    }
+
+    pub fn commit_slice(&mut self, outcome: SliceOutcome) -> JobSliceSummary {
+        let summary = summary_of(&outcome);
+        self.last = Some(outcome);
+        summary
+    }
+
+    /// Slice every plate of the loaded 3MF. A file with one plate slices once.
+    pub fn slice_all_plates(
+        &mut self,
+        on_progress: &mut dyn FnMut(EngineProgress),
+    ) -> Result<Vec<JobSliceSummary>, Error> {
+        if self.source_plates.len() <= 1 {
+            return Ok(vec![self.slice(on_progress)?]);
+        }
+        let path = self
+            .source_path
+            .clone()
+            .ok_or_else(|| Error::message("load a model before slicing"))?;
+        let numbers: Vec<u32> = self.source_plates.iter().map(|plate| plate.number).collect();
+        let mut summaries = Vec::with_capacity(numbers.len());
+        for number in numbers {
+            self.load_on_plate(&path, Some(number))?;
+            summaries.push(self.slice(on_progress)?);
+        }
+        Ok(summaries)
+    }
+
+    /// Replace the loaded models with another plate of the same file.
+    pub fn reload_plate(&mut self, plate: u32) -> Result<LoadOutcome, Error> {
+        let path = self
+            .source_path
+            .clone()
+            .ok_or_else(|| Error::message("load a model before choosing a plate"))?;
+        self.load_on_plate(&path, Some(plate))
+    }
+
+    /// Time, filament, and cost from the last slice. Nothing is sliced again.
+    pub fn slice_stats(
+        &self,
+        price_per_kg: Option<f64>,
+        include_layers: bool,
+    ) -> Result<crate::SliceStats, Error> {
+        self.slice_stats_variant(price_per_kg, include_layers, None)
+    }
+
+    /// `variant` is a row index from [`Self::slice_variants`]. Omit it for the
+    /// last ordinary slice.
+    pub fn slice_stats_variant(
+        &self,
+        price_per_kg: Option<f64>,
+        include_layers: bool,
+        variant: Option<usize>,
+    ) -> Result<crate::SliceStats, Error> {
+        let (path, warnings) = self.stats_source(variant)?;
+        let text = std::fs::read_to_string(&path)?;
+        let diameter = self
+            .resolve(None)
+            .map(|resolved| resolved.summary.material_diameter)
+            .unwrap_or(1.75);
+        Ok(crate::slice_stats_from_gcode(
+            &text,
+            diameter,
+            price_per_kg.unwrap_or(0.0),
+            include_layers,
+            warnings,
+        ))
+    }
+
+    fn stats_source(&self, variant: Option<usize>) -> Result<(PathBuf, Vec<String>), Error> {
+        if let Some(index) = variant {
+            let kept = self.variant_output(index)?;
+            return Ok((kept.path.clone(), kept.warnings.clone()));
+        }
+        let outcome = self
+            .last
+            .as_ref()
+            .ok_or_else(|| Error::message("slice a model before asking for stats"))?;
+        Ok((
+            outcome.gcode_path.clone(),
+            outcome.resolved.warnings.clone(),
+        ))
+    }
+
+    fn variant_output(&self, index: usize) -> Result<&VariantOutput, Error> {
+        self.variant_outputs
+            .iter()
+            .find(|row| row.index == index)
+            .ok_or_else(|| {
+                Error::message(format!(
+                    "no variant {index}. compare_slices returned {} row(s). Call apply_variant with a row index, or pass that index to slice_stats, slice_summary, or export_gcode.",
+                    self.variant_outputs.len()
+                ))
+            })
+    }
+
+    /// Summary for one compared row. The current job is not changed.
+    pub fn variant_summary(&self, index: usize) -> Result<JobSliceSummary, Error> {
+        let kept = self.variant_output(index)?;
+        let text = std::fs::read_to_string(&kept.path).unwrap_or_default();
+        let stats = crate::slice_stats_from_gcode(&text, 1.75, 0.0, false, kept.warnings.clone());
+        let seconds = kept
+            .print_time_seconds
+            .or(stats.header_time_seconds)
+            .or(Some(stats.print_time_seconds));
+        let filament = if kept.filament_metres > 0.0 {
+            kept.filament_metres
+        } else {
+            stats.filament_metres
+        };
+        Ok(JobSliceSummary {
+            layer_count: stats.layers as usize,
+            print_time_seconds: seconds,
+            filament_metres: filament,
+            warning_count: kept.warnings.len(),
+            warnings: kept.warnings.clone(),
+            gcode_path: kept.path.display().to_string(),
+            flavour: String::new(),
+            nonplanar_safety_ok: None,
+            nonplanar_planar_equivalence_ok: None,
+            nonplanar_collision_fixes: None,
+            nonplanar_report: None,
+        })
+    }
+
+    /// How far the loaded models stick out of the bed, if at all.
+    pub fn bed_warnings(&self) -> Vec<String> {
+        let Ok(resolved) = self.resolve(None) else {
+            return Vec::new();
+        };
+        let width = resolved.summary.machine_width;
+        let depth = resolved.summary.machine_depth;
+        let height = resolved.summary.machine_height;
+        let centred = resolved.summary.machine_center_is_zero;
+        let mut overflow = [0.0_f64; 3];
+        for model in &self.models {
+            let baked = mesh::bake(&model.mesh, &model.transform);
+            let (min, max) = baked.bounds();
+            let limits = [width, depth, height];
+            for axis in 0..3 {
+                let low = min[axis] as f64;
+                let high = max[axis] as f64;
+                let limit = limits[axis];
+                let over = if centred && axis < 2 {
+                    let half = limit * 0.5;
+                    (-half - low).max(0.0).max(high - half)
+                } else {
+                    (-low).max(0.0).max(high - limit)
+                };
+                overflow[axis] = overflow[axis].max(over);
+            }
+        }
+        if overflow.iter().any(|millimetres| *millimetres > 0.5) {
+            vec![format!(
+                "plate extends outside the build volume (X {:.1} mm, Y {:.1} mm, Z {:.1} mm past the plate)",
+                overflow[0], overflow[1], overflow[2]
+            )]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Slice the same models once per patch, a few at a time, and compare them.
+    ///
+    /// The session's own settings are left alone. [`Self::apply_variant`] copies
+    /// one patch onto them afterwards.
+    pub fn slice_variants(
+        &mut self,
+        patches: Vec<SettingsPatch>,
+        concurrency: Option<usize>,
+        price_per_kg: Option<f64>,
+    ) -> Result<Vec<VariantComparison>, Error> {
+        if patches.is_empty() {
+            return Err(Error::message("slice_variants needs at least one patch"));
+        }
+        if patches.len() > 8 {
+            return Err(Error::message("slice_variants takes at most 8 patches"));
+        }
+        if self.printer_id.is_none() {
+            return Err(Error::message("choose a printer before slicing"));
+        }
+        if self.models.is_empty() {
+            return Err(Error::message("import a model before slicing"));
+        }
+        self.variant_patches = patches.clone();
+        let session: &Session = self;
+        let width = variant_worker_limit(concurrency);
+        let mut rows = Vec::with_capacity(patches.len());
+        for chunk in patches.chunks(width) {
+            let start = rows.len();
+            let mut batch = Vec::with_capacity(chunk.len());
+            std::thread::scope(|scope| {
+                let mut handles = Vec::with_capacity(chunk.len());
+                for (offset, patch) in chunk.iter().enumerate() {
+                    let index = start + offset;
+                    handles.push(scope.spawn(move || {
+                        session.slice_one_variant(index, patch, price_per_kg)
+                    }));
+                }
+                for (offset, handle) in handles.into_iter().enumerate() {
+                    let index = start + offset;
+                    batch.push(handle.join().unwrap_or_else(|_| VariantComparison {
+                        index,
+                        label: "variant".into(),
+                        print_time_seconds: None,
+                        filament_metres: 0.0,
+                        grams: 0.0,
+                        cost: 0.0,
+                        support_seconds: 0.0,
+                        warnings: Vec::new(),
+                        error: Some("a variant thread panicked".into()),
+                        apply_variant: variant_hint(index),
+                        gcode_path: None,
+                    }));
+                }
+            });
+            rows.extend(batch);
+        }
+        self.variant_outputs = rows
+            .iter()
+            .filter_map(|row| {
+                let path = row.gcode_path.clone()?;
+                Some(VariantOutput {
+                    index: row.index,
+                    path,
+                    print_time_seconds: row.print_time_seconds,
+                    filament_metres: row.filament_metres,
+                    warnings: row.warnings.clone(),
+                })
+            })
+            .collect();
+        Ok(rows)
+    }
+
+    /// Make one compared patch the current settings. `index` matches the row.
+    pub fn apply_variant(&mut self, index: usize) -> Result<SettingsPatch, Error> {
+        let patch = self
+            .variant_patches
+            .get(index)
+            .cloned()
+            .ok_or_else(|| {
+                Error::message(format!(
+                    "no variant {index}. slice_variants returned {} row(s)",
+                    self.variant_patches.len()
+                ))
+            })?;
+        self.set_settings(patch.clone())?;
+        Ok(patch)
+    }
+
+    /// Apply one suggestion's fix, then hide that suggestion on this project.
+    pub fn apply_suggestion(
+        &mut self,
+        id: &str,
+        query: crate::SuggestQuery,
+    ) -> Result<AppliedSuggestion, Error> {
+        let found = self.suggestions(query)?;
+        let suggestion = found
+            .into_iter()
+            .find(|item| item.id == id || item.rule_id == id)
+            .ok_or_else(|| Error::message(format!("no suggestion '{id}'")))?;
+        let fix = suggestion
+            .fix
+            .clone()
+            .ok_or_else(|| Error::message(format!("'{}' has nothing to apply", suggestion.title)))?;
+        let mut applied = Vec::new();
+        let mut skipped = Vec::new();
+        if !fix.settings.is_empty() || fix.nonplanar_mode.is_some() {
+            let mut patch = SettingsPatch {
+                nonplanar_mode: fix.nonplanar_mode.clone(),
+                settings: fix.settings.clone(),
+                ..SettingsPatch::default()
+            };
+            if let Some(kind) = fix.settings.get("adhesion_type") {
+                patch.adhesion_type = Some(kind.clone());
+                patch.settings.remove("adhesion_type");
+            }
+            if let Some(width) = fix.settings.get("brim_width") {
+                patch.brim_width = width.parse().ok();
+                patch.settings.remove("brim_width");
+            }
+            if let Some(structure) = fix.settings.get("support_structure") {
+                patch.support_structure = Some(structure.clone());
+                patch.settings.remove("support_structure");
+            }
+            self.set_settings(patch)?;
+            applied.push("plate settings".into());
+        }
+        for (object_id, settings) in &fix.object_settings {
+            let model_id = object_id.parse::<u32>().map_err(|_| {
+                Error::message(format!("suggestion names object '{object_id}', which is not a model id"))
+            })?;
+            let model = self.model_mut(model_id)?;
+            for (key, value) in settings {
+                model.settings.retain(|(existing, _)| existing != key);
+                model.settings.push((key.clone(), value.clone()));
+            }
+            applied.push(format!("object {object_id}"));
+        }
+        for (object_id, rotation) in &fix.rotations_deg {
+            let model_id = object_id.parse::<u32>().map_err(|_| {
+                Error::message(format!("suggestion names object '{object_id}', which is not a model id"))
+            })?;
+            self.transform_model(model_id, None, Some(*rotation), None)?;
+            applied.push(format!("turned object {object_id}"));
+        }
+        for (object_id, slot) in &fix.slots {
+            let model_id = object_id.parse::<u32>().map_err(|_| {
+                Error::message(format!("suggestion names object '{object_id}', which is not a model id"))
+            })?;
+            self.model_mut(model_id)?.slot = Some(*slot);
+            applied.push(format!("object {object_id} uses slot {slot}"));
+        }
+        if !fix.plates.is_empty() {
+            skipped.push(
+                "moving a model to another plate is done in the app, not from this session"
+                    .into(),
+            );
+        }
+        self.remember_dismissed(&suggestion.id);
+        Ok(AppliedSuggestion {
+            id: suggestion.id,
+            title: suggestion.title,
+            applied,
+            skipped,
+        })
+    }
+
+    /// Hide a suggestion. `forever` stores the rule id for every project.
+    pub fn dismiss_suggestion(&mut self, id: &str, forever: bool) -> Result<DismissedSuggestion, Error> {
+        if forever {
+            let found = self.suggestions(crate::SuggestQuery::default())?;
+            let rule = found
+                .iter()
+                .find(|item| item.id == id || item.rule_id == id)
+                .map(|item| item.rule_id.clone())
+                .unwrap_or_else(|| id.to_string());
+            crate::suggest::remember_global_dismissal(&crate::project::config_dir(), &rule)
+                .map_err(Error::message)?;
+            self.remember_dismissed(&rule);
+            return Ok(DismissedSuggestion {
+                id: rule,
+                scope: "always".into(),
+            });
+        }
+        self.remember_dismissed(id);
+        Ok(DismissedSuggestion {
+            id: id.to_string(),
+            scope: "project".into(),
+        })
+    }
+
+    pub fn list_recent_projects(&self) -> Result<Vec<crate::RecentEntry>, Error> {
+        crate::project::load_recents(&crate::project::config_dir())
+    }
+
+    /// Replace the session with a saved project and remember it in recents.
+    pub fn open_project(&mut self, path: &Path) -> Result<ProjectOutline, Error> {
+        let loaded = crate::project::read_project(path)?;
+        let data = loaded.data;
+        self.models.clear();
+        self.instructions.clear();
+        self.support = data.support.clone();
+        self.support_model = None;
+        self.last = None;
+        self.source_path = None;
+        self.source_plates.clear();
+        self.project_settings = None;
+        self.dismissed = data.dismissed_suggestions.clone();
+        self.variant_patches.clear();
+        self.variant_outputs.clear();
+        self.settings = data.settings.clone();
+        self.printer_id = Some(data.printer_id.clone());
+        self.variant_name = data.variant_name.clone();
+        self.quality_type = data.quality_type.clone();
+        self.material_id = data.material_id.clone();
+        self.project_path = Some(path.to_path_buf());
+        let cancel = AtomicBool::new(false);
+        let tolerance = crate::cad::TessellationTolerance::standard();
+        for model in &data.models {
+            let mut progress = |_: f32, _: &str| {};
+            let imported = mesh::load_named_bytes(
+                &model.name,
+                &model.bytes,
+                &tolerance,
+                &mut progress,
+                &cancel,
+            )?;
+            let id = self.next_model;
+            self.next_model += 1;
+            self.models.push(Loaded {
+                id,
+                name: model.name.clone(),
+                mesh: imported.mesh,
+                transform: model.transform.clone(),
+                settings: model.settings.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                slot: model.slot,
+            });
+        }
+        if let Some(index) = data.support_model {
+            self.support_model = self.models.get(index).map(|model| model.id);
+        }
+        for instruction in data.instructions {
+            let id = self.next_instruction;
+            self.next_instruction += 1;
+            self.instructions.push((id, instruction));
+        }
+        self.listed_plates = vec![SessionPlate {
+            number: 1,
+            name: data.plate_names.first().cloned().unwrap_or_default(),
+            objects: self.models.len(),
+        }];
+        let outline = ProjectOutline {
+            path: path.display().to_string(),
+            name: data.name.clone(),
+            printer_id: data.printer_id.clone(),
+            models: self.models.len(),
+            dismissed: self.dismissed.clone(),
+        };
+        let _ = crate::project::remember_recent(
+            &crate::project::config_dir(),
+            &crate::RecentEntry {
+                path: outline.path.clone(),
+                name: outline.name.clone(),
+                saved_at_ms: crate::project::now_ms(),
+                printer: outline.printer_id.clone(),
+                missing: false,
+            },
+        );
+        Ok(outline)
+    }
+
+    /// Write the session as a `.shale` project. Meshes are stored as STL.
+    pub fn save_project(&mut self, path: &Path) -> Result<ProjectOutline, Error> {
+        if self.models.is_empty() {
+            return Err(Error::message("import a model before saving a project"));
+        }
+        let printer_id = self
+            .printer_id
+            .clone()
+            .unwrap_or_else(|| "unknown".into());
+        let mut models = Vec::new();
+        for model in &self.models {
+            let bytes = mesh_stl_bytes(&model.mesh)?;
+            let mut settings = std::collections::BTreeMap::new();
+            for (key, value) in &model.settings {
+                settings.insert(key.clone(), value.clone());
+            }
+            models.push(crate::ProjectModel {
+                name: stl_name(&model.name),
+                bytes,
+                transform: model.transform.clone(),
+                settings,
+                slot: model.slot,
+                plate: 0,
+                painted: Vec::new(),
+                blocked: Vec::new(),
+            });
+        }
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("project")
+            .to_string();
+        let data = crate::ProjectData {
+            name: name.clone(),
+            printer_id: printer_id.clone(),
+            printer_label: printer_id.clone(),
+            variant_name: self.variant_name.clone(),
+            quality_type: self.quality_type.clone(),
+            material_id: self.material_id.clone(),
+            ams: Vec::new(),
+            settings: self.settings.clone(),
+            chord_mm: 0.1,
+            turn_deg: 15.0,
+            models,
+            plate_names: vec!["plate 1".into()],
+            instructions: self
+                .instructions
+                .iter()
+                .map(|(_, instruction)| instruction.clone())
+                .collect(),
+            support: self.support.clone(),
+            support_model: self.support_model.and_then(|id| {
+                self.models.iter().position(|model| model.id == id)
+            }),
+            thumbnail: Vec::new(),
+            dismissed_suggestions: self.dismissed.clone(),
+            suggestions_shown: Vec::new(),
+        };
+        crate::project::write_project(path, &data)?;
+        self.project_path = Some(path.to_path_buf());
+        let outline = ProjectOutline {
+            path: path.display().to_string(),
+            name,
+            printer_id,
+            models: self.models.len(),
+            dismissed: self.dismissed.clone(),
+        };
+        let _ = crate::project::remember_recent(
+            &crate::project::config_dir(),
+            &crate::RecentEntry {
+                path: outline.path.clone(),
+                name: outline.name.clone(),
+                saved_at_ms: crate::project::now_ms(),
+                printer: outline.printer_id.clone(),
+                missing: false,
+            },
+        );
+        Ok(outline)
+    }
+
+    fn remember_dismissed(&mut self, id: &str) {
+        if !self.dismissed.iter().any(|existing| existing == id) {
+            self.dismissed.push(id.to_string());
+        }
+    }
+
+    fn slice_one_variant(
+        &self,
+        index: usize,
+        patch: &SettingsPatch,
+        price_per_kg: Option<f64>,
+    ) -> VariantComparison {
+        let label = patch_label(patch);
+        let failed = |error: String| VariantComparison {
+            index,
+            label: label.clone(),
+            print_time_seconds: None,
+            filament_metres: 0.0,
+            grams: 0.0,
+            cost: 0.0,
+            support_seconds: 0.0,
+            warnings: Vec::new(),
+            error: Some(error),
+            apply_variant: variant_hint(index),
+            gcode_path: None,
+        };
+        let printer_id = match patch
+            .printer_id
+            .clone()
+            .or_else(|| self.printer_id.clone())
+        {
+            Some(id) => id,
+            None => return failed("choose a printer before slicing".into()),
+        };
+        let settings = match settings_from_patch(&self.catalog, &self.effective_settings(), patch) {
+            Ok(settings) => settings,
+            Err(err) => return failed(err.to_string()),
+        };
         let placed: Vec<PlacedModel> = self
             .models
             .iter()
             .map(|model| PlacedModel {
-                slot: None,
+                slot: model.slot,
                 name: model.name.clone(),
                 mesh: model.mesh.clone(),
                 transform: model.transform.clone(),
@@ -419,27 +1286,160 @@ impl Session {
             .iter()
             .map(|(_, instruction)| instruction.clone())
             .collect();
-        let output = std::env::temp_dir()
-            .join("shale")
-            .join(format!("mcp-{}.gcode", std::process::id()));
-        let outcome = job::slice(
+        let stamp = SLICE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let output = std::env::temp_dir().join("shale").join(format!(
+            "mcp-{}-variant-{}-{}.gcode",
+            std::process::id(),
+            index,
+            stamp
+        ));
+        let variant = patch.variant_name.clone().or_else(|| self.variant_name.clone());
+        let quality = patch.quality_type.clone().or_else(|| self.quality_type.clone());
+        let material = patch.material_id.clone().or_else(|| self.material_id.clone());
+        match job::slice(
             &self.catalog,
             self.engine.as_ref(),
             &printer_id,
-            self.variant_name.clone(),
-            self.quality_type.clone(),
-            std::slice::from_ref(&self.material_id),
-            self.settings.clone(),
+            variant,
+            quality,
+            std::slice::from_ref(&material),
+            settings,
             &placed,
             &instructions,
             self.support.as_ref(),
             &[],
             output,
-            on_progress,
-        )?;
-        let summary = summary_of(&outcome);
-        self.last = Some(outcome);
-        Ok(summary)
+            &mut |_| {},
+        ) {
+            Ok(outcome) => {
+                let text = std::fs::read_to_string(&outcome.gcode_path).unwrap_or_default();
+                let stats = crate::slice_stats_from_gcode(
+                    &text,
+                    1.75,
+                    price_per_kg.unwrap_or(0.0),
+                    false,
+                    outcome.resolved.warnings.clone(),
+                );
+                let seconds = outcome.print_time_seconds.or(Some(stats.print_time_seconds));
+                let metres = if outcome.filament_metres > 0.0 {
+                    outcome.filament_metres
+                } else {
+                    stats.filament_metres
+                };
+                VariantComparison {
+                    index,
+                    label,
+                    print_time_seconds: seconds,
+                    filament_metres: metres,
+                    grams: stats.grams,
+                    cost: stats.cost,
+                    support_seconds: stats.support_seconds,
+                    warnings: stats.warnings,
+                    error: None,
+                    apply_variant: variant_hint(index),
+                    gcode_path: Some(outcome.gcode_path),
+                }
+            }
+            Err(err) => failed(err.to_string()),
+        }
+    }
+
+    /// Suggestions for the models on the bed. Rules are pure and do not slice.
+    pub fn suggestions(&self, query: crate::SuggestQuery) -> Result<Vec<crate::Suggestion>, Error> {
+        let resolved = self.resolve(None)?;
+        let summary = &resolved.summary;
+        let mut settings = std::collections::BTreeMap::new();
+        settings.insert("adhesion_type".into(), summary.adhesion_type.clone());
+        settings.insert("line_width".into(), format!("{:.3}", summary.line_width));
+        settings.insert("speed_print".into(), format!("{:.0}", summary.speed_print));
+        settings.insert(
+            "support_enable".into(),
+            if summary.support_enable { "1" } else { "0" }.into(),
+        );
+        settings.insert(
+            "material_bed_temperature".into(),
+            format!("{:.0}", summary.bed_temperature),
+        );
+        let user = self.effective_settings();
+        if let Some(enabled) = user.support_enable {
+            settings.insert("support_enable".into(), if enabled { "1" } else { "0" }.into());
+        }
+        for (key, value) in &user.extra {
+            settings.insert(key.clone(), value.clone());
+        }
+        let mut slots: Vec<crate::FilamentSlot> = query
+            .slots
+            .iter()
+            .cloned()
+            .map(crate::SlotQuery::into_slot)
+            .collect();
+        if slots.is_empty() {
+            let label = self.material_id.clone().unwrap_or_else(|| "PLA".into());
+            slots.push(crate::FilamentSlot {
+                index: 0,
+                material_id: label.clone(),
+                filament_type: label,
+                colour: String::new(),
+                loaded: true,
+            });
+        }
+        let gcode = self
+            .last
+            .as_ref()
+            .and_then(|outcome| std::fs::read_to_string(&outcome.gcode_path).ok())
+            .map(|text| crate::gcode_facts(&text));
+        let objects = self
+            .models
+            .iter()
+            .map(|model| crate::SceneObject {
+                id: model.id.to_string(),
+                name: model.name.clone(),
+                mesh: model.mesh.clone(),
+                transform: model.transform.clone(),
+                plate: 0,
+                settings: model.settings.iter().cloned().collect(),
+                slot: None,
+            })
+            .collect();
+        let scene = crate::Scene {
+            objects,
+            printer: crate::PrinterFacts {
+                id: resolved.printer_id.clone(),
+                name: summary.printer_name.clone(),
+                bed_width_mm: summary.machine_width,
+                bed_depth_mm: summary.machine_depth,
+                bed_height_mm: summary.machine_height,
+                nozzle_mm: summary.nozzle_size,
+                line_width_mm: summary.line_width,
+                speed_mm_s: summary.speed_print,
+                bed_temperature_c: summary.bed_temperature,
+                enclosed: crate::printer_is_enclosed(&resolved.printer_id),
+                multi_material: query.multi_material.unwrap_or(slots.len() > 1),
+            },
+            slots,
+            device_slots: query
+                .device_slots
+                .map(|slots| slots.into_iter().map(crate::SlotQuery::into_slot).collect()),
+            humidity_percent: query.humidity_percent,
+            hours_since_dry: query.hours_since_dry,
+            settings,
+            gcode,
+            nonplanar_mode: query
+                .nonplanar_mode
+                .unwrap_or_else(|| self.settings.nonplanar.mode.name().to_string()),
+            tags: query.tags,
+            dismissed: merged_ids(&query.dismissed, &self.dismissed),
+            global_dismissed: merged_ids(
+                &query.global_dismissed,
+                &crate::suggest::read_global_dismissals(&crate::project::config_dir()),
+            ),
+            shown_once: query.shown_once,
+        };
+        let found = crate::suggest::evaluate(&scene);
+        Ok(match query.limit {
+            Some(limit) => found.into_iter().take(limit).collect(),
+            None => found,
+        })
     }
 
     pub fn summary(&self) -> Option<JobSliceSummary> {
@@ -447,13 +1447,25 @@ impl Session {
     }
 
     pub fn export_gcode(&self, path: &Path) -> Result<PathBuf, Error> {
-        let Some(last) = &self.last else {
-            return Err(Error::message("slice a model before exporting G-code"));
+        self.export_variant(path, None)
+    }
+
+    /// `variant` copies that comparison's G-code. Omit it for the last slice.
+    pub fn export_variant(&self, path: &Path, variant: Option<usize>) -> Result<PathBuf, Error> {
+        let source = if let Some(index) = variant {
+            self.variant_output(index)?.path.clone()
+        } else {
+            let Some(last) = &self.last else {
+                return Err(Error::message(
+                    "slice a model before exporting G-code. After compare_slices, pass the row index.",
+                ));
+            };
+            last.gcode_path.clone()
         };
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::copy(&last.gcode_path, path)?;
+        std::fs::copy(&source, path)?;
         Ok(path.to_path_buf())
     }
 
@@ -492,14 +1504,31 @@ impl Session {
             quality_type: self.quality_type.clone(),
             material_id: self.material_id.clone(),
             intent_category: None,
-            settings: self.settings.clone(),
+            settings: self.effective_settings(),
         })
     }
 
+    /// User overrides, then the 3MF's embedded process settings, then the profile.
+    fn effective_settings(&self) -> UserSettings {
+        let mut settings = self.settings.clone();
+        if !self.ignore_project_settings {
+            if let Some(project) = &self.project_settings {
+                project_settings::apply_project_settings(&mut settings, project);
+            }
+        }
+        settings
+    }
+
     fn printer<'a>(&'a self, override_id: Option<&'a str>) -> Result<&'a str, Error> {
-        override_id
+        let id = override_id
             .or(self.printer_id.as_deref())
-            .ok_or_else(|| Error::message("choose a printer first"))
+            .ok_or_else(|| Error::message("choose a printer first"))?;
+        // An explicit id that is not a definition used to come back as an empty
+        // profile list, which an agent reads as "this printer has no profiles".
+        if self.catalog.printer(id).is_none() {
+            return Err(Error::UnknownPrinter(id.to_string()));
+        }
+        Ok(id)
     }
 
     fn model(&self, id: u32) -> Result<&Loaded, Error> {
@@ -539,6 +1568,316 @@ pub struct SettingsPatch {
     pub support_enable: Option<bool>,
     pub material_print_temperature: Option<f64>,
     pub material_bed_temperature: Option<f64>,
+    pub nonplanar_mode: Option<String>,
+    pub nonplanar_max_angle_deg: Option<f64>,
+    /// Turn an unverifiable curved slice into an error instead of a planar fallback.
+    pub nonplanar_strict: Option<bool>,
+    /// `none`, `skirt`, or `brim`. Written as Cura's `adhesion_type`.
+    pub adhesion_type: Option<String>,
+    /// Brim width in millimetres. Used with `adhesion_type: brim`.
+    pub brim_width: Option<f64>,
+    /// `normal` or `tree`. `auto` is reserved and refused until the engine has it.
+    pub support_structure: Option<String>,
+    /// Any other Cura key, the same as the CLI `--set KEY=VALUE`. Unknown keys
+    /// are an error that names a close match when there is one.
+    #[serde(default)]
+    pub settings: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct VariantComparison {
+    pub index: usize,
+    pub label: String,
+    pub print_time_seconds: Option<f64>,
+    pub filament_metres: f64,
+    pub grams: f64,
+    pub cost: f64,
+    pub support_seconds: f64,
+    pub warnings: Vec<String>,
+    pub error: Option<String>,
+    /// Tells the caller to use [`Session::apply_variant`] with this index.
+    pub apply_variant: String,
+    /// Kept so `slice_stats` can read this row. Not part of the tool JSON.
+    #[serde(skip)]
+    pub gcode_path: Option<PathBuf>,
+}
+
+struct VariantOutput {
+    index: usize,
+    path: PathBuf,
+    print_time_seconds: Option<f64>,
+    filament_metres: f64,
+    warnings: Vec<String>,
+}
+
+fn variant_hint(index: usize) -> String {
+    format!(
+        "Call apply_variant with index {index} to make this patch the current settings. slice_stats, slice_summary, and export_gcode take the same index."
+    )
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AppliedSuggestion {
+    pub id: String,
+    pub title: String,
+    pub applied: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DismissedSuggestion {
+    pub id: String,
+    /// `project` hides it here. `always` hides the rule in every project.
+    pub scope: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ProjectOutline {
+    pub path: String,
+    pub name: String,
+    pub printer_id: String,
+    pub models: usize,
+    pub dismissed: Vec<String>,
+}
+
+/// One slice, detached from the session lock so a long engine run can be polled.
+pub struct PreparedSlice {
+    catalog: Arc<Catalog>,
+    engine: Arc<dyn SlicingEngine + Send + Sync>,
+    printer_id: String,
+    variant_name: Option<String>,
+    quality_type: Option<String>,
+    material_id: Option<String>,
+    settings: UserSettings,
+    models: Vec<PlacedModel>,
+    instructions: Vec<CustomInstruction>,
+    support: Option<SupportPlan>,
+    output: PathBuf,
+}
+
+impl PreparedSlice {
+    pub fn run(
+        &self,
+        on_progress: &mut dyn FnMut(EngineProgress),
+    ) -> Result<SliceOutcome, Error> {
+        job::slice(
+            &self.catalog,
+            self.engine.as_ref(),
+            &self.printer_id,
+            self.variant_name.clone(),
+            self.quality_type.clone(),
+            std::slice::from_ref(&self.material_id),
+            self.settings.clone(),
+            &self.models,
+            &self.instructions,
+            self.support.as_ref(),
+            &[],
+            self.output.clone(),
+            on_progress,
+        )
+    }
+}
+
+fn printer_defaults(
+    catalog: &Catalog,
+) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+    let printer_id = catalog.default_printer_id().or_else(|| {
+        catalog
+            .printer("demo_ender")
+            .map(|_| "demo_ender".to_string())
+            .or_else(|| catalog.printers().first().map(|printer| printer.id.clone()))
+    });
+    let (variant_name, quality_type, material_id) = printer_id
+        .as_deref()
+        .and_then(|id| catalog.printer(id))
+        .map(|printer| {
+            (
+                printer.preferred_variant_name.clone(),
+                printer.preferred_quality_type.clone(),
+                printer.preferred_material.clone(),
+            )
+        })
+        .unwrap_or((None, None, None));
+    (printer_id, variant_name, quality_type, material_id)
+}
+
+fn settings_from_patch(
+    catalog: &Catalog,
+    base: &UserSettings,
+    patch: &SettingsPatch,
+) -> Result<UserSettings, Error> {
+    let mut settings = base.clone();
+    if let Some(value) = patch.layer_height {
+        settings.layer_height = Some(value);
+    }
+    if let Some(value) = patch.infill_sparse_density {
+        settings.infill_sparse_density = Some(value);
+    }
+    if let Some(value) = patch.support_enable {
+        settings.support_enable = Some(value);
+    }
+    if let Some(value) = patch.material_print_temperature {
+        settings.material_print_temperature = Some(value);
+    }
+    if let Some(value) = patch.material_bed_temperature {
+        settings.material_bed_temperature = Some(value);
+    }
+    if let Some(mode) = &patch.nonplanar_mode {
+        settings.nonplanar.mode = shale_nonplanar::NonplanarMode::from_cli_name(mode)
+            .unwrap_or(shale_nonplanar::NonplanarMode::Off);
+    }
+    if let Some(angle) = patch.nonplanar_max_angle_deg {
+        settings.nonplanar.max_angle_deg = angle;
+    }
+    if let Some(strict) = patch.nonplanar_strict {
+        settings.nonplanar.strict = strict;
+    }
+    if let Some(kind) = &patch.adhesion_type {
+        let kind = kind.trim().to_ascii_lowercase();
+        if !matches!(kind.as_str(), "none" | "skirt" | "brim") {
+            return Err(Error::message(
+                "adhesion must be none, skirt, or brim".to_string(),
+            ));
+        }
+        store_setting(catalog, &mut settings, "adhesion_type", kind)?;
+    }
+    if let Some(width) = patch.brim_width {
+        if !(0.0..=50.0).contains(&width) {
+            return Err(Error::message(
+                "brim width must be between 0 and 50 mm".to_string(),
+            ));
+        }
+        store_setting(catalog, &mut settings, "brim_width", format!("{width}"))?;
+    }
+    if let Some(structure) = &patch.support_structure {
+        let structure = structure.trim().to_ascii_lowercase();
+        match structure.as_str() {
+            "normal" | "tree" => {
+                store_setting(catalog, &mut settings, "support_structure", structure)?;
+            }
+            "auto" => {
+                return Err(Error::message(
+                    "support structure 'auto' is not available on this engine yet. Use normal or tree."
+                        .to_string(),
+                ));
+            }
+            _ => {
+                return Err(Error::message(
+                    "support_structure must be normal, tree, or auto".to_string(),
+                ));
+            }
+        }
+    }
+    for (key, value) in &patch.settings {
+        store_setting(catalog, &mut settings, key, value.clone())?;
+    }
+    Ok(settings)
+}
+
+fn store_setting(
+    catalog: &Catalog,
+    settings: &mut UserSettings,
+    key: &str,
+    value: String,
+) -> Result<(), Error> {
+    if !catalog.has_setting(key) {
+        let message = match catalog.nearest_setting(key) {
+            Some(name) => format!("unknown setting '{key}'. Did you mean '{name}'?"),
+            None => format!("unknown setting '{key}'"),
+        };
+        return Err(Error::message(message));
+    }
+    settings.extra.retain(|(existing, _)| existing != key);
+    settings.extra.push((key.to_string(), value));
+    Ok(())
+}
+
+fn variant_worker_limit(requested: Option<usize>) -> usize {
+    if let Some(count) = requested {
+        return count.clamp(1, 3);
+    }
+    let cpus = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(2);
+    let memory_kb = std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|text| {
+            text.lines().find_map(|line| {
+                let rest = line.strip_prefix("MemAvailable:")?;
+                rest.split_whitespace().next()?.parse::<u64>().ok()
+            })
+        })
+        .unwrap_or(8_000_000);
+    if memory_kb < 2_000_000 || cpus < 2 {
+        1
+    } else if memory_kb >= 6_000_000 && cpus >= 4 {
+        3
+    } else {
+        2
+    }
+}
+
+fn patch_label(patch: &SettingsPatch) -> String {
+    let mut bits = Vec::new();
+    if let Some(value) = patch.layer_height {
+        bits.push(format!("layer {value} mm"));
+    }
+    if let Some(value) = patch.infill_sparse_density {
+        bits.push(format!("infill {value}%"));
+    }
+    if let Some(value) = patch.support_enable {
+        bits.push(if value {
+            "supports on".into()
+        } else {
+            "supports off".into()
+        });
+    }
+    if let Some(value) = &patch.support_structure {
+        bits.push(format!("{value} supports"));
+    }
+    if let Some(value) = &patch.adhesion_type {
+        bits.push(format!("{value} adhesion"));
+    }
+    if bits.is_empty() {
+        "current settings".into()
+    } else {
+        bits.join(", ")
+    }
+}
+
+fn merged_ids(primary: &[String], extra: &[String]) -> Vec<String> {
+    let mut out = primary.to_vec();
+    for id in extra {
+        if !out.iter().any(|existing| existing == id) {
+            out.push(id.clone());
+        }
+    }
+    out
+}
+
+fn stl_name(name: &str) -> String {
+    let path = Path::new(name);
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("stl") => name.to_string(),
+        _ => format!(
+            "{}.stl",
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("model")
+        ),
+    }
+}
+
+fn mesh_stl_bytes(mesh: &TriangleMesh) -> Result<Vec<u8>, Error> {
+    let path = std::env::temp_dir().join(format!(
+        "shale-stl-{}-{}.stl",
+        std::process::id(),
+        SLICE_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    mesh::write_binary_stl(&path, mesh)?;
+    let bytes = std::fs::read(&path)?;
+    let _ = std::fs::remove_file(&path);
+    Ok(bytes)
 }
 
 const DEFAULT_KEYS: &[&str] = &[
@@ -567,6 +1906,7 @@ fn summary_of(outcome: &SliceOutcome) -> JobSliceSummary {
             &std::fs::read_to_string(&outcome.gcode_path).unwrap_or_default(),
         )
     };
+    let nonplanar = outcome.nonplanar_report.as_ref();
     JobSliceSummary {
         layer_count: outcome.toolpath.layers.len(),
         print_time_seconds: outcome.print_time_seconds,
@@ -575,5 +1915,9 @@ fn summary_of(outcome: &SliceOutcome) -> JobSliceSummary {
         warnings: outcome.resolved.warnings.clone(),
         gcode_path: outcome.gcode_path.display().to_string(),
         flavour: outcome.flavour.name().to_string(),
+        nonplanar_safety_ok: nonplanar.and_then(|r| r.safety.as_ref().map(|s| s.ok)),
+        nonplanar_planar_equivalence_ok: nonplanar.map(|r| r.planar_equivalence_ok),
+        nonplanar_collision_fixes: nonplanar.map(|r| r.collision_adjustments.len()),
+        nonplanar_report: outcome.nonplanar_report.clone(),
     }
 }

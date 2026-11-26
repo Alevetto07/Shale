@@ -11,7 +11,7 @@ pub mod cli;
 mod proto;
 
 pub use arcus::ArcusEngine;
-pub use cli::CliEngine;
+pub use cli::{cancel_engine_children, clear_engine_cancel, CliEngine};
 
 use std::collections::BTreeMap;
 use std::env;
@@ -72,11 +72,27 @@ pub struct LiveLayer {
     pub paths: Vec<LivePath>,
 }
 
+/// Figures from the G-code file, or from the CuraEngine log when that file
+/// is still empty.
+///
+/// The header `;TIME:` is often still the 6666 placeholder at this point.
+/// `print_time_seconds` is the latest `;TIME_ELAPSED:` (or a real `;TIME:`),
+/// or `Print time (s)` from the log. It is never the engine's "accomplished
+/// in" compute time. `filament_metres` is extrusion seen so far.
+#[derive(Clone, Debug)]
+pub struct ExportSnapshot {
+    pub layers_written: u32,
+    pub estimated_layers: u32,
+    pub print_time_seconds: Option<f64>,
+    pub filament_metres: f64,
+}
+
 #[derive(Clone, Debug)]
 pub struct EngineProgress {
     pub fraction: f32,
     pub message: String,
     pub layer: Option<LiveLayer>,
+    pub partial: Option<ExportSnapshot>,
 }
 
 impl EngineProgress {
@@ -85,6 +101,7 @@ impl EngineProgress {
             fraction,
             message: message.into(),
             layer: None,
+            partial: None,
         }
     }
 }

@@ -95,6 +95,9 @@
           "resolve": "any(extruderValues('support_enable'))"
         },
         "adhesion_type": { "type": "enum", "default_value": "brim" },
+        "brim_width": { "type": "float", "default_value": 8 },
+        "support_structure": { "type": "enum", "default_value": "normal" },
+        "draft_shield": { "type": "enum", "default_value": "disabled" },
         "broken_setting": { "type": "float", "default_value": 1, "value": "nope(" }
       }
     }

@@ -15,7 +15,9 @@ import {
   type OverhangPatch,
   type OpenedProject,
   type PlateSwitch,
+  type FitWarning,
   type PlateView,
+  type ProjectSettingsImport,
   type PreviewPath,
   type PrinterInfo,
   type QualityInfo,
@@ -26,17 +28,28 @@ import {
   type TowerBuilt,
   type Transform,
   type VariantInfo,
+  DEFAULT_NONPLANAR,
+  type NonplanarReportView,
+  type NonplanarSettings,
+  type Suggestion,
 } from "./api";
+import { Suggestions } from "./Suggestions";
 import { worldCentre, translationForCentre } from "./coords";
-import { StartScreen } from "./StartScreen";
-import { DevicePane, TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
+import { StartScreen, type StartPanel } from "./StartScreen";
+import { AppSidebar, readSidebarCollapsed, writeSidebarCollapsed } from "./AppSidebar";
+import { TitleBarNav } from "./TitleBarNav";
+import { TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
 import { FeatureLegend } from "./Legend";
 import { thumbnailJpeg } from "./thumbnail";
 import { variantOptionLabel } from "./profile-labels";
-import { Frame, meter, track } from "./theme";
+import { toast } from "sonner";
+import { Frame } from "./theme";
 import { MenuBar } from "./MenuBar";
+import { Dialog } from "./ui/dialog";
+import { SliceDock } from "./ui/slice-dock";
 import { applyUiStyle, readUiStyle, writeUiStyle, type UiStyleId } from "./ui-styles";
 import {
+  nonplanarFromSliceSettings,
   overridesFromSliceSettings,
   QUICK_SETTING_KEYS,
   quickSettingsView,
@@ -44,16 +57,40 @@ import {
 } from "./engine-settings";
 import type { QuickFallbacks } from "./ProcessSheet";
 import { pickQualityType } from "./profile-pick";
+import type { Section } from "./settings-meta";
+import { NonPlanarPanel } from "./ui/non-planar-panel";
+import { sliceStage } from "./ui/slice-stage";
 import { TitleBar } from "./TitleBar";
-import { SetupWizard } from "./SetupWizard";
+import {
+  CommandPalette,
+  Meter,
+  NumericControl,
+  Select,
+  Slider,
+  SwitchRow,
+  TextField,
+  ThemedToaster,
+  TooltipProvider,
+  toastUndo,
+} from "./ui";
+import { buildCommandPaletteItems, nextUiStyle } from "./command-palette-items";
+import { isPaletteShortcut } from "./ui/motion";
+import { ShellFrame } from "./ui/shell-frame";
+import { PaneFade, ViewSwap } from "./ui/view-swap";
+import { UiShowcase } from "./UiShowcase";
 import { shouldShowSetupWizard } from "./setup-wizard";
 import { useRecents } from "./recents";
-import type { TransformMode, ViewStyle, ColourMode } from "./Viewport";
+import { slopeRampFromDocument, type TransformMode, type ViewStyle, type ColourMode } from "./viewport-style";
 
 const Viewport = lazy(() =>
   import("./Viewport").then((module) => ({ default: module.Viewport })),
 );
-import { AsciiCheck, AsciiField, AsciiSelect, AsciiStepper } from "./widgets";
+const DevicePane = lazy(() =>
+  import("./DevicePane").then((module) => ({ default: module.DevicePane })),
+);
+const SetupWizard = lazy(() =>
+  import("./SetupWizard").then((module) => ({ default: module.SetupWizard })),
+);
 
 interface Progress {
   fraction: number;
@@ -184,6 +221,10 @@ export function App() {
   const [bed, setBed] = useState<Bed>(FALLBACK_BED);
   // Cura settings the user changed in the menu; anything absent is the profile's.
   const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<string[]>([]);
+  const [suggestionsShown, setSuggestionsShown] = useState<string[]>([]);
+  const suggestionsSeen = useRef<Set<string>>(new Set());
   useEffect(() => {
     overridesRef.current = overrides;
   }, [overrides]);
@@ -219,6 +260,10 @@ export function App() {
   /// The plates in this project. The one flagged `active` is the one `models`
   /// holds; the rest live in the backend until they are turned to.
   const [plates, setPlates] = useState<PlateView[]>([]);
+  const [fit, setFit] = useState<FitWarning | null>(null);
+  const [embedded, setEmbedded] = useState<ProjectSettingsImport | null>(null);
+  const [ignoreEmbedded, setIgnoreEmbedded] = useState(false);
+  const [confirmExport, setConfirmExport] = useState<null | "gcode" | "stl" | "3mf">(null);
   // Part counts are the backend's, because it holds the plates that are not in
   // front. A part arriving or leaving is the only thing that changes them.
   useEffect(() => {
@@ -255,6 +300,8 @@ export function App() {
   const [measureMarks, setMeasureMarks] = useState<Array<[number, number, number]>>([]);
   const [measureSpan, setMeasureSpan] = useState<MeasureSpan | null>(null);
   const [viewStyle, setViewStyle] = useState<ViewStyle>("solid");
+  const [cameraPreset, setCameraPreset] = useState<"iso" | "top" | "front">("iso");
+  const [cameraToken, setCameraToken] = useState(0);
   const [uiStyle, setUiStyle] = useState<UiStyleId>(() => readUiStyle());
   const [setupWizardOpen, setSetupWizardOpen] = useState(() => {
     if (import.meta.env.VITE_SHALE_MOCK === "1") {
@@ -267,6 +314,11 @@ export function App() {
     writeUiStyle(id);
     applyUiStyle(id);
   };
+  const [slopeRamp, setSlopeRamp] = useState(slopeRampFromDocument);
+  useEffect(() => {
+    setSlopeRamp(slopeRampFromDocument());
+  }, [uiStyle]);
+  const toggleUiStyle = () => chooseUiStyle(nextUiStyle(uiStyle));
   /// What the toolpath is coloured by, as Bambu's preview lets you choose.
   const [colourMode, setColourMode] = useState<ColourMode>("type");
   const [busy, setBusy] = useState(false);
@@ -288,6 +340,17 @@ export function App() {
   // The recent-projects list is data, not drawing: the Home panel is restyled
   // elsewhere and only asks this for what to show.
   const recents = useRecents();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const plateUndoRef = useRef<{ plates: PlateView[]; models: ModelView[]; selected: number | null } | null>(null);
+  const [startPanel, setStartPanel] = useState<StartPanel>("home");
+  const toggleSidebar = () => {
+    setSidebarCollapsed((value) => {
+      const next = !value;
+      writeSidebarCollapsed(next);
+      return next;
+    });
+  };
   const [notice, setNotice] = useState<string | null>(null);
   const restore = useRef<Restore | null>(null);
   const catalogLoadingRef = useRef(false);
@@ -347,12 +410,21 @@ export function App() {
     .join("|");
   const slicedPlate = useRef<string | null>(null);
 
+  const plateOverrides = useMemo(() => {
+    if (!embedded || ignoreEmbedded) return overrides;
+    const next = { ...overrides };
+    for (const setting of embedded.applied) {
+      if (!(setting.key in next)) next[setting.key] = setting.value;
+    }
+    return next;
+  }, [overrides, embedded, ignoreEmbedded]);
+
   const scopedOverrides = useMemo(
     () =>
       scope === "all"
-        ? overrides
+        ? plateOverrides
         : (models.find((m) => m.id === Number(scope))?.settings ?? {}),
-    [scope, overrides, models],
+    [scope, plateOverrides, models],
   );
 
   const quickFallbacks = useMemo(
@@ -374,7 +446,33 @@ export function App() {
     [profileValues, scopedOverrides, quickFallbacks],
   );
 
-  const engineSettings = useMemo(() => userSettingsForEngine(scopedOverrides), [scopedOverrides]);
+  const [nonplanar, setNonplanar] = useState<NonplanarSettings>(DEFAULT_NONPLANAR);
+  const [nonplanarReport, setNonplanarReport] = useState<NonplanarReportView | null>(null);
+  const [nonplanarOk, setNonplanarOk] = useState(true);
+  const [liveSlice, setLiveSliceState] = useState(() => {
+    try {
+      return window.localStorage.getItem("shale.live-slice") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const [settingsNonce, setSettingsNonce] = useState(0);
+  const [settingsSection, setSettingsSection] = useState<Section | null>(null);
+  const sliceQuiet = useRef<() => void>(() => undefined);
+
+  function setLiveSlice(next: boolean) {
+    setLiveSliceState(next);
+    try {
+      window.localStorage.setItem("shale.live-slice", next ? "1" : "0");
+    } catch {
+      // The preference is session-only when storage is blocked.
+    }
+  }
+
+  const engineSettings = useMemo(
+    () => userSettingsForEngine(scopedOverrides, nonplanar),
+    [scopedOverrides, nonplanar],
+  );
 
   const { layerHeight, infill, supports, nozzle, bed: bedTemp } = quick;
 
@@ -387,6 +485,7 @@ export function App() {
     quality,
     variant,
     scopedOverrides,
+    nonplanar,
   });
   const lastSlice = history.length > 0 ? history[history.length - 1] : null;
   const stale =
@@ -403,6 +502,29 @@ export function App() {
     setPrintSeconds(null);
     setFilamentMetres(null);
   }, [plateKey]);
+
+  useEffect(() => {
+    if (!printerId) return;
+    let cancelled = false;
+    void api
+      .nonplanarSupported(printerId)
+      .then((ok) => {
+        if (!cancelled) setNonplanarOk(ok);
+      })
+      .catch(() => {
+        if (!cancelled) setNonplanarOk(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [printerId]);
+
+  useEffect(() => {
+    if (!liveSlice || !stale || nonplanar.mode !== "off" || busy) return;
+    const id = window.setTimeout(() => sliceQuiet.current(), 1100);
+    return () => window.clearTimeout(id);
+  }, [liveSlice, stale, nonplanar.mode, settingsKey, busy]);
+
   const [enginePath, setEnginePath] = useState("");
   const [libDir, setLibDir] = useState("");
   const [backend, setBackend] = useState("cli");
@@ -716,6 +838,7 @@ export function App() {
         const next = await api.bed(printerId, variant, quality, material);
         if (cancelled) return;
         setBed(next);
+        setError((current) => (current && current.includes("unknown quality") ? null : current));
       } catch (err) {
         if (!cancelled) setError(messageOf(err));
       }
@@ -767,6 +890,8 @@ export function App() {
   // The sheet's numbers as they are right now, for a snapshot taken inside a
   // handler that would otherwise capture an older render's copy.
   const overridesRef = useRef<Record<string, string>>({});
+  const partSettingsTimer = useRef<number | null>(null);
+  const partSettingsPending = useRef<{ id: number; settings: Record<string, string> } | null>(null);
   const modelsRef = useRef<ModelView[]>(models);
   const lastEdit = useRef<{ key: string; at: number } | null>(null);
   const [historyDepth, setHistoryDepth] = useState({ past: 0, future: 0 });
@@ -1006,6 +1131,9 @@ export function App() {
       } else if (key === "y") {
         event.preventDefault();
         void actions.current.redo();
+      } else if (isPaletteShortcut(event)) {
+        event.preventDefault();
+        setCommandPaletteOpen((open) => !open);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1017,7 +1145,7 @@ export function App() {
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
-      if (target?.closest(".ascii-select, .ascii-menu, .ascii-step, .start")) return;
+      if (target?.closest(".ui-select, .ui-stepper, .ui-dropdown, [role='menu'], .start")) return;
       if (screen !== "slicer") return;
       if (event.key === "f") {
         event.preventDefault();
@@ -1180,7 +1308,14 @@ export function App() {
     try {
       const added = await api.importModel(picked, printerId || null, variant, quality, chord, turn);
       remember();
-      setModels((current) => [...current, ...added]);
+      setModels(added);
+      try {
+        setPlates(await api.listPlates());
+        setEmbedded(await api.importedSettings());
+        setIgnoreEmbedded(false);
+      } catch {
+        // The models are on the plate even if the plate list did not refresh.
+      }
       const last = added[added.length - 1];
       setSelectedId(last.id);
       setPreview(false);
@@ -1217,6 +1352,53 @@ export function App() {
     if (typeof picked !== "string") return;
     await importFromPath(picked);
   }
+
+  useEffect(() => {
+    if (models.length === 0) {
+      setFit(null);
+      return;
+    }
+    let live = true;
+    api
+      .plateFit(printerId || null)
+      .then((next) => {
+        if (live) setFit(next);
+      })
+      .catch(() => {
+        if (live) setFit(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [models, printerId, plates]);
+
+  const importPathRef = useRef(importFromPath);
+  importPathRef.current = importFromPath;
+  useEffect(() => {
+    if (import.meta.env.VITE_SHALE_MOCK === "1") return;
+    const win = getCurrentWindow() as {
+      onDragDropEvent?: (
+        cb: (event: { payload: { type: string; paths?: string[] } }) => void,
+      ) => Promise<() => void>;
+    };
+    if (typeof win.onDragDropEvent !== "function") return;
+    let stop: (() => void) | undefined;
+    let alive = true;
+    void win
+      .onDragDropEvent((event) => {
+        if (event.payload.type !== "drop") return;
+        const path = event.payload.paths?.[0];
+        if (path && /\.(stl|3mf|step|stp)$/i.test(path)) void importPathRef.current(path);
+      })
+      .then((off) => {
+        if (!alive) off();
+        else stop = off;
+      });
+    return () => {
+      alive = false;
+      stop?.();
+    };
+  }, []);
 
   async function cancelImport() {
     try {
@@ -1534,6 +1716,7 @@ export function App() {
       await api.removeModel(selected.id);
       setModels((current) => current.filter((model) => model.id !== selected.id));
       setSelectedId(null);
+      toastUndo("Part removed", () => void undo(), { id: "remove-part" });
     } catch (err) {
       setError(messageOf(err));
     }
@@ -1547,6 +1730,7 @@ export function App() {
       await api.removeModel(id);
       setModels((current) => current.filter((model) => model.id !== id));
       if (selectedId === id) setSelectedId(null);
+      toastUndo("Part removed", () => void undo(), { id: "remove-part" });
     } catch (err) {
       setError(messageOf(err));
     }
@@ -1566,17 +1750,26 @@ export function App() {
     }
   }
 
-  async function slice() {
+  async function slice(options?: { quiet?: boolean }) {
+    const quiet = options?.quiet === true;
     if (!printerId) {
-      setError("Choose a printer first.");
+      if (!quiet) setError("Choose a printer first.");
       return;
     }
     setError(null);
-    setBusy(true);
+    if (!quiet) setBusy(true);
     setCalibration(null);
-    setProgress({ fraction: 0.01, message: "Starting" });
+    setProgress({ fraction: 0.02, message: "Starting" });
     try {
-      const summary = await api.slice(printerId, variant, quality, material, ams, engineSettings);
+      const summary = await api.slice(
+        printerId,
+        variant,
+        quality,
+        material,
+        ams,
+        engineSettings,
+        ignoreEmbedded,
+      );
       setLayerCount(summary.layer_count);
       slicedPlate.current = plateKey;
       setLayerZ(summary.layers.map((item) => item.z));
@@ -1604,6 +1797,7 @@ export function App() {
       }
       const all = await api.previewAll();
       setPaths(all);
+      setNonplanarReport(summary.nonplanar ?? null);
       const record: SliceRecord = {
         n: history.length + 1,
         seconds: summary.print_time_seconds,
@@ -1619,22 +1813,38 @@ export function App() {
       setViewing(record.n);
       setPreview(true);
       // A finished slice is a result to look at: the app turns to Preview by
-      // itself, the way Bambu Studio does when a slice lands.
-      setPane("preview");
-      setShowModel(false);
-      // The toolpaths arrive at the camera the model was left under; frame
-      // them, the way pressing f would.
-      setFrameToken((token) => token + 1);
+      // itself. A background refresh keeps the person on the pane they are editing.
+      if (!quiet) {
+        setPane("preview");
+        setShowModel(false);
+        setFrameToken((token) => token + 1);
+      }
       setProgress({ fraction: 1, message: `${summary.layer_count} layers` });
     } catch (err) {
-      setError(messageOf(err));
+      if (!quiet) setError(messageOf(err));
       setProgress(null);
     } finally {
-      setBusy(false);
+      if (!quiet) setBusy(false);
     }
   }
 
+  sliceQuiet.current = () => {
+    void slice({ quiet: true });
+  };
+
+  function plateOverflows() {
+    return fit != null && Math.max(fit.x, fit.y, fit.z) > 0.5;
+  }
+
   async function exportGcode() {
+    if (plateOverflows()) {
+      setConfirmExport("gcode");
+      return;
+    }
+    await writeGcode();
+  }
+
+  async function writeGcode() {
     setError(null);
     const destination = await save({
       defaultPath: "shale.gcode",
@@ -1690,12 +1900,22 @@ export function App() {
     setModels((current) =>
       current.map((model) => (model.id === scopedPart.id ? { ...model, settings: next } : model)),
     );
-    try {
-      const updated = await api.setModelSettings(scopedPart.id, next);
-      setModels((current) => current.map((model) => (model.id === updated.id ? updated : model)));
-    } catch (err) {
-      setError(messageOf(err));
-    }
+    // Sliders report every pointer move. Keep the plate state immediate and
+    // send the part settings once the drag settles, still as set_model_settings.
+    partSettingsPending.current = { id: scopedPart.id, settings: next };
+    if (partSettingsTimer.current != null) window.clearTimeout(partSettingsTimer.current);
+    partSettingsTimer.current = window.setTimeout(() => {
+      partSettingsTimer.current = null;
+      const pending = partSettingsPending.current;
+      partSettingsPending.current = null;
+      if (!pending) return;
+      void api
+        .setModelSettings(pending.id, pending.settings)
+        .then((updated) => {
+          setModels((current) => current.map((model) => (model.id === updated.id ? updated : model)));
+        })
+        .catch((err: unknown) => setError(messageOf(err)));
+    }, 160);
   }
 
   async function resetScopedOverrides() {
@@ -1715,6 +1935,34 @@ export function App() {
     }
   }
 
+  type ProfileSnap = { printerId: string; variant: string | null; quality: string | null; material: string | null };
+  const snapProfile = (): ProfileSnap => ({ printerId, variant, quality, material });
+  const restoreProfile = (snap: ProfileSnap) => {
+    setPrinterId(snap.printerId);
+    setVariant(snap.variant);
+    setQuality(snap.quality);
+    setMaterial(snap.material);
+  };
+  const setPrinterWithUndo = (next: string) => {
+    if (next === printerId) return;
+    const before = snapProfile();
+    setPrinterId(next);
+    toastUndo("Printer profile changed", () => restoreProfile(before), { id: "profile-undo" });
+  };
+  const setQualityWithUndo = (next: string | null) => {
+    if (next === quality) return;
+    const before = snapProfile();
+    setQuality(next);
+    void resetScopedOverrides();
+    toastUndo("Quality preset changed", () => restoreProfile(before), { id: "profile-undo" });
+  };
+  const setMaterialWithUndo = (next: string | null) => {
+    if (next === material) return;
+    const before = snapProfile();
+    setMaterial(next);
+    toastUndo("Material changed", () => restoreProfile(before), { id: "profile-undo" });
+  };
+
   // A part that gets deleted while its settings are on screen hands the sheet
   // back to the whole plate.
   useEffect(() => {
@@ -1724,6 +1972,14 @@ export function App() {
   }, [models, scope]);
 
   async function exportGeometry(format: "stl" | "3mf") {
+    if (plateOverflows()) {
+      setConfirmExport(format);
+      return;
+    }
+    await writeGeometry(format);
+  }
+
+  async function writeGeometry(format: "stl" | "3mf") {
     setError(null);
     setNotice(null);
     const destination = await save({
@@ -1877,7 +2133,7 @@ export function App() {
 
   /// One drag of the brush. The whole path goes over the boundary together, so a
   /// stroke is one edit on the undo stack and not thirty: taking a pen stroke
-  /// back should take back the stroke.
+  /// back should Take back the stroke.
   async function paintStroke(target: number, points: Array<[number, number, number]>) {
     const block = paintMode === "block";
     try {
@@ -2005,6 +2261,7 @@ export function App() {
   }
 
   async function dropPlate(index: number) {
+    plateUndoRef.current = { plates: [...plates], models: [...modelsRef.current], selected: selectedId };
     try {
       const left = await api.deletePlate(index);
       const turned = left.find((plate) => plate.active);
@@ -2025,9 +2282,23 @@ export function App() {
       forgetSlice();
       setTower(null);
       setCalibration(null);
+      const snap = plateUndoRef.current;
+      if (snap) {
+        toastUndo("Plate deleted", () => {
+          setPlates(snap.plates);
+          void restoreSnapshot({ models: snap.models, selected: snap.selected });
+        }, { id: "drop-plate" });
+      }
     } catch (failure) {
       setError(String(failure));
     }
+  }
+
+  async function clearWorkplate() {
+    if (models.length === 0) return;
+    remember();
+    await emptyPlate();
+    toastUndo("Plate cleared", () => void undo(), { id: "clear-plate" });
   }
 
   /** Put one of the three calibration prints on the plate. */
@@ -2169,6 +2440,118 @@ export function App() {
     return materials.find((item) => item.id === id)?.label ?? id;
   }
 
+  function dismissSuggestion(item: Suggestion) {
+    setDismissedSuggestions((current) => (current.includes(item.id) ? current : [...current, item.id]));
+    setSuggestions((current) => current.filter((entry) => entry.id !== item.id));
+    markTabDirty();
+  }
+
+  function neverSuggestion(item: Suggestion) {
+    const raw = window.localStorage.getItem("shale.suggestions.never");
+    const list = raw ? (JSON.parse(raw) as string[]) : [];
+    if (!list.includes(item.rule_id)) {
+      list.push(item.rule_id);
+      window.localStorage.setItem("shale.suggestions.never", JSON.stringify(list));
+    }
+    dismissSuggestion(item);
+  }
+
+  async function applySuggestion(item: Suggestion) {
+    const fix = item.fix;
+    if (!fix) return;
+    markTabDirty();
+    if (Object.keys(fix.settings).length > 0) {
+      rememberSettings();
+      setOverrides((current) => ({ ...current, ...fix.settings }));
+    }
+    if (fix.nonplanar_mode === "off" || fix.nonplanar_mode === "auto" || fix.nonplanar_mode === "curved-tops") {
+      setNonplanar((current) => ({ ...current, mode: fix.nonplanar_mode as NonplanarSettings["mode"] }));
+    }
+    for (const [id, patch] of Object.entries(fix.object_settings)) {
+      const model = models.find((entry) => String(entry.id) === id);
+      if (!model) continue;
+      const updated = await api.setModelSettings(model.id, { ...model.settings, ...patch });
+      setModels((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
+    }
+    for (const [id, rotation] of Object.entries(fix.rotations_deg)) {
+      const model = models.find((entry) => String(entry.id) === id);
+      if (model) await commitAroundCentre(model, { rotation_deg: rotation });
+    }
+    for (const [id, slot] of Object.entries(fix.slots)) {
+      const updated = await api.setModelSlot(Number(id), slot);
+      setModels((current) => current.map((entry) => (entry.id === updated.id ? updated : entry)));
+    }
+    for (const [id, plate] of Object.entries(fix.plates)) {
+      const turned = await api.moveModelToPlate(Number(id), plate);
+      setModels(turned.models);
+      setPlates(turned.plates);
+    }
+    dismissSuggestion(item);
+    forgetSlice();
+  }
+
+  useEffect(() => {
+    if (pane !== "prepare" || !printerId) {
+      setSuggestions([]);
+      return;
+    }
+    let live = true;
+    const timer = window.setTimeout(() => {
+      const settings: Record<string, string> = {};
+      for (const [key, value] of Object.entries(overrides)) {
+        if (value) settings[key] = value;
+      }
+      const slots = [
+        { index: 0, material_id: material ?? "", filament_type: materialLabel(material) },
+        ...ams.map((id, index) => ({
+          index: index + 1,
+          material_id: id,
+          filament_type: materialLabel(id || null),
+        })),
+      ].filter((slot) => slot.material_id);
+      let never: string[] = [];
+      try {
+        const raw = window.localStorage.getItem("shale.suggestions.never");
+        const parsed = raw ? (JSON.parse(raw) as string[]) : [];
+        if (Array.isArray(parsed)) never = parsed;
+      } catch {
+        never = [];
+      }
+      void api
+        .suggestions({
+          printer_id: printerId,
+          variant_name: variant,
+          quality_type: quality,
+          material_id: material,
+          settings,
+          slots,
+          tags: [],
+          dismissed: dismissedSuggestions,
+          global_dismissed: never,
+          shown_once: suggestionsShown.filter((id) => !suggestionsSeen.current.has(id)),
+          nonplanar_mode: nonplanar.mode,
+        })
+        .then((items) => {
+          if (!live) return;
+          for (const item of items) {
+            if (item.once) suggestionsSeen.current.add(item.rule_id);
+          }
+          setSuggestions(items);
+          const fresh = items.filter((item) => item.once && !suggestionsShown.includes(item.rule_id));
+          if (fresh.length > 0) {
+            setSuggestionsShown((current) => [...current, ...fresh.map((item) => item.rule_id)]);
+          }
+        })
+        .catch(() => {
+          if (live) setSuggestions([]);
+        });
+    }, 250);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [pane, printerId, variant, quality, material, ams, overrides, models, nonplanar.mode, dismissedSuggestions, suggestionsShown]);
+
   function materialName(): string {
     return materialLabel(material);
   }
@@ -2205,6 +2588,8 @@ export function App() {
         turn_deg: turn,
         thumbnail: thumbnailJpeg(models),
         quiet: !adopt,
+        dismissed_suggestions: dismissedSuggestions,
+        suggestions_shown: suggestionsShown,
       });
       // A quiet save is a place to put a plate down, not a file to adopt: the
       // tab keeps its name and its (empty) path, and the project does not start
@@ -2348,6 +2733,8 @@ export function App() {
     setMaterial(opened.material_id);
     setAms([0, 1, 2].map((index) => opened.ams?.[index] ?? ""));
     setOverrides(overridesFromSliceSettings(opened.settings));
+    setNonplanar(nonplanarFromSliceSettings(opened.settings));
+    setNonplanarReport(null);
     if (opened.chord_mm > 0) {
       setChord(opened.chord_mm);
       setChordTied(false);
@@ -2358,6 +2745,9 @@ export function App() {
     setSelectedId(opened.models[0]?.id ?? null);
     setInstructions(opened.instructions);
     setSupport(opened.support);
+    setDismissedSuggestions(opened.dismissed_suggestions ?? []);
+    setSuggestionsShown(opened.suggestions_shown ?? []);
+    suggestionsSeen.current = new Set();
     setPreview(false);
     setShowModel(true);
     setPaths([]);
@@ -2455,6 +2845,8 @@ export function App() {
     setProgress(null);
     setProjectPath(null);
     setProjectName("Untitled");
+    setNonplanar(DEFAULT_NONPLANAR);
+    setNonplanarReport(null);
     setPane("prepare");
     enterSlicer();
   }
@@ -2601,9 +2993,158 @@ export function App() {
   const marks = instructionMarks(instructions, layerZ, layerHeight);
   const marksHere = instructions.filter((item) => markOf(item, layerZ, layerHeight) === layer);
 
+  function forgetRecentWithUndo(path: string) {
+    const entry = recents.all.find((row) => row.path === path);
+    recents.remove(path);
+    if (!entry) return;
+    toastUndo("Removed from recents", () => recents.restore(entry), { id: `recent-${path}` });
+  }
+
+  function selectPane(next: Pane) {
+    if (next === "home") {
+      setPane("home");
+      setScreen("start");
+      return;
+    }
+    if (next === "preview" && layerCount === 0) {
+      setNotice("nothing to preview yet — press slice first");
+      return;
+    }
+    setNotice(null);
+    setScreen("slicer");
+    setPane(next);
+    if (next === "preview") {
+      setPreview(true);
+      setShowModel(false);
+      setFrameToken((token) => token + 1);
+    }
+    if (next === "prepare") {
+      setPreview(false);
+      setShowModel(true);
+    }
+  }
+
+  const commandItems = useMemo(
+    () =>
+      buildCommandPaletteItems({
+        pane,
+        sliced: layerCount > 0,
+        recents: recents.all,
+        printers,
+        printerId: printerId || null,
+        qualities,
+        quality,
+        materials,
+        material,
+        uiStyle,
+        hasModels: models.length > 0,
+        onNewProject: () => void newProject(),
+        onOpenProject: () => void openProject(),
+        onImport: () => void importModel(),
+        onSlice: () => void slice(),
+        onOpenSliceSettings: () => {
+          setScreen("slicer");
+          setSettingsSection(null);
+          setSettingsNonce((nonce) => nonce + 1);
+        },
+        onClearPlate: () => void clearWorkplate(),
+        onPane: selectPane,
+        onPrinter: setPrinterWithUndo,
+        onQuality: setQualityWithUndo,
+        onMaterial: setMaterialWithUndo,
+        onToggleTheme: toggleUiStyle,
+        onOpenSettings: () => {
+          setPane("home");
+          setScreen("start");
+          setStartPanel("settings");
+        },
+        onOpenRecent: (path) => void openProject(path),
+        nonplanarMode: nonplanar.mode,
+        onNonplanarMode: (mode) => setNonplanar((current) => ({ ...current, mode })),
+        onToggleStrict: () => setNonplanar((current) => ({ ...current, strict: !current.strict })),
+        onOpenNonplanar: () => {
+          setScreen("slicer");
+          setPane("prepare");
+          setSettingsSection("Non-planar");
+          setSettingsNonce((nonce) => nonce + 1);
+        },
+        onExportGcode: () => void exportGcode(),
+        onArrange: () => void arrangeAll(),
+        onUndo: () => void undo(),
+        onRedo: () => void redo(),
+        canUndo: historyDepth.past > 0,
+        canRedo: historyDepth.future > 0,
+        onUiStyle: chooseUiStyle,
+        liveSlice,
+        onToggleLiveSlice: () => setLiveSlice(!liveSlice),
+      }),
+    [
+      pane,
+      layerCount,
+      recents.all,
+      printers,
+      printerId,
+      qualities,
+      quality,
+      materials,
+      material,
+      uiStyle,
+      models.length,
+      nonplanar.mode,
+      liveSlice,
+      historyDepth.past,
+      historyDepth.future,
+    ],
+  );
+
+  const qualityName =
+    qualities.find((item) => item.quality_type === quality)?.name ?? quality ?? "Quality preset";
+  const activeVariant = variants.find((item) => item.name === variant);
+  const profileVariantLabel = activeVariant ? variantOptionLabel(activeVariant) : variant;
+
+  useEffect(() => {
+    if (!notice) return;
+    const [title, ...rest] = notice.split("\n");
+    toast(title, {
+      id: "shale-notice",
+      description: rest.length > 0 ? rest.join("\n") : undefined,
+    });
+  }, [notice]);
+
+  if (import.meta.env.VITE_SHALE_MOCK === "1" && new URLSearchParams(window.location.search).get("showcase") === "ui") {
+    return (
+      <TooltipProvider>
+        <div className="app app--showcase">
+          <UiShowcase />
+        </div>
+      </TooltipProvider>
+    );
+  }
+
   return (
+    <TooltipProvider>
     <div className="app">
-      <TitleBar projectName={projectPath ? projectName : ""}>
+      <TitleBar
+        projectName={projectPath ? projectName : ""}
+        leading={
+          <TitleBarNav
+            sidebarCollapsed={sidebarCollapsed}
+            onToggleSidebar={toggleSidebar}
+            canBack={pane === "home" ? startPanel !== "home" || workspace : false}
+            canForward={false}
+            onBack={() => {
+              if (pane === "home") {
+                if (startPanel !== "home") setStartPanel("home");
+                else if (workspace) {
+                  setScreen("slicer");
+                  setPane("prepare");
+                }
+              }
+            }}
+            onForward={() => undefined}
+          />
+        }
+      >
         <MenuBar
           screen={screen}
           projectName={projectName}
@@ -2645,19 +3186,18 @@ export function App() {
           onFrame={() => setFrameToken((token) => token + 1)}
           printers={printers}
           printerId={printerId}
-          onPrinter={setPrinterId}
+          onPrinter={setPrinterWithUndo}
           variants={variants}
           variant={variant}
           onVariant={setVariant}
           qualities={qualities}
           quality={quality}
           onQuality={(next) => {
-            setQuality(next);
-            void resetScopedOverrides();
+            setQualityWithUndo(next);
           }}
           materials={materials}
           material={material}
-          onMaterial={setMaterial}
+          onMaterial={setMaterialWithUndo}
           quickFallbacks={quickFallbacks}
           demo={status?.demo ?? null}
           overrides={scopedOverrides}
@@ -2668,8 +3208,20 @@ export function App() {
           parts={models.map((model) => ({ id: model.id, name: model.name }))}
           onScope={setScope}
           onSlice={() => void slice()}
+          sliceStage={busy && progress ? sliceStage(progress.message) : null}
           uiStyle={uiStyle}
           onUiStyle={chooseUiStyle}
+          nonplanar={nonplanar}
+          onNonplanar={setNonplanar}
+          nonplanarReport={nonplanarReport}
+          nonplanarSupported={nonplanarOk}
+          liveSlice={liveSlice}
+          onLiveSlice={setLiveSlice}
+          settingsNonce={settingsNonce}
+          settingsSection={settingsSection}
+          pane={pane}
+          onPane={selectPane}
+          onOpenPalette={() => setCommandPaletteOpen(true)}
         />
       </TitleBar>
 
@@ -2689,13 +3241,16 @@ export function App() {
         </p>
       )}
       {importing && (
-        <p className="banner" role="status">
-          import {(importProgress ? importProgress.fraction * 100 : 0).toFixed(0)}%{" "}
-          {importProgress?.message ?? "reading"}{" "}
+        <div className="banner" role="status">
+          <Meter
+            fraction={importProgress?.fraction ?? 0.08}
+            message={importProgress?.message ?? "Reading the model"}
+            stage={sliceStage(importProgress?.message ?? "Reading the model")}
+          />
           <button type="button" onClick={() => void cancelImport()}>
-            cancel
+            Cancel
           </button>
-        </p>
+        </div>
       )}
       {error && (
         <p className="banner error" role="alert">
@@ -2715,39 +3270,10 @@ export function App() {
           )}
         </p>
       )}
-      {notice && (
-        <p className="banner" role="status">
-          {notice}
-        </p>
-      )}
 
       <TabBar
         pane={pane}
-        onPane={(next) => {
-          if (next === "home") {
-            setPane("home");
-            setScreen("start");
-            return;
-          }
-          if (next === "preview" && layerCount === 0) {
-            setNotice("nothing to preview yet — press slice first");
-            return;
-          }
-          // A notice belongs to the workspace that raised it; carrying it into
-          // the next one is how a stale sentence ends up under a different page.
-          setNotice(null);
-          setScreen("slicer");
-          setPane(next);
-          if (next === "preview") {
-            setPreview(true);
-            setShowModel(false);
-            setFrameToken((token) => token + 1);
-          }
-          if (next === "prepare") {
-            setPreview(false);
-            setShowModel(true);
-          }
-        }}
+        onPane={selectPane}
         tabs={docTabs}
         activeTab={activeTab}
         onTab={(id) => void selectTab(id)}
@@ -2758,12 +3284,74 @@ export function App() {
         sliced={layerCount > 0}
       />
 
+      <ShellFrame
+        collapsed={sidebarCollapsed}
+        sidebar={
+        <AppSidebar
+          collapsed={sidebarCollapsed}
+          recents={recents.all}
+          recentsRead={recents.read}
+          onNew={() => void newProject()}
+          onOpen={() => void openProject()}
+          onImport={() => void importModel()}
+          onOpenRecent={(path) => void openProject(path)}
+          onForgetRecent={forgetRecentWithUndo}
+          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+          plates={plates}
+          activePlate={plates.find((plate) => plate.active)?.index}
+          onShowPlate={(index) => void showPlate(index)}
+          profileQuality={qualityName}
+          profileMaterial={materialName() || "Material not set"}
+          profileVariant={profileVariantLabel}
+          onProfiles={() => {
+            setPane("home");
+            setScreen("start");
+            setStartPanel("settings");
+          }}
+          printer={printers.find((entry) => entry.id === printerId) ?? null}
+          printerLabel={variant ?? undefined}
+          onPrinters={() => {
+            setPane("home");
+            setScreen("start");
+            setStartPanel("printers");
+          }}
+          onSettings={() => {
+            setPane("home");
+            setScreen("start");
+            setStartPanel("settings");
+          }}
+          onAbout={() => {
+            setPane("home");
+            setScreen("start");
+            setStartPanel("about");
+          }}
+          onQuit={() => void quit()}
+          onDeviceQueue={
+            pane !== "device"
+              ? () => {
+                  setPane("device");
+                  setScreen("slicer");
+                }
+              : undefined
+          }
+          uiStyle={uiStyle}
+          onUiStyle={chooseUiStyle}
+          doneSlices={history.slice(-6).reverse().map((record) => ({
+            id: String(record.n),
+            title: `Slice ${record.n}`,
+            subtitle: `${record.layers} layers${record.seconds != null ? ` · ${clockTime(record.seconds)}` : ""}`,
+          }))}
+        />
+        }
+      >
+        <ViewSwap view={pane === "prepare" || pane === "preview" ? "workspace" : pane}>
       {pane === "home" ? (
         <div className="home-pane">
           <StartScreen
             live={!busy && !importing}
+            panel={startPanel}
+            onPanel={setStartPanel}
             canReturn={workspace}
-            recents={recents.shown} recentsRead={recents.read}
             printers={printers}
             printerId={printerId}
             enginePath={enginePath}
@@ -2777,10 +3365,6 @@ export function App() {
             onNew={() => void newProject()}
             onOpen={() => void openProject()}
             onImport={() => void importModel()}
-            onOpenRecent={(path) => void openProject(path)}
-            onForgetRecent={(path) => {
-              recents.remove(path);
-            }}
             onChoosePrinter={setPrinterId}
             onEnginePath={setEnginePath}
             onLibDir={setLibDir}
@@ -2790,9 +3374,16 @@ export function App() {
             uiStyle={uiStyle}
             onUiStyle={chooseUiStyle}
             onRerunSetup={() => setSetupWizardOpen(true)}
+            recents={recents.all}
+            onOpenRecent={(path) => void openProject(path)}
+            onDropModel={(path) => {
+              if (path) void importFromPath(path);
+              else void importModel();
+            }}
           />
         </div>
       ) : pane === "device" ? (
+        <Suspense fallback={<div className="workspace-skeleton" aria-hidden><div className="ui-sidebar__skeleton"><i style={{ width: "46%" }} /><i style={{ width: "72%" }} /><i style={{ width: "58%" }} /></div></div>}>
         <DevicePane
           machine={printerLabel()}
           source={printers.find((item) => item.id === printerId)?.source ?? "cura"}
@@ -2816,12 +3407,15 @@ export function App() {
           gcodeReady={layerCount > 0}
           plate={docTabs.find((tab) => tab.id === activeTab)?.name ?? "plate"}
         />
+        </Suspense>
       ) : (
       <div className="workspace">
         <aside className="panel">
+        <div className="panel-scroll">
+        <PaneFade pane={pane}>
           {pane === "prepare" && (
           <>
-          <Frame title="plates">
+          <Frame title="Plates">
             <div className="row plates">
               {plates.map((plate) => (
                 <span key={plate.index} className="plate-chip">
@@ -2831,10 +3425,10 @@ export function App() {
                     title={plate.name}
                     onClick={() => void showPlate(plate.index)}
                   >
-                    <span className="plate-name">Plate {plate.index + 1}</span>
+                    <span className="plate-name">{plate.name}</span>
                     <span className="plate-count">
                       {plate.models === 0
-                        ? "empty"
+                        ? "Empty"
                         : plate.models === 1
                           ? "1 part"
                           : `${plate.models} parts`}
@@ -2852,18 +3446,23 @@ export function App() {
                   )}
                 </span>
               ))}
-              <button type="button" title="add a plate" onClick={() => void newPlate()}>
+              <button type="button" title="Add a plate" onClick={() => void newPlate()}>
                 +
               </button>
             </div>
             <p className="hint">
-              each plate holds its own parts and is sliced on its own. a project saves every plate with it.
+              Each plate holds its own parts and is sliced on its own. A project saves every plate with it.
             </p>
           </Frame>
+          <ProjectSummary
+            embedded={embedded}
+            ignored={ignoreEmbedded}
+            onIgnore={setIgnoreEmbedded}
+          />
 
-          <Frame title="objects">
+          <Frame title="Objects">
             {models.length === 0 ? (
-              <p className="hint">nothing on this plate yet. import a model and it is listed here.</p>
+              <p className="hint">Nothing on this plate yet. Import a model and it is listed here.</p>
             ) : (
               <ul className="objects" role="listbox" aria-label="Objects on this plate">
                 {models.map((model, index) => (
@@ -2897,9 +3496,9 @@ export function App() {
             )}
           </Frame>
 
-          <Frame title="paint support">
+          <Frame title="Paint support">
             {paintTarget === null ? (
-              <p className="hint">import a part and its undersides can be painted here.</p>
+              <p className="hint">Import a part and its undersides can be painted here.</p>
             ) : (
               <>
                 <p className="hint">
@@ -2918,11 +3517,11 @@ export function App() {
                 {/* Two brushes, because they ask for opposite things. A patch is
                     just triangles; what you press decides whether support grows
                     under them or is kept out. */}
-                <div className="row paint-brush" role="group" aria-label="brush">
+                <div className="row paint-brush" role="group" aria-label="Brush">
                   {(
                     [
-                      ["enforce", "hold up"],
-                      ["block", "keep out"],
+                      ["enforce", "Hold up"],
+                      ["block", "Keep out"],
                     ] as const
                   ).map(([value, label]) => (
                     <button
@@ -2936,7 +3535,7 @@ export function App() {
                     </button>
                   ))}
                 </div>
-                <div className="row paint-brush" role="group" aria-label="brush reach">
+                <div className="row paint-brush" role="group" aria-label="Brush reach">
                   <button
                     type="button"
                     className={`paint-brush-button${paintArmed ? " on" : ""}`}
@@ -2944,20 +3543,20 @@ export function App() {
                     title="Drag over the part to paint the surface under the cursor"
                     onClick={() => setPaintArmed((armed) => !armed)}
                   >
-                    brush
+                    Brush
                   </button>
-                  <label className="paint-radius">
-                    <span>reach</span>
-                    <input
-                      aria-label="Brush reach in millimetres"
-                      type="number"
+                  <label className="paint-radius ui-field">
+                    <span className="ui-field__label">Reach</span>
+                    <Slider
+                      label="Brush reach in millimetres"
+                      value={[Math.max(1, Math.min(40, Number(paintRadius) || 1))]}
                       min={1}
                       max={40}
                       step={1}
-                      value={paintRadius}
-                      onChange={(event) => setPaintRadius(event.target.value)}
+                      unit="mm"
+                      inputDigits={0}
+                      onValueChange={(value) => setPaintRadius(String(Math.round(value)))}
                     />
-                    <span>mm</span>
                   </label>
                 </div>
                 {(paintArmed || patches.length > 0 || painted > 0 || blocked > 0) && (
@@ -2991,8 +3590,8 @@ export function App() {
                 </div>
                 )}
                 <p className="hint">
-                  a painted face is held up by a column to the bed, and painting turns the plate's own
-                  support off: what you paint is the whole of it.
+                  A painted face is held up by a column to the bed, and painting turns the plate's own
+                  support off. What you paint is the whole of it.
                 </p>
               </>
             )}
@@ -3004,15 +3603,21 @@ export function App() {
               slice is made from. Preview is a reading of the result and offers
               none of them. */}
           {pane === "prepare" && (<>
-          <Frame title="printer">
+          <Suggestions
+            items={suggestions}
+            onApply={(item) => void applySuggestion(item)}
+            onDismiss={dismissSuggestion}
+            onNever={neverSuggestion}
+          />
+          <Frame title="Printer">
             <label>
-              filter
-              <AsciiField label="filter" value={printerQuery} placeholder="name…" onChange={setPrinterQuery} />
+              Filter
+              <TextField label="Filter" value={printerQuery} placeholder="Name…" onChange={setPrinterQuery} />
             </label>
             <label>
-              machine
-              <AsciiSelect
-                label="machine"
+              Machine
+              <Select
+                label="Machine"
                 value={printerId}
                 options={filteredPrinters.map((printer) => ({
                   value: printer.id,
@@ -3022,9 +3627,9 @@ export function App() {
               />
             </label>
             <label>
-              nozzle
-              <AsciiSelect
-                label="nozzle"
+              Nozzle
+              <Select
+                label="Nozzle"
                 value={variant ?? ""}
                 options={variants.map((item) => ({
                   value: item.name,
@@ -3034,9 +3639,9 @@ export function App() {
               />
             </label>
             <label>
-              quality
-              <AsciiSelect
-                label="quality"
+              Quality
+              <Select
+                label="Quality"
                 value={quality ?? ""}
                 options={qualities.map((item) => ({ value: item.quality_type, label: item.name }))}
                 onChange={(next) => {
@@ -3046,36 +3651,48 @@ export function App() {
               />
             </label>
             <label>
-              material
-              <AsciiSelect
-                label="material"
+              Material
+              <Select
+                label="Material"
                 value={material ?? ""}
                 options={spools.map((item) => ({ value: item.id, label: item.label }))}
                 onChange={(next) => setMaterial(next || null)}
               />
             </label>
-            <p className="meta">
-              bed {bed.width.toFixed(0)} x {bed.depth.toFixed(0)} x {bed.height.toFixed(0)} mm
-              {"\n"}
-              nozzle {bed.nozzle_size.toFixed(2)}  line {bed.line_width.toFixed(2)}  {bed.adhesion_type}  {bed.speed_print.toFixed(0)} mm/s
-              {bed.warning_count > 0 ? `\n${bed.warning_count} resolver warnings` : ""}
+            <p className="value-chips">
+              <span>Bed {bed.width.toFixed(0)} × {bed.depth.toFixed(0)} × {bed.height.toFixed(0)} mm</span>
+              <span>Nozzle {bed.nozzle_size.toFixed(2)} mm</span>
+              <span>Line {bed.line_width.toFixed(2)} mm</span>
+              <span>{bed.speed_print.toFixed(0)} mm/s</span>
+              {bed.warning_count > 0 ? <span>{bed.warning_count} resolver warnings</span> : null}
             </p>
           </Frame>
 
-          <Frame title="ams">
+          <Frame title="Non-planar">
+            <NonPlanarPanel
+              value={nonplanar}
+              onChange={setNonplanar}
+              report={nonplanarReport}
+              supported={nonplanarOk}
+              liveSlice={liveSlice}
+              onLiveSlice={setLiveSlice}
+            />
+          </Frame>
+
+          <Frame title="AMS">
             <p className="meta">
               {ams.filter(Boolean).length === 0
-                ? "one spool: the plate material"
+                ? "One spool: the plate material"
                 : `plate plus ${ams.filter(Boolean).length} spool${ams.filter(Boolean).length === 1 ? "" : "s"}`}
             </p>
             {[0, 1, 2].map((index) => (
               <label key={index}>
-                spool {index + 2}
-                <AsciiSelect
-                  label={`spool ${index + 2}`}
+                Spool {index + 2}
+                <Select
+                  label={`Spool ${index + 2}`}
                   value={ams[index] ?? ""}
                   options={[
-                    { value: "", label: "empty" },
+                    { value: "", label: "Empty" },
                     ...materials.map((item) => ({ value: item.id, label: item.label })),
                   ]}
                   onChange={(next) =>
@@ -3085,31 +3702,31 @@ export function App() {
               </label>
             ))}
             <p className="hint">
-              the plate material is spool 1. give a part a spool in the model frame and the slice gets a tool change,
-              its own hotend temperature and its own filament.
+              The plate material is Spool 1. Give a part a spool in the model frame and the slice gets a tool change,
+              its own hotend temperature, and its own filament.
             </p>
           </Frame>
 
-          <Frame title="calibration">
+          <Frame title="Calibration" advanced>
             <p className="meta">
               {tower
                 ? `${tower.bands.length} bands, ${tower.bands[0].value} to ${
                     tower.bands[tower.bands.length - 1].value
                   } ${tower.unit}, ${tower.band_height_mm} mm each — ${tower.kind}`
-                : "a five-band temperature tower, 5 °C apart"}
+                : "A five-band temperature tower, 5 °C apart"}
             </p>
             <div className="row">
               <button type="button" disabled={calibrating} onClick={() => void addCalibration("temperature")}>
-                temperature tower
+                Temperature tower
               </button>
               <button type="button" disabled={calibrating} onClick={() => void addCalibration("flow")}>
-                flow coupon
+                Flow coupon
               </button>
               <button type="button" disabled={calibrating} onClick={() => void addCalibration("pressure")}>
-                pressure tower
+                Pressure tower
               </button>
               <button type="button" disabled={!tower || calibrating} onClick={() => void stepCalibration()}>
-                step it
+                Step it
               </button>
             </div>
             {calibration && (
@@ -3121,17 +3738,17 @@ export function App() {
               </p>
             )}
             <p className="hint">
-              the tower alternates 20 mm and 26 mm blocks, so every band overhangs the one below by 3 mm; the flow
-              coupon is a 30 mm single-wall tube, because flow is measured with calipers, not judged. slice it, then
+              The tower alternates 20 mm and 26 mm blocks, so every band overhangs the one below by 3 mm. The flow
+              coupon is a 30 mm single-wall tube, because flow is measured with calipers, not judged. Slice it, then
               step it: one M104, M221 or M900 per band, written into the slice, and the preview stays as it was.
             </p>
           </Frame>
 
-          <Frame title="slice">
+          <Frame title="Slice">
             <label>
-              layer mm
-              <AsciiStepper
-                label="layer mm"
+              Layer height
+              <NumericControl
+                label="Layer height"
                 value={layerHeight}
                 min={0.05}
                 max={0.8}
@@ -3141,9 +3758,9 @@ export function App() {
               />
             </label>
             <label>
-              infill %
-              <AsciiStepper
-                label="infill %"
+              Infill
+              <NumericControl
+                label="Infill"
                 value={infill}
                 min={0}
                 max={100}
@@ -3154,16 +3771,16 @@ export function App() {
                 }
               />
             </label>
-            <AsciiCheck
+            <SwitchRow
               checked={supports}
               onChange={(value) => void setScopedOverride(QUICK_SETTING_KEYS.supports, value ? "1" : "0")}
             >
-              supports
-            </AsciiCheck>
+              Supports
+            </SwitchRow>
             <label>
-              hotend C
-              <AsciiStepper
-                label="hotend C"
+              Nozzle
+              <NumericControl
+                label="Nozzle temperature"
                 value={nozzle}
                 min={0}
                 max={400}
@@ -3175,9 +3792,9 @@ export function App() {
               />
             </label>
             <label>
-              bed C
-              <AsciiStepper
-                label="bed C"
+              Bed
+              <NumericControl
+                label="Bed temperature"
                 value={bedTemp}
                 min={0}
                 max={150}
@@ -3188,11 +3805,11 @@ export function App() {
                 }
               />
             </label>
-            <p className="hint">layer height also sets the first layer. changing quality reloads these values.</p>
+            <p className="hint">Layer height also sets the first layer. Changing quality reloads these values.</p>
             <label>
-              chord mm
-              <AsciiStepper
-                label="chord mm"
+              Chord
+              <NumericControl
+                label="Chord"
                 value={chord}
                 min={0.02}
                 max={0.5}
@@ -3206,8 +3823,8 @@ export function App() {
             </label>
             <label>
               turn °
-              <AsciiStepper
-                label="turn"
+              <NumericControl
+                label="Turn"
                 value={turn}
                 min={2}
                 max={45}
@@ -3217,7 +3834,7 @@ export function App() {
               />
             </label>
             <button type="button" onClick={() => setChordTied(true)}>
-              tie chord to layer
+              Tie chord to the layer
             </button>
             <p className="hint">
               step files are tessellated here. chord is half the layer height, and no coarser than half the nozzle.
@@ -3225,14 +3842,14 @@ export function App() {
             </p>
           </Frame>
 
-          <Frame title="supports">
+          <Frame title="Supports">
             <label>
               angle
-              <AsciiStepper label="angle" value={supportAngle} min={0} max={90} step={1} digits={0} onChange={setSupportAngle} />
+              <NumericControl label="Angle" value={supportAngle} min={0} max={90} step={1} digits={0} onChange={setSupportAngle} />
             </label>
             <label>
               bridge mm
-              <AsciiStepper label="bridge mm" value={bridgeMm} min={0} max={80} step={1} digits={0} onChange={setBridgeMm} />
+              <NumericControl label="Bridge" value={bridgeMm} min={0} max={80} step={1} digits={0} onChange={setBridgeMm} />
             </label>
             <div className="row">
               <button type="button" disabled={selectedId == null || supportBusy} onClick={() => void proposeSupports()}>
@@ -3249,9 +3866,9 @@ export function App() {
             <ul className="instructions">
               {support?.plan.regions.map((region) => (
                 <li key={region.id}>
-                  <AsciiCheck checked={region.enabled} onChange={() => void toggleSupport(region.id)}>
+                  <SwitchRow checked={region.enabled} onChange={() => void toggleSupport(region.id)}>
                     {`${region.role === "block" ? "block" : "support"}  ${region.summary}`}
-                  </AsciiCheck>
+                  </SwitchRow>
                 </li>
               ))}
             </ul>
@@ -3260,11 +3877,11 @@ export function App() {
             </p>
           </Frame>
 
-          <Frame title="instructions">
+          <Frame title="Instructions">
             <label>
               kind
-              <AsciiSelect
-                label="kind"
+              <Select
+                label="Kind"
                 value={kind}
                 options={[
                   { value: "pause", label: "pause" },
@@ -3280,8 +3897,8 @@ export function App() {
             {kind === "pause" && (
               <label>
                 by
-                <AsciiSelect
-                  label="by"
+                <Select
+                  label="By"
                   value={anchor}
                   options={[
                     { value: "layer", label: "layer" },
@@ -3293,7 +3910,7 @@ export function App() {
             )}
             <label>
               {kind === "fan" || (kind === "pause" && anchor === "height") ? "height" : "layer"}
-              <AsciiStepper
+              <NumericControl
                 label={kind === "fan" || (kind === "pause" && anchor === "height") ? "height" : "layer"}
                 value={at}
                 min={0}
@@ -3305,33 +3922,33 @@ export function App() {
             {kind === "fan" && (
               <label>
                 percent
-                <AsciiStepper label="percent" value={fanPercent} min={0} max={100} step={1} digits={0} onChange={setFanPercent} />
+                <NumericControl label="Percent" value={fanPercent} min={0} max={100} step={1} digits={0} onChange={setFanPercent} />
               </label>
             )}
             {kind === "temperature" && (
               <>
                 <label>
-                  hotend C
-                  <AsciiStepper label="hotend C" value={tempNozzle} min={0} max={400} step={1} digits={0} onChange={setTempNozzle} />
+                  Nozzle
+                  <NumericControl label="Nozzle temperature" value={tempNozzle} min={0} max={400} step={1} digits={0} onChange={setTempNozzle} />
                 </label>
                 <label>
-                  bed C
-                  <AsciiStepper label="bed C" value={tempBed} min={0} max={150} step={1} digits={0} onChange={setTempBed} />
+                  Bed
+                  <NumericControl label="Bed temperature" value={tempBed} min={0} max={150} step={1} digits={0} onChange={setTempBed} />
                 </label>
-                <AsciiCheck checked={tempWait} onChange={setTempWait}>
+                <SwitchRow checked={tempWait} onChange={setTempWait}>
                   wait until reached
-                </AsciiCheck>
+                </SwitchRow>
               </>
             )}
             {kind === "pause" && (
-              <AsciiCheck checked={filament} onChange={setFilament}>
+              <SwitchRow checked={filament} onChange={setFilament}>
                 filament change
-              </AsciiCheck>
+              </SwitchRow>
             )}
             {(kind === "pause" || kind === "message" || kind === "park_and_wait") && (
               <label>
                 note
-                <AsciiField label="note" value={note} onChange={setNote} />
+                <TextField label="Note" value={note} onChange={setNote} />
               </label>
             )}
             <button type="button" onClick={() => void addInstruction()}>
@@ -3351,7 +3968,7 @@ export function App() {
             <p className="hint">Marlin gets M600 / M0. RepRap pauses with M226. Klipper uses PAUSE, or M600 for a filament change.</p>
           </Frame>
 
-          <Frame title="model">
+          <Frame title="Model">
             {models.length === 0 && <p className="hint">Import an STL or a simple 3MF. It is centred on the bed.</p>}
             <ul className="models">
               {models.map((model) => (
@@ -3371,8 +3988,8 @@ export function App() {
               <>
                 <label>
                   spool
-                  <AsciiSelect
-                    label="spool"
+                  <Select
+                    label="Spool"
                     value={String(selected.slot ?? 0)}
                     options={[
                       { value: "0", label: "plate (T1)" },
@@ -3409,7 +4026,7 @@ export function App() {
                     return (
                       <label key={axis}>
                         {mode === "rotate" ? `${axis}°` : axis}
-                        <AsciiStepper
+                        <NumericControl
                           label={axis}
                           value={shown}
                           step={mode === "scale" ? 0.01 : mode === "translate" ? 1 : 1}
@@ -3649,7 +4266,7 @@ export function App() {
           {/* Every slice is kept, so two outcomes can be put side by side
               instead of one overwriting the other. */}
           {pane === "preview" && (
-            <Frame title="sliced">
+            <Frame title="Sliced">
               <JobSummary
                 layerCount={layerCount}
                 printSeconds={printSeconds}
@@ -3663,9 +4280,9 @@ export function App() {
           )}
 
           {pane === "preview" && (
-            <Frame title="slices">
+            <Frame title="Slices">
               {history.length === 0 ? (
-                <p className="hint">no slices yet</p>
+                <p className="hint">No slices yet</p>
               ) : (
                 <div className="slice-list">
                   {history.map((record) => {
@@ -3710,20 +4327,46 @@ export function App() {
 
           {/* Money and energy belong to a slice, not to a part: the numbers only
               mean anything once there is a result to price. */}
+          {pane === "preview" && plates.length > 0 && (
+            <Frame title="Plates">
+              <div className="row plates">
+                {plates.map((plate) => (
+                  <span key={plate.index} className="plate-chip">
+                    <button
+                      type="button"
+                      className={plate.active ? "plate-tab active" : "plate-tab"}
+                      title={plate.name}
+                      onClick={() => void showPlate(plate.index)}
+                    >
+                      <span className="plate-name">{plate.name}</span>
+                      <span className="plate-count">
+                        {plate.models === 0 ? "Empty" : plate.models === 1 ? "1 part" : `${plate.models} parts`}
+                      </span>
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </Frame>
+          )}
           {pane === "preview" && (<>
-          <Frame title="cost">
+          <ProjectSummary
+            embedded={embedded}
+            ignored={ignoreEmbedded}
+            onIgnore={setIgnoreEmbedded}
+          />
+          <Frame title="Cost">
             <label>
-              currency
-              <AsciiField
-                label="currency"
+              Currency
+              <TextField
+                label="Currency"
                 value={cost.currency}
                 onChange={(value) => changeCost({ currency: value })}
               />
             </label>
             <label>
-              price / kg
-              <AsciiField
-                label="price per kg"
+              Price per kg
+              <TextField
+                label="Price per kg"
                 value={String(cost.price_per_kg)}
                 onChange={(value) => {
                   const next = Number(value.replace(",", "."));
@@ -3732,9 +4375,9 @@ export function App() {
               />
             </label>
             <label>
-              power, W
-              <AsciiField
-                label="printer power"
+              Power
+              <TextField
+                label="Printer power"
                 value={String(cost.watts)}
                 onChange={(value) => {
                   const next = Number(value.replace(",", "."));
@@ -3743,9 +4386,9 @@ export function App() {
               />
             </label>
             <label>
-              energy / kWh
-              <AsciiField
-                label="electricity price"
+              Energy per kWh
+              <TextField
+                label="Electricity price"
                 value={String(cost.electricity_per_kwh)}
                 onChange={(value) => {
                   const next = Number(value.replace(",", "."));
@@ -3754,7 +4397,7 @@ export function App() {
               />
             </label>
             <p className="hint">
-              filament weight is the slice's metres through the material's strand; energy is
+              Filament weight is the slice's metres through the material's strand. Energy is
               printer power times the estimate. both figures are only ever as good as the three
               numbers above.
             </p>
@@ -3762,15 +4405,15 @@ export function App() {
           </>)}
 
           {pane === "prepare" && (<>
-          <Frame title="engine">
+          <Frame title="Engine" advanced>
             <label>
-              backend
-              <AsciiSelect
-                label="backend"
+              Backend
+              <Select
+                label="Backend"
                 value={backend}
                 options={[
-                  { value: "cli", label: "cli  log progress" },
-                  { value: "arcus", label: "arcus  live layers" },
+                  { value: "cli", label: "CLI, log progress" },
+                  { value: "arcus", label: "Arcus, live layers" },
                 ]}
                 onChange={(next) => {
                   setBackend(next);
@@ -3783,34 +4426,88 @@ export function App() {
               />
             </label>
             <label>
-              binary
-              <AsciiField label="binary" value={enginePath} onChange={setEnginePath} />
+              Binary
+              <TextField label="Binary" value={enginePath} onChange={setEnginePath} />
             </label>
             <label>
-              libs
-              <AsciiField
-                label="libs"
+              Libraries
+              <TextField
+                label="Libraries"
                 value={libDir}
                 placeholder="bundled libs, if needed"
                 onChange={setLibDir}
               />
             </label>
             <button type="button" onClick={() => void applyEngine()}>
-              check engine
+              Check engine
             </button>
           </Frame>
           </>)}
 
+        </PaneFade>
+        </div>
+        {(pane === "prepare" || pane === "preview") && (
+          <SliceDock
+            busy={busy}
+            stage={busy && progress ? sliceStage(progress.message) : null}
+            fraction={busy && progress ? progress.fraction : null}
+            disabled={busy || models.length === 0}
+            onSlice={() => void slice()}
+            time={layerCount > 0 && printSeconds != null ? clockTime(printSeconds) : null}
+            filament={layerCount > 0 && filamentMetres != null ? `${filamentMetres.toFixed(1)} m` : null}
+            weight={
+              layerCount > 0 && grams != null ? `${grams < 10 ? grams.toFixed(1) : grams.toFixed(0)} g` : null
+            }
+            cost={layerCount > 0 && estimate ? money(estimate.total) : null}
+          />
+        )}
         </aside>
 
         <main className="stage">
           {/* Prepare never shows a result, so when the plate or the process has
               moved on from the last slice it says so and offers the press. */}
+          {(pane === "prepare" || pane === "preview") &&
+            fit != null &&
+            Math.max(fit.x, fit.y, fit.z) > 0.5 && (
+            <p className="fit-warning" role="status">
+              {fit.plate_name} extends outside the build volume (X {fit.x.toFixed(1)} mm, Y {fit.y.toFixed(1)} mm, Z {fit.z.toFixed(1)} mm past the plate).
+            </p>
+          )}
+          <Dialog
+            open={confirmExport !== null}
+            onOpenChange={(open) => {
+              if (!open) setConfirmExport(null);
+            }}
+            title="This plate extends past the bed"
+            description={
+              fit
+                ? `${fit.plate_name} is outside the build volume by X ${fit.x.toFixed(1)} mm, Y ${fit.y.toFixed(1)} mm, Z ${fit.z.toFixed(1)} mm. Exporting writes that geometry as it is.`
+                : "This plate extends past the bed."
+            }
+          >
+            <div className="row">
+              <button type="button" onClick={() => setConfirmExport(null)}>
+                Stay
+              </button>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  const kind = confirmExport;
+                  setConfirmExport(null);
+                  if (kind === "gcode") void writeGcode();
+                  else if (kind === "stl" || kind === "3mf") void writeGeometry(kind);
+                }}
+              >
+                Export anyway
+              </button>
+            </div>
+          </Dialog>
           {pane === "prepare" && stale && (
             <p className="slice-again" role="status">
-              changed since slice {lastSlice?.n}
+              Changed since slice {lastSlice?.n}
               <button type="button" onClick={() => void slice()}>
-                slice again
+                Slice again
               </button>
             </p>
           )}
@@ -3855,7 +4552,12 @@ export function App() {
               formatClock={clockTime}
             />
           )}
-          <Suspense fallback={<div className="viewport viewport-loading" aria-hidden />}>
+          {importing && models.length === 0 && (
+            <div className="viewport viewport-skeleton import-skeleton" aria-hidden>
+              <div className="viewport-skeleton__plate" />
+            </div>
+          )}
+          <Suspense fallback={<div className="viewport viewport-skeleton" aria-hidden><div className="viewport-skeleton__plate" /></div>}>
           <Viewport
             width={bed.width}
             depth={bed.depth}
@@ -3875,8 +4577,12 @@ export function App() {
             showToolpaths={preview}
             viewStyle={viewStyle}
             colour={colourMode}
+            slopeAccent={slopeRamp.accent}
+            slopeDim={slopeRamp.dim}
             mode={mode}
             frameToken={frameToken}
+            cameraPreset={cameraPreset}
+            cameraToken={cameraToken}
             measuring={measuring}
             marks={measureMarks}
             measureLabel={measureSpan ? `${measureSpan.distance_mm.toFixed(2)} mm` : null}
@@ -3896,107 +4602,127 @@ export function App() {
           />
           </Suspense>
           {models.length === 0 && !preview && (
-            <p className="caption">no model on the plate. import an stl, 3mf, or step</p>
+            <div className="studio-empty">
+              <h2>No model on this plate</h2>
+              <p>Drop an STL, 3MF, or STEP file here, or import one.</p>
+              <button type="button" onClick={() => void importModel()}>
+                Import a model
+              </button>
+            </div>
           )}
-          </div>
-          <footer className="scrubber">
-            <div className="scrub-bar" role="group" aria-label="View style">
-              <em>view</em>
-              {(["solid", "wire", "ascii"] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  className={viewStyle === item ? "selected" : ""}
-                  onClick={() => setViewStyle(item)}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
+          <div className="studio-float studio-float--tools" role="toolbar" aria-label="View">
+            {(
+              [
+                ["solid", "Solid"],
+                ["wire", "Wireframe"],
+              ] as const
+            ).map(([item, label]) => (
+              <button
+                key={item}
+                type="button"
+                aria-pressed={viewStyle === item}
+                onClick={() => setViewStyle(item)}
+              >
+                {label}
+              </button>
+            ))}
+            {(
+              [
+                ["iso", "Iso"],
+                ["top", "Top"],
+                ["front", "Front"],
+              ] as const
+            ).map(([item, label]) => (
+              <button
+                key={item}
+                type="button"
+                aria-pressed={cameraPreset === item}
+                onClick={() => {
+                  setCameraPreset(item);
+                  setCameraToken((token) => token + 1);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+            <button type="button" onClick={() => setFrameToken((token) => token + 1)}>
+              Frame
+            </button>
             {preview && (
-            <div className="scrub-bar" role="group" aria-label="Toolpath colour">
-              <em>colour</em>
-              {(["type", "speed"] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  className={colourMode === item ? "selected" : ""}
-                  onClick={() => setColourMode(item)}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-            )}
-            {preview ? (
               <>
-                <div className="scrub-bar" role="group" aria-label="Preview playback">
-                  <em>preview</em>
                 <button
                   type="button"
-                  className={playing ? "selected" : ""}
+                  aria-pressed={playing}
                   onClick={() => {
-                    // At the top of a finished preview, play means watch it
-                    // again, not press a button that does nothing.
                     if (!playing && layer >= layerCount - 1) setLayer(0);
                     setPlaying((on) => !on);
                   }}
                 >
-                  {playing ? "pause" : "play"}
+                  {playing ? "Pause" : "Play"}
                 </button>
                 <button type="button" onClick={() => { setPreview(false); setShowModel(true); }}>
-                  model
+                  Model
                 </button>
                 <button type="button" onClick={() => void addMarkAt(layer, false)}>
-                  pause here
+                  Pause here
                 </button>
                 <button type="button" onClick={() => void addMarkAt(layer, true)}>
-                  swap here
+                  Swap here
                 </button>
-                <AsciiCheck checked={showModel} onChange={setShowModel}>
-                  ghost
-                </AsciiCheck>
-                </div>
-                <div className="ascii-slider">
-                  <div className="readout">
-                    layer <span className="active">{String(layer + 1).padStart(3, " ")}</span> / {layerCount}
-                    {layerZ[layer] != null ? `   z ${layerZ[layer].toFixed(2)}` : ""}
-                    {minutes == null ? "" : `   ~${minutes} min`}
-                    {marksHere.length > 0 ? `   + ${marksHere.map((item) => item.summary).join(" / ")}` : ""}
-                  </div>
-                  <div className="glyphs" aria-hidden="true">
-                    {Array.from(track(layer, Math.max(0, layerCount - 1), 28, marks)).map((glyph, index) =>
-                      glyph === "●" ? (
-                        <span key={index} className="active">
-                          {glyph}
-                        </span>
-                      ) : (
-                        glyph
-                      ),
-                    )}
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={Math.max(0, layerCount - 1)}
-                    value={layer}
-                    aria-label="Layer"
-                    onChange={(event) => setLayer(Number(event.target.value))}
-                  />
-                </div>
+                <button type="button" aria-pressed={showModel} onClick={() => setShowModel((on) => !on)}>
+                  Ghost
+                </button>
               </>
-            ) : (
-              <p className="hint">drag to orbit. scroll to zoom. z is up.  1 move  2 rotate  3 scale  f frame</p>
             )}
-            {progress && (
-              <p className="meter" aria-live="polite">
-                {meter(progress.fraction)} {String(Math.round(progress.fraction * 100)).padStart(3, " ")}%  {progress.message}
-              </p>
-            )}
-          </footer>
+          </div>
+          {preview && (
+            <div className="studio-float studio-float--layers">
+              <div className="studio-float" role="toolbar" aria-label="Toolpath colour">
+                {(
+                  [
+                    ["type", "Feature"],
+                    ["speed", "Speed"],
+                    ["slope", "Slope"],
+                  ] as const
+                ).map(([item, label]) => (
+                  <button
+                    key={item}
+                    type="button"
+                    aria-pressed={colourMode === item}
+                    onClick={() => setColourMode(item)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="readout">
+                {layerZ[layer] != null ? `Z ${layerZ[layer].toFixed(2)}` : `Layer ${layer + 1}`}
+                {` / ${layerCount}`}
+                {minutes == null ? "" : ` · ~${minutes} min`}
+                {marksHere.length > 0 ? ` · ${marksHere.map((item) => item.summary).join(" / ")}` : ""}
+              </div>
+              <Slider
+                label="Layer"
+                value={[layer]}
+                min={0}
+                max={Math.max(0, layerCount - 1)}
+                step={1}
+                inputDigits={0}
+                marks={marks}
+                formatValue={(value) => `Layer ${value + 1}`}
+                onValueChange={setLayer}
+              />
+            </div>
+          )}
+          </div>
         </main>
       </div>
       )}
+        </ViewSwap>
+      </ShellFrame>
+      <ThemedToaster uiStyle={uiStyle} />
+      <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} items={commandItems} />
+      <Suspense fallback={null}>
       <SetupWizard
         open={setupWizardOpen}
         printers={printers}
@@ -4006,11 +4732,47 @@ export function App() {
         onChoosePrinter={setPrinterId}
         onClose={() => setSetupWizardOpen(false)}
       />
+      </Suspense>
     </div>
+    </TooltipProvider>
   );
 }
 
 type InstructionKind = "pause" | "temperature" | "fan" | "beep" | "message" | "park_and_wait";
+
+function ProjectSummary({
+  embedded,
+  ignored,
+  onIgnore,
+}: {
+  embedded: ProjectSettingsImport | null;
+  ignored: boolean;
+  onIgnore: (ignored: boolean) => void;
+}) {
+  if (!embedded || embedded.applied.length === 0) return null;
+  return (
+    <details className="import-summary">
+      <summary>Project settings</summary>
+      <ul>
+        {embedded.applied.map((setting) => (
+          <li key={setting.key}>
+            {setting.label} {setting.detail}
+            {ignored ? " (ignored)" : ""}
+          </li>
+        ))}
+      </ul>
+      <p>{embedded.note}</p>
+      <label>
+        <input
+          type="checkbox"
+          checked={ignored}
+          onChange={(event) => onIgnore(event.target.checked)}
+        />
+        Ignore project settings
+      </label>
+    </details>
+  );
+}
 
 function markOf(item: StoredInstruction, layerZ: number[], layerHeight: number): number | null {
   const instruction = item.instruction;
@@ -4084,52 +4846,52 @@ function JobSummary({
   const className =
     variant === "demo" ? "job-card demo-cost" : "job-card job-card--panel";
   if (layerCount <= 0) {
-    return <span className="job-state quiet">not sliced</span>;
+    return <span className="job-state quiet">Not sliced</span>;
   }
   return (
     <div className={className} data-sliced="yes">
-      {variant !== "panel" && <span className="job-state">sliced</span>}
+      {variant !== "panel" && <span className="job-state">Sliced</span>}
       <dl>
         <div>
-          <dt>time</dt>
+          <dt>Time</dt>
           <dd>{printSeconds == null ? "—" : formatClock(printSeconds)}</dd>
         </div>
         <div>
-          <dt>length</dt>
+          <dt>Filament</dt>
           <dd>{filamentMetres == null ? "—" : `${filamentMetres.toFixed(1)} m`}</dd>
         </div>
         {grams != null && (
           <div>
-            <dt>weight</dt>
+            <dt>Weight</dt>
             <dd>{grams < 10 ? grams.toFixed(1) : grams.toFixed(0)} g</dd>
           </div>
         )}
         <div>
-          <dt>layers</dt>
+          <dt>Layers</dt>
           <dd>{layerCount}</dd>
         </div>
         {estimate && (
           <>
             <div>
-              <dt>material</dt>
+              <dt>Material</dt>
               <dd>{formatMoney(estimate.filament_cost)}</dd>
             </div>
             <div>
-              <dt>energy</dt>
+              <dt>Energy</dt>
               <dd>
                 {estimate.kwh.toFixed(3)} kWh · {formatMoney(estimate.energy_cost)}
               </dd>
             </div>
             {estimate.spools.map((spool) => (
               <div key={spool.slot}>
-                <dt>{`spool ${spool.slot + 1}`}</dt>
+                <dt>{`Spool ${spool.slot + 1}`}</dt>
                 <dd>
                   {spool.grams.toFixed(0)} g · {formatMoney(spool.cost)}
                 </dd>
               </div>
             ))}
             <div className="job-total">
-              <dt>total</dt>
+              <dt>Total</dt>
               <dd>{formatMoney(estimate.total)}</dd>
             </div>
           </>

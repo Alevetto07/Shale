@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: "jsdom",
+    setupFiles: ["./src/test-setup.ts"],
     env: { VITE_SHALE_MOCK: "1" },
     css: true,
   },
@@ -19,13 +20,13 @@ export default defineConfig({
   build: {
     target: "es2022",
     sourcemap: false,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (id.includes("node_modules/three") || id.includes("@react-three")) {
-            return "three-viewport";
-          }
-        },
+    // The plate is a dynamic import. Preloading it would parse three.js before
+    // the shell has painted.
+    modulePreload: {
+      resolveDependencies(_filename, deps) {
+        return deps.filter(
+          (dep) => !/Viewport-|DevicePane-|SettingsView-|SetupWizard-|three/.test(dep),
+        );
       },
     },
   },

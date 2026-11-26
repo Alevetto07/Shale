@@ -77,6 +77,52 @@ fn slice_without_a_model_explains_what_is_missing() {
 }
 
 #[test]
+fn nonplanar_refuses_a_printer_without_a_head_envelope() {
+    let output = binary()
+        .args([
+            "slice",
+            "missing-model.stl",
+            "--printer",
+            "creality_k1",
+            "--nonplanar",
+            "auto",
+        ])
+        .output()
+        .expect("run slice");
+    assert!(!output.status.success());
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        text.contains("non-planar needs a toolhead envelope"),
+        "{text}"
+    );
+    assert!(text.contains("'creality_k1'"), "{text}");
+    assert!(
+        text.contains("bambu_lab_a1"),
+        "the message should list printers: {text}"
+    );
+    // Refused before the model path is even read.
+    assert!(!text.contains("missing-model.stl"), "{text}");
+}
+
+#[test]
+fn planar_slicing_of_an_unsupported_printer_is_not_refused_by_the_envelope_gate() {
+    let output = binary()
+        .args([
+            "slice",
+            "missing-model.stl",
+            "--printer",
+            "creality_k1",
+            "--nonplanar",
+            "off",
+        ])
+        .output()
+        .expect("run slice");
+    assert!(!output.status.success());
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(!text.contains("toolhead envelope"), "{text}");
+}
+
+#[test]
 fn info_never_prints_contradictory_env_lines() {
     let output = binary().arg("info").output().expect("run info");
     assert!(output.status.success());

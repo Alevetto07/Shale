@@ -1,3 +1,4 @@
+import { ChevronDown } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
 
 export { UI_THEME_ID } from "./ui-styles";
@@ -81,8 +82,40 @@ function writeFolded(titles: string[]) {
   }
 }
 
-export function Frame({ title, children }: { title: string; children: ReactNode }) {
-  const [open, setOpen] = useState(() => !readFolded().includes(title));
+const ADVANCED_KEY = "shale.ui.advanced-open";
+
+function readAdvancedOpen(): string[] {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(ADVANCED_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeAdvancedOpen(titles: string[]) {
+  try {
+    window.localStorage.setItem(ADVANCED_KEY, JSON.stringify(titles));
+  } catch {
+    // A section that forgets it was opened is still usable.
+  }
+}
+
+export function Frame({
+  title,
+  children,
+  advanced = false,
+}: {
+  title: string;
+  children: ReactNode;
+  /** Starts closed. Calibration and the engine path live here, out of the way of a first slice. */
+  advanced?: boolean;
+}) {
+  const [open, setOpen] = useState(() => {
+    if (readFolded().includes(title)) return false;
+    if (advanced) return readAdvancedOpen().includes(title);
+    return true;
+  });
   const contentId = useId();
 
   function toggle() {
@@ -91,6 +124,11 @@ export function Frame({ title, children }: { title: string; children: ReactNode 
     const folded = readFolded().filter((item) => item !== title);
     if (!next) folded.push(title);
     writeFolded(folded);
+    if (advanced) {
+      const opened = readAdvancedOpen().filter((item) => item !== title);
+      if (next) opened.push(title);
+      writeAdvancedOpen(opened);
+    }
   }
 
   return (
@@ -101,13 +139,14 @@ export function Frame({ title, children }: { title: string; children: ReactNode 
           className="frame-toggle"
           aria-expanded={open}
           aria-controls={contentId}
-          title={open ? `fold ${title}` : `unfold ${title}`}
+          title={open ? `Fold ${title}` : `Unfold ${title}`}
           onClick={toggle}
         >
-          <span className="frame-caret" aria-hidden="true">
-            {open ? "▾" : "▸"}
+          <span className="frame-caret" data-open={open ? "1" : "0"} aria-hidden="true">
+            <ChevronDown size={14} strokeWidth={1.5} />
           </span>
           <span className="frame-title">{title}</span>
+          {advanced ? <span className="frame-chip">Advanced</span> : null}
         </button>
       </header>
       <div

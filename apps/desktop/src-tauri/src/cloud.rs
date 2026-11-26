@@ -127,6 +127,26 @@ pub fn cloud_login(
     }
 }
 
+/// Open Bambu Lab's own sign-in page (Google, Apple, or email) and store the
+/// tokens the page hands back. The email form stays available beside this.
+#[tauri::command]
+pub async fn cloud_login_web(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, CloudState>,
+) -> Result<Session, String> {
+    let host = lock(&state)?.host().to_string();
+    let (access, refresh, expires, account) = crate::bambu_login::sign_in(&app, &host).await?;
+    let mut cloud = lock(&state)?;
+    cloud
+        .adopt_web_login(&access, &refresh, expires, &account)
+        .map_err(|err| err.to_string())?;
+    Ok(Session {
+        signed_in: cloud.signed_in(),
+        account: cloud.account().map(str::to_string),
+        host: cloud.host().to_string(),
+    })
+}
+
 #[tauri::command]
 pub fn cloud_verify(
     state: tauri::State<CloudState>,
@@ -139,6 +159,19 @@ pub fn cloud_verify(
         .submit_code(&email, &tfa_key, &code)
         .map(|_| ())
         .map_err(|err| err.to_string())
+}
+
+/// Global, or China (`CN` / `China` / `zh-CN`) which uses `api.bambulab.cn`.
+/// Switching region while signed in signs out: the two clouds do not share tokens.
+#[tauri::command]
+pub fn cloud_set_region(state: tauri::State<CloudState>, region: String) -> Result<Session, String> {
+    let mut cloud = lock(&state)?;
+    cloud.set_region(&region).map_err(|err| err.to_string())?;
+    Ok(Session {
+        signed_in: cloud.signed_in(),
+        account: cloud.account().map(str::to_string),
+        host: cloud.host().to_string(),
+    })
 }
 
 #[tauri::command]

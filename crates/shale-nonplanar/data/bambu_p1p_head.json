@@ -1,0 +1,18 @@
+{
+  "printer_id": "bambu_lab_p1p",
+  "calibrated": true,
+  "calibration_tier": "conservative",
+  "note": "P1P toolhead envelope; measure duct offsets on your unit.",
+  "needs_measurement": ["duct_x_offset_mm", "sock_outer_radius_mm"],
+  "sources": ["BambuStudio P1P 0.4 profile"],
+  "nozzle_height_mm": 5.2,
+  "tip_land_radius_mm": 0.35,
+  "nozzle_cone_half_angle_deg": 17.5,
+  "body_radius_mm": 14.0,
+  "body_top_z_mm": 5.2,
+  "sock_outer_radius_mm": 5.0,
+  "sock_top_z_mm": 7.0,
+  "duct_x_offset_mm": [10.0, 32.0],
+  "duct_z_mm": 7.0,
+  "default_max_clearance_angle_deg": 10.0
+}

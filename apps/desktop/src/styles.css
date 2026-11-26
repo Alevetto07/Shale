@@ -77,16 +77,20 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   flex-direction: column;
   min-height: 0;
 }
-/* Main workspaces fill the window below the tab strip. */
-.app > .workspace,
-.app > .home-pane,
-.app > .device {
+/* Main workspaces fill the shell below the tab strip. */
+.app-surface > .workspace,
+.app-surface > .home-pane,
+.app-surface > .device {
   flex: 1 1 auto;
   min-height: 0;
 }
 .home-pane {
   position: relative;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .device { flex: 1 1 auto; }
@@ -178,8 +182,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   display: block;
   pointer-events: none;
 }
-.titlebar-buttons button:hover { background: #14161f; color: var(--ink); }
-.titlebar-buttons .titlebar-close:hover { background: #b4474a; color: #fff; }
+.titlebar-buttons button:hover { background: var(--panel-raised); color: var(--ink); }
+.titlebar-buttons .titlebar-close:hover { background: var(--danger); color: #fff; }
 
 .brand {
   display: flex;
@@ -192,6 +196,9 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   height: 16px;
   width: auto;
   display: block;
+}
+.brand-mark--light {
+  display: none;
 }
 .wordmark {
   margin: 0;
@@ -244,8 +251,8 @@ code { font-family: var(--mono); }
   display: grid;
   grid-template-columns: minmax(280px, 360px) 1fr;
   grid-template-rows: minmax(0, 1fr);
-  gap: 0.5rem;
-  padding: 0.4rem 1rem 1rem;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5) var(--space-6);
 }
 
 .panel {
@@ -255,7 +262,7 @@ code { font-family: var(--mono); }
   padding: 0.2rem 0.4rem 1.5rem 0.2rem;
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  gap: var(--space-4);
   background: var(--panel);
   min-height: 0;
   align-content: flex-start;
@@ -519,7 +526,7 @@ button.model.selected::before { content: "> "; color: var(--accent); }
   padding: 0.15rem 0.4rem;
   border: 1px solid var(--line);
   border-radius: 3px;
-  background: rgba(6, 7, 11, 0.88);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
   color: var(--ink);
   font-size: 11px;
   letter-spacing: 0.02em;
@@ -562,6 +569,15 @@ button.model.selected::before { content: "> "; color: var(--accent); }
 }
 .margin-field { position: fixed; z-index: 3; }
 .plate canvas { display: block; max-width: 100%; max-height: 100%; }
+.viewport-host { width: 100%; height: 100%; min-width: 0; min-height: 0; }
+.app-surface--enter { animation: view-enter 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes view-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-surface--enter { animation: none; }
+}
 .caption {
   position: absolute;
   left: 1rem;
@@ -1336,7 +1352,7 @@ button.recent-row.dim { color: var(--ink-3); }
   position: relative;
   top: 1px;
 }
-.doc-tab:hover { color: var(--ink); background: rgba(233, 232, 242, 0.08); }
+.doc-tab:hover { color: var(--ink); background: var(--surface-hover); }
 .doc-tab.active {
   background: var(--panel);
   border-color: var(--line);
@@ -1419,7 +1435,7 @@ button.recent-row.dim { color: var(--ink-3); }
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
 }
 .doc-open { color: var(--ink-2); }
-.doc-open:hover { color: var(--ink); background: rgba(233, 232, 242, 0.06); }
+.doc-open:hover { color: var(--ink); background: var(--surface-hover); }
 
 .mode-bar {
   display: flex;
@@ -1454,18 +1470,21 @@ button.recent-row.dim { color: var(--ink-3); }
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--ink-2);
-  transition: color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+  transition: transform var(--duration-press) var(--ease-out), color var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out);
+}
+.mode-chip:not([aria-disabled="true"]):active {
+  transform: scale(var(--press-scale));
+  transition-duration: 100ms;
 }
 .mode-chip:hover:not(:disabled) {
   color: var(--ink);
   background: color-mix(in srgb, var(--panel) 80%, transparent);
 }
-.mode-chip.active {
-  /* A fill, not an outline: the panel colour alone is the same shade as the bar
-     behind it, so the accent has to be in the fill for the chip to read as set. */
+.mode-chip.active,
+.mode-chip[data-state="active"] {
+  /* The travelling indicator carries the fill. The label stays put. */
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 24%, var(--panel));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+  background: transparent;
 }
 .mode-chip.waiting {
   /* Preview before a slice is genuinely unavailable, not merely unselected:
@@ -1636,6 +1655,44 @@ button.recent-row.dim { color: var(--ink-3); }
 .slice-name { grid-area: name; color: var(--ink); }
 .slice-data { grid-area: data; font-variant-numeric: tabular-nums; }
 .slice-diff { grid-area: diff; color: var(--ink-3); }
+
+.fit-warning {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 12px;
+  z-index: 30;
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.import-summary {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.import-summary summary {
+  cursor: pointer;
+}
+.import-summary ul {
+  margin: 6px 0;
+  padding-left: 1.1rem;
+}
+.import-summary p {
+  margin: 0 0 6px;
+  opacity: 0.75;
+}
+.import-summary label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 
 .slice-again {
   position: absolute;
@@ -1953,7 +2010,7 @@ button.recent-row.dim { color: var(--ink-3); }
   border-color: var(--accent);
   color: var(--accent);
 }
-.device-controls button.device-go:hover:not(:disabled) { background: var(--accent); color: var(--bg); }
+.device-controls button.device-go:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); }
 .device-controls .device-note { margin: 0; }
 
 .device-confirm {
@@ -2300,6 +2357,9 @@ select {
   background: var(--panel);
 }
 .legend-ramp i { flex: 1; min-width: 0; }
+.legend-ramp--slope {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 42%, var(--bg)), var(--accent));
+}
 .legend-scale-ends {
   display: flex;
   justify-content: space-between;

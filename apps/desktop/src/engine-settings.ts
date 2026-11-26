@@ -1,4 +1,4 @@
-import type { SliceSettings } from "./api";
+import { DEFAULT_NONPLANAR, type NonplanarSettings, type SliceSettings } from "./api";
 
 /** Cura keys bound to the process sheet's quick rows. */
 export const QUICK_SETTING_KEYS = {
@@ -71,9 +71,18 @@ export function quickSettingsView(
   return { layerHeight, walls, infill, pattern, supports, speed, nozzle, bed };
 }
 
+function clampAngle(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_NONPLANAR.max_angle_deg;
+  return Math.min(10, Math.max(0.5, value));
+}
+
 /** What the slicer should receive: only keys the user has explicitly overridden. */
-export function userSettingsForEngine(scoped: Record<string, string>): SliceSettings {
+export function userSettingsForEngine(
+  scoped: Record<string, string>,
+  nonplanar: NonplanarSettings = DEFAULT_NONPLANAR,
+): SliceSettings {
   const entries = Object.entries(scoped).filter(([, value]) => value !== "");
+  const mode = nonplanar.mode === "auto" || nonplanar.mode === "curved-tops" ? nonplanar.mode : "off";
   return {
     layer_height: parseNumber(scoped.layer_height),
     infill_sparse_density: parseNumber(scoped.infill_sparse_density),
@@ -81,6 +90,25 @@ export function userSettingsForEngine(scoped: Record<string, string>): SliceSett
     material_print_temperature: parseNumber(scoped.material_print_temperature),
     material_bed_temperature: parseNumber(scoped.material_bed_temperature),
     extra: entries,
+    nonplanar: {
+      mode,
+      max_angle_deg: clampAngle(nonplanar.max_angle_deg),
+      strict: nonplanar.strict,
+      underside_bands: mode === "auto" && nonplanar.underside_bands,
+    },
+  };
+}
+
+/** Non-planar controls from a saved project. Missing fields stay at the defaults. */
+export function nonplanarFromSliceSettings(settings: SliceSettings): NonplanarSettings {
+  const raw = settings.nonplanar;
+  if (!raw) return { ...DEFAULT_NONPLANAR };
+  const mode = raw.mode === "auto" || raw.mode === "curved-tops" ? raw.mode : "off";
+  return {
+    mode,
+    max_angle_deg: clampAngle(raw.max_angle_deg),
+    strict: !!raw.strict,
+    underside_bands: !!raw.underside_bands,
   };
 }
 

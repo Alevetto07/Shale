@@ -681,6 +681,71 @@ pub fn place_on_bed(
     }
 }
 
+/// Centre and drop a mesh the way `place_on_bed` does, keeping the rotation
+/// and scale already on the part. Translation is rewritten; the pose is not.
+pub fn centre_keeping_pose(
+    mesh: &TriangleMesh,
+    pose: &Transform,
+    width: f64,
+    depth: f64,
+    center_is_zero: bool,
+) -> Transform {
+    let shaped = Transform {
+        translation: [0.0, 0.0, 0.0],
+        rotation_deg: pose.rotation_deg,
+        scale: pose.scale,
+    };
+    let baked = bake(mesh, &shaped);
+    let (min, max) = baked.bounds();
+    let centre_x = (min[0] as f64 + max[0] as f64) * 0.5;
+    let centre_y = (min[1] as f64 + max[1] as f64) * 0.5;
+    let (tx, ty) = if center_is_zero {
+        (-centre_x, -centre_y)
+    } else {
+        (width * 0.5 - centre_x, depth * 0.5 - centre_y)
+    };
+    Transform {
+        translation: [tx, ty, -(min[2] as f64)],
+        rotation_deg: pose.rotation_deg,
+        scale: pose.scale,
+    }
+}
+
+/// How far a placed mesh sticks out of the bed, in millimetres on X, Y and Z.
+/// Zero means that axis fits. An empty mesh fits. Vertices are transformed
+/// first, so a rotated or scaled part is judged by where it actually lands.
+pub fn bed_overflow(
+    mesh: &TriangleMesh,
+    transform: &Transform,
+    width: f64,
+    depth: f64,
+    height: f64,
+) -> [f64; 3] {
+    if mesh.vertices.is_empty() {
+        return [0.0; 3];
+    }
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    for vertex in &mesh.vertices {
+        let point = apply_transform(
+            [vertex[0] as f64, vertex[1] as f64, vertex[2] as f64],
+            transform,
+        );
+        for axis in 0..3 {
+            min[axis] = min[axis].min(point[axis]);
+            max[axis] = max[axis].max(point[axis]);
+        }
+    }
+    let limit = [width, depth, height];
+    let mut overflow = [0.0; 3];
+    for axis in 0..3 {
+        let below = (-min[axis]).max(0.0);
+        let above = (max[axis] - limit[axis]).max(0.0);
+        overflow[axis] = below.max(above);
+    }
+    overflow
+}
+
 /// Move the mesh along Z so its lowest transformed vertex sits on the plate.
 pub fn drop_to_bed(mesh: &TriangleMesh, transform: &mut Transform) {
     let mut min_z = f64::INFINITY;
@@ -736,7 +801,7 @@ pub fn load_objects(
             progress(0.2, "reading 3MF");
             load_3mf_objects(bytes)?
                 .into_iter()
-                .map(|(name, mesh)| NamedObject { name, mesh })
+                .map(|(_, name, mesh)| NamedObject { name, mesh })
                 .collect::<Vec<_>>()
         }
         "step" | "stp" => {
@@ -770,13 +835,172 @@ fn load_3mf(bytes: &[u8]) -> Result<TriangleMesh, Error> {
     Ok(crate::exchange::merge(
         &objects
             .into_iter()
-            .map(|(_, mesh)| mesh)
+            .map(|(_, _, mesh)| mesh)
             .collect::<Vec<_>>(),
     ))
 }
 
+/// One object the 3MF build places, with its transform already in the vertices.
+#[derive(Clone, Debug)]
+pub struct BuildObject {
+    /// The `<item objectid>` this mesh came from.
+    pub object_id: u32,
+    pub name: String,
+    pub mesh: TriangleMesh,
+}
+
+/// One plate named in `Metadata/model_settings.config`.
+///
+/// `number` is the file's `plater_id` (1-based). `object_ids` are build-item
+/// ids, the same numbers as [`BuildObject::object_id`].
+#[derive(Clone, Debug)]
+pub struct PlateGroup {
+    pub number: u32,
+    pub name: String,
+    pub object_ids: Vec<u32>,
+}
+
+/// Every object a 3MF build places, still carrying the id a plate list uses.
+pub fn load_build_objects(bytes: &[u8]) -> Result<Vec<BuildObject>, Error> {
+    let mut objects = load_3mf_objects(bytes)?
+        .into_iter()
+        .map(|(object_id, name, mesh)| BuildObject {
+            object_id,
+            name,
+            mesh,
+        })
+        .collect::<Vec<_>>();
+    for object in &mut objects {
+        right_way_round(&mut object.mesh);
+    }
+    Ok(objects)
+}
+
+/// Plates declared by a Bambu or Orca 3MF. An empty list means the file has
+/// no `model_settings.config` (or it names no plate).
+pub fn read_plate_groups(bytes: &[u8]) -> Vec<PlateGroup> {
+    let Ok(mut archive) = ZipArchive::new(Cursor::new(bytes)) else {
+        return Vec::new();
+    };
+    let Ok(xml) = read_zip_text(&mut archive, "Metadata/model_settings.config") else {
+        return Vec::new();
+    };
+    parse_plate_groups(&xml)
+}
+
+fn parse_plate_groups(xml: &str) -> Vec<PlateGroup> {
+    let mut plates = Vec::new();
+    for chunk in xml.split("<plate").skip(1) {
+        let body = chunk.split("</plate>").next().unwrap_or(chunk);
+        let number = plate_meta(body, "plater_id")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(plates.len() as u32 + 1);
+        let name = plate_meta(body, "plater_name").unwrap_or_default();
+        let mut object_ids = Vec::new();
+        for instance in body.split("<model_instance").skip(1) {
+            if let Some(id) = plate_meta(instance, "object_id").and_then(|value| value.parse().ok())
+            {
+                object_ids.push(id);
+            }
+        }
+        plates.push(PlateGroup {
+            number,
+            name,
+            object_ids,
+        });
+    }
+    plates
+}
+
+fn plate_meta(xml: &str, key: &str) -> Option<String> {
+    let needle = format!("key=\"{key}\"");
+    let rest = xml.split(&needle).nth(1)?;
+    let value = rest.split("value=\"").nth(1)?.split('"').next()?;
+    Some(value.to_string())
+}
+
+/// Hand each build object to the plate that lists its id.
+///
+/// A file with no plate list is one plate holding everything. An object the
+/// plates do not mention stays on the first plate, so a plate split never
+/// drops geometry. Plates that end up empty are left out.
+pub fn assign_plates(
+    objects: Vec<BuildObject>,
+    mut plates: Vec<PlateGroup>,
+) -> Vec<(PlateGroup, Vec<BuildObject>)> {
+    if plates.is_empty() {
+        let object_ids = objects.iter().map(|object| object.object_id).collect();
+        plates.push(PlateGroup {
+            number: 1,
+            name: String::new(),
+            object_ids,
+        });
+    }
+    let mut by_id: HashMap<u32, Vec<BuildObject>> = HashMap::new();
+    for object in objects {
+        by_id.entry(object.object_id).or_default().push(object);
+    }
+    let mut grouped = Vec::new();
+    for plate in plates {
+        let mut items = Vec::new();
+        for id in &plate.object_ids {
+            if let Some(found) = by_id.remove(id) {
+                items.extend(found);
+            }
+        }
+        grouped.push((plate, items));
+    }
+    if !by_id.is_empty() {
+        if let Some((_, first)) = grouped.first_mut() {
+            for items in by_id.into_values() {
+                first.extend(items);
+            }
+        }
+    }
+    grouped.retain(|(_, items)| !items.is_empty());
+    grouped
+}
+
+/// Centre a group of meshes on the bed with one shared translation, and sit
+/// the lowest vertex on Z = 0. Relative positions inside the group stay put.
+pub fn place_assembly(
+    meshes: &[TriangleMesh],
+    width: f64,
+    depth: f64,
+    center_is_zero: bool,
+) -> Transform {
+    let mut min = [f32::MAX; 3];
+    let mut max = [f32::MIN; 3];
+    let mut any = false;
+    for mesh in meshes {
+        if mesh.vertices.is_empty() {
+            continue;
+        }
+        any = true;
+        let (lo, hi) = mesh.bounds();
+        for axis in 0..3 {
+            min[axis] = min[axis].min(lo[axis]);
+            max[axis] = max[axis].max(hi[axis]);
+        }
+    }
+    if !any {
+        return Transform::default();
+    }
+    let centre_x = (min[0] as f64 + max[0] as f64) * 0.5;
+    let centre_y = (min[1] as f64 + max[1] as f64) * 0.5;
+    let (tx, ty) = if center_is_zero {
+        (-centre_x, -centre_y)
+    } else {
+        (width * 0.5 - centre_x, depth * 0.5 - centre_y)
+    };
+    Transform {
+        translation: [tx, ty, -(min[2] as f64)],
+        ..Transform::default()
+    }
+}
+
 /// One mesh per object the build places, with the build's transforms applied.
-fn load_3mf_objects(bytes: &[u8]) -> Result<Vec<(String, TriangleMesh)>, Error> {
+fn load_3mf_objects(bytes: &[u8]) -> Result<Vec<(u32, String, TriangleMesh)>, Error> {
     let mut archive = ZipArchive::new(Cursor::new(bytes))
         .map_err(|err| Error::Mesh(format!("3MF is not a zip archive: {err}")))?;
     let root_path = threemf_root_part(&mut archive)?;
@@ -850,6 +1074,7 @@ fn load_3mf_objects(bytes: &[u8]) -> Result<Vec<(String, TriangleMesh)>, Error> 
             .and_then(|(_, object)| object.name.clone())
             .unwrap_or_else(|| format!("object {id}"));
         objects.push((
+            id,
             name,
             TriangleMesh {
                 vertices,
@@ -921,7 +1146,10 @@ fn resolve_zip_name(archive: &ZipArchive<Cursor<&[u8]>>, path: &str) -> Option<S
         .map(str::to_string)
 }
 
-fn read_zip_text(archive: &mut ZipArchive<Cursor<&[u8]>>, path: &str) -> Result<String, Error> {
+pub(crate) fn read_zip_text(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    path: &str,
+) -> Result<String, Error> {
     let name = resolve_zip_name(archive, path)
         .ok_or_else(|| Error::Mesh(format!("3MF part {path} is missing")))?;
     let mut file = archive
@@ -1168,10 +1396,11 @@ fn flatten_object(
 }
 
 fn apply_affine(vertex: [f32; 3], matrix: &[f64; 12]) -> [f32; 3] {
-    // 3MF writes a 4x3 matrix in row-major order, so the twelve numbers are
-    // m00 m01 m02 | m10 m11 m12 | m20 m21 m22 | m30 m31 m32 and the last three
-    // are the translation. Reading it as 3x4 puts a translation into a
-    // rotation slot, which threw Bambu projects hundreds of metres off plate.
+    // Stored as a 4×3 matrix: columns (0,1,2), (3,4,5), (6,7,8) and translation
+    // at (9,10,11). Bambu writes that layout. The 3MF spec writes 3×4, with the
+    // translation in the fourth column of each row. `parse_transform` picks the
+    // rigid reading and converts a spec matrix into this layout. Treating a
+    // 4×3 translation as 3×4 threw Bambu projects hundreds of metres off plate.
     let x = vertex[0] as f64;
     let y = vertex[1] as f64;
     let z = vertex[2] as f64;
@@ -1183,22 +1412,105 @@ fn apply_affine(vertex: [f32; 3], matrix: &[f64; 12]) -> [f32; 3] {
 }
 
 fn compose(parent: [f64; 12], child: [f64; 12]) -> [f64; 12] {
-    let mut out = [0.0; 12];
-    for row in 0..3 {
-        for col in 0..3 {
-            let mut sum = 0.0;
-            for k in 0..3 {
-                sum += parent[row * 3 + k] * child[k * 3 + col];
-            }
-            out[row * 3 + col] = sum;
-        }
-        let mut translate = parent[row * 3 + 3];
-        for k in 0..3 {
-            translate += parent[row * 3 + k] * child[k * 3 + 3];
-        }
-        out[row * 3 + 3] = translate;
+    // Parent after child, in the same 4×3 layout as `apply_affine`. The old
+    // 3×4 multiply kept an X translation under an identity parent and dropped
+    // Y and Z, so plate components landed on top of each other.
+    let column = |matrix: &[f64; 12], x: f64, y: f64, z: f64| -> [f64; 3] {
+        [
+            matrix[0] * x + matrix[3] * y + matrix[6] * z,
+            matrix[1] * x + matrix[4] * y + matrix[7] * z,
+            matrix[2] * x + matrix[5] * y + matrix[8] * z,
+        ]
+    };
+    let x = column(&parent, child[0], child[1], child[2]);
+    let y = column(&parent, child[3], child[4], child[5]);
+    let z = column(&parent, child[6], child[7], child[8]);
+    let translate = column(&parent, child[9], child[10], child[11]);
+    [
+        x[0],
+        x[1],
+        x[2],
+        y[0],
+        y[1],
+        y[2],
+        z[0],
+        z[1],
+        z[2],
+        translate[0] + parent[9],
+        translate[1] + parent[10],
+        translate[2] + parent[11],
+    ]
+}
+
+/// How far a 3×3 is from a rigid transform (unit columns, orthogonal, det ±1).
+fn rigid_error(columns: [[f64; 3]; 3]) -> f64 {
+    let mut error = 0.0;
+    let mut lengths = [0.0; 3];
+    for (index, column) in columns.iter().enumerate() {
+        let length =
+            (column[0] * column[0] + column[1] * column[1] + column[2] * column[2]).sqrt();
+        lengths[index] = length;
+        error += (length - 1.0) * (length - 1.0);
     }
-    out
+    for (left, right) in [(0, 1), (0, 2), (1, 2)] {
+        let dot = columns[left][0] * columns[right][0]
+            + columns[left][1] * columns[right][1]
+            + columns[left][2] * columns[right][2];
+        let scale = (lengths[left] * lengths[right]).max(1e-9);
+        error += (dot / scale).abs();
+    }
+    let (cx, cy, cz) = (columns[0], columns[1], columns[2]);
+    let det = cx[0] * (cy[1] * cz[2] - cy[2] * cz[1])
+        - cx[1] * (cy[0] * cz[2] - cy[2] * cz[0])
+        + cx[2] * (cy[0] * cz[1] - cy[1] * cz[0]);
+    let det_error = det.abs() - 1.0;
+    error + det_error * det_error
+}
+
+fn columns_4x3(matrix: &[f64; 12]) -> [[f64; 3]; 3] {
+    [
+        [matrix[0], matrix[1], matrix[2]],
+        [matrix[3], matrix[4], matrix[5]],
+        [matrix[6], matrix[7], matrix[8]],
+    ]
+}
+
+fn columns_3x4(matrix: &[f64; 12]) -> [[f64; 3]; 3] {
+    // Spec 3×4 is m00 m01 m02 tx, m10 m11 m12 ty, m20 m21 m22 tz.
+    [
+        [matrix[0], matrix[4], matrix[8]],
+        [matrix[1], matrix[5], matrix[9]],
+        [matrix[2], matrix[6], matrix[10]],
+    ]
+}
+
+fn convert_3x4_to_4x3(matrix: [f64; 12]) -> [f64; 12] {
+    [
+        matrix[0],
+        matrix[4],
+        matrix[8],
+        matrix[1],
+        matrix[5],
+        matrix[9],
+        matrix[2],
+        matrix[6],
+        matrix[10],
+        matrix[3],
+        matrix[7],
+        matrix[11],
+    ]
+}
+
+fn canonicalise_transform(matrix: [f64; 12]) -> [f64; 12] {
+    let as_4x3 = rigid_error(columns_4x3(&matrix));
+    let as_3x4 = rigid_error(columns_3x4(&matrix));
+    // Keep the 4×3 layout when the two readings are close, including a
+    // uniform scale. Convert only when the spec 3×4 reading is clearly rigid.
+    if as_3x4 + 0.05 < as_4x3 {
+        convert_3x4_to_4x3(matrix)
+    } else {
+        matrix
+    }
 }
 
 fn identity_transform() -> [f64; 12] {
@@ -1218,7 +1530,7 @@ fn parse_transform(raw: Option<&str>) -> [f64; 12] {
     }
     let mut matrix = [0.0; 12];
     matrix.copy_from_slice(&numbers);
-    matrix
+    canonicalise_transform(matrix)
 }
 
 fn local_name(qname: &[u8]) -> String {
@@ -1563,6 +1875,76 @@ mod tests {
     }
 
     #[test]
+    fn composing_a_4x3_parent_with_a_3x4_child_keeps_plate_parts_apart() {
+        // Plate 1 is a 4×3 build item. One component is a 4×3 Y offset and
+        // the other is a spec 3×4 X offset. The old multiply dropped the Y
+        // offset and misread the 3×4 translation, so both parts stacked.
+        let xml = r#"<?xml version="1.0"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources>
+    <object id="1" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="0" y="0" z="0"/>
+          <vertex x="1" y="0" z="0"/>
+          <vertex x="0" y="1" z="0"/>
+        </vertices>
+        <triangles>
+          <triangle v1="0" v2="1" v3="2"/>
+        </triangles>
+      </mesh>
+    </object>
+    <object id="3" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="0" y="0" z="0"/>
+          <vertex x="1" y="0" z="0"/>
+          <vertex x="0" y="1" z="0"/>
+        </vertices>
+        <triangles>
+          <triangle v1="0" v2="1" v3="2"/>
+        </triangles>
+      </mesh>
+    </object>
+    <object id="2" type="model">
+      <components>
+        <component objectid="1" transform="1 0 0 0 1 0 0 0 1 0 30 0"/>
+        <component objectid="3" transform="1 0 0 40 0 1 0 0 0 0 1 0"/>
+      </components>
+    </object>
+  </resources>
+  <build>
+    <item objectid="2" transform="1 0 0 0 1 0 0 0 1 100 20 0"/>
+  </build>
+</model>"#;
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut buffer);
+            writer
+                .start_file("3D/3dmodel.model", SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(xml.as_bytes()).unwrap();
+            writer.finish().unwrap();
+        }
+        let mesh = load_3mf(&buffer.into_inner()).unwrap();
+        let near = |x: f32, y: f32| {
+            mesh.vertices
+                .iter()
+                .any(|vertex| (vertex[0] - x).abs() < 1e-3 && (vertex[1] - y).abs() < 1e-3)
+        };
+        assert!(
+            near(100.0, 50.0),
+            "the 4×3 part should sit at the parent plus its Y offset, vertices {:?}",
+            mesh.vertices
+        );
+        assert!(
+            near(140.0, 20.0),
+            "the 3×4 part should sit at the parent plus its X offset, vertices {:?}",
+            mesh.vertices
+        );
+    }
+
+    #[test]
     fn a_capped_preview_keeps_contiguous_runs() {
         // Lone sampled triangles read as broken geometry, so a capped preview
         // must keep neighbouring facets together.
@@ -1586,6 +1968,37 @@ mod tests {
             "second kept triangle follows the first"
         );
         assert!((preview[18] - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_part_past_the_plate_reports_how_far_it_sticks_out() {
+        let mesh = TriangleMesh {
+            vertices: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 5.0]],
+            triangles: vec![[0, 1, 2]],
+        };
+        let fits = bed_overflow(&mesh, &Transform::default(), 256.0, 256.0, 256.0);
+        assert_eq!(fits, [0.0, 0.0, 0.0]);
+        let parked = Transform {
+            translation: [300.0, -4.0, 0.0],
+            ..Transform::default()
+        };
+        let overflow = bed_overflow(&mesh, &parked, 256.0, 256.0, 256.0);
+        assert!((overflow[0] - 54.0).abs() < 1e-6, "x {}", overflow[0]);
+        assert!((overflow[1] - 4.0).abs() < 1e-6, "y {}", overflow[1]);
+        assert_eq!(overflow[2], 0.0);
+        assert_eq!(
+            bed_overflow(
+                &TriangleMesh {
+                    vertices: Vec::new(),
+                    triangles: Vec::new(),
+                },
+                &Transform::default(),
+                180.0,
+                180.0,
+                180.0,
+            ),
+            [0.0; 3]
+        );
     }
 
     #[test]
@@ -1757,5 +2170,102 @@ endsolid t
         let baked = bake(&mesh, &transform);
         let (min, _) = baked.bounds();
         assert!(min[2].abs() < 1e-4);
+    }
+
+    #[test]
+    fn plates_keep_their_own_objects_and_centre_as_one() {
+        let model = r#"<?xml version="1.0"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources>
+    <object id="2" name="left" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="0" y="0" z="0"/>
+          <vertex x="10" y="0" z="0"/>
+          <vertex x="0" y="10" z="0"/>
+        </vertices>
+        <triangles><triangle v1="0" v2="1" v3="2"/></triangles>
+      </mesh>
+    </object>
+    <object id="4" name="right" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="400" y="0" z="1"/>
+          <vertex x="410" y="0" z="1"/>
+          <vertex x="400" y="10" z="1"/>
+        </vertices>
+        <triangles><triangle v1="0" v2="1" v3="2"/></triangles>
+      </mesh>
+    </object>
+  </resources>
+  <build>
+    <item objectid="2"/>
+    <item objectid="4"/>
+  </build>
+</model>"#;
+        let settings = r#"<?xml version="1.0"?>
+<config>
+  <plate>
+    <metadata key="plater_id" value="1"/>
+    <metadata key="plater_name" value="Left"/>
+    <model_instance><metadata key="object_id" value="2"/></model_instance>
+  </plate>
+  <plate>
+    <metadata key="plater_id" value="2"/>
+    <metadata key="plater_name" value="Right"/>
+    <model_instance><metadata key="object_id" value="4"/></model_instance>
+  </plate>
+</config>"#;
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut cursor);
+            for (name, body) in [
+                ("3D/3dmodel.model", model),
+                ("Metadata/model_settings.config", settings),
+            ] {
+                writer
+                    .start_file(name, SimpleFileOptions::default())
+                    .unwrap();
+                writer.write_all(body.as_bytes()).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        let bytes = cursor.into_inner();
+        let grouped = assign_plates(load_build_objects(&bytes).unwrap(), read_plate_groups(&bytes));
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].0.name, "Left");
+        assert_eq!(grouped[0].1.len(), 1);
+        assert_eq!(grouped[1].0.number, 2);
+        assert_eq!(grouped[1].1[0].object_id, 4);
+        let transform = place_assembly(
+            &[grouped[1].1[0].mesh.clone()],
+            256.0,
+            256.0,
+            false,
+        );
+        let baked = bake(&grouped[1].1[0].mesh, &transform);
+        let (min, max) = baked.bounds();
+        assert!(min[0] > 0.0 && max[0] < 256.0, "right plate landed at {min:?} {max:?}");
+        assert!(min[2].abs() < 1e-3, "z min {}", min[2]);
+    }
+
+    #[test]
+    fn centring_keeps_a_rotation_and_a_scale() {
+        let mesh = cube_at(0.0, 0.0);
+        let pose = Transform {
+            translation: [40.0, -10.0, 5.0],
+            rotation_deg: [0.0, 0.0, 90.0],
+            scale: [2.0, 2.0, 2.0],
+        };
+        let placed = centre_keeping_pose(&mesh, &pose, 220.0, 220.0, false);
+        assert_eq!(placed.rotation_deg, pose.rotation_deg);
+        assert_eq!(placed.scale, pose.scale);
+        let baked = bake(&mesh, &placed);
+        let (min, max) = baked.bounds();
+        assert!(min[2].abs() < 1e-3, "dropped to the bed, z min {}", min[2]);
+        let centre_x = (min[0] + max[0]) * 0.5;
+        let centre_y = (min[1] + max[1]) * 0.5;
+        assert!((centre_x as f64 - 110.0).abs() < 1.0, "x centre {centre_x}");
+        assert!((centre_y as f64 - 110.0).abs() < 1.0, "y centre {centre_y}");
     }
 }

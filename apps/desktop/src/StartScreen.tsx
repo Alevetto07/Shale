@@ -1,30 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import { EASE_OUT } from "./ui/motion";
 import type { PrinterInfo, RecentProject } from "./api";
 import { PlateField } from "./field/PlateField";
-import { RecentProjectsPanel, type RecentProjectsPanelHandle } from "./RecentProjectsPanel";
-import { SettingsView } from "./SettingsView";
 import { uiStyleById, type UiStyleId } from "./ui-styles";
-import { AsciiField } from "./widgets";
+import { Button, Input } from "./ui";
+import { HomeLanding } from "./ui/home-landing";
 
-type Panel = "menu" | "printers" | "settings" | "about";
+const SettingsView = lazy(() => import("./SettingsView").then((module) => ({ default: module.SettingsView })));
 
-interface Item {
-  id: string;
-  label: string;
-  hint: string;
-  detail?: string;
-  /// The machine a recent project was saved on, kept apart from the date so a
-  /// long machine name cannot eat the date when the row is narrow.
-  machine?: string;
-  dim?: boolean;
-  run: () => void;
-}
+export type StartPanel = "home" | "printers" | "settings" | "about";
 
 export function StartScreen({
   live,
+  panel,
+  onPanel,
   canReturn,
-  recents,
-  recentsRead,
   printers,
   printerId,
   enginePath,
@@ -35,8 +26,6 @@ export function StartScreen({
   onNew,
   onOpen,
   onImport,
-  onOpenRecent,
-  onForgetRecent,
   onChoosePrinter,
   onEnginePath,
   onLibDir,
@@ -46,15 +35,16 @@ export function StartScreen({
   onRerunSetup,
   uiStyle,
   onUiStyle,
+  recents,
+  onOpenRecent,
+  onDropModel,
 }: {
   live: boolean;
+  panel: StartPanel;
+  onPanel: (panel: StartPanel) => void;
   uiStyle: UiStyleId;
   onUiStyle: (id: UiStyleId) => void;
   canReturn: boolean;
-  recents: RecentProject[];
-  /// False until the list has been read once: an empty list means "none yet",
-  /// but only after the read, never before it.
-  recentsRead: boolean;
   printers: PrinterInfo[];
   printerId: string;
   enginePath: string;
@@ -65,8 +55,6 @@ export function StartScreen({
   onNew: () => void;
   onOpen: () => void;
   onImport: () => void;
-  onOpenRecent: (path: string) => void;
-  onForgetRecent: (path: string) => void;
   onChoosePrinter: (id: string) => void;
   onEnginePath: (value: string) => void;
   onLibDir: (value: string) => void;
@@ -74,69 +62,23 @@ export function StartScreen({
   onApplyEngine: () => void;
   onQuit: () => void;
   onRerunSetup?: () => void;
+  recents: RecentProject[];
+  onOpenRecent: (path: string) => void;
+  onDropModel: (path: string | null) => void;
 }) {
-  const [panel, setPanel] = useState<Panel>("menu");
-  const [cursor, setCursor] = useState(0);
   const [printerQuery, setPrinterQuery] = useState("");
-  const buttons = useRef<Array<HTMLButtonElement | null>>([]);
-  const recentsRef = useRef<RecentProjectsPanelHandle>(null);
   const plate = uiStyleById(uiStyle);
   const plateStill =
     typeof window !== "undefined" && new URLSearchParams(window.location.search).get("plateStill") === "1";
   const fieldLive = live && !plateStill;
 
-  const items = menuItems({
-    panel,
-    canReturn,
-    printers,
-    printerQuery,
-    onReturn,
-    onNew,
-    onOpen,
-    onImport,
-    onChoosePrinter,
-    onQuit,
-    onPanel: setPanel,
-  });
-
-  useEffect(() => {
-    setCursor(0);
-  }, [panel]);
-
-  useEffect(() => {
-    const node = buttons.current[cursor];
-    node?.focus();
-  }, [cursor, panel, items.length]);
-
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const typing = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA";
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        if (typing) return;
-        event.preventDefault();
-        setCursor((current) => {
-          if (items.length === 0) return 0;
-          const step = event.key === "ArrowDown" ? 1 : -1;
-          return (current + step + items.length) % items.length;
-        });
-        return;
-      }
-      if (event.key === "Home") {
-        if (typing) return;
-        event.preventDefault();
-        setCursor(0);
-        return;
-      }
-      if (event.key === "End") {
-        if (typing) return;
-        event.preventDefault();
-        setCursor(Math.max(0, items.length - 1));
-        return;
-      }
       if (event.key === "Escape") {
         event.preventDefault();
-        if (panel !== "menu") setPanel("menu");
+        if (panel !== "home") onPanel("home");
         else if (canReturn) onReturn();
         return;
       }
@@ -146,11 +88,11 @@ export function StartScreen({
         n: onNew,
         o: onOpen,
         i: onImport,
-        p: () => setPanel("printers"),
-        s: () => setPanel("settings"),
-        a: () => setPanel("about"),
+        p: () => onPanel("printers"),
+        s: () => onPanel("settings"),
+        a: () => onPanel("about"),
         q: onQuit,
-        r: () => recentsRef.current?.focusFirst(),
+        r: () => document.querySelector<HTMLElement>("[data-recent='1']")?.focus(),
       };
       const run = shortcut[key];
       if (!run) return;
@@ -159,183 +101,218 @@ export function StartScreen({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [items, panel, canReturn, onReturn, onNew, onOpen, onImport, onQuit]);
+  }, [panel, canReturn, onReturn, onNew, onOpen, onImport, onQuit, onPanel]);
+
+  const filteredPrinters = printers
+    .filter((printer) => {
+      const query = printerQuery.trim().toLowerCase();
+      if (!query) return true;
+      return `${printer.manufacturer} ${printer.name} ${printer.id}`.toLowerCase().includes(query);
+    })
+    .slice(0, 40);
 
   return (
-    <div className="start">
+    <div className="start start--hero" aria-label="Start">
+      {panel === "home" ? (
+        <div className="home-hero" aria-hidden="true" style={{ backgroundImage: `url(${plate.plateImage})` }} />
+      ) : null}
       <PlateField
-        live={fieldLive}
-        comet={fieldLive}
+        live={fieldLive && panel !== "home"}
+        comet={fieldLive && panel !== "home"}
         imageUrl={plate.plateImage}
         backgroundRgb={plate.plateBackground}
         plateTune={plate.plateTune}
       />
-      <nav className="start-menu" aria-label="Start">
-        {panel === "menu" && (
-          <div className="start-list">
-            {items.map((item, index) => (
-              <button
-                key={item.id}
-                type="button"
-                ref={(node) => {
-                  buttons.current[index] = node;
+      {panel === "home" ? (
+        <HomeLanding
+          recents={recents}
+          printers={printers}
+          printerId={printerId}
+          onNew={onNew}
+          onOpen={onOpen}
+          onImport={onImport}
+          onOpenRecent={onOpenRecent}
+          onChoosePrinter={onChoosePrinter}
+          onDropModel={onDropModel}
+        />
+      ) : null}
+      {panel !== "home" ? (
+        <div className="start-panel-overlay">
+          <StartPanelShell key={panel}>
+            {panel === "printers" ? (
+              <PrintersPanel
+                printers={filteredPrinters}
+                printerId={printerId}
+                query={printerQuery}
+                onQuery={setPrinterQuery}
+                onBack={() => onPanel("home")}
+                onChoose={(id) => {
+                  onChoosePrinter(id);
+                  onPanel("home");
                 }}
-                className={item.dim ? "dim" : undefined}
-                aria-current={index === cursor ? "true" : undefined}
-                onClick={item.run}
-                onFocus={() => setCursor(index)}
-              >
-                <span>{item.label}</span>
-                {item.detail ? <span className="start-detail">{item.detail}</span> : null}
-                {item.hint ? <span className="start-hint">{item.hint}</span> : null}
-              </button>
-            ))}
-          </div>
-        )}
-        {panel === "printers" && (
-          <div className="start-panel">
-            <button type="button" className="start-back" onClick={() => setPanel("menu")}>
-              Back
-            </button>
-            <AsciiField label="filter printers" value={printerQuery} placeholder="Filter" onChange={setPrinterQuery} />
-            <div className="start-scroll">
-              {items.map((item, index) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  ref={(node) => {
-                    buttons.current[index] = node;
-                  }}
-                  className={item.id === `printer-${printerId}` ? "selected" : undefined}
-                  onClick={item.run}
-                  onFocus={() => setCursor(index)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {panel === "settings" && (
-          <div className="start-panel start-panel--settings">
-            <button type="button" className="start-back" onClick={() => setPanel("menu")}>
-              Back
-            </button>
-            <SettingsView
-              compact
-              version={version}
-              printers={printers}
-              printerId={printerId}
-              enginePath={enginePath}
-              libDir={libDir}
-              backend={backend}
-              uiStyle={uiStyle}
-              onUiStyle={onUiStyle}
-              onChoosePrinter={onChoosePrinter}
-              onEnginePath={onEnginePath}
-              onLibDir={onLibDir}
-              onBackend={onBackend}
-              onApplyEngine={onApplyEngine}
-              onRerunSetup={onRerunSetup}
-            />
-          </div>
-        )}
-        {panel === "about" && (
-          <div className="start-panel">
-            <button type="button" className="start-back" onClick={() => setPanel("menu")}>
-              Back
-            </button>
-            <p className="credit">
-              Shale {version} — a desktop slicer. Slicing is done by an unmodified
-              CuraEngine process; printer definitions, quality profiles and materials
-              are Cura's, read as data, and the application's own licence is still
-              undecided (see LICENSING.md).
-            </p>
-            <p className="credit">
-              Home screen: {plate.plateCredit.name} ({plate.plateCredit.object}),{" "}
-              {plate.plateCredit.credit}. Released {plate.plateCredit.release}. {plate.plateCredit.licence}.
-            </p>
-            <p className="credit">
-              <a href={plate.plateCredit.page}>{plate.plateCredit.page}</a>
-            </p>
-            <p className="credit">
-              Space Grotesk, Geist Mono, and Inter are used under the SIL Open Font License 1.1.
-            </p>
-          </div>
-        )}
-      </nav>
-      <RecentProjectsPanel
-        ref={recentsRef}
-        recents={recents}
-        recentsRead={recentsRead}
-        onOpen={onOpenRecent}
-        onForget={onForgetRecent}
-      />
+              />
+            ) : null}
+            {panel === "settings" ? (
+              <SettingsOverlay
+                version={version}
+                printers={printers}
+                printerId={printerId}
+                enginePath={enginePath}
+                libDir={libDir}
+                backend={backend}
+                uiStyle={uiStyle}
+                onUiStyle={onUiStyle}
+                onChoosePrinter={onChoosePrinter}
+                onEnginePath={onEnginePath}
+                onLibDir={onLibDir}
+                onBackend={onBackend}
+                onApplyEngine={onApplyEngine}
+                onRerunSetup={onRerunSetup}
+                onBack={() => onPanel("home")}
+              />
+            ) : null}
+            {panel === "about" ? (
+              <AboutPanel plate={plate} version={version} onBack={() => onPanel("home")} />
+            ) : null}
+          </StartPanelShell>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function menuItems({
-  panel,
-  canReturn,
-  printers,
-  printerQuery,
-  onReturn,
-  onNew,
-  onOpen,
-  onImport,
-  onChoosePrinter,
-  onQuit,
-  onPanel,
-}: {
-  panel: Panel;
-  canReturn: boolean;
-  printers: PrinterInfo[];
-  printerQuery: string;
-  onReturn: () => void;
-  onNew: () => void;
-  onOpen: () => void;
-  onImport: () => void;
-  onChoosePrinter: (id: string) => void;
-  onQuit: () => void;
-  onPanel: (panel: Panel) => void;
-}): Item[] {
-  if (panel === "printers") {
-    const query = printerQuery.trim().toLowerCase();
-    return printers
-      .filter((printer) =>
-        query
-          ? `${printer.manufacturer} ${printer.name} ${printer.id}`.toLowerCase().includes(query)
-          : true,
-      )
-      .slice(0, 40)
-      .map((printer) => ({
-        id: `printer-${printer.id}`,
-        label: `${printer.manufacturer ? `${printer.manufacturer} ` : ""}${printer.name}${
-          printer.source === "bambu" ? " · Bambu" : ""
-        }`,
-        hint: "",
-        run: () => {
-          onChoosePrinter(printer.id);
-          onPanel("menu");
-        },
-      }));
-  }
-  const items: Item[] = [];
-  if (canReturn) {
-    items.push({ id: "return", label: "Return", hint: "esc", run: onReturn });
-  }
-  items.push(
-    { id: "new", label: "New project", hint: "n", run: onNew },
-    { id: "open", label: "Open project...", hint: "o", run: onOpen },
-    { id: "import", label: "Import model...", hint: "i", run: onImport },
+function StartPanelShell({ children }: { children: ReactNode }) {
+  const reduce = useReducedMotion();
+  return (
+    <motion.div
+      className="start-panel-sheet"
+      initial={reduce ? { opacity: 0 } : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={reduce ? { opacity: 0 } : { opacity: 0, y: 4 }}
+      transition={reduce ? { duration: 0 } : { duration: 0.2, ease: [...EASE_OUT] }}
+    >
+      {children}
+    </motion.div>
   );
-  items.push(
-    { id: "printers", label: "Printers", hint: "p", run: () => onPanel("printers") },
-    { id: "settings", label: "Settings", hint: "s", run: () => onPanel("settings") },
-    { id: "about", label: "About and credits", hint: "a", run: () => onPanel("about") },
-    { id: "quit", label: "Quit", hint: "q", run: onQuit },
-  );
-  return items;
 }
 
+function PrintersPanel({
+  printers,
+  printerId,
+  query,
+  onQuery,
+  onBack,
+  onChoose,
+}: {
+  printers: PrinterInfo[];
+  printerId: string;
+  query: string;
+  onQuery: (value: string) => void;
+  onBack: () => void;
+  onChoose: (id: string) => void;
+}) {
+  const listRef = useRef<HTMLDivElement>(null);
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={onBack}>
+        Back
+      </Button>
+      <Input aria-label="Filter printers" value={query} placeholder="Filter" onChange={(e) => onQuery(e.target.value)} />
+      <div className="start-scroll" ref={listRef} role="listbox" aria-label="Printers">
+        {printers.map((printer) => (
+          <button
+            key={printer.id}
+            type="button"
+            role="option"
+            aria-selected={printer.id === printerId}
+            className={printer.id === printerId ? "selected" : undefined}
+            onClick={() => onChoose(printer.id)}
+          >
+            {`${printer.manufacturer ? `${printer.manufacturer} ` : ""}${printer.name}${
+              printer.source === "bambu" ? " · Bambu" : ""
+            }`}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function SettingsOverlay(props: {
+  version: string;
+  printers: PrinterInfo[];
+  printerId: string;
+  enginePath: string;
+  libDir: string;
+  backend: string;
+  uiStyle: UiStyleId;
+  onUiStyle: (id: UiStyleId) => void;
+  onChoosePrinter: (id: string) => void;
+  onEnginePath: (value: string) => void;
+  onLibDir: (value: string) => void;
+  onBackend: (value: string) => void;
+  onApplyEngine: () => void;
+  onRerunSetup?: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={props.onBack}>
+        Back
+      </Button>
+      <Suspense fallback={<div className="ui-sidebar__skeleton" aria-hidden><i style={{ width: "40%" }} /><i style={{ width: "70%" }} /></div>}>
+      <SettingsView
+        compact
+        version={props.version}
+        printers={props.printers}
+        printerId={props.printerId}
+        enginePath={props.enginePath}
+        libDir={props.libDir}
+        backend={props.backend}
+        uiStyle={props.uiStyle}
+        onUiStyle={props.onUiStyle}
+        onChoosePrinter={props.onChoosePrinter}
+        onEnginePath={props.onEnginePath}
+        onLibDir={props.onLibDir}
+        onBackend={props.onBackend}
+        onApplyEngine={props.onApplyEngine}
+        onRerunSetup={props.onRerunSetup}
+      />
+      </Suspense>
+    </>
+  );
+}
+
+function AboutPanel({
+  plate,
+  version,
+  onBack,
+}: {
+  plate: ReturnType<typeof uiStyleById>;
+  version: string;
+  onBack: () => void;
+}) {
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={onBack}>
+        Back
+      </Button>
+      <p className="credit">
+        Shale {version} — a desktop slicer. Slicing is done by an unmodified CuraEngine process; printer
+        definitions, quality profiles and materials are Cura&apos;s, read as data, and the application is
+        licensed under AGPL-3.0-or-later.
+      </p>
+      <p className="credit">
+        Home screen: {plate.plateCredit.name} ({plate.plateCredit.object}), {plate.plateCredit.credit}. Released{" "}
+        {plate.plateCredit.release}. {plate.plateCredit.licence}.
+      </p>
+      <p className="credit">
+        <a href={plate.plateCredit.page}>{plate.plateCredit.page}</a>
+      </p>
+      <p className="credit">
+        Space Grotesk, Geist Mono, and Inter are used under the SIL Open Font License 1.1. Motion, Radix UI,
+        Sonner, cmdk, Number Flow, and clsx are MIT. Lucide is ISC.
+      </p>
+    </>
+  );
+}

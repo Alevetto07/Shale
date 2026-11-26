@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { motion } from "motion/react";
 import { SETTING_GROUPS, type SettingField } from "./settings";
 import type { QualityInfo } from "./api";
 import { QUICK_SETTING_KEYS, quickSettingsView } from "./engine-settings";
@@ -11,6 +12,10 @@ import {
   describe,
   type Section,
 } from "./settings-meta";
+import type { NonplanarReportView, NonplanarSettings } from "./api";
+import { Button, Input, NonPlanarPanel, NumericControl, Select, SwitchRow, Tabs, TabsContent, TabsList, TabsTrigger, Tooltip } from "./ui";
+import { springSnappy } from "./ui/springs";
+import { useReducedMotion } from "./ui/use-reduced-motion";
 
 export interface QuickFallbacks {
   layerHeight: number;
@@ -33,6 +38,16 @@ interface Props {
   qualityType: string | null;
   onQuality: (qualityType: string) => void;
   printerLabel: string;
+  nonplanar: NonplanarSettings;
+  onNonplanar: (next: NonplanarSettings) => void;
+  nonplanarReport: NonplanarReportView | null;
+  nonplanarSupported: boolean;
+  liveSlice: boolean;
+  onLiveSlice: (next: boolean) => void;
+  /** When set, the sheet opens on this tab (command palette). */
+  sectionRequest?: Section | null;
+  /** Bumps when the palette asks again, even if the tab name did not change. */
+  focusNonce?: number;
 }
 
 /// The keys the simple rows already own; showing them twice would let the two
@@ -47,6 +62,8 @@ const BASE_KEYS = new Set([
 
 const VISIBLE_KEY = "shale.settings.hidden";
 
+const INFILL_PATTERNS = ["grid", "lines", "triangles", "gyroid", "cubic", "honeycomb", "lightning", "concentric", "zigzag", "cross"];
+
 function loadHidden(): Set<string> {
   try {
     const raw = window.localStorage.getItem(VISIBLE_KEY);
@@ -58,12 +75,38 @@ function loadHidden(): Set<string> {
   }
 }
 
+function fractionDigits(step: number | undefined): number {
+  if (step == null || Number.isInteger(step)) return 0;
+  const text = String(step);
+  const index = text.indexOf(".");
+  return index < 0 ? 0 : Math.min(3, text.length - index - 1);
+}
+
+function formatNumber(value: number, digits: number): string {
+  if (digits <= 0) return String(Math.round(value));
+  return value.toFixed(digits);
+}
+
+function Help({ text }: { text: string }) {
+  return (
+    <Tooltip label={text}>
+      <button type="button" className="setting-q" aria-label={text}>
+        ?
+      </button>
+    </Tooltip>
+  );
+}
+
 export function ProcessSheet(props: Props) {
-  const [section, setSection] = useState<Section>("Quality");
+  const [section, setSection] = useState<Section>(props.sectionRequest ?? "Quality");
+  useEffect(() => {
+    if (props.sectionRequest) setSection(props.sectionRequest);
+  }, [props.sectionRequest, props.focusNonce]);
   const [advanced, setAdvanced] = useState(false);
   const [picking, setPicking] = useState(false);
   const [hidden, setHidden] = useState<Set<string>>(() => loadHidden());
   const [search, setSearch] = useState("");
+  const reduce = useReducedMotion();
 
   useEffect(() => {
     try {
@@ -122,38 +165,76 @@ export function ProcessSheet(props: Props) {
 
   const label = (field: SettingField) => BAMBU_LABEL[field.key] ?? field.label;
 
+  const ranged = (name: string, key: string, value: number, min: number, max: number, step: number, unit?: string) => (
+    <div className="menu-row setting-row setting-row--range" data-changed={key in props.overrides ? "yes" : "no"}>
+      <span className="setting-name">
+        {name}
+        <Help text={describe(key, name)} />
+        {quickReset(key)}
+      </span>
+      <NumericControl
+        label={name}
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        digits={fractionDigits(step)}
+        unit={unit}
+        onChange={(next) => props.onOverride(key, formatNumber(next, fractionDigits(step)))}
+      />
+    </div>
+  );
+
   const control = (field: SettingField) => {
     const value = props.overrides[field.key] ?? "";
     if (field.kind === "toggle") {
+      const profileOn = profile[field.key] === "1" || profile[field.key] === "true";
+      const on = value === "" ? profileOn : value === "1" || value === "true";
       return (
-        <select value={value} onChange={(event) => props.onOverride(field.key, event.target.value)}>
-          <option value="">profile</option>
-          <option value="1">on</option>
-          <option value="0">off</option>
-        </select>
+        <SwitchRow checked={on} onChange={(next) => props.onOverride(field.key, next ? "1" : "0")}>
+          {on ? "on" : "off"}
+        </SwitchRow>
       );
     }
     if (field.kind === "choice") {
       return (
-        <select value={value} onChange={(event) => props.onOverride(field.key, event.target.value)}>
-          <option value="">profile</option>
-          {(field.options ?? []).map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
+        <Select
+          label={label(field)}
+          value={value}
+          options={[
+            { value: "", label: "profile" },
+            ...(field.options ?? []).map((option) => ({ value: option, label: option })),
+          ]}
+          onChange={(next) => props.onOverride(field.key, next)}
+        />
+      );
+    }
+    if (field.min != null && field.max != null) {
+      const fallback = Number(profile[field.key] ?? field.min);
+      const numeric = value === "" ? (Number.isFinite(fallback) ? fallback : field.min) : Number(value);
+      return (
+        <NumericControl
+          label={label(field)}
+          value={Number.isFinite(numeric) ? numeric : field.min}
+          min={field.min}
+          max={field.max}
+          step={field.step ?? 1}
+          digits={fractionDigits(field.step)}
+          unit={field.unit}
+          onChange={(next) => props.onOverride(field.key, formatNumber(next, fractionDigits(field.step)))}
+        />
       );
     }
     return (
       <span className="setting-number">
         <input
           type="number"
+          aria-label={label(field)}
           value={value}
           min={field.min}
           max={field.max}
           step={field.step ?? 1}
-          placeholder={props.profileValues?.[field.key] ?? "profile"}
+          placeholder={profile[field.key] ?? "profile"}
           onChange={(event) => props.onOverride(field.key, event.target.value)}
         />
         {field.unit && <em>{field.unit}</em>}
@@ -161,308 +242,207 @@ export function ProcessSheet(props: Props) {
     );
   };
 
-  const row = (field: SettingField) => (
-    <div className="menu-row setting-row" key={field.key} data-changed={field.key in props.overrides ? "yes" : "no"}>
-      <span className="setting-name">
-        {label(field)}
-        {/* The description is behind the question mark: a wall of grey prose
-            under every control is not a settings panel, it is a manual. */}
-        <span className="setting-q" title={describe(field.key, label(field))} aria-label={describe(field.key, label(field))}>
-          ?
+  const row = (field: SettingField) => {
+    const rangedField = field.kind === "number" && field.min != null && field.max != null;
+    return (
+      <div
+        className={rangedField ? "menu-row setting-row setting-row--range" : "menu-row setting-row"}
+        key={field.key}
+        data-changed={field.key in props.overrides ? "yes" : "no"}
+      >
+        <span className="setting-name">
+          {label(field)}
+          <Help text={describe(field.key, label(field))} />
+          {field.kind !== "toggle" ? quickReset(field.key) : null}
         </span>
-      </span>
-      {control(field)}
+        {control(field)}
+        {field.kind === "toggle" ? quickReset(field.key) : null}
+      </div>
+    );
+  };
+
+  const nonPlanar = section === "Non-planar";
+  const body = nonPlanar ? (
+    <NonPlanarPanel
+      value={props.nonplanar}
+      onChange={props.onNonplanar}
+      report={props.nonplanarReport}
+      supported={props.nonplanarSupported}
+      liveSlice={props.liveSlice}
+      onLiveSlice={props.onLiveSlice}
+    />
+  ) : search ? (
+    <div className="settings-body">
+      <p className="hint">
+        {hits.length} {hits.length === 1 ? "setting" : "settings"}
+      </p>
+      {hits.map((hit) => row(hit.field))}
+    </div>
+  ) : (
+    <div className="settings-body">
+      {section === "Quality" && ranged("Layer height", QUICK_SETTING_KEYS.layerHeight, quick.layerHeight, 0.02, 1, 0.02, "mm")}
+      {section === "Strength" && (
+        <>
+          {ranged("Wall loops", QUICK_SETTING_KEYS.walls, quick.walls, 1, 12, 1)}
+          {ranged("Sparse infill density", QUICK_SETTING_KEYS.infill, quick.infill, 0, 100, 5, "%")}
+          <div className="menu-row setting-row" data-changed={QUICK_SETTING_KEYS.pattern in props.overrides ? "yes" : "no"}>
+            <span className="setting-name">
+              Sparse infill pattern
+              <Help text="The shape the sparse infill is drawn in." />
+              {quickReset(QUICK_SETTING_KEYS.pattern)}
+            </span>
+            <Select
+              label="Sparse infill pattern"
+              value={quick.pattern}
+              options={INFILL_PATTERNS.map((pattern) => ({ value: pattern, label: pattern }))}
+              onChange={(next) => props.onOverride(QUICK_SETTING_KEYS.pattern, next)}
+            />
+          </div>
+        </>
+      )}
+      {section === "Speed" && ranged("Print speed", QUICK_SETTING_KEYS.speed, quick.speed, 10, 500, 5, "mm/s")}
+      {section === "Support" && (
+        <div className="menu-row setting-row" data-changed={QUICK_SETTING_KEYS.supports in props.overrides ? "yes" : "no"}>
+          <span className="setting-name">
+            Enable support
+            <Help text="Print support under overhangs." />
+          </span>
+          <SwitchRow
+            checked={quick.supports}
+            onChange={(next) => props.onOverride(QUICK_SETTING_KEYS.supports, next ? "1" : "0")}
+          >
+            {quick.supports ? "on" : "off"}
+          </SwitchRow>
+          {quickReset(QUICK_SETTING_KEYS.supports)}
+        </div>
+      )}
+      {section === "Others" && (
+        <>
+          {ranged("Nozzle temperature", QUICK_SETTING_KEYS.nozzle, quick.nozzle, 150, 320, 5, "°C")}
+          {ranged("Bed temperature", QUICK_SETTING_KEYS.bed, quick.bed, 0, 120, 5, "°C")}
+        </>
+      )}
+
+      {rows.map((entry, index) => {
+        const previous = rows[index - 1];
+        const heading = previous?.group !== entry.group;
+        return (
+          <div key={entry.field.key}>
+            {heading && <h4 className="settings-heading">{entry.group}</h4>}
+            {row(entry.field)}
+          </div>
+        );
+      })}
+
+      {rows.length === 0 && (
+        <p className="hint">Nothing in this section at this level. Turn advanced on.</p>
+      )}
+
+      {Object.keys(props.overrides).length > 0 && (
+        <Button type="button" variant="ghost" size="sm" onClick={props.onResetOverrides}>
+          reset {Object.keys(props.overrides).length} changed
+        </Button>
+      )}
     </div>
   );
 
   return (
     <div className="process-sheet">
-      <div className="process-head">
-        <div className="process-tabs">
-          {SECTIONS.map((entry) => (
-            <button
-              key={entry}
-              type="button"
-              className={entry === section ? "selected" : ""}
-              onClick={() => setSection(entry)}
-            >
-              {entry}
-            </button>
-          ))}
-        </div>
-        <label className="process-advanced">
-          <input type="checkbox" checked={advanced} onChange={(event) => setAdvanced(event.target.checked)} />
-          <em>advanced</em>
-        </label>
-      </div>
-
-      <div className="process-presets">
-        <span className="process-presets-label">{props.printerLabel} process</span>
-        {props.qualities.map((preset) => (
-          <button
-            key={preset.quality_type}
-            type="button"
-            className={preset.quality_type === props.qualityType ? "process-preset on" : "process-preset"}
-            onClick={() => applyPreset(preset.quality_type)}
-            title={preset.name}
-          >
-            {preset.name}
-          </button>
-        ))}
-      </div>
-
-      <div className="process-tools">
-        <label className="process-search">
-          <span className="visually-hidden">search settings</span>
-          <input
-            type="search"
-            value={search}
-            placeholder="search settings"
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </label>
-        <button type="button" className="process-visibility" onClick={() => setPicking((v) => !v)}>
-          {picking ? "done" : `settings shown ${hidden.size > 0 ? `(${hidden.size} hidden)` : ""}`}
-        </button>
-      </div>
-
-      {picking ? (
-        <div className="settings-body process-picker">
-          <p className="hint">Unticked settings are hidden from the panel. Nothing is deleted.</p>
-          {SETTING_GROUPS.map((group) => {
-            const fields = group.fields.filter((field) => !NO_BAMBU_EQUIVALENT.has(field.key));
-            if (fields.length === 0) return null;
-            return (
-              <div key={group.id} className="picker-group">
-                <h4 className="settings-heading">{group.label}</h4>
-                {fields.map((field) => (
-                  <label key={field.key} className="picker-row">
-                    <input
-                      type="checkbox"
-                      checked={!hidden.has(field.key)}
-                      onChange={(event) => {
-                        setHidden((current) => {
-                          const next = new Set(current);
-                          if (event.target.checked) next.delete(field.key);
-                          else next.add(field.key);
-                          return next;
-                        });
-                      }}
-                    />
-                    <span>{label(field)}</span>
-                  </label>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      ) : search ? (
-        <div className="settings-body">
-          <p className="hint">
-            {hits.length} {hits.length === 1 ? "setting" : "settings"}
-          </p>
-          {hits.map((hit) => row(hit.field))}
-        </div>
-      ) : (
-        <div className="settings-body">
-          {section === "Quality" && (
-            <div
-              className="menu-row setting-row"
-              data-changed={QUICK_SETTING_KEYS.layerHeight in props.overrides ? "yes" : "no"}
-            >
-              <span className="setting-name">
-                Layer height
-                <span className="setting-q" title="Height of every layer after the first.">?</span>
-              </span>
-              <span className="setting-number">
-                <input
-                  type="number"
-                  value={quick.layerHeight}
-                  min={0.02}
-                  max={1}
-                  step={0.02}
-                  onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.layerHeight, event.target.value)}
-                />
-                <em>mm</em>
-                {quickReset(QUICK_SETTING_KEYS.layerHeight)}
-              </span>
-            </div>
+      <Tabs value={section} onValueChange={(value) => setSection(value as Section)}>
+        <div className="process-head">
+          <TabsList className="process-tabs" aria-label="Slice settings">
+            {SECTIONS.map((entry) => (
+              <TabsTrigger key={entry} value={entry}>
+                {entry}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          {!nonPlanar && (
+            <SwitchRow checked={advanced} onChange={setAdvanced}>
+              advanced
+            </SwitchRow>
           )}
-          {section === "Strength" && (
-            <>
-              <div
-                className="menu-row setting-row"
-                data-changed={QUICK_SETTING_KEYS.walls in props.overrides ? "yes" : "no"}
+        </div>
+
+        {!nonPlanar && (
+          <div className="process-presets presets">
+            <span className="process-presets-label">{props.printerLabel} process</span>
+            {props.qualities.map((preset) => (
+              <Button
+                key={preset.quality_type}
+                type="button"
+                size="sm"
+                variant={preset.quality_type === props.qualityType ? "primary" : "secondary"}
+                onClick={() => applyPreset(preset.quality_type)}
+                title={preset.name}
               >
-                <span className="setting-name">
-                  Wall loops
-                  <span className="setting-q" title="How many perimeters are printed around each layer.">?</span>
-                </span>
-                <span className="setting-number">
-                  <input
-                    type="number"
-                    value={quick.walls}
-                    min={1}
-                    max={12}
-                    step={1}
-                    onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.walls, event.target.value)}
-                  />
-                  {quickReset(QUICK_SETTING_KEYS.walls)}
-                </span>
-              </div>
-              <div
-                className="menu-row setting-row"
-                data-changed={QUICK_SETTING_KEYS.infill in props.overrides ? "yes" : "no"}
-              >
-                <span className="setting-name">
-                  Sparse infill density
-                  <span className="setting-q" title="How much material is laid inside the part.">?</span>
-                </span>
-                <span className="setting-number">
-                  <input
-                    type="number"
-                    value={quick.infill}
-                    min={0}
-                    max={100}
-                    step={5}
-                    onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.infill, event.target.value)}
-                  />
-                  <em>%</em>
-                  {quickReset(QUICK_SETTING_KEYS.infill)}
-                </span>
-              </div>
-              <div
-                className="menu-row setting-row"
-                data-changed={QUICK_SETTING_KEYS.pattern in props.overrides ? "yes" : "no"}
-              >
-                <span className="setting-name">
-                  Sparse infill pattern
-                  <span className="setting-q" title="The shape the sparse infill is drawn in.">?</span>
-                </span>
-                <select
-                  value={quick.pattern}
-                  onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.pattern, event.target.value)}
-                >
-                  {["grid", "lines", "triangles", "gyroid", "cubic", "honeycomb", "lightning", "concentric", "zigzag", "cross"].map((pattern) => (
-                    <option key={pattern} value={pattern}>{pattern}</option>
+                {preset.name}
+              </Button>
+            ))}
+          </div>
+        )}
+
+        {!nonPlanar && (
+          <div className="process-tools">
+            <label className="process-search">
+              <span className="visually-hidden">Search settings</span>
+              <Input
+                type="search"
+                value={search}
+                placeholder="Search settings"
+                aria-label="Search settings"
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </label>
+            <Button type="button" variant="secondary" size="sm" onClick={() => setPicking((v) => !v)}>
+              {picking ? "done" : `settings shown ${hidden.size > 0 ? `(${hidden.size} hidden)` : ""}`}
+            </Button>
+          </div>
+        )}
+
+        {picking && !nonPlanar ? (
+          <div className="settings-body process-picker">
+            <p className="hint">Unticked settings are hidden from the panel. Nothing is deleted.</p>
+            {SETTING_GROUPS.map((group) => {
+              const fields = group.fields.filter((field) => !NO_BAMBU_EQUIVALENT.has(field.key));
+              if (fields.length === 0) return null;
+              return (
+                <div key={group.id} className="picker-group">
+                  <h4 className="settings-heading">{group.label}</h4>
+                  {fields.map((field) => (
+                    <label key={field.key} className="picker-row">
+                      <input
+                        type="checkbox"
+                        checked={!hidden.has(field.key)}
+                        onChange={(event) => {
+                          setHidden((current) => {
+                            const next = new Set(current);
+                            if (event.target.checked) next.delete(field.key);
+                            else next.add(field.key);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span>{label(field)}</span>
+                    </label>
                   ))}
-                </select>
-                {quickReset(QUICK_SETTING_KEYS.pattern)}
-              </div>
-            </>
-          )}
-          {section === "Speed" && (
-            <div
-              className="menu-row setting-row"
-              data-changed={QUICK_SETTING_KEYS.speed in props.overrides ? "yes" : "no"}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <TabsContent value={section}>
+            <motion.div
+              key={search ? "search" : section}
+              initial={reduce ? false : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={reduce ? { duration: 0 } : springSnappy}
             >
-              <span className="setting-name">
-                Print speed
-                <span className="setting-q" title="The speed every feature falls back to.">?</span>
-              </span>
-              <span className="setting-number">
-                <input
-                  type="number"
-                  value={quick.speed}
-                  min={10}
-                  max={500}
-                  step={5}
-                  onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.speed, event.target.value)}
-                />
-                <em>mm/s</em>
-                {quickReset(QUICK_SETTING_KEYS.speed)}
-              </span>
-            </div>
-          )}
-          {section === "Support" && (
-            <div
-              className="menu-row setting-row"
-              data-changed={QUICK_SETTING_KEYS.supports in props.overrides ? "yes" : "no"}
-            >
-              <span className="setting-name">
-                Enable support
-                <span className="setting-q" title="Print support under overhangs.">?</span>
-              </span>
-              <label className="menu-toggle">
-                <input
-                  type="checkbox"
-                  checked={quick.supports}
-                  onChange={(event) =>
-                    props.onOverride(QUICK_SETTING_KEYS.supports, event.target.checked ? "1" : "0")
-                  }
-                />
-                <em>{quick.supports ? "on" : "off"}</em>
-              </label>
-              {quickReset(QUICK_SETTING_KEYS.supports)}
-            </div>
-          )}
-          {section === "Others" && (
-            <>
-              <div
-                className="menu-row setting-row"
-                data-changed={QUICK_SETTING_KEYS.nozzle in props.overrides ? "yes" : "no"}
-              >
-                <span className="setting-name">
-                  Nozzle temperature
-                  <span className="setting-q" title="Hotend temperature for the first layer.">?</span>
-                </span>
-                <span className="setting-number">
-                  <input
-                    type="number"
-                    value={quick.nozzle}
-                    min={150}
-                    max={320}
-                    step={5}
-                    onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.nozzle, event.target.value)}
-                  />
-                  <em>°C</em>
-                  {quickReset(QUICK_SETTING_KEYS.nozzle)}
-                </span>
-              </div>
-              <div
-                className="menu-row setting-row"
-                data-changed={QUICK_SETTING_KEYS.bed in props.overrides ? "yes" : "no"}
-              >
-                <span className="setting-name">
-                  Bed temperature
-                  <span className="setting-q" title="Bed temperature for the first layer.">?</span>
-                </span>
-                <span className="setting-number">
-                  <input
-                    type="number"
-                    value={quick.bed}
-                    min={0}
-                    max={120}
-                    step={5}
-                    onChange={(event) => props.onOverride(QUICK_SETTING_KEYS.bed, event.target.value)}
-                  />
-                  <em>°C</em>
-                  {quickReset(QUICK_SETTING_KEYS.bed)}
-                </span>
-              </div>
-            </>
-          )}
-
-          {rows.map((entry, index) => {
-            const previous = rows[index - 1];
-            const heading = previous?.group !== entry.group;
-            return (
-              <div key={entry.field.key}>
-                {heading && <h4 className="settings-heading">{entry.group}</h4>}
-                {row(entry.field)}
-              </div>
-            );
-          })}
-
-          {rows.length === 0 && <p className="hint">Nothing in this section at this level. Turn advanced on.</p>}
-
-          {Object.keys(props.overrides).length > 0 && (
-            <button type="button" className="settings-reset" onClick={props.onResetOverrides}>
-              reset {Object.keys(props.overrides).length} changed
-            </button>
-          )}
-        </div>
-      )}
+              {body}
+            </motion.div>
+          </TabsContent>
+        )}
+      </Tabs>
     </div>
   );
 }

@@ -88,6 +88,74 @@ export interface PlateView {
   active: boolean;
 }
 
+export interface SuggestionFix {
+  settings: Record<string, string>;
+  object_settings: Record<string, Record<string, string>>;
+  rotations_deg: Record<string, [number, number, number]>;
+  slots: Record<string, number>;
+  plates: Record<string, number>;
+  nonplanar_mode: string | null;
+  label: string;
+}
+
+export interface Suggestion {
+  id: string;
+  rule_id: string;
+  severity: "tip" | "warning";
+  title: string;
+  reason: string;
+  objects: string[];
+  fix: SuggestionFix | null;
+  dismissible: boolean;
+  score: number;
+  once: boolean;
+}
+
+export interface SuggestionSlot {
+  index: number;
+  material_id: string;
+  filament_type: string;
+  colour?: string;
+}
+
+export interface SuggestionQuery {
+  printer_id: string;
+  variant_name?: string | null;
+  quality_type?: string | null;
+  material_id?: string | null;
+  settings: Record<string, string>;
+  slots: SuggestionSlot[];
+  device_slots?: SuggestionSlot[] | null;
+  humidity_percent?: number | null;
+  hours_since_dry?: number | null;
+  tags: string[];
+  dismissed: string[];
+  global_dismissed: string[];
+  shown_once: string[];
+  nonplanar_mode: string;
+}
+
+export interface FitWarning {
+  plate_index: number;
+  plate_name: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface ImportedSetting {
+  key: string;
+  label: string;
+  value: string;
+  detail: string;
+}
+
+export interface ProjectSettingsImport {
+  applied: ImportedSetting[];
+  ignored: number;
+  note: string;
+}
+
 export interface PlateSwitch {
   plates: PlateView[];
   models: ModelView[];
@@ -204,9 +272,12 @@ export const secretGet = (key: string) => invoke<string | null>("secret_get", { 
 export const cloudState = () => invoke<CloudSession>("cloud_state");
 export const cloudLogin = (email: string, password: string) =>
   invoke<CloudLoginStep>("cloud_login", { email, password });
+export const cloudLoginWeb = () => invoke<CloudSession>("cloud_login_web");
 export const cloudVerify = (email: string, tfaKey: string, code: string) =>
   invoke<void>("cloud_verify", { email, tfaKey, code });
 export const cloudSignOut = () => invoke<void>("cloud_sign_out");
+export const cloudSetRegion = (region: string) =>
+  invoke<CloudSession>("cloud_set_region", { region });
 export const cloudDevices = () => invoke<CloudDeviceRow[]>("cloud_devices");
 export const cloudSend = (devId: string, taskName: string) =>
   invoke<string>("cloud_send", { devId, taskName });
@@ -296,6 +367,8 @@ export interface SliceSummary {
    * Marlin start. A Bambu machine refuses anything else.
    */
   machine_gcode: boolean;
+  /** Set when the slice asked for curved layers. */
+  nonplanar?: NonplanarReportView | null;
 }
 
 export interface PreviewPath {
@@ -305,6 +378,8 @@ export interface PreviewPath {
   feed?: number;
   /** Which layer the polyline belongs to; the preview scrubs by draw range. */
   layer: number;
+  /** Degrees above horizontal for each segment. Omitted for travel and for a live layer. */
+  slopes?: number[];
 }
 
 export type CustomInstruction =
@@ -377,6 +452,46 @@ export interface SupportView {
   overlays: SupportOverlay[];
 }
 
+export type NonplanarModeName = "off" | "curved-tops" | "auto";
+
+/** Job settings for curved layers. Default is off; the angle cap matches the CLI. */
+export interface NonplanarSettings {
+  mode: NonplanarModeName;
+  max_angle_deg: number;
+  strict: boolean;
+  underside_bands: boolean;
+}
+
+export const DEFAULT_NONPLANAR: NonplanarSettings = {
+  mode: "off",
+  max_angle_deg: 10,
+  strict: false,
+  underside_bands: false,
+};
+
+export interface NonplanarSurfaceView {
+  id: number;
+  kind: string;
+  enabled: boolean;
+  reason: string;
+  tilt_deg: number;
+}
+
+/** Plain-language result of a curved slice. `null` when the job was planar. */
+export interface NonplanarReportView {
+  mode: string;
+  max_angle_deg: number;
+  strict: boolean;
+  underside_bands: boolean;
+  outcome: "curved" | "planar";
+  fallback_to_planar: boolean;
+  fallback_reasons: string[];
+  curved_move_count: number;
+  worst_slope_deg: number | null;
+  surfaces: NonplanarSurfaceView[];
+  envelope_note: string;
+}
+
 export interface SliceSettings {
   layer_height?: number;
   infill_sparse_density?: number;
@@ -384,6 +499,7 @@ export interface SliceSettings {
   material_print_temperature?: number;
   material_bed_temperature?: number;
   extra: [string, string][];
+  nonplanar?: NonplanarSettings;
 }
 
 export const api = {
@@ -546,6 +662,7 @@ export const api = {
     materialId: string | null,
     ams: string[],
     settings: SliceSettings,
+    ignoreProjectSettings = false,
   ) =>
     invoke<SliceSummary>("slice_model", {
       printerId,
@@ -554,7 +671,13 @@ export const api = {
       materialId,
       ams,
       settings,
+      ignoreProjectSettings,
     }),
+  plateFit: (printerId: string | null) => invoke<FitWarning>("plate_fit", { printerId }),
+  suggestions: (args: SuggestionQuery) => invoke<Suggestion[]>("suggestions", { args }),
+  moveModelToPlate: (id: number, plate: number) =>
+    invoke<PlateSwitch>("move_model_to_plate", { id, plate }),
+  importedSettings: () => invoke<ProjectSettingsImport | null>("imported_settings"),
   supportPlan: () => invoke<SupportView | null>("current_support"),
   overhangPatches: (modelId: number) => invoke<OverhangPatch[]>("overhang_patches", { modelId }),
   /** `block` paints the faces as needing no support; the default holds them up. */
@@ -598,6 +721,8 @@ export const api = {
   removeInstruction: (id: number) => invoke<StoredInstruction[]>("remove_instruction", { id }),
   previewUntil: (layer: number) => invoke<PreviewPath[]>("preview_until", { layer }),
   previewAll: () => invoke<PreviewPath[]>("preview_all"),
+  /** True when the printer ships a head envelope the curved pass can check. */
+  nonplanarSupported: (printerId: string) => invoke<boolean>("nonplanar_supported", { printerId }),
   exportPlate: (destination: string, format: "stl" | "3mf") =>
     invoke<number>("export_plate", { destination, format }),
   exportGcode: (destination: string) => invoke<string>("export_gcode", { destination }),
@@ -629,8 +754,10 @@ export const api = {
 
   cloudState,
   cloudLogin,
+  cloudLoginWeb,
   cloudVerify,
   cloudSignOut,
+  cloudSetRegion,
   cloudDevices,
   cloudSend,
 };
@@ -660,6 +787,8 @@ export interface SaveProject {
   /// Write the file without putting it in the recent list: a draft parked
   /// behind another tab is not a project the person chose to open.
   quiet?: boolean;
+  dismissed_suggestions?: string[];
+  suggestions_shown?: string[];
 }
 
 export interface OpenedProject {
@@ -678,6 +807,8 @@ export interface OpenedProject {
   instructions: StoredInstruction[];
   support: SupportView | null;
   warnings: string[];
+  dismissed_suggestions?: string[];
+  suggestions_shown?: string[];
 }
 
 /** The editable half of the cost estimate: price, power, tariff, currency. */

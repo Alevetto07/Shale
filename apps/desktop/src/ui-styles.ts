@@ -137,6 +137,10 @@ export function uiStyleById(id: UiStyleId): UiStyleDefinition {
   return byId.get(id) ?? byId.get(DEFAULT_UI_STYLE_ID)!;
 }
 
+export function uiStyleLabel(id: UiStyleId): string {
+  return uiStyleById(id).label;
+}
+
 /** Legacy export: default theme id. */
 export const UI_THEME_ID = DEFAULT_UI_STYLE_ID;
 

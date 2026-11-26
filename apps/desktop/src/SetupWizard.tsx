@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { PrinterInfo } from "./api";
 import { CloudPanel } from "./CloudPanel";
 import { SlicerImportPanel } from "./SlicerImportPanel";
+import { Button, Dialog, Input } from "./ui";
 import {
   completeSetupWizard,
   markStepSkipped,
@@ -14,7 +15,7 @@ const STEPS: { id: SetupWizardStep; title: string; blurb: string }[] = [
   { id: "welcome", title: "Welcome", blurb: "Set up Shale in a minute — or skip and finish later in Settings." },
   { id: "theme", title: "Theme", blurb: "Pick an interface style with a live plate preview." },
   { id: "printers", title: "Printers", blurb: "Choose your default Bambu machine from the catalogue." },
-  { id: "import", title: "Import", blurb: "See presets from Bambu Studio, Orca, Prusa, or Cura on this PC." },
+  { id: "import", title: "Import", blurb: "Check this PC for Bambu Studio, Orca, Prusa, or Cura settings when you are ready." },
   { id: "account", title: "Bambu account", blurb: "Sign in for cloud printers — optional." },
   { id: "done", title: "Done", blurb: "You are ready to slice." },
 ];
@@ -46,8 +47,6 @@ export function SetupWizard({
       setIndex(0);
     }
   }, [open]);
-
-  if (!open) return null;
 
   const bambuPrinters = printers
     .filter((p) => !printerQuery.trim() || `${p.manufacturer} ${p.name} ${p.id}`.toLowerCase().includes(printerQuery.trim().toLowerCase()))
@@ -81,37 +80,38 @@ export function SetupWizard({
   }
 
   return (
-    <div className="setup-wizard-backdrop" role="presentation">
-      <div className="setup-wizard" role="dialog" aria-modal="true" aria-labelledby="setup-wizard-title">
-        <header className="setup-wizard-header">
-          <p className="setup-wizard-kicker">First-run setup</p>
-          <h2 id="setup-wizard-title">{step.title}</h2>
-          <p>{step.blurb}</p>
-          <ol className="setup-wizard-steps" aria-label="Steps">
-            {STEPS.map((item, stepIndex) => (
-              <li key={item.id} className={stepIndex === index ? "active" : stepIndex < index ? "done" : undefined}>
-                {item.title}
-              </li>
-            ))}
-          </ol>
-        </header>
-
-        <div className="setup-wizard-body">{bodyForStep(step.id)}</div>
-
-        <footer className="setup-wizard-footer">
-          <button type="button" className="quiet" onClick={() => finish(true)}>
-            Skip setup
-          </button>
-          <span className="setup-wizard-spacer" />
-          <button type="button" className="quiet" onClick={skipStep}>
-            Skip step
-          </button>
-          <button type="button" className="primary" onClick={next}>
-            {index >= STEPS.length - 1 ? "Finish" : "Continue"}
-          </button>
-        </footer>
-      </div>
-    </div>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title={step.title}
+      description={step.blurb}
+      kicker="First-run setup"
+      dismissOnOutside={false}
+      className="setup-wizard"
+    >
+      <ol className="setup-wizard-steps" aria-label="Steps">
+        {STEPS.map((item, stepIndex) => (
+          <li key={item.id} className={stepIndex === index ? "active" : stepIndex < index ? "done" : undefined}>
+            {item.title}
+          </li>
+        ))}
+      </ol>
+      <div className="setup-wizard-body">{bodyForStep(step.id)}</div>
+      <footer className="setup-wizard-footer">
+        <Button type="button" variant="ghost" onClick={() => finish(true)}>
+          Skip setup
+        </Button>
+        <span className="setup-wizard-spacer" />
+        <Button type="button" variant="ghost" onClick={skipStep}>
+          Skip step
+        </Button>
+        <Button type="button" variant="primary" onClick={next}>
+          {index >= STEPS.length - 1 ? "Finish" : "Continue"}
+        </Button>
+      </footer>
+    </Dialog>
   );
 
   function bodyForStep(id: SetupWizardStep): ReactNode {
@@ -123,20 +123,22 @@ export function SetupWizard({
       case "printers":
         return (
           <>
-            <label className="setup-filter">
-              <span>Filter</span>
-              <input value={printerQuery} onChange={(e) => setPrinterQuery(e.target.value)} />
+            <label className="setup-filter ui-field">
+              <span className="ui-field__label">Filter</span>
+              <Input aria-label="Filter printers" value={printerQuery} onChange={(e) => setPrinterQuery(e.target.value)} />
             </label>
             <div className="setup-printer-list">
               {bambuPrinters.map((printer) => (
-                <button
+                <Button
                   key={printer.id}
                   type="button"
-                  className={printer.id === printerId ? "selected" : undefined}
+                  variant={printer.id === printerId ? "primary" : "ghost"}
+                  size="sm"
+                  className="ui-btn--block"
                   onClick={() => onChoosePrinter(printer.id)}
                 >
                   {printer.manufacturer} {printer.name}
-                </button>
+                </Button>
               ))}
             </div>
           </>

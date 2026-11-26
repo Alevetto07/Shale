@@ -14,6 +14,7 @@
   --line: rgba(242, 232, 220, 0.12);
   --line-strong: rgba(242, 232, 220, 0.24);
   --accent: #e8b86a;
+  --accent-ink: #1a1208;
   --accent-soft: rgba(232, 184, 106, 0.16);
   --accent-muted: rgba(232, 184, 106, 0.48);
   --danger: #c45c4a;
@@ -32,7 +33,7 @@
   --shadow-sheet: 0 18px 48px rgba(0, 0, 0, 0.6);
   --shadow-float: 0 30px 90px rgba(0, 0, 0, 0.72);
 
-  font-family: var(--mono);
+  font-family: var(--prose);
   font-weight: 400;
   background: var(--bg);
   color: var(--ink);

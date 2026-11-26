@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "bambu-login",
+  "description": "Bambu Lab's own sign-in page. It cannot call Shale commands.",
+  "windows": ["bambu-login"],
+  "remote": {
+    "urls": [
+      "https://bambulab.com/*",
+      "https://*.bambulab.com/*",
+      "https://bambulab.cn/*",
+      "https://*.bambulab.cn/*",
+      "https://accounts.google.com/*",
+      "https://*.google.com/*",
+      "https://*.googleusercontent.com/*",
+      "https://appleid.apple.com/*",
+      "https://*.apple.com/*",
+      "http://127.0.0.1/*"
+    ]
+  },
+  "permissions": []
+}

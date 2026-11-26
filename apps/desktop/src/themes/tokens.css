@@ -16,19 +16,20 @@
   --space-8: 2.5rem;
 
   /* Corner radii */
-  --radius-xs: 2px;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
   --radius-pill: 999px;
 
-  /* Typography scale */
-  --text-2xs: 0.62rem;
-  --text-xs: 0.68rem;
-  --text-sm: 0.72rem;
-  --text-md: 0.82rem;
-  --text-base: 13px;
-  --text-lg: 14px;
+  /* Typography scale. Nothing in the interface sits under 12px. */
+  --text-2xs: 0.75rem;
+  --text-xs: 0.8125rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-base: 0.875rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
 
   /* Elevation & surfaces */
   --shadow-sheet: 0 18px 48px rgba(0, 0, 0, 0.55);
@@ -40,11 +41,19 @@
   --duration-fast: 120ms;
   --duration-mid: 160ms;
   --duration-slow: 220ms;
+  --duration-press: 140ms;
+  --duration-tooltip: 160ms;
+  --duration-menu: 200ms;
+  --duration-sheet: 280ms;
+  --press-scale: 0.96;
   --transition-interactive: color var(--duration-fast) var(--ease-out),
     background-color var(--duration-fast) var(--ease-out),
     border-color var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) var(--ease-out),
     opacity var(--duration-fast) var(--ease-out);
+
+  /* Layout */
+  --sidebar-width: 268px;
+  --sidebar-rail: 52px;
 
   /* Focus */
   --focus-ring: 1px solid var(--accent);
@@ -59,6 +68,11 @@
     --duration-fast: 0ms;
     --duration-mid: 0ms;
     --duration-slow: 0ms;
+    --duration-press: 0ms;
+    --duration-tooltip: 0ms;
+    --duration-menu: 0ms;
+    --duration-sheet: 0ms;
+    --press-scale: 1;
     --transition-interactive: none;
   }
 }

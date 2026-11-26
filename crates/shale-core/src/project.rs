@@ -72,6 +72,12 @@ pub struct ProjectData {
     /// Index into [`ProjectData::models`] the support plan belongs to.
     pub support_model: Option<usize>,
     pub thumbnail: Vec<u8>,
+    /// Suggestion ids, or rule ids, the project has dismissed.
+    #[serde(default)]
+    pub dismissed_suggestions: Vec<String>,
+    /// Rules that show at most once, recorded the first time they appear.
+    #[serde(default)]
+    pub suggestions_shown: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -110,6 +116,10 @@ struct Document {
     support: Option<SupportPlan>,
     #[serde(default)]
     support_model: Option<usize>,
+    #[serde(default)]
+    dismissed_suggestions: Vec<String>,
+    #[serde(default)]
+    suggestions_shown: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -211,9 +221,11 @@ pub fn write_project(path: &Path, data: &ProjectData) -> Result<(), Error> {
             data.plate_names.clone()
         },
         instructions: data.instructions.clone(),
-        support,
-        support_model: data.support_model,
-    };
+            support,
+            support_model: data.support_model,
+            dismissed_suggestions: data.dismissed_suggestions.clone(),
+            suggestions_shown: data.suggestions_shown.clone(),
+        };
     let json = serde_json::to_vec_pretty(&document).map_err(|source| Error::Json {
         path: path.display().to_string(),
         source,
@@ -323,9 +335,80 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
             support: document.support,
             support_model: document.support_model,
             thumbnail,
+            dismissed_suggestions: document.dismissed_suggestions,
+            suggestions_shown: document.suggestions_shown,
         },
         warnings,
     })
+}
+
+/// Where recents and "don't suggest this again" live.
+///
+/// `SHALE_CONFIG_DIR` wins. `SHALE_CACHE_DIR` is next, so an isolated eval
+/// cache does not read the desktop app's recents. Otherwise this is the
+/// desktop app's config directory (`dev.shale.desktop`), the same folder the
+/// window writes `recents.json` into. It is not the catalogue cache.
+pub fn config_dir() -> PathBuf {
+    config_dir_from(&ConfigEnv::from_process())
+}
+
+struct ConfigEnv {
+    shale: Option<String>,
+    cache: Option<String>,
+    appdata: Option<String>,
+    xdg: Option<String>,
+    home: Option<String>,
+    macos: bool,
+}
+
+impl ConfigEnv {
+    fn from_process() -> Self {
+        Self {
+            shale: std::env::var("SHALE_CONFIG_DIR").ok(),
+            cache: std::env::var("SHALE_CACHE_DIR").ok(),
+            appdata: std::env::var("APPDATA").ok(),
+            xdg: std::env::var("XDG_CONFIG_HOME").ok(),
+            home: std::env::var("HOME").ok(),
+            macos: cfg!(target_os = "macos"),
+        }
+    }
+}
+
+fn nonempty(value: Option<&String>) -> Option<&str> {
+    value
+        .map(|text| text.trim())
+        .filter(|text| !text.is_empty())
+}
+
+fn config_dir_from(env: &ConfigEnv) -> PathBuf {
+    if let Some(dir) = nonempty(env.shale.as_ref()) {
+        return PathBuf::from(dir);
+    }
+    // An isolated cache must not fall through to the desktop recents file.
+    if let Some(dir) = nonempty(env.cache.as_ref()) {
+        return PathBuf::from(dir).join("session");
+    }
+    // Tauri's app_config_dir for identifier `dev.shale.desktop`.
+    if let Some(appdata) = nonempty(env.appdata.as_ref()) {
+        return PathBuf::from(appdata).join("dev.shale.desktop");
+    }
+    if env.macos {
+        if let Some(home) = nonempty(env.home.as_ref()) {
+            return PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("dev.shale.desktop");
+        }
+    }
+    if let Some(xdg) = nonempty(env.xdg.as_ref()) {
+        return PathBuf::from(xdg).join("dev.shale.desktop");
+    }
+    if let Some(home) = nonempty(env.home.as_ref()) {
+        return PathBuf::from(home)
+            .join(".config")
+            .join("dev.shale.desktop");
+    }
+    std::env::temp_dir().join("shale-config")
 }
 
 pub fn load_recents(dir: &Path) -> Result<Vec<RecentEntry>, Error> {
@@ -440,6 +523,60 @@ fn read_zip(zip: &mut ZipArchive<File>, name: &str) -> Result<Vec<u8>, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unset_config_dir_is_the_desktop_app_dir() {
+        let windows = config_dir_from(&ConfigEnv {
+            shale: None,
+            cache: None,
+            appdata: Some(r"C:\Users\Alessio\AppData\Roaming".into()),
+            xdg: None,
+            home: Some(r"C:\Users\Alessio".into()),
+            macos: false,
+        });
+        assert_eq!(
+            windows,
+            PathBuf::from(r"C:\Users\Alessio\AppData\Roaming").join("dev.shale.desktop")
+        );
+
+        let linux = config_dir_from(&ConfigEnv {
+            shale: None,
+            cache: None,
+            appdata: None,
+            xdg: None,
+            home: Some("/home/alessio".into()),
+            macos: false,
+        });
+        assert_eq!(
+            linux,
+            PathBuf::from("/home/alessio/.config/dev.shale.desktop")
+        );
+
+        let forced = config_dir_from(&ConfigEnv {
+            shale: Some("/tmp/shale-cfg".into()),
+            cache: Some(r"C:\eval\cache".into()),
+            appdata: Some(r"C:\Users\Alessio\AppData\Roaming".into()),
+            xdg: None,
+            home: Some("/home/alessio".into()),
+            macos: false,
+        });
+        assert_eq!(forced, PathBuf::from("/tmp/shale-cfg"));
+        assert!(!windows.ends_with("catalog-cache"));
+
+        let isolated = config_dir_from(&ConfigEnv {
+            shale: None,
+            cache: Some(r"C:\eval\cache".into()),
+            appdata: Some(r"C:\Users\Alessio\AppData\Roaming".into()),
+            xdg: None,
+            home: Some(r"C:\Users\Alessio".into()),
+            macos: false,
+        });
+        assert_eq!(
+            isolated,
+            PathBuf::from(r"C:\eval\cache").join("session")
+        );
+        assert!(!isolated.to_string_lossy().contains("dev.shale.desktop"));
+    }
     use crate::instructions::CustomInstruction;
     use crate::mesh::{write_binary_stl, TriangleMesh};
     use crate::supports::{
@@ -523,6 +660,8 @@ mod tests {
             support: None,
             support_model: None,
             thumbnail: Vec::new(),
+            dismissed_suggestions: Vec::new(),
+            suggestions_shown: Vec::new(),
         };
         write_project(&path, &saved).unwrap();
         let loaded = read_project(&path).unwrap().data;
@@ -562,6 +701,7 @@ mod tests {
                 material_print_temperature: Some(210.0),
                 material_bed_temperature: Some(60.0),
                 extra: vec![("adhesion_type".into(), "brim".into())],
+                ..UserSettings::default()
             },
             chord_mm: 0.08,
             turn_deg: 12.0,
@@ -596,6 +736,8 @@ mod tests {
             support: Some(sample_support()),
             support_model: Some(0),
             thumbnail: b"thumbnail-bytes".to_vec(),
+            dismissed_suggestions: vec!["brim_contact:cube".into()],
+            suggestions_shown: vec!["filament_fit".into()],
         };
         write_project(&path, &saved).unwrap();
         let loaded = read_project(&path).unwrap();

@@ -1,0 +1,379 @@
+# Shale MCP
+
+`shale-mcp` is a small set of tools for a model that is driving a print. Names say what they do. Arguments are JSON. A tool either returns JSON or an error string you can show to a person.
+
+Start it with the Cura resources and the engine on the path the desktop uses:
+
+```
+SHALE_CURA_DIR=... SHALE_MATERIALS_DIR=... SHALE_CURAENGINE=... shale-mcp
+```
+
+Add `--http 127.0.0.1:7337` to listen on localhost. Any other address is refused.
+
+One process keeps one job. Printer, settings, models, and non-planar mode stay until `new_job` or `clear_job`. `remove_model` drops one model.
+
+`slice` returns within a couple of seconds. If `status` is `running`, poll `slice_progress`, then read `slice_result`. A cube is under a minute. The aerospike is about 10 minutes, which is longer than a 600 second tool call. To compare layer height or infill, call `compare_slices` (the same tool as `slice_variants`) once. Call `list_plates` before `slice` with a plate number. `arrange_model` keeps rotation and scale.
+
+Projects and "don't suggest this again" are stored under `SHALE_CONFIG_DIR`. When that is unset and `SHALE_CACHE_DIR` is set, they stay inside `SHALE_CACHE_DIR/session` and do not read the desktop recents. When both are unset, they use the desktop app's config directory (`dev.shale.desktop`: `%APPDATA%\dev.shale.desktop` on Windows, `$XDG_CONFIG_HOME/dev.shale.desktop` or `$HOME/.config/dev.shale.desktop` on Linux). That is the folder the window writes `recents.json` into. It is not the catalogue cache.
+
+## Printers and materials
+
+### `list_printers`
+
+Use this to see which machines the catalogue can slice for.
+
+No arguments. Returns an array of `{id, name, manufacturer}`.
+
+### `list_materials`
+
+Use this to pick a filament id for `set_settings`.
+
+```json
+{ "printer_id": "bambu_lab_a1" }
+```
+
+`printer_id` may be omitted. The current printer is used.
+
+### `list_profiles`
+
+Use this to see nozzle variants and quality profiles.
+
+```json
+{ "printer_id": "bambu_lab_a1" }
+```
+
+### `list_my_printers`
+
+Use this for the printers bound to the signed-in Bambu account. Read only.
+
+No arguments. A successful result is the full list, with `done` saying to stop. Do not probe port 8883, read a config file, or run `cmdkey`. If this process is not signed in, the error is final: `sign in to Bambu in Shale first. no printer access without Shale sign-in; do not attempt other routes`.
+
+### `printer_status`
+
+Use this for one machine: state, the current job, progress, time left, nozzle and bed temperatures, and AMS slots with material, colour, and humidity when the report has them.
+
+```json
+{ "id": "01P00C000000000" }
+```
+
+The cloud device list does not include temperatures or AMS humidity. A LAN status report includes temperatures and still has no AMS humidity. Those fields are null rather than guessed. This tool does not start, pause, or stop a print. `get_printer_status` is the same tool. A successful result includes `done` and is the full answer: do not probe port 8883, read a config file, or run `cmdkey`.
+
+### `list_print_jobs`
+
+Use this for recent print tasks on the signed-in account (`GET /v1/user-service/my/tasks`). Read only.
+
+No arguments. The same sign-in error as `list_my_printers` when there is no account.
+
+## Models
+
+### `load_model`
+
+Use this to put a model on the bed. STL, 3MF, and the other formats the app imports.
+
+```json
+{ "path": "/home/me/bracket.stl", "plate": 1, "add_to_plate": false }
+```
+
+`plate` is 1-based and matches `list_plates`. Omit it for plate 1. An STL is added. A 3MF replaces the plate unless `add_to_plate` is true, which keeps what is already loaded and appends this file.
+
+### `list_plates`
+
+Use this after `load_model` to see which plates a 3MF contained. The result is `{ "plates": [ { "number", "name", "objects" } ] }`. `number` is the same 1-based plate `load_model` and `slice` take. An STL is plate 1.
+
+No arguments.
+
+### `transform_model`
+
+Use this to move, turn, or scale one model.
+
+```json
+{ "id": 1, "rotation_deg": [0, 90, 0] }
+```
+
+`translation` and `scale` are optional arrays of three numbers. Omitted axes stay as they are.
+
+### `arrange_model`
+
+Use this to centre a model on the bed and drop it down. Rotation and scale are kept.
+
+```json
+{ "id": 1 }
+```
+
+## Settings
+
+### `get_settings`
+
+Use this to read the resolved plate: printer, quality, temperatures, and the settings a person would see. Process settings embedded in a 3MF are included. A value you set yourself wins over the file.
+
+```json
+{ "printer_id": "bambu_lab_a1" }
+```
+
+`printer_id` may be omitted.
+
+### `set_settings`
+
+Use this to change the slice. Only the fields you send are changed.
+
+```json
+{
+  "adhesion_type": "brim",
+  "brim_width": 8,
+  "support_structure": "tree",
+  "infill_sparse_density": 15,
+  "settings": { "draft_shield": "limited" }
+}
+```
+
+`adhesion_type` is `none`, `skirt`, or `brim`. `support_structure` is `normal` or `tree`. `auto` is refused with `support structure 'auto' is not available on this engine yet. Use normal or tree.`
+
+`settings` is any other Cura key, the same as the CLI `--set KEY=VALUE`. An unknown key is an error. A close key is named: `adhesion` comes back as `Did you mean 'adhesion_type'?`.
+
+`nonplanar_mode` is `off`, `curved-tops`, or `auto`. `nonplanar_max_angle_deg` is greater than 0 and at most 10.
+
+## Suggestions
+
+### `get_suggestions`
+
+Use this for the ranked list of tips and warnings. Warnings come first. The app shows three; this tool returns the full list unless you set `limit`.
+
+```json
+{ "limit": 3 }
+```
+
+Optional fields, all omitted when you do not know them:
+
+- `slots`: spools the project uses. `{ "index": 0, "filament_type": "PLA" }`
+- `device_slots`: spools the connected printer has loaded
+- `humidity_percent`: 0 to 100, only when the printer reported it
+- `hours_since_dry`: only from spool data
+- `tags`: the only tag that changes a suggestion is `hot-use`
+- `dismissed`, `global_dismissed`, `shown_once`: ids already hidden
+- `nonplanar_mode`: `off`, `auto`, or `curved-tops`
+- `multi_material`: true when the printer has an AMS
+
+### `apply_suggestion`
+
+Use this to apply one fix and then hide that suggestion on this project. This is a different tool from `get_suggestions`.
+
+```json
+{ "id": "brim_contact:1" }
+```
+
+`id` is the suggestion id or the rule id from `get_suggestions`. A suggestion with nothing to change is an error. Moving a model onto another plate is reported in `skipped` and is left to the app.
+
+### `dismiss_suggestion`
+
+Use this to hide a suggestion without changing settings. This is a different tool from `apply_suggestion`.
+
+```json
+{ "id": "brim", "forever": false }
+```
+
+`forever` true stores the rule for every project. `forever` false hides it on this project only.
+
+## Slicing
+
+### `new_job` and `clear_job`
+
+Use either one at the start of a task. Both clear models, the printer, settings, and non-planar mode. Without this, the next task inherits the previous job.
+
+No arguments.
+
+### `remove_model`
+
+Use this to drop one model and keep the rest.
+
+```json
+{ "id": 1 }
+```
+
+### `slice`
+
+Use this to start a slice. It returns within a couple of seconds. A finished slice includes the summary. A running slice needs `slice_progress`, then `slice_result`.
+
+```json
+{ "plate": 1, "all_plates": false }
+```
+
+Call `list_plates` before `plate`. `all_plates` true slices every plate. A cube is under a minute. The aerospike is about 10 minutes.
+
+### `slice_progress`
+
+Use this while `slice` says `running`. `status` is `running`, `done`, or `failed`. `fraction` is 0 to 1. During export the message is `Exporting layer N of M`. Layers, time, and filament come from the G-code when it is being written. When the file is still empty, the same layer count comes from the CuraEngine log (`Layer export [N]`). The seconds on that line are engine time, not print time. Bed overflow is in `warnings` as soon as the slice starts. A `done` result is the full answer.
+
+No arguments.
+
+### `slice_result`
+
+Use this for the summary once `slice_progress` says `done`: time, filament, layers, warnings. While export is still writing, the same call returns those figures so far with `partial: true`.
+
+No arguments. Errors when nothing has been sliced, or the slice failed.
+
+### `compare_slices`
+
+Use this to compare settings in one call, such as 0.12 mm against 0.20 mm, or 15% infill against 30%. Do not call `slice` once per setting. `slice_variants` is the same tool.
+
+```json
+{
+  "patches": [
+    { "layer_height": 0.12 },
+    { "layer_height": 0.20 }
+  ]
+}
+```
+
+Up to 8 patches. The current settings are not changed. `apply_variant` makes one row current.
+
+### `slice_summary`
+
+Use this to read the last slice: layers, time, filament, warnings, and a short non-planar note. Pass `variant` as the row index from `compare_slices` to read that row instead.
+
+```json
+{ "variant": 0 }
+```
+
+Omit `variant` for the last ordinary slice. Errors if nothing has been sliced.
+
+### `slice_stats`
+
+Use this for a breakdown of the last slice. Nothing is sliced again.
+
+```json
+{ "price_per_kg": 20, "layers": false, "variant": 0 }
+```
+
+Returns time, filament metres, grams, cost, layer count, max and average speed, seconds in walls, infill, supports, skirt, travel, ironing, and anything else, grams per extruder (only the tools that were selected), and purge waste. `print_time_seconds` is a feed-rate estimate (distance divided by the F value). `header_time_seconds` is the CuraEngine `;TIME:` header, which is the print estimate. `time_note` says the same thing. `layers` true adds one duration per layer. Omit `price_per_kg` for 20 EUR. `variant` is the row from `compare_slices`; omit it for the last ordinary slice. `slice_summary` and `export_gcode` take the same index.
+
+While a large export is still writing, `slice_progress` moves from "Exporting layer N of M" and includes `print_time_seconds` and `filament_metres` from the G-code so far. If CuraEngine has not flushed the file yet, those layers come from its log instead. `slice_result` returns those partial figures with `partial: true` instead of waiting for the whole file. Stopping shale-mcp, or `new_job` while a slice is running, stops the CuraEngine child.
+
+### `slice_variants`
+
+Same tool as `compare_slices`. Use it to compare patches, not to slice one setting at a time. The current settings are not changed.
+
+```json
+{
+  "patches": [
+    { "infill_sparse_density": 15 },
+    { "infill_sparse_density": 30 },
+    { "layer_height": 0.12 },
+    { "support_structure": "tree" }
+  ],
+  "concurrency": 2,
+  "price_per_kg": 20
+}
+```
+
+At most 8 patches. Each patch is sliced in its own engine process and its own temp file. `concurrency` is how many run at once: 1, 2, or 3. Omit it and Shale uses 2, or 3 when the machine has at least four cores and 6 GB free, or 1 when memory is tight.
+
+Each row has `index`, `label`, `print_time_seconds`, `filament_metres`, `grams`, `cost`, `support_seconds`, `warnings`, `error`, and `apply_variant`. A failed patch sets `error` and the others still come back. `apply_variant` names the index to pass to `apply_variant`, and the same index works on `slice_stats`, `slice_summary`, and `export_gcode` while that comparison is the latest one.
+
+### `apply_variant`
+
+Use this to make one compared patch the current settings.
+
+```json
+{ "index": 1 }
+```
+
+`index` is the row from `slice_variants`, starting at 0.
+
+### `export_gcode`
+
+Use this to copy the last slice to a path.
+
+```json
+{ "path": "/home/me/bracket.gcode" }
+```
+
+## Supports and instructions
+
+### `analyse_overhangs`
+
+Use this to see where a model overhangs.
+
+```json
+{ "id": 1 }
+```
+
+### `propose_supports`
+
+Use this to build a support plan. It does not turn supports on. The result includes `apply_supports`, which is the next call. Omit ids there to enable every region.
+
+```json
+{ "id": 1 }
+```
+
+### `apply_supports`
+
+Use this to keep the proposed supports. Pass region ids to keep a subset.
+
+```json
+{ "ids": [1, 2] }
+```
+
+Omit `ids` to keep every region.
+
+### `list_instructions`
+
+Use this to read custom G-code instructions on the job.
+
+No arguments.
+
+### `add_instruction`
+
+Use this to add one instruction the slicer will emit.
+
+```json
+{ "kind": "pause", "layer": 10 }
+```
+
+Kinds: `pause` (layer or height_mm, filament_change, message), `temperature` (layer, nozzle_c, bed_c, wait), `fan` (height_mm, percent), `beep` (layer), `message` (layer, text), `park_and_wait` (layer, x, y, message). An unknown kind is an error.
+
+### `remove_instruction`
+
+Use this to delete one instruction by id.
+
+```json
+{ "id": 1 }
+```
+
+## Projects
+
+### `list_recent_projects`
+
+Use this to see projects opened or saved recently, newest first. This is the desktop app's list when `SHALE_CONFIG_DIR` is unset.
+
+No arguments. Each entry has `path`, `name`, `printer`, `saved_at_ms`, and `missing`.
+
+### `open_project`
+
+Use this to load a `.shale` project into the session. The models loaded now are replaced.
+
+```json
+{ "path": "/home/me/bracket.shale" }
+```
+
+### `save_project`
+
+Use this to write the open models as a `.shale` project. Meshes are stored as STL.
+
+```json
+{ "path": "/home/me/bracket.shale" }
+```
+
+## The same jobs from the terminal
+
+`shale-cli` covers the file-shaped tools:
+
+```
+shale projects
+shale open bracket.shale
+shale save bracket.stl -o bracket.shale
+shale stats --gcode bracket.gcode --price 20 --layers
+shale compare bracket.stl --patch infill_sparse_density=15 --patch infill_sparse_density=30
+shale suggest bracket.stl --json
+```
+
+`compare` is `slice_variants`. It does not change a saved project; apply the row you want with `apply_variant` in MCP, or slice again with those settings.

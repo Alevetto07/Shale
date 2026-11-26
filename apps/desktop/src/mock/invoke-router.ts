@@ -65,6 +65,10 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
       return models as T;
     case "list_plates":
       return mockPlates(models.length) as T;
+    case "plate_fit":
+      return { plate_index: 0, plate_name: "plate 1", x: 0, y: 0, z: 0 } as T;
+    case "imported_settings":
+      return null as T;
     case "add_plate":
     case "switch_plate":
       return { plates: mockPlates(models.length), models } as T;
@@ -124,11 +128,18 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
       return [] as T;
     case "mesh_health":
       return { triangles: 12, openEdges: 0, volumeMm3: 8000 } as T;
+    case "nonplanar_supported":
+      return true as T;
     case "slice_model":
       sliceSummary = mockSlice(models.map((m) => m.id));
       return sliceSummary as T;
     case "slice_tools":
-      return { cutters: true, booleans: true } as T;
+      return {
+        tools: [0],
+        changes: 0,
+        file: "C:\\mock\\plate.gcode",
+        usage: [{ tool: 0, metres: 4.2 }],
+      } as T;
     case "export_gcode":
       return String(args.destination ?? "C:\\mock\\plate.gcode") as T;
     case "host_defaults":
@@ -143,6 +154,16 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
     case "host_status":
       return mockHost(flags.hostConnected) as T;
     case "cloud_state":
+      return cloudSession as T;
+    case "cloud_set_region":
+      cloudSession = {
+        ...cloudSession,
+        signedIn: false,
+        host:
+          String(args.region) === "China" || String(args.region) === "CN"
+            ? "https://api.bambulab.cn"
+            : "https://api.bambulab.com",
+      };
       return cloudSession as T;
     case "cloud_login":
       cloudSession = mockCloud(false);

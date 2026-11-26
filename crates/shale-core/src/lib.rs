@@ -45,11 +45,14 @@ pub mod paint;
 pub mod preset;
 pub mod primitives;
 pub mod project;
+pub mod project_settings;
 pub mod queue;
 pub mod removal;
+pub mod stats;
 pub mod resolver;
 pub mod session;
 pub mod slicer_import;
+pub mod suggest;
 pub mod supports;
 pub mod template;
 mod value;
@@ -57,27 +60,48 @@ mod value;
 pub use cad::{suggest_chord_mm, ImportReport, ImportedMesh, TessellationTolerance};
 pub use catalog::{Catalog, MaterialInfo, PrinterInfo, QualityInfo, ResourcePaths, VariantInfo};
 pub use engine::{
-    ArcusEngine, CliEngine, Engine, EngineBackend, EngineProgress, LiveLayer, SlicingEngine,
+    cancel_engine_children, clear_engine_cancel, ArcusEngine, CliEngine, Engine, EngineBackend,
+    EngineProgress, ExportSnapshot, LiveLayer, SlicingEngine,
 };
 pub use error::Error;
 pub use gcode::Toolpath;
 pub use instructions::{CustomInstruction, GcodeFlavour};
 pub use job::{compare_support, slice, PlacedModel, SliceOutcome};
 pub use mesh::{
-    apply_transform, bake, drop_to_bed, load_mesh, load_mesh_reporting, load_mesh_with,
-    load_named_bytes, place_on_bed, Transform, TriangleMesh,
+    apply_transform, assign_plates, bake, drop_to_bed, load_build_objects, load_mesh,
+    load_mesh_reporting, load_mesh_with, load_named_bytes, place_assembly, place_on_bed,
+    read_plate_groups, BuildObject, PlateGroup, Transform, TriangleMesh,
+};
+pub use project_settings::{
+    apply_project_settings, read_project_settings, ImportedSetting, ProjectSettings,
+    ProjectSettingsImport,
 };
 pub use project::{
-    forget_recent, load_recents, now_ms, read_project, remember_recent, LoadedProject, ProjectData,
-    ProjectModel, RecentEntry,
+    config_dir, forget_recent, load_recents, now_ms, read_project, remember_recent, write_project,
+    LoadedProject, ProjectData, ProjectModel, RecentEntry,
 };
+pub use stats::{from_gcode as slice_stats_from_gcode, ExtruderUse, SliceStats};
 pub use resolver::{ProfileSummary, ResolveRequest, ResolvedSettings, UserSettings};
-pub use session::{JobSliceSummary, Session, SettingsPatch, SettingsView, StoredInstruction};
+pub use session::{
+    AppliedSuggestion, DismissedSuggestion, JobSliceSummary, PreparedSlice, ProjectOutline,
+    Session, SettingsPatch, SettingsView, StoredInstruction, VariantComparison,
+};
+pub use suggest::{
+    evaluate as evaluate_suggestions, filament_kind, gcode_facts, present as present_suggestions,
+    printer_is_enclosed, FilamentSlot, GcodeFacts, PrinterFacts, Scene, SceneObject, Severity,
+    Suggestion, SuggestionFix, SlotQuery, SuggestQuery,
+};
 pub use supports::{
     analyse, overlays, propose, set_enabled, Analysis, FeatureKind, RegionRole, SupportComparison,
     SupportOverlay, SupportParams, SupportPlan, SupportRegion,
 };
 pub use value::Value;
+pub use shale_nonplanar::{
+    check_user_max_angle, count_curved_extrusions, plan_auto_placement, safety_report_from_gcode,
+    segment_slope_deg, worst_extrusion_slope_deg, AutoPlacementReport, DetectionReport,
+    NonplanarMode, NonplanarOptions, NonplanarReport, PlannedSurface, PlannedSurfaceKind,
+    SafetyReport, SurfacePreview, CURVED_EXTRUSION_MIN_SLOPE_DEG, USER_MAX_ANGLE_DEG,
+};
 
 /// Removes the pre-v0.1.2 per-install cache under `%LOCALAPPDATA%\\Shale\\cache`.
 pub fn remove_legacy_catalog_cache() {
@@ -101,3 +125,5 @@ pub fn integration_test_cache_dir(component: &str) -> std::path::PathBuf {
 }
 
 mod error;
+pub mod auto_spans;
+pub mod nonplanar_bridge;

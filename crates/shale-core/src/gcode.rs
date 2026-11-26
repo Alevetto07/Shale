@@ -65,6 +65,15 @@ pub struct HeaderFacts {
     pub filament_metres: Option<f64>,
 }
 
+/// `;TIME:` when it is a real estimate, otherwise the last `;TIME_ELAPSED:`.
+///
+/// `6666` is CuraEngine's placeholder and is not a duration.
+pub fn declared_time_seconds(gcode: &str) -> Option<f64> {
+    header_facts(gcode)
+        .seconds
+        .or_else(|| elapsed_seconds(gcode))
+}
+
 pub fn header_facts(gcode: &str) -> HeaderFacts {
     let mut facts = HeaderFacts::default();
     for raw in gcode.lines() {
