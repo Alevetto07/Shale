@@ -65,6 +65,14 @@ interface ViewportProps {
   /// How wide the brush reaches, in millimetres of model surface.
   paintRadius: number;
   onBrush: (id: number, points: Array<[number, number, number]>) => void;
+  /// A cut plane through the selected part. Dragging it slides the cut.
+  cutPlane?: {
+    axis: 0 | 1 | 2;
+    offset: number;
+    min: [number, number, number];
+    max: [number, number, number];
+    onOffset: (offset: number) => void;
+  } | null;
 }
 
 function MockPlateFallback({
@@ -179,6 +187,7 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
       {props.overlays.map((overlay) => (
         <SupportVolume key={overlay.id} overlay={overlay} />
       ))}
+      {props.cutPlane && <CutPlane {...props.cutPlane} />}
             {props.showToolpaths && (
         <Toolpaths
           paths={props.toolpaths}
@@ -201,6 +210,79 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
     </div>
   );
 });
+
+function CutPlane({
+  axis,
+  offset,
+  min,
+  max,
+  onOffset,
+}: {
+  axis: 0 | 1 | 2;
+  offset: number;
+  min: [number, number, number];
+  max: [number, number, number];
+  onOffset: (offset: number) => void;
+}) {
+  const camera = useThree((state) => state.camera);
+  const gl = useThree((state) => state.gl);
+  const controls = useThree((state) => state.controls as { enabled?: boolean } | null);
+  const drag = useRef<{ plane: THREE.Plane; centre: number } | null>(null);
+  const centre = (min[axis] + max[axis]) / 2;
+  const limit = Math.max(0, (max[axis] - min[axis]) / 2 - 0.2);
+  const clamped = Math.max(-limit, Math.min(limit, offset));
+  const position: [number, number, number] = [
+    (min[0] + max[0]) / 2,
+    (min[1] + max[1]) / 2,
+    (min[2] + max[2]) / 2,
+  ];
+  position[axis] = centre + clamped;
+  const span = (item: 0 | 1 | 2) => Math.max(8, (max[item] - min[item]) * 1.15);
+  // planeGeometry lies in XY with a +Z normal. Turn that normal onto the cut axis.
+  const rotation: [number, number, number] =
+    axis === 0 ? [0, Math.PI / 2, 0] : axis === 1 ? [-Math.PI / 2, 0, 0] : [0, 0, 0];
+  const args: [number, number] =
+    axis === 0 ? [span(2), span(1)] : axis === 1 ? [span(0), span(2)] : [span(0), span(1)];
+  return (
+    <mesh
+      position={position}
+      rotation={rotation}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        const origin = new THREE.Vector3(position[0], position[1], position[2]);
+        const axisVec = new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0);
+        const camDir = new THREE.Vector3();
+        camera.getWorldDirection(camDir);
+        const normal = new THREE.Vector3().crossVectors(camDir, axisVec);
+        if (normal.lengthSq() < 1e-8) normal.set(1, 0, 0).cross(axisVec);
+        normal.normalize();
+        drag.current = {
+          plane: new THREE.Plane().setFromNormalAndCoplanarPoint(normal, origin),
+          centre,
+        };
+        gl.domElement.setPointerCapture(event.pointerId);
+        if (controls) controls.enabled = false;
+      }}
+      onPointerMove={(event) => {
+        const current = drag.current;
+        if (!current) return;
+        event.stopPropagation();
+        const hit = new THREE.Vector3();
+        if (!event.ray.intersectPlane(current.plane, hit)) return;
+        const next = hit.getComponent(axis) - current.centre;
+        onOffset(Math.round(Math.max(-limit, Math.min(limit, next)) * 10) / 10);
+      }}
+      onPointerUp={(event) => {
+        event.stopPropagation();
+        drag.current = null;
+        if (controls) controls.enabled = true;
+      }}
+    >
+      <planeGeometry args={args} />
+      <meshBasicMaterial color="#d7c4ff" transparent opacity={0.38} side={THREE.DoubleSide} depthWrite={false} />
+    </mesh>
+  );
+}
 
 function SupportVolume({ overlay }: { overlay: SupportOverlay }) {
   const geometry = useMemo(() => {

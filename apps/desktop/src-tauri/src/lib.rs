@@ -1499,6 +1499,40 @@ fn auto_orient(state: State<AppState>, id: u32) -> Result<Transform, String> {
     }
 }
 
+/// Stand every visible part on the face that needs the least support.
+///
+/// Same scoring as [`auto_orient`], one part at a time, so a plate of parts
+/// each lies on its own best face. The caller snapshots the plate first; undo
+/// writes those transforms back.
+#[tauri::command]
+fn auto_orient_all(state: State<AppState>) -> Result<Vec<ModelView>, String> {
+    let mut inner = lock(&state)?;
+    let angle = shale_core::supports::DEFAULT_SUPPORT_ANGLE;
+    for model in inner.models.iter_mut().filter(|model| model.visible) {
+        model.transform = shale_core::orient::orient(&model.mesh, &model.transform, angle);
+    }
+    inner.support = None;
+    inner.support_model_id = None;
+    inner.toolpath = None;
+    inner.gcode_path = None;
+    inner.nonplanar_view = None;
+    Ok(inner
+        .models
+        .iter()
+        .filter(|model| model.visible)
+        .map(|model| {
+            view_of(
+                model.id,
+                &model.name,
+                &model.transform,
+                &model.report,
+                &model.settings,
+                model.slot.as_ref(),
+            )
+        })
+        .collect())
+}
+
 /// Rest the face the user clicked on the plate.
 ///
 /// The viewport knows the normal of the triangle under the cursor in world
@@ -1653,6 +1687,7 @@ fn cut_model(
     pin_radius: Option<f64>,
     pin_height: Option<f64>,
     dovetail: Option<f64>,
+    face_down: Option<bool>,
 ) -> Result<CutResult, String> {
     let mut inner = lock(&state)?;
     let index = inner
@@ -1723,6 +1758,7 @@ fn cut_model(
         }
     })?;
     let keep = keep.unwrap_or_else(|| "both".to_string());
+    let face_down = face_down.unwrap_or(true);
     let mut pieces: Vec<(&str, TriangleMesh)> = Vec::new();
     if keep != "above" && !halves.below.triangles.is_empty() {
         pieces.push(("lower", halves.below));
@@ -1754,6 +1790,13 @@ fn cut_model(
         };
         // Each half keeps its place in plan and is set down on the plate: the
         // upper piece of a horizontal cut would otherwise float above the bed.
+        // Lay the cut face on the plate when asked. The mesh is already in
+        // world space, so the rotation is baked in and the transform only drops it.
+        let mesh = if face_down {
+            shale_core::cut::seat_cut_face(&mesh, axis, suffix == "upper")
+        } else {
+            mesh
+        };
         let (low, _) = shale_core::mesh::bounds(&mesh);
         let transform = Transform {
             translation: [0.0, 0.0, -low[2]],
@@ -5633,6 +5676,7 @@ pub fn run() {
             fill_plate,
             update_transform,
             auto_orient,
+            auto_orient_all,
             place_on_face,
             mesh_health,
             snap_measure,

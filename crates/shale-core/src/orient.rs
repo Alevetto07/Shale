@@ -452,6 +452,23 @@ mod tests {
     }
 
     #[test]
+    fn a_tall_brick_lies_on_its_largest_face() {
+        // Standing, the brick needs no support either way. The shorter height
+        // is the one with less to hold up, and the wider foot is the steadier.
+        let mesh = boxed([0.0, 0.0, 0.0], [8.0, 12.0, 80.0]);
+        let best = best_orientation(&mesh, 45.0);
+        assert!(best.overhang_mm2 < 1e-6, "{best:?}");
+        assert!(
+            (best.height_mm - 8.0).abs() < 1e-6,
+            "the 8 mm side should be the height: {best:?}"
+        );
+        assert!(
+            (best.footprint_mm2 - 12.0 * 80.0).abs() < 1.0,
+            "{best:?}"
+        );
+    }
+
+    #[test]
     fn a_cube_needs_no_support_however_it_stands() {
         let mesh = cube(10.0);
         let best = best_orientation(&mesh, 45.0);

@@ -70,6 +70,12 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
     case "imported_settings":
       return null as T;
     case "add_plate":
+    case "auto_orient":
+      return (
+        models[0]?.transform ?? { translation: [0, 0, 0], rotation_deg: [0, 0, 0], scale: [1, 1, 1] }
+      ) as T;
+    case "auto_orient_all":
+      return models as T;
     case "switch_plate":
       return { plates: mockPlates(models.length), models } as T;
     case "delete_plate":

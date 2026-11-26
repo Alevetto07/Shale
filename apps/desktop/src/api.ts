@@ -655,6 +655,7 @@ export const api = {
     }),
   updateTransform: (id: number, transform: Transform) => invoke<void>("update_transform", { id, transform }),
   autoOrient: (id: number) => invoke<Transform>("auto_orient", { id }),
+  autoOrientAll: () => invoke<ModelView[]>("auto_orient_all"),
   /// Rest the chosen face on the plate. The normal is in world space.
   /** What the part is now: triangles, material, and whether it closes. */
   meshHealth: (id: number) =>
@@ -670,6 +671,7 @@ export const api = {
     pinRadius = 2,
     pinHeight = 5,
     dovetail = 0,
+    faceDown = true,
   ) =>
     invoke<{ views: ModelView[]; joint: string | null }>("cut_model", {
       id,
@@ -680,6 +682,7 @@ export const api = {
       pinRadius,
       pinHeight,
       dovetail,
+      faceDown,
     }),
   /* One part against the others: subtract keeps what the others do not cover,
      union and common are the other two answers to the same question. */

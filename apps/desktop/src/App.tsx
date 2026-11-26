@@ -36,7 +36,7 @@ import {
   type Suggestion,
 } from "./api";
 import { Suggestions } from "./Suggestions";
-import { worldCentre, translationForCentre } from "./coords";
+import { translationForCentre, worldBox, worldCentre } from "./coords";
 import { ModelsView } from "./models/ModelsView";
 import { StartScreen, type StartPanel } from "./StartScreen";
 import { AppSidebar, readSidebarCollapsed, writeSidebarCollapsed } from "./AppSidebar";
@@ -294,6 +294,8 @@ export function App() {
   const [cutAxis, setCutAxis] = useState(2);
   const [cutOffset, setCutOffset] = useState("0");
   const [cutKeep, setCutKeep] = useState("both");
+  /// Lay each kept half so the face the plane made sits on the bed.
+  const [cutFaceDown, setCutFaceDown] = useState(true);
   /// Pins turn the two halves back into one part: a round pin on the lower
   /// half, a hole of the same size plus clearance in the upper.
   const [cutPins, setCutPins] = useState(0);
@@ -1543,6 +1545,23 @@ export function App() {
       const transform = await api.autoOrient(selected.id);
       remember();
       setModels((current) => current.map((model) => (model.id === selected.id ? { ...model, transform } : model)));
+      toastUndo("Orientation changed", () => void undo(), { id: "orient" });
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  /** Same choice, for every part on the plate. Undo puts them all back. */
+  async function autoOrientAll() {
+    if (modelsRef.current.length === 0) return;
+    try {
+      const views = await api.autoOrientAll();
+      remember();
+      setModels(views);
+      setPaths([]);
+      setLayerCount(0);
+      forgetSlice();
+      toastUndo("Orientations changed", () => void undo(), { id: "orient-all" });
     } catch (err) {
       setError(messageOf(err));
     }
@@ -1636,6 +1655,7 @@ export function App() {
         Number(pinRadius) || 2,
         Number(pinHeight) || 5,
         cutDovetail,
+        cutFaceDown,
       );
       remember();
       setModels((current) => [...current.filter((model) => model.id !== selected.id), ...halves]);
@@ -3640,6 +3660,17 @@ export function App() {
           />
 
           <Frame title="Objects">
+            {models.length > 0 && (
+              <div className="row">
+                <button
+                  type="button"
+                  title="Stand every part on the face that needs the least support. Undo puts them back."
+                  onClick={() => void autoOrientAll()}
+                >
+                  Orient all
+                </button>
+              </div>
+            )}
             {models.length === 0 ? (
               <p className="hint">Nothing on this plate yet. Import a model and it is listed here.</p>
             ) : (
@@ -4252,7 +4283,7 @@ export function App() {
                   <button type="button" onClick={() => void dropSelected()}>
                     Drop to plate
                   </button>
-                  <button type="button" title="Stand the part on the face that needs least support" onClick={() => void autoOrient()}>
+                  <button type="button" title="Stand the part on the face that needs least support. Undo puts it back." onClick={() => void autoOrient()}>
                     Auto orient
                   </button>
                   <button
@@ -4289,9 +4320,17 @@ export function App() {
                     <option value="above">upper only</option>
                     <option value="below">lower only</option>
                   </select>
-                  <button type="button" title="Split the part with a plane through its centre" onClick={() => void cutSelected()}>
+                  <button type="button" title="Split the part with the plane. Drag the plane in the view to move it." onClick={() => void cutSelected()}>
                     Cut
                   </button>
+                  <label className="cut-pin-toggle">
+                    <input
+                      type="checkbox"
+                      checked={cutFaceDown}
+                      onChange={(event) => setCutFaceDown(event.target.checked)}
+                    />
+                    cut face down
+                  </label>
                 </div>
                 <div className="row cut-pins">
                   <label className="cut-pin-toggle">
@@ -4792,6 +4831,16 @@ export function App() {
               setSelectedId(id < 0 ? null : id);
             }}
             onTransform={(id, transform) => void commitTransform(id, transform)}
+            cutPlane={
+              selected && solidShown && !measuring
+                ? {
+                    axis: cutAxis === 1 ? 1 : cutAxis === 0 ? 0 : 2,
+                    offset: Number(cutOffset) || 0,
+                    ...worldBox(selected.positions, selected.transform),
+                    onOffset: (next) => setCutOffset(String(next)),
+                  }
+                : null
+            }
           />
           </Suspense>
           {models.length === 0 && !preview && (
