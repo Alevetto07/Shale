@@ -486,6 +486,15 @@ pub struct SliceOutcome {
     pub nonplanar_context: Option<shale_nonplanar::NonplanarContext>,
 }
 
+/// Object overrides the engine should see. Ear controls are Shale's own.
+fn publish_settings(settings: &[(String, String)]) -> Vec<(String, String)> {
+    settings
+        .iter()
+        .filter(|(key, value)| !value.is_empty() && !crate::brim_ears::is_private(key))
+        .cloned()
+        .collect()
+}
+
 /// Cura stores `machine_max_feedrate_*` in mm/s; F words use mm/min.
 fn machine_max_feedrate_mm_per_min(resolved: &ResolvedSettings) -> f64 {
     for key in ["machine_max_feedrate_x", "machine_max_speed_x"] {
@@ -699,7 +708,7 @@ pub fn slice(
             mesh::write_binary_stl(&und_path, &baked)?;
             undeformed_paths.push(EngineMesh {
                 path: und_path,
-                settings: model.settings.clone(),
+                settings: publish_settings(&model.settings),
                 extruder: model.slot,
             });
             let np_in = crate::nonplanar_bridge::to_nonplanar(machine);
@@ -721,9 +730,47 @@ pub fn slice(
         mesh::write_binary_stl(&path, &baked)?;
         baked_paths.push(EngineMesh {
             path,
-            settings: model.settings.clone(),
+            settings: publish_settings(&model.settings),
             extruder: model.slot,
         });
+    }
+
+    // Mouse ears are meshes, not a Cura brim mode. They are flat discs on the
+    // bed, so they are not run through the curved-layer deformer.
+    let plate_brim = resolved
+        .global
+        .get("adhesion_type")
+        .is_some_and(|value| value.eq_ignore_ascii_case("brim"));
+    let mut ear_index = 0usize;
+    for model in models {
+        for ear in crate::brim_ears::ears_for(
+            &model.mesh,
+            &model.transform,
+            &model.settings,
+            layer_height,
+            plate_brim,
+        ) {
+            let mut baked = ear.mesh;
+            mesh::to_engine_space(
+                &mut baked,
+                resolved.summary.machine_width,
+                resolved.summary.machine_depth,
+                resolved.summary.machine_center_is_zero,
+            );
+            let (engine_min, engine_max) = mesh::bounds(&baked);
+            for axis in 0..3 {
+                scene_min[axis] = scene_min[axis].min(engine_min[axis]);
+                scene_max[axis] = scene_max[axis].max(engine_max[axis]);
+            }
+            let path = model_dir.join(format!("brim-ear-{ear_index}.stl"));
+            ear_index += 1;
+            mesh::write_binary_stl(&path, &baked)?;
+            baked_paths.push(EngineMesh {
+                path,
+                settings: ear.settings,
+                extruder: model.slot,
+            });
+        }
     }
 
     let mut modifiers = Vec::new();

@@ -52,6 +52,14 @@ export const OBJECT_OVERRIDE_FIELDS: ObjectField[] = [
   { kind: "number", key: "brim_width", label: "Brim width", title: "Brim width for this object, in millimetres" },
   {
     kind: "choice",
+    key: "brim_ears",
+    label: "Brim ears",
+    title: "Brim ears on sharp corners",
+    options: [ { value: "", label: "Automatic" }, { value: "1", label: "On" }, { value: "0", label: "Off" } ],
+  },
+  { kind: "number", key: "brim_ear_radius", label: "Ear radius", title: "Brim ear radius, in millimetres" },
+  {
+    kind: "choice",
     key: "z_seam_type",
     label: "Seam",
     title: "Seam position for this object",

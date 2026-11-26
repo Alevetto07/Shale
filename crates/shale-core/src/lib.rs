@@ -18,6 +18,7 @@
 #![allow(clippy::type_complexity)]
 
 pub mod bambu;
+pub mod brim_ears;
 pub mod cad;
 pub mod calibrate;
 pub mod catalog;

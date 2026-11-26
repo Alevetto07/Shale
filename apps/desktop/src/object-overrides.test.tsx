@@ -46,6 +46,7 @@ describe("ObjectOverrides", () => {
   it("offers brim type and seam position", () => {
     render(<Harness />);
     expect(screen.getByRole("combobox", { name: "Brim type for this object" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Brim ears on sharp corners" })).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "Seam position for this object" })).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "Brim width for this object, in millimetres" })).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/deep field/i);
