@@ -433,12 +433,12 @@ fn classify_connect(err: io::Error) -> CameraFault {
         io::ErrorKind::ConnectionRefused | io::ErrorKind::TimedOut | io::ErrorKind::NotFound => {
             CameraFault::Unreachable
         }
-        io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof => {
-            CameraFault::LanLiveViewOff
-        }
+        io::ErrorKind::ConnectionReset
+        | io::ErrorKind::ConnectionAborted
+        | io::ErrorKind::UnexpectedEof => CameraFault::LanLiveViewOff,
         _ => {
             let text = err.to_string();
-            if text.contains("reset") || text.contains("closed") {
+            if text.contains("reset") || text.contains("closed") || text.contains("aborted") {
                 CameraFault::LanLiveViewOff
             } else {
                 CameraFault::Unreachable
@@ -451,11 +451,13 @@ fn classify_handshake(err: io::Error) -> CameraFault {
     // A printer with LAN-only live view off accepts the TCP connection and
     // then drops it, which is what OpenBambuAPI records for port 322.
     let text = err.to_string();
-    if text.contains("reset")
+    if err.kind() == io::ErrorKind::UnexpectedEof
+        || err.kind() == io::ErrorKind::ConnectionReset
+        || err.kind() == io::ErrorKind::ConnectionAborted
+        || text.contains("reset")
         || text.contains("closed")
         || text.contains("eof")
-        || err.kind() == io::ErrorKind::UnexpectedEof
-        || err.kind() == io::ErrorKind::ConnectionReset
+        || text.contains("aborted")
     {
         CameraFault::LanLiveViewOff
     } else {
@@ -550,6 +552,15 @@ mod tests {
         assert!(!text.contains("SECRET-CODE"));
         assert!(text.contains("set"));
         assert_eq!(target.access_code(), "SECRET-CODE");
+    }
+
+    #[test]
+    fn a_windows_abort_during_the_handshake_is_live_view_off() {
+        let err = io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "An established connection was aborted by the software in your host machine. (os error 10053)",
+        );
+        assert_eq!(classify_handshake(err), CameraFault::LanLiveViewOff);
     }
 
     #[test]
