@@ -880,16 +880,40 @@ mod gate_tests {
 // ------------------------------------------------------------- the commands
 
 /// The JSON the machine takes to start a G-code file that is already uploaded.
+///
+/// No mapping means the external spool: `use_ams` stays false and `ams_mapping`
+/// is left out, which is what a single-colour plate has always sent.
 pub fn gcode_file_command(sequence: u64, remote: &str, bed_type: &str) -> serde_json::Value {
-    serde_json::json!({
-        "print": {
-            "sequence_id": sequence.to_string(),
-            "command": "gcode_file",
-            "param": remote,
-            "bed_type": bed_type,
-            "use_ams": false,
-        }
-    })
+    gcode_file_command_mapped(sequence, remote, bed_type, &[])
+}
+
+/// Same command, with one AMS tray per sliced tool.
+///
+/// `ams_mapping[tool]` is the tray index (0–3) or −1 for the external spool.
+/// `use_ams` is true only when at least one tool leaves the external spool.
+pub fn gcode_file_command_mapped(
+    sequence: u64,
+    remote: &str,
+    bed_type: &str,
+    ams_mapping: &[i32],
+) -> serde_json::Value {
+    let use_ams = ams_mapping.iter().any(|slot| *slot >= 0);
+    let mut print = serde_json::json!({
+        "sequence_id": sequence.to_string(),
+        "command": "gcode_file",
+        "param": remote,
+        "bed_type": bed_type,
+        "use_ams": use_ams,
+    });
+    if use_ams {
+        print["ams_mapping"] = serde_json::json!(ams_mapping);
+    }
+    serde_json::json!({ "print": print })
+}
+
+/// A tray the printer understands: −1 is the external spool, 0–3 are the AMS.
+pub fn ams_mapping_ok(mapping: &[i32]) -> bool {
+    mapping.iter().all(|slot| (-1..=3).contains(slot))
 }
 
 pub fn simple_command(sequence: u64, command: &str) -> serde_json::Value {
@@ -984,6 +1008,17 @@ mod tests {
         assert_eq!(command["print"]["param"], "/cache/cube.gcode");
         assert_eq!(command["print"]["bed_type"], "textured_plate");
         assert_eq!(command["print"]["use_ams"], false);
+        assert!(command["print"].get("ams_mapping").is_none());
+    }
+
+    #[test]
+    fn a_mapped_print_names_each_tray() {
+        let command = gcode_file_command_mapped(7, "/cache/cube.gcode", "textured_plate", &[0, -1]);
+        assert_eq!(command["print"]["use_ams"], true);
+        assert_eq!(command["print"]["ams_mapping"], serde_json::json!([0, -1]));
+        assert!(ams_mapping_ok(&[0, -1, 3]));
+        assert!(!ams_mapping_ok(&[4]));
+        assert!(!ams_mapping_ok(&[-2]));
     }
 
     #[test]
@@ -998,6 +1033,7 @@ mod tests {
 }
 /// Bambu's cloud: an account, a device list, and sending a print.
 pub mod cloud;
+pub mod history;
 
 /// MakerWorld and Thingiverse search and download.
 pub mod models;

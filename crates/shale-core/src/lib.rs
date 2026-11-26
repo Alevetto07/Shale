@@ -79,7 +79,9 @@ pub use project::{
     config_dir, forget_recent, load_recents, now_ms, read_project, remember_recent, write_project,
     LoadedProject, ProjectData, ProjectModel, RecentEntry,
 };
-pub use stats::{from_gcode as slice_stats_from_gcode, ExtruderUse, SliceStats};
+pub use stats::{
+    features_from_gcode, from_gcode as slice_stats_from_gcode, ExtruderUse, FeatureUse, SliceStats,
+};
 pub use resolver::{ProfileSummary, ResolveRequest, ResolvedSettings, UserSettings};
 pub use session::{
     AppliedSuggestion, DismissedSuggestion, JobSliceSummary, PreparedSlice, ProjectOutline,
