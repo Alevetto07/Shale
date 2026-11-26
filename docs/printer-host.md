@@ -103,15 +103,27 @@ about that licence, so Shale fetches it instead.
 
 The same FTPS session lists the card, downloads a timelapse or a sliced file,
 deletes after a confirmation, and starts a file that is already there. A
-`.gcode` uses `gcode_file`. A 3MF uses `project_file` and names
-`Metadata/plate_1.gcode` inside the archive. Reprint does not upload.
+`.gcode` uses `gcode_file`. A `.gcode.3mf` is read first: the plate comes from
+`slice_info.config` and the `Metadata/plate_N.gcode` entries, lowest index
+first, so a file that only contains plate 2 starts plate 2. Reprint does not
+upload.
+
+A Bambu send uploads a `.gcode.3mf` in the layout Bambu Studio writes:
+`Metadata/plate_1.gcode` and its uppercase `.md5`, `slice_info.config` (filament
+identity and the tray map), plate thumbnails, `model_settings.config`, and
+`project_settings.config`. The thumbnails are a fixed plate preview, not a
+render of the mesh. The same `ams_mapping` array is on the `project_file`
+command. The dialog's timelapse, bed levelling, flow dynamics, vibration
+compensation, and use-AMS switches follow Studio's defaults for the printer.
+A P1 has no flow calibration. A P2, H2, or X2 sends automatic calibration
+(`auto_bed_leveling` / `auto_flow_cali` of 2) when those switches are on.
+A printer that is not a Bambu machine still receives plain G-code.
 
 ## Known gaps
 
-- **`use_ams: false`.** This sends a plain G-code file, so the machine prints
-  from the spool it has loaded. Bambu Studio's route is `project_file` with a
-  sliced 3MF that carries the plate's G-code, an `md5`, and an `ams_mapping`
-  array — that needs a sliced-3MF writer, which Shale does not have yet.
+- **One plate per upload.** Each send is its own archive, with that plate as
+  `Metadata/plate_1.gcode`. A 3MF already on the printer can still name another
+  plate, and reprint uses the one in the file.
 - **No camera.** The chamber stream is a separate protocol (`bambu:///local/…`
   on X1-class, JPEG on 6000 for the A1/P1) and is not implemented.
 - **No firmware or account calls.** Those go through Bambu's cloud, not the LAN.

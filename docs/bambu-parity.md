@@ -236,9 +236,9 @@ screenshot, and the brush carries its own undo.
 
 What is left: seams are not painted at all, re-cutting a part rotates a plane
 rather than describing a joint profile, the body of the G-code is Marlin-flavoured
-rather than Bambu's (its start and end are the machine's own), the flush volumes
-behind a multi-spool tower are not priced, and a multi-spool plate cannot be sent
-as a sliced 3MF.
+rather than Bambu's (its start and end are the machine's own), and the flush volumes
+behind a multi-spool tower are not priced. A multi-spool plate is sent as a
+`.gcode.3mf`, with the tray map in the file and on the start command.
 
 ## The host half
 
@@ -254,9 +254,9 @@ What that closes and what it does not:
 | Bambu Studio | Shale |
 |---|---|
 | live state, temperatures, layer, remaining time | yes, one poll a second |
-| upload the sliced plate and start it | yes — plain G-code, `use_ams: false` |
+| upload the sliced plate and start it | yes — a `.gcode.3mf`, `project_file`, with Studio's send options |
 | pause, resume, stop | yes |
-| sliced 3MF with `ams_mapping` for a multi-spool job | **no** — needs a sliced-3MF writer |
+| sliced 3MF with `ams_mapping` for a multi-spool job | yes — the same array is in the file and on the command |
 | camera | **no** — a separate stream protocol |
 | firmware and account calls | **no** — those are cloud, not LAN |
 | a job queue | **yes** — a job is a copy of the slice, so the next slice cannot overwrite a queued one; `start queue` names every job and is the only press that lets a print start without you pressing for it. The queue advances on `FINISH`/`IDLE` and stops on `FAILED` |
