@@ -8,10 +8,12 @@
 
 mod arcus;
 pub mod cli;
+mod process;
 mod proto;
 
 pub use arcus::ArcusEngine;
 pub use cli::CliEngine;
+pub use process::cancel_running_engines;
 
 use std::collections::BTreeMap;
 use std::env;

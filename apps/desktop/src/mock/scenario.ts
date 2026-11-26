@@ -14,6 +14,8 @@ export interface MockFlags {
   sliced: boolean;
   models: boolean;
   recents: boolean;
+  /** Show a sample HMS alert on the device pane. */
+  hms: boolean;
 }
 
 const DEFAULT: MockFlags = {
@@ -23,6 +25,7 @@ const DEFAULT: MockFlags = {
   sliced: true,
   models: true,
   recents: true,
+  hms: false,
 };
 
 export function readMockFlags(): MockFlags {
@@ -35,6 +38,7 @@ export function readMockFlags(): MockFlags {
   if (params.get("slice") === "0") flags.sliced = false;
   if (params.get("models") === "0") flags.models = false;
   if (params.get("recents") === "0") flags.recents = false;
+  if (params.get("hms") === "1") flags.hms = true;
 
   switch (scenario) {
     case "home":

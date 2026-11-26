@@ -868,6 +868,63 @@ fn normalise(a: [f64; 3]) -> [f64; 3] {
     }
 }
 
+fn box_centre_xy(mesh: &TriangleMesh) -> [f64; 2] {
+    let (min, max) = mesh.bounds();
+    [
+        f64::from(min[0] + max[0]) * 0.5,
+        f64::from(min[1] + max[1]) * 0.5,
+    ]
+}
+
+/// A proper rotation that sends the cut face's outward normal to straight down.
+///
+/// `positive` means that normal points along `+axis` (the below half). The
+/// above half's cut face points the other way.
+fn lay_down(point: [f64; 3], axis: usize, positive: bool) -> [f64; 3] {
+    let [x, y, z] = point;
+    match (axis, positive) {
+        (0, true) => [z, y, -x],
+        (0, false) => [-z, y, x],
+        (1, true) => [x, z, -y],
+        (1, false) => [x, -z, y],
+        (2, true) => [x, -y, -z],
+        _ => [x, y, z],
+    }
+}
+
+/// Turn a cut half so the face the plane made lies on the bed.
+///
+/// The cut face is the one that was open until the cap closed it. Printing
+/// that face down keeps the join flat and puts any pegs pointing up. The
+/// part stays where it was in plan; only the way up changes. `above` is the
+/// half the plane's normal points towards.
+pub fn seat_cut_face(mesh: &TriangleMesh, axis: usize, above: bool) -> TriangleMesh {
+    if mesh.vertices.is_empty() {
+        return mesh.clone();
+    }
+    let origin = box_centre_xy(mesh);
+    let mut seated = mesh.clone();
+    for vertex in &mut seated.vertices {
+        let turned = lay_down(
+            [vertex[0] as f64, vertex[1] as f64, vertex[2] as f64],
+            axis.min(2),
+            !above,
+        );
+        *vertex = [turned[0] as f32, turned[1] as f32, turned[2] as f32];
+    }
+    let shifted = box_centre_xy(&seated);
+    let (min, _) = seated.bounds();
+    let dx = (origin[0] - shifted[0]) as f32;
+    let dy = (origin[1] - shifted[1]) as f32;
+    let dz = -min[2];
+    for vertex in &mut seated.vertices {
+        vertex[0] += dx;
+        vertex[1] += dy;
+        vertex[2] += dz;
+    }
+    seated
+}
+
 /// Volume enclosed by a closed mesh, signed by its winding.
 pub fn volume(mesh: &TriangleMesh) -> f64 {
     let mut total = 0.0;
@@ -1151,5 +1208,45 @@ mod tests {
             joint.tab_mm3
         );
         assert!(is_closed(&halves.below) && is_closed(&halves.above));
+    }
+
+    #[test]
+    fn seating_a_cut_lays_the_cut_face_on_the_bed() {
+        let cube = boxed([0.0, 0.0, 0.0], [10.0, 10.0, 20.0]);
+        let halves = cut(&cube, &Plane::new([0.0, 0.0, 8.0], [0.0, 0.0, 1.0]));
+        // The lower half's cut is its top. After seating, that face is the one
+        // on the bed, and the half is still 8 mm tall.
+        let lower = seat_cut_face(&halves.below, 2, false);
+        let (min, max) = lower.bounds();
+        assert!(f64::from(min[2]).abs() < 1e-3, "on the bed: {min:?}");
+        assert!(
+            (f64::from(max[2] - min[2]) - 8.0).abs() < 1e-2,
+            "height {max:?}"
+        );
+        let on_bed = lower
+            .vertices
+            .iter()
+            .filter(|vertex| f64::from(vertex[2]).abs() < 1e-3)
+            .count();
+        assert!(on_bed >= 4, "the cut face should be the one on the bed: {on_bed}");
+        assert!((volume(&lower).abs() - volume(&halves.below).abs()).abs() < 1.0);
+
+        // An X cut: the below half's cut face points +X, and seating turns it down.
+        let sides = cut(&cube, &Plane::new([4.0, 0.0, 0.0], [1.0, 0.0, 0.0]));
+        let side = seat_cut_face(&sides.below, 0, false);
+        let (side_min, side_max) = side.bounds();
+        assert!(f64::from(side_min[2]).abs() < 1e-3, "{side_min:?}");
+        assert!(
+            (f64::from(side_max[2] - side_min[2]) - 4.0).abs() < 1e-2,
+            "the 4 mm thickness becomes the height: {side_max:?}"
+        );
+        let (before_min, before_max) = sides.below.bounds();
+        let (after_min, after_max) = side.bounds();
+        let before_x = f64::from(before_min[0] + before_max[0]) * 0.5;
+        let after_x = f64::from(after_min[0] + after_max[0]) * 0.5;
+        assert!(
+            (before_x - after_x).abs() < 0.05,
+            "it stays where it was in plan: {before_x} then {after_x}"
+        );
     }
 }

@@ -19,6 +19,14 @@ pub struct ExtruderUse {
     pub grams: f64,
 }
 
+/// Time and filament for one preview kind. `metres` is filament length, not travel.
+#[derive(Clone, Debug, Serialize)]
+pub struct FeatureUse {
+    pub kind: String,
+    pub seconds: f64,
+    pub metres: f64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct SliceStats {
     pub print_time_seconds: f64,
@@ -36,6 +44,9 @@ pub struct SliceStats {
     pub ironing_seconds: f64,
     pub skirt_seconds: f64,
     pub other_seconds: f64,
+    /// One row per feature the legend can name, longest first is not required:
+    /// the order is the preview's own (walls, then skin, infill, support, the rest).
+    pub features: Vec<FeatureUse>,
     pub extruders: Vec<ExtruderUse>,
     pub purge_grams: f64,
     /// One entry per `;LAYER:` when the caller asked for them.
@@ -86,11 +97,62 @@ pub fn from_gcode(
         ironing_seconds: facts.ironing_seconds,
         skirt_seconds: facts.skirt_seconds,
         other_seconds: facts.other_seconds,
+        features: features_of(&facts),
         extruders,
         purge_grams,
         layer_seconds: include_layers.then_some(facts.layer_seconds),
         warnings,
     }
+}
+
+const FEATURE_ORDER: &[&str] = &[
+    "wall-outer",
+    "wall-inner",
+    "skin",
+    "infill",
+    "support",
+    "support-interface",
+    "brim",
+    "raft",
+    "skirt",
+    "prime-tower",
+    "ironing",
+    "travel",
+];
+
+pub fn features_from_gcode(gcode: &str) -> Vec<FeatureUse> {
+    features_of(&gcode_facts(gcode))
+}
+
+fn features_of(facts: &GcodeFacts) -> Vec<FeatureUse> {
+    let mut kinds: Vec<String> = facts
+        .feature_seconds
+        .keys()
+        .cloned()
+        .chain(facts.feature_mm.keys().cloned())
+        .collect();
+    kinds.sort();
+    kinds.dedup();
+    kinds.sort_by(|left, right| {
+        let left_at = FEATURE_ORDER
+            .iter()
+            .position(|kind| kind == left)
+            .unwrap_or(FEATURE_ORDER.len());
+        let right_at = FEATURE_ORDER
+            .iter()
+            .position(|kind| kind == right)
+            .unwrap_or(FEATURE_ORDER.len());
+        left_at.cmp(&right_at).then_with(|| left.cmp(right))
+    });
+    kinds
+        .into_iter()
+        .map(|kind| FeatureUse {
+            seconds: facts.feature_seconds.get(&kind).copied().unwrap_or(0.0),
+            metres: facts.feature_mm.get(&kind).copied().unwrap_or(0.0) / 1000.0,
+            kind,
+        })
+        .filter(|item| item.seconds > 1e-6 || item.metres > 1e-9)
+        .collect()
 }
 
 fn extruders_of(facts: &GcodeFacts, diameter: f64) -> Vec<ExtruderUse> {
@@ -136,6 +198,14 @@ G1 X30 Y0 E4
         assert!(stats.cost > 0.0);
         assert!(stats.walls_seconds > 0.0);
         assert!(stats.infill_seconds > 0.0);
+        assert!(stats
+            .features
+            .iter()
+            .any(|item| item.kind == "wall-outer" && item.metres > 0.0));
+        assert!(stats
+            .features
+            .iter()
+            .any(|item| item.kind == "infill" && item.seconds > 0.0));
     }
 
     #[test]

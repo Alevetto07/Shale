@@ -469,8 +469,49 @@ impl<T: Transport> Cloud<T> {
         if gcode.is_empty() {
             return Err(CloudError::Refused("there is nothing to print".into()));
         }
+        self.send_print_named(dev_id, task_name, "plate.gcode", gcode)
+    }
+
+    /// Send a sliced file under an explicit name. A Bambu machine takes
+    /// `plate.gcode.3mf`; `send_print` keeps the plain G-code name.
+    pub fn send_print_named(
+        &mut self,
+        dev_id: &str,
+        task_name: &str,
+        file_name: &str,
+        file: &[u8],
+    ) -> Result<String, CloudError> {
+        if dev_id.trim().is_empty() {
+            return Err(CloudError::Refused(
+                "no printer was chosen for this print".into(),
+            ));
+        }
+        if file.is_empty() {
+            return Err(CloudError::Refused("there is nothing to print".into()));
+        }
+        self.send_print_task(dev_id, task_name, file_name, file, &serde_json::json!({}))
+    }
+
+    /// Send a sliced file and attach the print fields (tray map, calibration)
+    /// to the cloud task. The file itself still carries the same tray map.
+    pub fn send_print_task(
+        &mut self,
+        dev_id: &str,
+        task_name: &str,
+        file_name: &str,
+        file: &[u8],
+        extra: &serde_json::Value,
+    ) -> Result<String, CloudError> {
+        if dev_id.trim().is_empty() {
+            return Err(CloudError::Refused(
+                "no printer was chosen for this print".into(),
+            ));
+        }
+        if file.is_empty() {
+            return Err(CloudError::Refused("there is nothing to print".into()));
+        }
         let token = self.access_token()?;
-        let request = api::create_task(dev_id, task_name, "plate.gcode", gcode)
+        let request = api::create_task_with(dev_id, task_name, file_name, file, extra)
             .into_request(&self.host, Some(&token));
         let answer = self.send(request)?;
         let created: api::TaskCreated = parse(&answer, "POST /v1/iot-service/api/user/task")?;

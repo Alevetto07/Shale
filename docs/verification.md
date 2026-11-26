@@ -619,8 +619,8 @@ that press.
   Bambu's is the start and the end — the wipe, the bed scan, the AMS handover,
   the calibration and the finish — and no machine here can run any of it.
 - Per-filament flush volumes are not priced; CuraEngine has no flush matrix.
-- A multi-spool plate is refused rather than sent, because the sliced 3MF needs
-  an `ams_mapping` this app does not write.
+- A multi-spool plate is sent as a `.gcode.3mf`. The tray map is in the file
+  and on the start command. No machine here has run that file.
 - Camera and timelapse need a printer; the printer is not on this network.
 
 

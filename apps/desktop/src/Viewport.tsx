@@ -65,6 +65,19 @@ interface ViewportProps {
   /// How wide the brush reaches, in millimetres of model surface.
   paintRadius: number;
   onBrush: (id: number, points: Array<[number, number, number]>) => void;
+  /// Dragging on the plate draws a support box of this height.
+  boxArmed: boolean;
+  boxHeight: number;
+  supportBoxes: Array<{ min: [number, number, number]; max: [number, number, number]; block: boolean }>;
+  onSupportBox: (min: [number, number, number], max: [number, number, number]) => void;
+  /// A cut plane through the selected part. Dragging it slides the cut.
+  cutPlane?: {
+    axis: 0 | 1 | 2;
+    offset: number;
+    min: [number, number, number];
+    max: [number, number, number];
+    onOffset: (offset: number) => void;
+  } | null;
 }
 
 function MockPlateFallback({
@@ -179,6 +192,16 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
       {props.overlays.map((overlay) => (
         <SupportVolume key={overlay.id} overlay={overlay} />
       ))}
+      {props.cutPlane && <CutPlane {...props.cutPlane} />}
+      <SupportBoxTool
+        armed={props.boxArmed}
+        height={props.boxHeight}
+        width={props.width}
+        depth={props.depth}
+        centerIsZero={props.centerIsZero}
+        boxes={props.supportBoxes}
+        onPlace={props.onSupportBox}
+      />
             {props.showToolpaths && (
         <Toolpaths
           paths={props.toolpaths}
@@ -201,6 +224,79 @@ export const Viewport = memo(function Viewport(props: ViewportProps) {
     </div>
   );
 });
+
+function CutPlane({
+  axis,
+  offset,
+  min,
+  max,
+  onOffset,
+}: {
+  axis: 0 | 1 | 2;
+  offset: number;
+  min: [number, number, number];
+  max: [number, number, number];
+  onOffset: (offset: number) => void;
+}) {
+  const camera = useThree((state) => state.camera);
+  const gl = useThree((state) => state.gl);
+  const controls = useThree((state) => state.controls as { enabled?: boolean } | null);
+  const drag = useRef<{ plane: THREE.Plane; centre: number } | null>(null);
+  const centre = (min[axis] + max[axis]) / 2;
+  const limit = Math.max(0, (max[axis] - min[axis]) / 2 - 0.2);
+  const clamped = Math.max(-limit, Math.min(limit, offset));
+  const position: [number, number, number] = [
+    (min[0] + max[0]) / 2,
+    (min[1] + max[1]) / 2,
+    (min[2] + max[2]) / 2,
+  ];
+  position[axis] = centre + clamped;
+  const span = (item: 0 | 1 | 2) => Math.max(8, (max[item] - min[item]) * 1.15);
+  // planeGeometry lies in XY with a +Z normal. Turn that normal onto the cut axis.
+  const rotation: [number, number, number] =
+    axis === 0 ? [0, Math.PI / 2, 0] : axis === 1 ? [-Math.PI / 2, 0, 0] : [0, 0, 0];
+  const args: [number, number] =
+    axis === 0 ? [span(2), span(1)] : axis === 1 ? [span(0), span(2)] : [span(0), span(1)];
+  return (
+    <mesh
+      position={position}
+      rotation={rotation}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        const origin = new THREE.Vector3(position[0], position[1], position[2]);
+        const axisVec = new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0);
+        const camDir = new THREE.Vector3();
+        camera.getWorldDirection(camDir);
+        const normal = new THREE.Vector3().crossVectors(camDir, axisVec);
+        if (normal.lengthSq() < 1e-8) normal.set(1, 0, 0).cross(axisVec);
+        normal.normalize();
+        drag.current = {
+          plane: new THREE.Plane().setFromNormalAndCoplanarPoint(normal, origin),
+          centre,
+        };
+        gl.domElement.setPointerCapture(event.pointerId);
+        if (controls) controls.enabled = false;
+      }}
+      onPointerMove={(event) => {
+        const current = drag.current;
+        if (!current) return;
+        event.stopPropagation();
+        const hit = new THREE.Vector3();
+        if (!event.ray.intersectPlane(current.plane, hit)) return;
+        const next = hit.getComponent(axis) - current.centre;
+        onOffset(Math.round(Math.max(-limit, Math.min(limit, next)) * 10) / 10);
+      }}
+      onPointerUp={(event) => {
+        event.stopPropagation();
+        drag.current = null;
+        if (controls) controls.enabled = true;
+      }}
+    >
+      <planeGeometry args={args} />
+      <meshBasicMaterial color="#d7c4ff" transparent opacity={0.38} side={THREE.DoubleSide} depthWrite={false} />
+    </mesh>
+  );
+}
 
 function SupportVolume({ overlay }: { overlay: SupportOverlay }) {
   const geometry = useMemo(() => {
@@ -365,6 +461,136 @@ function Framer({
     invalidate,
   ]);
   return null;
+}
+
+function SupportBoxTool({
+  armed,
+  height,
+  width,
+  depth,
+  centerIsZero,
+  boxes,
+  onPlace,
+}: {
+  armed: boolean;
+  height: number;
+  width: number;
+  depth: number;
+  centerIsZero: boolean;
+  boxes: Array<{ min: [number, number, number]; max: [number, number, number]; block: boolean }>;
+  onPlace: (min: [number, number, number], max: [number, number, number]) => void;
+}) {
+  const camera = useThree((state) => state.camera);
+  const gl = useThree((state) => state.gl);
+  const controls = useThree((state) => state.controls) as { enabled?: boolean } | null;
+  const [draft, setDraft] = useState<[[number, number], [number, number]] | null>(null);
+  const place = useRef(onPlace);
+  place.current = onPlace;
+  const cx = centerIsZero ? 0 : width / 2;
+  const cy = centerIsZero ? 0 : depth / 2;
+
+  useEffect(() => {
+    if (!armed) return;
+    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    let start: [number, number] | null = null;
+
+    const hit = (event: PointerEvent): [number, number] | null => {
+      const rect = gl.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const point = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(plane, point)) return null;
+      return [point.x, point.y];
+    };
+    const down = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      const point = hit(event);
+      if (!point) return;
+      start = point;
+      setDraft([point, point]);
+      if (controls) controls.enabled = false;
+      event.preventDefault();
+    };
+    const move = (event: PointerEvent) => {
+      if (!start) return;
+      const point = hit(event);
+      if (point) setDraft([start, point]);
+    };
+    const up = () => {
+      if (controls) controls.enabled = true;
+      if (!start) return;
+      setDraft((current) => {
+        if (current) {
+          const [a, b] = current;
+          place.current([a[0], a[1], 0], [b[0], b[1], Math.max(0.4, height)]);
+        }
+        return null;
+      });
+      start = null;
+    };
+    const element = gl.domElement;
+    element.addEventListener("pointerdown", down);
+    element.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      element.removeEventListener("pointerdown", down);
+      element.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      if (controls) controls.enabled = true;
+    };
+  }, [armed, camera, gl, controls, height]);
+
+  const shown = draft
+    ? [
+        ...boxes,
+        {
+          min: [Math.min(draft[0][0], draft[1][0]), Math.min(draft[0][1], draft[1][1]), 0] as [
+            number,
+            number,
+            number,
+          ],
+          max: [
+            Math.max(draft[0][0], draft[1][0]),
+            Math.max(draft[0][1], draft[1][1]),
+            Math.max(0.4, height),
+          ] as [number, number, number],
+          block: false,
+        },
+      ]
+    : boxes;
+
+  return (
+    <group>
+      {shown.map((box, index) => {
+        const sx = Math.max(0.2, box.max[0] - box.min[0]);
+        const sy = Math.max(0.2, box.max[1] - box.min[1]);
+        const sz = Math.max(0.2, box.max[2] - box.min[2]);
+        return (
+          <mesh
+            key={`${index}-${box.min.join(",")}`}
+            position={[(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, (box.min[2] + box.max[2]) / 2]}
+          >
+            <boxGeometry args={[sx, sy, sz]} />
+            <meshStandardMaterial
+              color={box.block ? "#e0a15a" : "#8aa2ff"}
+              transparent
+              opacity={0.38}
+              depthWrite={false}
+            />
+          </mesh>
+        );
+      })}
+      {armed ? (
+        <mesh position={[cx, cy, 0.15]}>
+          <planeGeometry args={[Math.max(width, 10), Math.max(depth, 10)]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+      ) : null}
+    </group>
+  );
 }
 
 function Bed({

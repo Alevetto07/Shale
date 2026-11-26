@@ -45,6 +45,45 @@ export function rotateScale(
   return [te0 * x + te4 * y + te8 * z, te1 * x + te5 * y + te9 * z, te2 * x + te6 * y + te10 * z];
 }
 
+/** World-space bounding box of a mesh under a transform. */
+export function worldBox(
+  positions: ArrayLike<number>,
+  transform: Transform,
+): { min: [number, number, number]; max: [number, number, number] } {
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (let index = 0; index < positions.length; index += 3) {
+    const rotated = rotateScale(
+      [positions[index], positions[index + 1], positions[index + 2]],
+      transform.rotation_deg,
+      transform.scale,
+    );
+    const point = [
+      rotated[0] + transform.translation[0],
+      rotated[1] + transform.translation[1],
+      rotated[2] + transform.translation[2],
+    ];
+    for (let axis = 0; axis < 3; axis += 1) {
+      min[axis] = Math.min(min[axis], point[axis]);
+      max[axis] = Math.max(max[axis], point[axis]);
+    }
+  }
+  if (!Number.isFinite(min[0])) return { min: [0, 0, 0], max: [0, 0, 0] };
+  return { min, max };
+}
+
+/** Where the cut plane sits: the part's centre on `axis`, plus `offset` millimetres. */
+export function cutPlanePosition(
+  box: { min: [number, number, number]; max: [number, number, number] },
+  axis: 0 | 1 | 2,
+  offset: number,
+): number {
+  const centre = (box.min[axis] + box.max[axis]) / 2;
+  const limit = Math.max(0, (box.max[axis] - box.min[axis]) / 2 - 0.2);
+  const clamped = Math.max(-limit, Math.min(limit, offset));
+  return centre + clamped;
+}
+
 /** World position of the part's centre. This is what the panel and the gizmo show. */
 export function worldCentre(positions: ArrayLike<number>, transform: Transform): [number, number, number] {
   const offset = rotateScale(localCentre(positions), transform.rotation_deg, transform.scale);

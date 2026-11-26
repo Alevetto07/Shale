@@ -3,10 +3,11 @@
 //! Bambu Studio calls this *lay flat*; the idea is the same everywhere: try the
 //! orientations that put a face on the plate and keep the one whose downward
 //! facing surface area is smallest, because that is the surface that will need
-//! support. The candidate set is the 24 rotations of the cube group, reached
-//! here by trying all 64 quarter-turn combinations and letting the duplicates
-//! compete — the scoring is cheap enough that a table of matrices would only add
-//! a way to be wrong.
+//! support. The candidate set starts with the 24 rotations of the cube group,
+//! reached by trying all 64 quarter-turn combinations. Faces of the convex hull
+//! add the angles in between, so a part modelled already tilted lies on the
+//! face it was built with. A large mesh only contributes its biggest faces and
+//! a thinned set of vertices.
 //!
 //! Nothing here knows about the engine. It scores geometry, so it can be reason
 //! about — and tested — without slicing anything.
@@ -136,28 +137,207 @@ pub fn overhang_area(mesh: &TriangleMesh, rotation_deg: [f64; 3], angle_deg: f64
     area
 }
 
+/// How many faces and vertices the hull search will look at.
+///
+/// Past this, only the largest faces are tested, against a thinned point set.
+/// The quarter-turn search still sees the whole mesh.
+pub fn hull_budget(triangles: usize, vertices: usize) -> (usize, usize) {
+    const TRIANGLES: usize = 1_200;
+    const VERTICES: usize = 6_000;
+    (triangles.min(TRIANGLES), vertices.min(VERTICES))
+}
+
+fn triangle_area_at(mesh: &TriangleMesh, index: usize) -> f64 {
+    let corners = mesh.triangles[index];
+    let a = mesh.vertices[corners[0] as usize];
+    let b = mesh.vertices[corners[1] as usize];
+    let c = mesh.vertices[corners[2] as usize];
+    let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    let cross = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    ];
+    0.5 * (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt() as f64
+}
+
+/// A hull face's outward normal, when every vertex sits on one side of it.
+fn hull_normal(mesh: &TriangleMesh, index: usize, points: &[[f64; 3]]) -> Option<[f64; 3]> {
+    let corners = mesh.triangles[index];
+    let raw = [
+        mesh.vertices[corners[0] as usize],
+        mesh.vertices[corners[1] as usize],
+        mesh.vertices[corners[2] as usize],
+    ];
+    let a = [raw[0][0] as f64, raw[0][1] as f64, raw[0][2] as f64];
+    let b = [raw[1][0] as f64, raw[1][1] as f64, raw[1][2] as f64];
+    let c = [raw[2][0] as f64, raw[2][1] as f64, raw[2][2] as f64];
+    let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    let cross = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    ];
+    let length = (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt();
+    if length < 1e-8 {
+        return None;
+    }
+    let normal = [cross[0] / length, cross[1] / length, cross[2] / length];
+    let plane = normal[0] * a[0] + normal[1] * a[1] + normal[2] * a[2];
+    let mut positive = false;
+    let mut negative = false;
+    for point in points {
+        let side = normal[0] * point[0] + normal[1] * point[1] + normal[2] * point[2] - plane;
+        if side > 1e-3 {
+            positive = true;
+        } else if side < -1e-3 {
+            negative = true;
+        }
+        if positive && negative {
+            return None;
+        }
+    }
+    // The empty side is the outside of the solid.
+    if positive {
+        Some([-normal[0], -normal[1], -normal[2]])
+    } else {
+        Some(normal)
+    }
+}
+
+/// Euler angles that turn `normal` to face straight down.
+fn lay_flat(normal: [f64; 3]) -> [f64; 3] {
+    let length = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+    if length < 1e-9 {
+        return [0.0, 0.0, 0.0];
+    }
+    let n = [normal[0] / length, normal[1] / length, normal[2] / length];
+    let target = [0.0, 0.0, -1.0];
+    let dot = (n[0] * target[0] + n[1] * target[1] + n[2] * target[2]).clamp(-1.0, 1.0);
+    let axis_cross = [
+        n[1] * target[2] - n[2] * target[1],
+        n[2] * target[0] - n[0] * target[2],
+        n[0] * target[1] - n[1] * target[0],
+    ];
+    let sine = (axis_cross[0] * axis_cross[0]
+        + axis_cross[1] * axis_cross[1]
+        + axis_cross[2] * axis_cross[2])
+        .sqrt();
+    let (axis, angle) = if sine < 1e-9 {
+        if dot > 0.0 {
+            ([1.0, 0.0, 0.0], 0.0)
+        } else {
+            ([1.0, 0.0, 0.0], std::f64::consts::PI)
+        }
+    } else {
+        (
+            [
+                axis_cross[0] / sine,
+                axis_cross[1] / sine,
+                axis_cross[2] / sine,
+            ],
+            sine.atan2(dot),
+        )
+    };
+    let (s, c) = (angle.sin(), angle.cos());
+    let (x, y, z) = (axis[0], axis[1], axis[2]);
+    let turn = [
+        [
+            c + x * x * (1.0 - c),
+            x * y * (1.0 - c) - z * s,
+            x * z * (1.0 - c) + y * s,
+        ],
+        [
+            y * x * (1.0 - c) + z * s,
+            c + y * y * (1.0 - c),
+            y * z * (1.0 - c) - x * s,
+        ],
+        [
+            z * x * (1.0 - c) - y * s,
+            z * y * (1.0 - c) + x * s,
+            c + z * z * (1.0 - c),
+        ],
+    ];
+    euler_from(&turn)
+}
+
+fn hull_rotations(mesh: &TriangleMesh) -> Vec<[f64; 3]> {
+    if mesh.triangles.is_empty() || mesh.vertices.is_empty() {
+        return Vec::new();
+    }
+    let (tri_cap, vert_cap) = hull_budget(mesh.triangles.len(), mesh.vertices.len());
+    let mut order: Vec<usize> = (0..mesh.triangles.len()).collect();
+    if order.len() > tri_cap {
+        order.sort_by(|&left, &right| {
+            triangle_area_at(mesh, right)
+                .partial_cmp(&triangle_area_at(mesh, left))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        order.truncate(tri_cap);
+    }
+    let stride = if mesh.vertices.len() > vert_cap {
+        mesh.vertices.len().div_ceil(vert_cap).max(1)
+    } else {
+        1
+    };
+    let points: Vec<[f64; 3]> = mesh
+        .vertices
+        .iter()
+        .step_by(stride)
+        .map(|vertex| [vertex[0] as f64, vertex[1] as f64, vertex[2] as f64])
+        .collect();
+    let mut seen = Vec::<[i32; 3]>::new();
+    let mut rotations = Vec::new();
+    for index in order {
+        let Some(normal) = hull_normal(mesh, index, &points) else {
+            continue;
+        };
+        let key = [
+            (normal[0] * 40.0).round() as i32,
+            (normal[1] * 40.0).round() as i32,
+            (normal[2] * 40.0).round() as i32,
+        ];
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        rotations.push(lay_flat(normal));
+        if rotations.len() >= 48 {
+            break;
+        }
+    }
+    rotations
+}
+
 /// The orientation that needs the least support, then prints shortest.
 pub fn best_orientation(mesh: &TriangleMesh, angle_deg: f64) -> Orientation {
     let mut best: Option<Orientation> = None;
+    let mut consider = |rotation_deg: [f64; 3]| {
+        let (min, max) = rotated_bounds(mesh, rotation_deg);
+        if !min[0].is_finite() {
+            return;
+        }
+        let candidate = Orientation {
+            rotation_deg,
+            overhang_mm2: overhang_area(mesh, rotation_deg, angle_deg),
+            height_mm: max[2] - min[2],
+            footprint_mm2: (max[0] - min[0]) * (max[1] - min[1]),
+        };
+        if best.is_none_or(|current| candidate.better_than(&current)) {
+            best = Some(candidate);
+        }
+    };
     for x in [0.0, 90.0, 180.0, 270.0] {
         for y in [0.0, 90.0, 180.0, 270.0] {
             for z in [0.0, 90.0, 180.0, 270.0] {
-                let rotation_deg = [x, y, z];
-                let (min, max) = rotated_bounds(mesh, rotation_deg);
-                if !min[0].is_finite() {
-                    continue;
-                }
-                let candidate = Orientation {
-                    rotation_deg,
-                    overhang_mm2: overhang_area(mesh, rotation_deg, angle_deg),
-                    height_mm: max[2] - min[2],
-                    footprint_mm2: (max[0] - min[0]) * (max[1] - min[1]),
-                };
-                if best.is_none_or(|current| candidate.better_than(&current)) {
-                    best = Some(candidate);
-                }
+                consider([x, y, z]);
             }
         }
+    }
+    for rotation in hull_rotations(mesh) {
+        consider(rotation);
     }
     best.unwrap_or(Orientation {
         rotation_deg: [0.0, 0.0, 0.0],
@@ -323,9 +503,14 @@ fn euler_from(m: &[[f64; 3]; 3]) -> [f64; 3] {
     let sin_y = m[0][2].clamp(-1.0, 1.0);
     let y = sin_y.asin();
     if sin_y.abs() > 1.0 - 1e-9 {
-        // Looking straight up or straight down: x and z describe the same turn,
-        // so put all of it in x.
-        let x = (-m[2][0] * sin_y.signum()).atan2(m[1][1]);
+        // Pitch is ±90°, so x and z are the same turn. Read that turn out of
+        // the middle row and put it all in x. The old form always came back
+        // near 45°, and a side face then landed on a corner.
+        let x = if sin_y > 0.0 {
+            m[1][0].atan2(m[1][1])
+        } else {
+            (-m[1][0]).atan2(m[1][1])
+        };
         return [x.to_degrees(), y.to_degrees(), 0.0];
     }
     [
@@ -452,6 +637,23 @@ mod tests {
     }
 
     #[test]
+    fn a_tall_brick_lies_on_its_largest_face() {
+        // Standing, the brick needs no support either way. The shorter height
+        // is the one with less to hold up, and the wider foot is the steadier.
+        let mesh = boxed([0.0, 0.0, 0.0], [8.0, 12.0, 80.0]);
+        let best = best_orientation(&mesh, 45.0);
+        assert!(best.overhang_mm2 < 1e-6, "{best:?}");
+        assert!(
+            (best.height_mm - 8.0).abs() < 1e-6,
+            "the 8 mm side should be the height: {best:?}"
+        );
+        assert!(
+            (best.footprint_mm2 - 12.0 * 80.0).abs() < 1.0,
+            "{best:?}"
+        );
+    }
+
+    #[test]
     fn a_cube_needs_no_support_however_it_stands() {
         let mesh = cube(10.0);
         let best = best_orientation(&mesh, 45.0);
@@ -467,11 +669,14 @@ mod tests {
             flat < 1e-6,
             "the wedge as drawn rests on its flat face: {flat}"
         );
-        // The prism is symmetrical, so several quarter turns put the same
-        // face down. What matters is that the answer is a flat one.
+        // The slope is a hull face. Laying it on the bed keeps the overhang at
+        // zero, and the height falls from 10 mm to 10/√2.
         let best = best_orientation(&mesh, 45.0);
         assert!(best.overhang_mm2 < 1e-6, "{best:?}");
-        assert!((best.height_mm - 10.0).abs() < 1e-6, "{best:?}");
+        assert!(
+            (best.height_mm - 10.0 / 2.0_f64.sqrt()).abs() < 1e-6,
+            "{best:?}"
+        );
     }
 
     #[test]
@@ -597,5 +802,37 @@ mod tests {
         );
         assert!((centre_before.0 - centre_after.0).abs() < 1e-6);
         assert!((centre_before.1 - centre_after.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_tilted_box_lies_on_a_hull_face_rather_than_a_quarter_turn() {
+        let mut mesh = boxed([0.0, 0.0, 0.0], [40.0, 30.0, 10.0]);
+        let tilt = Transform {
+            translation: [0.0, 0.0, 0.0],
+            rotation_deg: [17.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
+        };
+        for vertex in &mut mesh.vertices {
+            let point = crate::mesh::apply_transform(
+                [vertex[0] as f64, vertex[1] as f64, vertex[2] as f64],
+                &tilt,
+            );
+            *vertex = [point[0] as f32, point[1] as f32, point[2] as f32];
+        }
+        let best = best_orientation(&mesh, 45.0);
+        assert!(
+            best.overhang_mm2 < 1.0,
+            "a hull face should sit flat: {best:?}"
+        );
+        assert!(
+            (best.height_mm - 10.0).abs() < 0.5,
+            "the 10 mm side is the height: {best:?}"
+        );
+    }
+
+    #[test]
+    fn a_large_mesh_is_capped_before_the_hull_search() {
+        assert_eq!(hull_budget(12, 8), (12, 8));
+        assert_eq!(hull_budget(9_000, 40_000), (1_200, 6_000));
     }
 }

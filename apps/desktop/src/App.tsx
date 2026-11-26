@@ -19,6 +19,7 @@ import {
   type FitWarning,
   type PlateView,
   type ProjectSettingsImport,
+  type FeatureUse,
   type PreviewPath,
   type PrinterInfo,
   type QualityInfo,
@@ -35,13 +36,16 @@ import {
   type Suggestion,
 } from "./api";
 import { Suggestions } from "./Suggestions";
-import { worldCentre, translationForCentre } from "./coords";
+import { translationForCentre, worldBox, worldCentre } from "./coords";
 import { ModelsView } from "./models/ModelsView";
 import { StartScreen, type StartPanel } from "./StartScreen";
 import { AppSidebar, readSidebarCollapsed, writeSidebarCollapsed } from "./AppSidebar";
 import { TitleBarNav } from "./TitleBarNav";
 import { TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
 import { FeatureLegend } from "./Legend";
+import { ObjectOverrides } from "./object-overrides";
+import { plateWarnings } from "./print-check";
+import { parallelFraction, platesToSlice, runningSummary, sliceAtOnce } from "./slice-all";
 import { thumbnailJpeg } from "./thumbnail";
 import { variantOptionLabel } from "./profile-labels";
 import { toast } from "sonner";
@@ -98,6 +102,8 @@ const SetupWizard = lazy(() =>
 interface Progress {
   fraction: number;
   message: string;
+  plate?: number;
+  name?: string;
   layer?: {
     index: number;
     z: number;
@@ -221,6 +227,7 @@ export function App() {
   // The AMS holds three more spools beside the plate's own material. An empty
   // string is an empty bay, so the slot count is derived instead of stored.
   const [ams, setAms] = useState<string[]>(["", "", ""]);
+  const [amsMapping, setAmsMapping] = useState<number[]>([]);
   const [bed, setBed] = useState<Bed>(FALLBACK_BED);
   // Cura settings the user changed in the menu; anything absent is the profile's.
   const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -258,11 +265,19 @@ export function App() {
   /// The brush is a mode: while it is in hand a drag paints the surface under
   /// the cursor, and a click is not a selection.
   const [paintArmed, setPaintArmed] = useState(false);
+  const [boxArmed, setBoxArmed] = useState(false);
+  const [boxHeight, setBoxHeight] = useState("8");
+  const [supportBoxes, setSupportBoxes] = useState<
+    Array<{ min: [number, number, number]; max: [number, number, number]; block: boolean }>
+  >([]);
   const [faceArmed, setFaceArmed] = useState(false);
   const [paintRadius, setPaintRadius] = useState("6");
   /// The plates in this project. The one flagged `active` is the one `models`
   /// holds; the rest live in the backend until they are turned to.
   const [plates, setPlates] = useState<PlateView[]>([]);
+  const [sliceWidth, setSliceWidth] = useState(() =>
+    sliceAtOnce(Number(window.localStorage.getItem("shale.sliceAtOnce"))),
+  );
   const [fit, setFit] = useState<FitWarning | null>(null);
   const [embedded, setEmbedded] = useState<ProjectSettingsImport | null>(null);
   const [ignoreEmbedded, setIgnoreEmbedded] = useState(false);
@@ -290,6 +305,8 @@ export function App() {
   const [cutAxis, setCutAxis] = useState(2);
   const [cutOffset, setCutOffset] = useState("0");
   const [cutKeep, setCutKeep] = useState("both");
+  /// Lay each kept half so the face the plane made sits on the bed.
+  const [cutFaceDown, setCutFaceDown] = useState(true);
   /// Pins turn the two halves back into one part: a round pin on the lower
   /// half, a hole of the same size plus clearance in the upper.
   const [cutPins, setCutPins] = useState(0);
@@ -383,6 +400,7 @@ export function App() {
   }, [status?.demo, layerCount]);
   const [layerZ, setLayerZ] = useState<number[]>([]);
   const [paths, setPaths] = useState<PreviewPath[]>([]);
+  const [features, setFeatures] = useState<FeatureUse[]>([]);
   /// Kinds turned off in the legend. The toolpath stays loaded; this only
   /// decides what is drawn, so switching a kind back on is instant.
   // Travel is not something a person wants to see by default: it is the
@@ -857,6 +875,19 @@ export function App() {
       setImportProgress(event.payload);
     });
     const unlisten = listen<Progress>("slice-progress", (event) => {
+      const job = batch.current;
+      if (job && typeof event.payload.plate === "number") {
+        const row = job.rows.find((item) => item.index === event.payload.plate);
+        if (row) {
+          row.fraction = event.payload.fraction;
+          row.detail = event.payload.message;
+        }
+        setProgress({
+          fraction: parallelFraction(job.rows.map((item) => item.fraction)),
+          message: runningSummary(job.rows),
+        });
+        return;
+      }
       setProgress(event.payload);
       const live = event.payload.layer;
       if (live && live.paths.length > 0) {
@@ -897,6 +928,9 @@ export function App() {
   const partSettingsTimer = useRef<number | null>(null);
   const partSettingsPending = useRef<{ id: number; settings: Record<string, string> } | null>(null);
   const modelsRef = useRef<ModelView[]>(models);
+  const platesRef = useRef<PlateView[]>(plates);
+  /// Set while "slice all" is running, so each plate keeps its own fraction.
+  const batch = useRef<{ rows: { index: number; name: string; fraction: number; detail: string }[] } | null>(null);
   const lastEdit = useRef<{ key: string; at: number } | null>(null);
   const [historyDepth, setHistoryDepth] = useState({ past: 0, future: 0 });
 
@@ -905,7 +939,8 @@ export function App() {
 
   useEffect(() => {
     modelsRef.current = models;
-  }, [models]);
+    platesRef.current = plates;
+  }, [models, plates]);
 
   /// The tab bar's bookkeeping. `markTabDirty` is called from `remember`, so
   /// every edit that can be undone also marks the file as behind — one place,
@@ -1201,6 +1236,25 @@ export function App() {
       cancelled = true;
     };
   }, [preview, busy, layerCount]);
+
+  useEffect(() => {
+    if (layerCount <= 0) {
+      setFeatures([]);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .featureBreakdown()
+      .then((rows) => {
+        if (!cancelled) setFeatures(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setFeatures([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [layerCount]);
 
   // A slice restored at boot (or mock data) fills the plate but not the history
   // list until the user presses slice again — keep the sidebar in sync with the
@@ -1505,6 +1559,23 @@ export function App() {
       const transform = await api.autoOrient(selected.id);
       remember();
       setModels((current) => current.map((model) => (model.id === selected.id ? { ...model, transform } : model)));
+      toastUndo("Orientation changed", () => void undo(), { id: "orient" });
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  /** Same choice, for every part on the plate. Undo puts them all back. */
+  async function autoOrientAll() {
+    if (modelsRef.current.length === 0) return;
+    try {
+      const views = await api.autoOrientAll();
+      remember();
+      setModels(views);
+      setPaths([]);
+      setLayerCount(0);
+      forgetSlice();
+      toastUndo("Orientations changed", () => void undo(), { id: "orient-all" });
     } catch (err) {
       setError(messageOf(err));
     }
@@ -1598,6 +1669,7 @@ export function App() {
         Number(pinRadius) || 2,
         Number(pinHeight) || 5,
         cutDovetail,
+        cutFaceDown,
       );
       remember();
       setModels((current) => [...current.filter((model) => model.id !== selected.id), ...halves]);
@@ -1756,16 +1828,30 @@ export function App() {
     }
   }
 
-  async function slice(options?: { quiet?: boolean }) {
+  function reportProgress(fraction: number, message: string) {
+    const job = batch.current;
+    if (!job || job.rows.length === 0) {
+      setProgress({ fraction, message });
+      return;
+    }
+    setProgress({
+      fraction: parallelFraction(job.rows.map((item) => item.fraction)),
+      message: runningSummary(job.rows),
+    });
+  }
+
+  async function slice(options?: { quiet?: boolean; hold?: boolean }) {
     const quiet = options?.quiet === true;
+    const hold = options?.hold === true;
     if (!printerId) {
       if (!quiet) setError("Choose a printer first.");
+      if (hold) throw new Error("Choose a printer first.");
       return;
     }
     setError(null);
     if (!quiet) setBusy(true);
     setCalibration(null);
-    setProgress({ fraction: 0.02, message: "Starting" });
+    reportProgress(0.02, "Starting");
     try {
       const summary = await api.slice(
         printerId,
@@ -1777,6 +1863,11 @@ export function App() {
         ignoreEmbedded,
       );
       setLayerCount(summary.layer_count);
+      setPlates((current) => {
+        const next = current.map((item) => (item.active ? { ...item, sliced: true } : item));
+        platesRef.current = next;
+        return next;
+      });
       slicedPlate.current = plateKey;
       setLayerZ(summary.layers.map((item) => item.z));
       setLayer(Math.max(0, summary.layer_count - 1));
@@ -1825,12 +1916,91 @@ export function App() {
         setShowModel(false);
         setFrameToken((token) => token + 1);
       }
-      setProgress({ fraction: 1, message: `${summary.layer_count} layers` });
+      reportProgress(1, `${summary.layer_count} layers`);
     } catch (err) {
+      if (hold) throw err;
       if (!quiet) setError(messageOf(err));
       setProgress(null);
     } finally {
-      if (!quiet) setBusy(false);
+      if (!quiet && !hold) setBusy(false);
+    }
+  }
+
+  /// Slice every plate that has a part on it. Up to `shale.sliceAtOnce` plates
+  /// run at once, each in its own CuraEngine. `onlyUnsliced` is what "send
+  /// every plate" uses: a plate that already has G-code is left.
+  async function sliceAll(options?: { onlyUnsliced?: boolean }): Promise<boolean> {
+    if (!printerId) {
+      setError("Choose a printer first.");
+      return false;
+    }
+    const onlyUnsliced = options?.onlyUnsliced === true;
+    const targets = platesToSlice(platesRef.current, onlyUnsliced);
+    if (targets.length === 0) {
+      if (!onlyUnsliced) setError("Nothing on any plate to slice.");
+      return true;
+    }
+    const width = sliceAtOnce(Number(window.localStorage.getItem("shale.sliceAtOnce")));
+    setBusy(true);
+    setError(null);
+    batch.current = {
+      rows: targets.map((plate) => ({ index: plate.index, name: plate.name, fraction: 0.02, detail: "Starting" })),
+    };
+    reportProgress(0.02, "Starting");
+    try {
+      const summary = await api.slicePlates(
+        targets.map((plate) => plate.index),
+        width,
+        printerId,
+        variant,
+        quality,
+        material,
+        ams,
+        engineSettings,
+        ignoreEmbedded,
+      );
+      const listed = await api.listPlates();
+      platesRef.current = listed;
+      setPlates(listed);
+      const active = summary.plates.find((plate) => plate.active);
+      if (active) {
+        setLayerCount(active.layer_count);
+        setLayerZ(active.layers.map((item) => item.z));
+        setLayer(Math.max(0, active.layer_count - 1));
+        setPrintSeconds(active.print_time_seconds);
+        setFilamentMetres(active.filament_metres);
+        const all = await api.previewAll();
+        setPaths(all);
+        setPreview(true);
+      }
+      setNotice(
+        summary.plates.length === 1
+          ? `Sliced ${summary.plates[0].name}`
+          : `Sliced ${summary.plates.length} plates`,
+      );
+      return true;
+    } catch (err) {
+      setError(messageOf(err));
+      setProgress(null);
+      try {
+        const listed = await api.listPlates();
+        platesRef.current = listed;
+        setPlates(listed);
+      } catch {
+        // The plates already on screen stay.
+      }
+      return false;
+    } finally {
+      batch.current = null;
+      setBusy(false);
+    }
+  }
+
+  async function cancelSlice() {
+    try {
+      await api.cancelSlice();
+    } catch (err) {
+      setError(messageOf(err));
     }
   }
 
@@ -1877,6 +2047,36 @@ export function App() {
     syncHistory();
   }
 
+  function queuePartSettings(id: number, settings: Record<string, string>) {
+    partSettingsPending.current = { id, settings };
+    if (partSettingsTimer.current != null) window.clearTimeout(partSettingsTimer.current);
+    partSettingsTimer.current = window.setTimeout(() => {
+      partSettingsTimer.current = null;
+      const pending = partSettingsPending.current;
+      partSettingsPending.current = null;
+      if (!pending) return;
+      void api
+        .setModelSettings(pending.id, pending.settings)
+        .then((updated) => {
+          setModels((current) => current.map((model) => (model.id === updated.id ? updated : model)));
+        })
+        .catch((err: unknown) => setError(messageOf(err)));
+    }, 160);
+  }
+
+  function writeObjectOverride(part: ModelView, key: string, value: string) {
+    if ((part.settings[key] ?? "") !== value) rememberPartSettings(part);
+    const next = { ...part.settings };
+    if (value === "") delete next[key];
+    else next[key] = value;
+    setModels((current) => current.map((model) => (model.id === part.id ? { ...model, settings: next } : model)));
+    queuePartSettings(part.id, next);
+    setPreview(false);
+    setPaths([]);
+    setLayerCount(0);
+    forgetSlice();
+  }
+
   async function applyPartSettings(id: number, settings: Record<string, string>) {
     try {
       const updated = await api.setModelSettings(id, settings);
@@ -1908,20 +2108,7 @@ export function App() {
     );
     // Sliders report every pointer move. Keep the plate state immediate and
     // send the part settings once the drag settles, still as set_model_settings.
-    partSettingsPending.current = { id: scopedPart.id, settings: next };
-    if (partSettingsTimer.current != null) window.clearTimeout(partSettingsTimer.current);
-    partSettingsTimer.current = window.setTimeout(() => {
-      partSettingsTimer.current = null;
-      const pending = partSettingsPending.current;
-      partSettingsPending.current = null;
-      if (!pending) return;
-      void api
-        .setModelSettings(pending.id, pending.settings)
-        .then((updated) => {
-          setModels((current) => current.map((model) => (model.id === updated.id ? updated : model)));
-        })
-        .catch((err: unknown) => setError(messageOf(err)));
-    }, 160);
+    queuePartSettings(scopedPart.id, next);
   }
 
   async function resetScopedOverrides() {
@@ -2203,19 +2390,33 @@ export function App() {
     try {
       const turned: PlateSwitch = await api.switchPlate(index);
       setModels(turned.models);
+      platesRef.current = turned.plates;
       setPlates(turned.plates);
+      setSupportBoxes(await api.supportBoxes().catch(() => []));
       setSelectedId(null);
       setScope("all");
       setPreview(false);
       // The model is drawn only while `showModel` is on, and the slice that was
       // on screen belonged to the plate we just left: its layer count and its
-      // toolpaths have to go with it.
+      // toolpaths have to go with it. A plate that was sliced before keeps its
+      // file, so the numbers come back when that plate is in front again.
       setShowModel(turned.models.length > 0);
       setPaths([]);
       setLayer(0);
       setLayerCount(0);
       setLayerZ([]);
       forgetSlice();
+      try {
+        const existing = await api.existingSlice();
+        if (existing && existing.layer_count > 0) {
+          setLayerCount(existing.layer_count);
+          setLayerZ(existing.layers.map((item) => item.z));
+          setPrintSeconds(existing.print_time_seconds);
+          setFilamentMetres(existing.filament_metres);
+        }
+      } catch {
+        // A plate with no slice is the ordinary case.
+      }
       setTower(null);
       setCalibration(null);
       setMeasureSpan(null);
@@ -2275,6 +2476,7 @@ export function App() {
         const swapped = await api.switchPlate(turned.index);
         setModels(swapped.models);
         setPlates(swapped.plates);
+        setSupportBoxes(await api.supportBoxes().catch(() => []));
         setShowModel(swapped.models.length > 0);
       } else {
         setPlates(left);
@@ -2446,6 +2648,11 @@ export function App() {
     return materials.find((item) => item.id === id)?.label ?? id;
   }
 
+  function materialColour(id: string | null): string {
+    if (!id) return "";
+    return materials.find((item) => item.id === id)?.color ?? "";
+  }
+
   function dismissSuggestion(item: Suggestion) {
     setDismissedSuggestions((current) => (current.includes(item.id) ? current : [...current, item.id]));
     setSuggestions((current) => current.filter((entry) => entry.id !== item.id));
@@ -2565,8 +2772,10 @@ export function App() {
   /// The bays as the machine numbers them: T1 is the plate's own material, and
   /// T2..T4 are the AMS. An empty string is an empty bay, not a blank label.
   function spoolsForDevice(): Spool[] {
-    const bays: Spool[] = [{ bay: 1, material: materialLabel(material) }];
-    ams.forEach((slot, index) => bays.push({ bay: index + 2, material: materialLabel(slot || null) }));
+    const bays: Spool[] = [{ bay: 1, material: materialLabel(material), colour: materialColour(material) }];
+    ams.forEach((slot, index) =>
+      bays.push({ bay: index + 2, material: materialLabel(slot || null), colour: materialColour(slot || null) }),
+    );
     return bays;
   }
 
@@ -2596,6 +2805,7 @@ export function App() {
         quiet: !adopt,
         dismissed_suggestions: dismissedSuggestions,
         suggestions_shown: suggestionsShown,
+        ams_mapping: amsMapping,
       });
       // A quiet save is a place to put a plate down, not a file to adopt: the
       // tab keeps its name and its (empty) path, and the project does not start
@@ -2738,6 +2948,7 @@ export function App() {
     setQuality(opened.quality_type);
     setMaterial(opened.material_id);
     setAms([0, 1, 2].map((index) => opened.ams?.[index] ?? ""));
+    setAmsMapping(opened.ams_mapping ?? []);
     setOverrides(overridesFromSliceSettings(opened.settings));
     setNonplanar(nonplanarFromSliceSettings(opened.settings));
     setNonplanarReport(null);
@@ -2793,6 +3004,7 @@ export function App() {
     try {
       const opened = await api.openProject(picked);
       applyOpened(opened);
+      setSupportBoxes(await api.supportBoxes().catch(() => []));
       recents.refresh();
     } catch (err) {
       setError(messageOf(err));
@@ -3440,6 +3652,10 @@ export function App() {
           engineReady={enginePath.length > 0}
           gcodeReady={layerCount > 0}
           plate={docTabs.find((tab) => tab.id === activeTab)?.name ?? "plate"}
+          plates={plates.map((item) => (item.active ? { ...item, sliced: layerCount > 0 } : item))}
+          onSliceMissing={() => sliceAll({ onlyUnsliced: true })}
+          mapping={amsMapping}
+          onMapping={setAmsMapping}
         />
         </Suspense>
       ) : (
@@ -3483,9 +3699,37 @@ export function App() {
               <button type="button" title="Add a plate" onClick={() => void newPlate()}>
                 +
               </button>
+              <button
+                type="button"
+                title="Slice every plate that has a part on it"
+                disabled={busy || models.length + plates.reduce((sum, plate) => sum + (plate.active ? 0 : plate.models), 0) === 0}
+                onClick={() => void sliceAll()}
+              >
+                Slice all
+              </button>
+              <label className="slice-at-once">
+                At a time
+                <input
+                  type="number"
+                  min={1}
+                  max={4}
+                  value={sliceWidth}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const next = sliceAtOnce(Number(event.target.value));
+                    window.localStorage.setItem("shale.sliceAtOnce", String(next));
+                    setSliceWidth(next);
+                  }}
+                />
+              </label>
+              {busy && (
+                <button type="button" onClick={() => void cancelSlice()}>
+                  Cancel
+                </button>
+              )}
             </div>
             <p className="hint">
-              Each plate holds its own parts and is sliced on its own. A project saves every plate with it.
+              Each plate holds its own parts. Slice all runs up to {sliceWidth} at a time, each in its own CuraEngine. Cancel stops every one that is still running.
             </p>
           </Frame>
           <ProjectSummary
@@ -3495,6 +3739,17 @@ export function App() {
           />
 
           <Frame title="Objects">
+            {models.length > 0 && (
+              <div className="row">
+                <button
+                  type="button"
+                  title="Stand every part on the face that needs the least support. Undo puts them back."
+                  onClick={() => void autoOrientAll()}
+                >
+                  Orient all
+                </button>
+              </div>
+            )}
             {models.length === 0 ? (
               <p className="hint">Nothing on this plate yet. Import a model and it is listed here.</p>
             ) : (
@@ -3524,6 +3779,12 @@ export function App() {
                     >
                       ×
                     </button>
+                    {model.id === selectedId && (
+                      <ObjectOverrides
+                        settings={model.settings}
+                        onChange={(key, value) => writeObjectOverride(model, key, value)}
+                      />
+                    )}
                   </li>
                 ))}
               </ul>
@@ -3575,9 +3836,24 @@ export function App() {
                     className={`paint-brush-button${paintArmed ? " on" : ""}`}
                     aria-pressed={paintArmed}
                     title="Drag over the part to paint the surface under the cursor"
-                    onClick={() => setPaintArmed((armed) => !armed)}
+                    onClick={() => {
+                      setBoxArmed(false);
+                      setPaintArmed((armed) => !armed);
+                    }}
                   >
                     Brush
+                  </button>
+                  <button
+                    type="button"
+                    className={`paint-brush-button${boxArmed ? " on" : ""}`}
+                    aria-pressed={boxArmed}
+                    title="Drag on the plate to place a support box"
+                    onClick={() => {
+                      setPaintArmed(false);
+                      setBoxArmed((armed) => !armed);
+                    }}
+                  >
+                    Box
                   </button>
                   <label className="paint-radius ui-field">
                     <span className="ui-field__label">Reach</span>
@@ -3593,6 +3869,39 @@ export function App() {
                     />
                   </label>
                 </div>
+                {boxArmed && (
+                  <>
+                    <div className="row paint-brush">
+                      <label className="paint-radius ui-field">
+                        <span className="ui-field__label">Height</span>
+                        <Slider
+                          label="Box height in millimetres"
+                          value={[Math.max(1, Math.min(80, Number(boxHeight) || 8))]}
+                          min={1}
+                          max={80}
+                          step={1}
+                          unit="mm"
+                          inputDigits={0}
+                          onValueChange={(value) => setBoxHeight(String(Math.round(value)))}
+                        />
+                      </label>
+                    </div>
+                    <p className="paint-hint">
+                      drag on the plate — {paintMode === "block" ? "kept clear" : "held up"},{" "}
+                      {Math.max(1, Number(boxHeight) || 8)} mm tall
+                    </p>
+                  </>
+                )}
+                {supportBoxes.length > 0 && (
+                  <div className="row paint-brush">
+                    <button type="button" className="paint-back" onClick={() => void api.undoSupportBox().then(setSupportBoxes)}>
+                      Undo box
+                    </button>
+                    <button type="button" className="paint-clear" onClick={() => void api.clearSupportBoxes().then(setSupportBoxes)}>
+                      Clear boxes
+                    </button>
+                  </div>
+                )}
                 {(paintArmed || patches.length > 0 || painted > 0 || blocked > 0) && (
                 <div className="row paint-patches">
                   {paintArmed && (
@@ -3839,6 +4148,13 @@ export function App() {
                 }
               />
             </label>
+            {plateWarnings(materialName(), localStorage.getItem("shale.device.bed") ?? "textured_plate", bedTemp).map(
+              (note) => (
+                <p key={note} className="plate-advice" role="status">
+                  {note}
+                </p>
+              ),
+            )}
             <p className="hint">Layer height also sets the first layer. Changing quality reloads these values.</p>
             <label>
               Chord
@@ -4094,7 +4410,7 @@ export function App() {
                   <button type="button" onClick={() => void dropSelected()}>
                     Drop to plate
                   </button>
-                  <button type="button" title="Stand the part on the face that needs least support" onClick={() => void autoOrient()}>
+                  <button type="button" title="Stand the part on the face that needs least support. Undo puts it back." onClick={() => void autoOrient()}>
                     Auto orient
                   </button>
                   <button
@@ -4131,9 +4447,17 @@ export function App() {
                     <option value="above">upper only</option>
                     <option value="below">lower only</option>
                   </select>
-                  <button type="button" title="Split the part with a plane through its centre" onClick={() => void cutSelected()}>
+                  <button type="button" title="Split the part with the plane. Drag the plane in the view to move it." onClick={() => void cutSelected()}>
                     Cut
                   </button>
+                  <label className="cut-pin-toggle">
+                    <input
+                      type="checkbox"
+                      checked={cutFaceDown}
+                      onChange={(event) => setCutFaceDown(event.target.checked)}
+                    />
+                    cut face down
+                  </label>
                 </div>
                 <div className="row cut-pins">
                   <label className="cut-pin-toggle">
@@ -4572,6 +4896,7 @@ export function App() {
               }
               onAll={() => setHiddenKinds(new Set())}
               onNone={() => setHiddenKinds(new Set(paths.map((path) => path.kind)))}
+              features={features}
             />
           )}
           {preview && status?.demo === "cost" && (
@@ -4625,6 +4950,15 @@ export function App() {
             paintArmed={paintArmed}
             paintRadius={Math.max(0.5, Number(paintRadius) || 6)}
             onBrush={(id, points) => void paintStroke(id, points)}
+            boxArmed={boxArmed}
+            boxHeight={Math.max(1, Number(boxHeight) || 8)}
+            supportBoxes={supportBoxes}
+            onSupportBox={(min, max) => {
+              void api
+                .addSupportBox(min, max, paintMode === "block")
+                .then((boxes) => setSupportBoxes(Array.isArray(boxes) ? boxes : []))
+                .catch((failure) => setError(String(failure)));
+            }}
             onMeasure={(id, point) => void addMeasurePoint(id, point)}
             onSelect={(id) => {
               // An armed pick that outlives its panel is an armed pick nobody
@@ -4633,6 +4967,16 @@ export function App() {
               setSelectedId(id < 0 ? null : id);
             }}
             onTransform={(id, transform) => void commitTransform(id, transform)}
+            cutPlane={
+              selected && solidShown && !measuring
+                ? {
+                    axis: cutAxis === 1 ? 1 : cutAxis === 0 ? 0 : 2,
+                    offset: Number(cutOffset) || 0,
+                    ...worldBox(selected.positions, selected.transform),
+                    onOffset: (next) => setCutOffset(String(next)),
+                  }
+                : null
+            }
           />
           </Suspense>
           {models.length === 0 && !preview && (

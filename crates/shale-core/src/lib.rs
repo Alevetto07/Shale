@@ -18,6 +18,7 @@
 #![allow(clippy::type_complexity)]
 
 pub mod bambu;
+pub mod brim_ears;
 pub mod cad;
 pub mod calibrate;
 pub mod catalog;
@@ -60,12 +61,13 @@ mod value;
 pub use cad::{suggest_chord_mm, ImportReport, ImportedMesh, TessellationTolerance};
 pub use catalog::{Catalog, MaterialInfo, PrinterInfo, QualityInfo, ResourcePaths, VariantInfo};
 pub use engine::{
+    cancel_running_engines,
     ArcusEngine, CliEngine, Engine, EngineBackend, EngineProgress, LiveLayer, SlicingEngine,
 };
 pub use error::Error;
 pub use gcode::Toolpath;
 pub use instructions::{CustomInstruction, GcodeFlavour};
-pub use job::{compare_support, slice, PlacedModel, SliceOutcome};
+pub use job::{compare_support, slice, slice_with_boxes, PlacedModel, SliceOutcome};
 pub use mesh::{
     apply_transform, assign_plates, bake, drop_to_bed, load_build_objects, load_mesh,
     load_mesh_reporting, load_mesh_with, load_named_bytes, place_assembly, place_on_bed,
@@ -77,9 +79,11 @@ pub use project_settings::{
 };
 pub use project::{
     config_dir, forget_recent, load_recents, now_ms, read_project, remember_recent, write_project,
-    LoadedProject, ProjectData, ProjectModel, RecentEntry,
+    LoadedProject, ProjectData, ProjectModel, ProjectSupportBox, RecentEntry,
 };
-pub use stats::{from_gcode as slice_stats_from_gcode, ExtruderUse, SliceStats};
+pub use stats::{
+    features_from_gcode, from_gcode as slice_stats_from_gcode, ExtruderUse, FeatureUse, SliceStats,
+};
 pub use resolver::{ProfileSummary, ResolveRequest, ResolvedSettings, UserSettings};
 pub use session::{
     AppliedSuggestion, DismissedSuggestion, JobSliceSummary, PreparedSlice, ProjectOutline,

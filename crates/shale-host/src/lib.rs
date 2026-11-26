@@ -23,6 +23,12 @@ use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use serde::{Deserialize, Serialize};
 
+pub mod files;
+pub mod gcode3mf;
+pub mod hms;
+pub mod plate_preview;
+pub mod print_options;
+
 /// Everything needed to reach one printer on the LAN.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +104,11 @@ pub struct Status {
     pub fingerprint: String,
     pub reports: u64,
     pub updated_at: f64,
+    /// HMS alerts from the latest report that carried an `hms` array. A report
+    /// that omits the field leaves this as it was: the machine sends plenty of
+    /// partial updates.
+    #[serde(default)]
+    pub hms: Vec<hms::HmsAlert>,
 }
 
 impl Status {
@@ -275,13 +286,13 @@ impl Trust {
 }
 
 /// A TCP connection with TLS on top, plus the byte buffer the MQTT framing needs.
-struct Wire {
+pub(crate) struct Wire {
     stream: StreamOwned<ClientConnection, TcpStream>,
     buffered: Vec<u8>,
 }
 
 impl Wire {
-    fn open(trust: &Trust, host: &str, port: u16) -> Result<Self> {
+    pub(crate) fn open(trust: &Trust, host: &str, port: u16) -> Result<Self> {
         let addr = (host, port)
             .to_socket_addrs()?
             .next()
@@ -307,7 +318,7 @@ impl Wire {
         })
     }
 
-    fn write_all(&mut self, bytes: &[u8]) -> Result<()> {
+    pub(crate) fn write_all(&mut self, bytes: &[u8]) -> Result<()> {
         self.stream.write_all(bytes)?;
         self.stream.flush()?;
         Ok(())
@@ -349,7 +360,7 @@ impl Wire {
         Some(packet)
     }
 
-    fn read_line(&mut self) -> Result<String> {
+    pub(crate) fn read_line(&mut self) -> Result<String> {
         loop {
             if let Some(pos) = self.buffered.iter().position(|b| *b == b'\n') {
                 let line: Vec<u8> = self.buffered.drain(..=pos).collect();
@@ -475,6 +486,12 @@ impl Link {
     /// The certificate fingerprint this link has been offered.
     pub fn pin(&self) -> Option<Pin> {
         self.trust.seen()
+    }
+
+    /// The trust this link already established, so a file transfer checks the
+    /// same certificate the status channel did.
+    pub fn trust(&self) -> Trust {
+        self.trust.clone()
     }
 
     pub fn status(&self) -> Status {
@@ -650,6 +667,13 @@ fn absorb(value: &serde_json::Value, status: &Arc<Mutex<Status>>) {
     if let Some(v) = num("print_error") {
         guard.error = v as i64;
     }
+    if let Some(alerts) = hms::present(print) {
+        let cleared = alerts.is_empty() && guard.hms.iter().any(|old| old.message == guard.note);
+        guard.hms = alerts;
+        if cleared {
+            guard.note.clear();
+        }
+    }
     if let Some(name) = text("subtask_name") {
         guard.file = name;
     }
@@ -659,7 +683,9 @@ fn absorb(value: &serde_json::Value, status: &Arc<Mutex<Status>>) {
     }
     guard.reports += 1;
     guard.updated_at = now_epoch();
-    if guard.error != 0 {
+    if let Some(first) = guard.hms.first() {
+        guard.note = first.message.clone();
+    } else if guard.error != 0 {
         guard.note = format!("the printer reported error {}", guard.error);
     }
 }
@@ -742,7 +768,7 @@ pub fn upload_with(
     Ok(bytes.len())
 }
 
-fn send_cmd(wire: &mut Wire, command: &str, want: &str) -> Result<()> {
+pub(crate) fn send_cmd(wire: &mut Wire, command: &str, want: &str) -> Result<()> {
     wire.write_all(format!("{command}\r\n").as_bytes())?;
     let line = wire.read_line()?;
     if line.starts_with(want) {
@@ -752,7 +778,7 @@ fn send_cmd(wire: &mut Wire, command: &str, want: &str) -> Result<()> {
     }
 }
 
-fn expect(wire: &mut Wire, want: &str) -> Result<()> {
+pub(crate) fn expect(wire: &mut Wire, want: &str) -> Result<()> {
     let line = wire.read_line()?;
     if line.starts_with(want) {
         Ok(())
@@ -761,7 +787,7 @@ fn expect(wire: &mut Wire, want: &str) -> Result<()> {
     }
 }
 
-fn pasv(wire: &mut Wire) -> Result<std::net::SocketAddr> {
+pub(crate) fn pasv(wire: &mut Wire) -> Result<std::net::SocketAddr> {
     wire.write_all(b"PASV\r\n")?;
     let line = wire.read_line()?;
     if !line.starts_with("227") {
@@ -785,6 +811,28 @@ fn pasv(wire: &mut Wire) -> Result<std::net::SocketAddr> {
     let addr = format!("{ip}:{port}");
     addr.parse()
         .map_err(|_| HostError::Bad(format!("bad address {addr}")))
+}
+
+/// The TLS data connection a `PASV` reply named. Listing and downloading read
+/// it; uploading writes it. The certificate is the same one the control
+/// channel just accepted.
+pub(crate) fn open_data(
+    trust: &Trust,
+    host: &str,
+    addr: std::net::SocketAddr,
+) -> Result<StreamOwned<ClientConnection, TcpStream>> {
+    let data = TcpStream::connect_timeout(&addr, Duration::from_secs(6))?;
+    data.set_read_timeout(Some(Duration::from_secs(20)))?;
+    data.set_write_timeout(Some(Duration::from_secs(20)))?;
+    let name = ServerName::try_from(host.to_string())
+        .map_err(|_| HostError::Bad("the printer host is not a server name".into()))?;
+    let conn = ClientConnection::new(Arc::clone(&trust.config), name)?;
+    let mut secure = StreamOwned::new(conn, data);
+    secure
+        .conn
+        .complete_io(&mut secure.sock)
+        .map_err(handshake_error)?;
+    Ok(secure)
 }
 
 // --------------------------------------------------------------- the file gate
@@ -880,16 +928,40 @@ mod gate_tests {
 // ------------------------------------------------------------- the commands
 
 /// The JSON the machine takes to start a G-code file that is already uploaded.
+///
+/// No mapping means the external spool: `use_ams` stays false and `ams_mapping`
+/// is left out, which is what a single-colour plate has always sent.
 pub fn gcode_file_command(sequence: u64, remote: &str, bed_type: &str) -> serde_json::Value {
-    serde_json::json!({
-        "print": {
-            "sequence_id": sequence.to_string(),
-            "command": "gcode_file",
-            "param": remote,
-            "bed_type": bed_type,
-            "use_ams": false,
-        }
-    })
+    gcode_file_command_mapped(sequence, remote, bed_type, &[])
+}
+
+/// Same command, with one AMS tray per sliced tool.
+///
+/// `ams_mapping[tool]` is the tray index (0–3) or −1 for the external spool.
+/// `use_ams` is true only when at least one tool leaves the external spool.
+pub fn gcode_file_command_mapped(
+    sequence: u64,
+    remote: &str,
+    bed_type: &str,
+    ams_mapping: &[i32],
+) -> serde_json::Value {
+    let use_ams = ams_mapping.iter().any(|slot| *slot >= 0);
+    let mut print = serde_json::json!({
+        "sequence_id": sequence.to_string(),
+        "command": "gcode_file",
+        "param": remote,
+        "bed_type": bed_type,
+        "use_ams": use_ams,
+    });
+    if use_ams {
+        print["ams_mapping"] = serde_json::json!(ams_mapping);
+    }
+    serde_json::json!({ "print": print })
+}
+
+/// A tray the printer understands: −1 is the external spool, 0–3 are the AMS.
+pub fn ams_mapping_ok(mapping: &[i32]) -> bool {
+    mapping.iter().all(|slot| (-1..=3).contains(slot))
 }
 
 pub fn simple_command(sequence: u64, command: &str) -> serde_json::Value {
@@ -933,6 +1005,36 @@ mod tests {
         let status = Arc::new(Mutex::new(Status::default()));
         handle_packet(&buffered, &status);
         assert_eq!(status.lock().unwrap().state, "RUNNING");
+        assert!(status.lock().unwrap().hms.is_empty());
+    }
+
+    #[test]
+    fn an_hms_report_becomes_a_sentence_and_a_later_partial_keeps_it() {
+        let status = Arc::new(Mutex::new(Status::default()));
+        absorb(
+            &serde_json::json!({"print": {"hms": [{"attr": 117448704, "code": 131073}]}}),
+            &status,
+        );
+        {
+            let guard = status.lock().unwrap();
+            assert_eq!(guard.hms.len(), 1);
+            assert_eq!(guard.hms[0].code, "0700-2000-0002-0001");
+            assert!(guard.note.contains("run out of filament"));
+        }
+
+        absorb(
+            &serde_json::json!({"print": {"nozzle_temper": 200}}),
+            &status,
+        );
+        assert_eq!(
+            status.lock().unwrap().hms.len(),
+            1,
+            "a partial report keeps the alert"
+        );
+
+        absorb(&serde_json::json!({"print": {"hms": []}}), &status);
+        assert!(status.lock().unwrap().hms.is_empty());
+        assert!(status.lock().unwrap().note.is_empty());
     }
 
     #[test]
@@ -984,6 +1086,17 @@ mod tests {
         assert_eq!(command["print"]["param"], "/cache/cube.gcode");
         assert_eq!(command["print"]["bed_type"], "textured_plate");
         assert_eq!(command["print"]["use_ams"], false);
+        assert!(command["print"].get("ams_mapping").is_none());
+    }
+
+    #[test]
+    fn a_mapped_print_names_each_tray() {
+        let command = gcode_file_command_mapped(7, "/cache/cube.gcode", "textured_plate", &[0, -1]);
+        assert_eq!(command["print"]["use_ams"], true);
+        assert_eq!(command["print"]["ams_mapping"], serde_json::json!([0, -1]));
+        assert!(ams_mapping_ok(&[0, -1, 3]));
+        assert!(!ams_mapping_ok(&[4]));
+        assert!(!ams_mapping_ok(&[-2]));
     }
 
     #[test]
@@ -998,6 +1111,7 @@ mod tests {
 }
 /// Bambu's cloud: an account, a device list, and sending a print.
 pub mod cloud;
+pub mod history;
 
 /// MakerWorld and Thingiverse search and download.
 pub mod models;

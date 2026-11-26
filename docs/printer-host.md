@@ -79,12 +79,51 @@ acknowledged.
   lost. The client now sends `close_notify` and drains the stream first. A real
   printer would have eaten every upload this way.
 
+## Printer messages
+
+`print.hms` is a list of `{attr, code}` pairs. Shale shows each one as the four
+groups Bambu prints (`0300-0100-0001-0007`) and links
+`https://wiki.bambulab.com/en/x1/troubleshooting/hmscode/0300_0100_0001_0007`,
+the same URL Bambu Studio builds.
+
+The sentence comes from Bambu's table. On startup Shale asks
+`https://e.bambulab.com/query.php?lang=en` — Studio's own call — and stores the
+answer at `hms/hms_en.json` in the app config directory. That folder is not the
+printer-profile cache. A later start sends the cached version and keeps the
+file when the server says it is current. If the request fails, the sentences
+already cached are used, and a code the table does not name falls back to a
+short British-English line that names the module and the code.
+
+The table itself is not in this repository. Bambu Studio is AGPL-3.0, and the
+JSON ships inside that program, but the live endpoint does not publish a
+separate licence for the message text. Copying the file in would be a guess
+about that licence, so Shale fetches it instead.
+
+## Files on the printer
+
+The same FTPS session lists the card, downloads a timelapse or a sliced file,
+deletes after a confirmation, and starts a file that is already there. A
+`.gcode` uses `gcode_file`. A `.gcode.3mf` is read first: the plate comes from
+`slice_info.config` and the `Metadata/plate_N.gcode` entries, lowest index
+first, so a file that only contains plate 2 starts plate 2. Reprint does not
+upload.
+
+A Bambu send uploads a `.gcode.3mf` in the layout Bambu Studio writes:
+`Metadata/plate_1.gcode` and its uppercase `.md5`, `slice_info.config` (filament
+identity and the tray map), plate thumbnails, `model_settings.config`, and
+`project_settings.config`. The thumbnails are an isometric view of the
+meshes on that plate. An empty plate is a picture of the bed. The same `ams_mapping` array is on the `project_file`
+command. The dialog's timelapse, bed levelling, flow dynamics, vibration
+compensation, and use-AMS switches follow Studio's defaults for the printer.
+A P1 has no flow calibration. A P2, H2, or X2 sends automatic calibration
+(`auto_bed_leveling` / `auto_flow_cali` of 2) when those switches are on.
+A printer that is not a Bambu machine still receives plain G-code.
+
 ## Known gaps
 
-- **`use_ams: false`.** This sends a plain G-code file, so the machine prints
-  from the spool it has loaded. Bambu Studio's route is `project_file` with a
-  sliced 3MF that carries the plate's G-code, an `md5`, and an `ams_mapping`
-  array — that needs a sliced-3MF writer, which Shale does not have yet.
+- **One plate per upload.** Each send is its own archive, with that plate as
+  `Metadata/plate_1.gcode`. A 3MF already on the printer can still name another
+  plate, and reprint uses the one in the file.
 - **No camera.** The chamber stream is a separate protocol (`bambu:///local/…`
   on X1-class, JPEG on 6000 for the A1/P1) and is not implemented.
 - **No firmware or account calls.** Those go through Bambu's cloud, not the LAN.

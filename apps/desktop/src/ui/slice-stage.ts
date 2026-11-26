@@ -1,6 +1,13 @@
 /** Short stage name for the live slice bar. The engine's own sentence stays in the tooltip. */
 export function sliceStage(message: string): string {
-  const text = message.trim().toLowerCase();
+  const raw = message.trim();
+  const plate = /^plate \d+ of \d+/i.exec(raw);
+  if (plate) {
+    const rest = raw.slice(plate[0].length).replace(/^[\s:—–-]+/, "");
+    const stage = rest ? sliceStage(rest) : "Slicing layers";
+    return `${plate[0]} · ${stage}`;
+  }
+  const text = raw.toLowerCase();
   if (!text) return "Preparing";
   if (text.includes("curv") || text.includes("nonplanar") || text.includes("non-planar")) {
     return "Curving layers";

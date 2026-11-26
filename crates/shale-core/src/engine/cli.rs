@@ -234,7 +234,7 @@ impl SlicingEngine for CliEngine {
                 }
             }
         }
-        let mut child = command.spawn().map_err(|err| {
+        let child = command.spawn().map_err(|err| {
             Error::Engine(format!(
                 "could not start CuraEngine at '{}': {err}. Paths are passed as separate arguments, including paths with spaces. DLLs are loaded from the engine's own folder ({}).",
                 self.program.display(),
@@ -244,9 +244,11 @@ impl SlicingEngine for CliEngine {
                     .unwrap_or_else(|| "the system search path".into())
             ))
         })?;
+        let tracked = super::process::TrackedChild::adopt(child);
+        let (stdout, stderr) = tracked.take_pipes();
 
         let (tx, rx) = mpsc::channel::<String>();
-        if let Some(stdout) = child.stdout.take() {
+        if let Some(stdout) = stdout {
             let tx = tx.clone();
             thread::spawn(move || {
                 for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -254,7 +256,7 @@ impl SlicingEngine for CliEngine {
                 }
             });
         }
-        if let Some(stderr) = child.stderr.take() {
+        if let Some(stderr) = stderr {
             let tx = tx.clone();
             thread::spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
@@ -296,11 +298,14 @@ impl SlicingEngine for CliEngine {
             }
             let message = log.last().cloned().unwrap_or_else(|| "Slicing".to_string());
             on_progress(EngineProgress::new(fraction, message));
-            if let Some(status) = child.try_wait()? {
-                break status;
+            match tracked.poll()? {
+                super::process::ChildPoll::Running => {}
+                super::process::ChildPoll::Finished(status) => break status,
+                super::process::ChildPoll::Cancelled => {
+                    return Err(Error::Engine("The slice was cancelled.".into()));
+                }
             }
             if started.elapsed() > Duration::from_secs(60 * 30) {
-                let _ = child.kill();
                 return Err(Error::Engine(
                     "CuraEngine ran for more than 30 minutes and was stopped".into(),
                 ));

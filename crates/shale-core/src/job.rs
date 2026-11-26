@@ -486,6 +486,15 @@ pub struct SliceOutcome {
     pub nonplanar_context: Option<shale_nonplanar::NonplanarContext>,
 }
 
+/// Object overrides the engine should see. Ear controls are Shale's own.
+fn publish_settings(settings: &[(String, String)]) -> Vec<(String, String)> {
+    settings
+        .iter()
+        .filter(|(key, value)| !value.is_empty() && !crate::brim_ears::is_private(key))
+        .cloned()
+        .collect()
+}
+
 /// Cura stores `machine_max_feedrate_*` in mm/s; F words use mm/min.
 fn machine_max_feedrate_mm_per_min(resolved: &ResolvedSettings) -> f64 {
     for key in ["machine_max_feedrate_x", "machine_max_speed_x"] {
@@ -513,6 +522,41 @@ pub fn slice(
     // Faces painted as needing support. Each patch becomes a column of prisms
     // under the part, handed to the engine as a `support_mesh`.
     painted: &[paint::PaintedPatch],
+    output_path: PathBuf,
+    on_progress: &mut dyn FnMut(EngineProgress),
+) -> Result<SliceOutcome, Error> {
+    slice_with_boxes(
+        catalog,
+        engine,
+        printer_id,
+        variant_name,
+        quality_type,
+        materials,
+        settings,
+        models,
+        instructions,
+        support,
+        painted,
+        &[],
+        output_path,
+        on_progress,
+    )
+}
+
+/// [`slice`], plus boxes drawn on the plate as enforcer or blocker volumes.
+pub fn slice_with_boxes(
+    catalog: &Catalog,
+    engine: &dyn SlicingEngine,
+    printer_id: &str,
+    variant_name: Option<String>,
+    quality_type: Option<String>,
+    materials: &[Option<String>],
+    settings: UserSettings,
+    models: &[PlacedModel],
+    instructions: &[CustomInstruction],
+    support: Option<&SupportPlan>,
+    painted: &[paint::PaintedPatch],
+    boxes: &[paint::SupportBox],
     output_path: PathBuf,
     on_progress: &mut dyn FnMut(EngineProgress),
 ) -> Result<SliceOutcome, Error> {
@@ -565,11 +609,10 @@ pub fn slice(
     // hand-written handling below, so every other field in the sheet was a
     // facade: it moved, it was remembered, and the slice ignored it. Merged in
     // last, an override wins over the profile, which is what an override means.
-    for (key, value) in settings
-        .extra
-        .iter()
-        .chain(models.iter().flat_map(|model| model.settings.iter()))
-    {
+    // Plate overrides only. A value on one object stays on that object: it is
+    // handed to the engine after that object's `-l`, and copying it here would
+    // make the last object decide the whole plate.
+    for (key, value) in settings.extra.iter() {
         if !value.is_empty() {
             resolved.global.insert(key.clone(), value.clone());
         }
@@ -700,7 +743,7 @@ pub fn slice(
             mesh::write_binary_stl(&und_path, &baked)?;
             undeformed_paths.push(EngineMesh {
                 path: und_path,
-                settings: model.settings.clone(),
+                settings: publish_settings(&model.settings),
                 extruder: model.slot,
             });
             let np_in = crate::nonplanar_bridge::to_nonplanar(machine);
@@ -722,9 +765,47 @@ pub fn slice(
         mesh::write_binary_stl(&path, &baked)?;
         baked_paths.push(EngineMesh {
             path,
-            settings: model.settings.clone(),
+            settings: publish_settings(&model.settings),
             extruder: model.slot,
         });
+    }
+
+    // Mouse ears are meshes, not a Cura brim mode. They are flat discs on the
+    // bed, so they are not run through the curved-layer deformer.
+    let plate_brim = resolved
+        .global
+        .get("adhesion_type")
+        .is_some_and(|value| value.eq_ignore_ascii_case("brim"));
+    let mut ear_index = 0usize;
+    for model in models {
+        for ear in crate::brim_ears::ears_for(
+            &model.mesh,
+            &model.transform,
+            &model.settings,
+            layer_height,
+            plate_brim,
+        ) {
+            let mut baked = ear.mesh;
+            mesh::to_engine_space(
+                &mut baked,
+                resolved.summary.machine_width,
+                resolved.summary.machine_depth,
+                resolved.summary.machine_center_is_zero,
+            );
+            let (engine_min, engine_max) = mesh::bounds(&baked);
+            for axis in 0..3 {
+                scene_min[axis] = scene_min[axis].min(engine_min[axis]);
+                scene_max[axis] = scene_max[axis].max(engine_max[axis]);
+            }
+            let path = model_dir.join(format!("brim-ear-{ear_index}.stl"));
+            ear_index += 1;
+            mesh::write_binary_stl(&path, &baked)?;
+            baked_paths.push(EngineMesh {
+                path,
+                settings: ear.settings,
+                extruder: model.slot,
+            });
+        }
     }
 
     let mut modifiers = Vec::new();
@@ -764,6 +845,39 @@ pub fn slice(
         };
         let path = model_dir.join(format!("painted-{}-{}.stl", patch.model, role.name()));
         mesh::write_binary_stl(&path, &prisms)?;
+        modifiers.push(EngineMesh {
+            path,
+            settings: supports::modifier_settings(role),
+            extruder: None,
+        });
+    }
+    let box_enforce = boxes
+        .iter()
+        .any(|region| region.role == paint::PaintRole::Enforce);
+    if box_enforce {
+        force_setting(&mut resolved, "support_enable", "false");
+        force_setting(&mut resolved, "support_meshes_present", "true");
+    }
+    for (index, region) in boxes.iter().enumerate() {
+        let Some((min, max)) = paint::normalise_box(region.min, region.max) else {
+            continue;
+        };
+        let mut mesh = supports::box_mesh(min, max);
+        if mesh.triangles.is_empty() {
+            continue;
+        }
+        mesh::to_engine_space(
+            &mut mesh,
+            resolved.summary.machine_width,
+            resolved.summary.machine_depth,
+            resolved.summary.machine_center_is_zero,
+        );
+        let role = match region.role {
+            paint::PaintRole::Enforce => supports::RegionRole::Enforce,
+            paint::PaintRole::Block => supports::RegionRole::Block,
+        };
+        let path = model_dir.join(format!("support-box-{index}-{}.stl", role.name()));
+        mesh::write_binary_stl(&path, &mesh)?;
         modifiers.push(EngineMesh {
             path,
             settings: supports::modifier_settings(role),

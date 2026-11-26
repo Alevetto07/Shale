@@ -18,13 +18,15 @@
 //!   reports the test pushes are delivered to subscribers on
 //!   `device/<serial>/report`.
 //! * Implicit FTPS — a TLS control channel that accepts USER/PASS/PBSZ/PROT/
-//!   TYPE, hands out a passive port, and reads a `STOR` payload over a second
-//!   TLS connection.
+//!   TYPE, hands out a passive port, reads a `STOR`, and serves `LIST`, `RETR`
+//!   and `DELE` against a small in-memory card. The card starts with a G-code
+//!   file, a 3MF and a timelapse, which is what the storage browser tests.
 //!
 //! What it does not do is pretend to be a printer: it does not move, heat, or
 //! interpret G-code. It records what it was given, which is exactly what a
 //! wiring test needs to see.
 
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -67,6 +69,7 @@ impl FakePrinter {
         let config = Arc::new(server_config(cert, key));
         let commands = Arc::new(Mutex::new(Vec::new()));
         let uploads = Arc::new(Mutex::new(Vec::new()));
+        let files = Arc::new(Mutex::new(seed_files()));
         let outboxes: Arc<Mutex<Vec<Arc<Mutex<Vec<u8>>>>>> = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
 
@@ -98,6 +101,7 @@ impl FakePrinter {
         }
         {
             let uploads = Arc::clone(&uploads);
+            let files = Arc::clone(&files);
             let stop = Arc::clone(&stop);
             thread::spawn(move || {
                 for stream in ftps.incoming() {
@@ -107,9 +111,10 @@ impl FakePrinter {
                     let Ok(stream) = stream else { break };
                     let config = Arc::clone(&config);
                     let uploads = Arc::clone(&uploads);
+                    let files = Arc::clone(&files);
                     let stop = Arc::clone(&stop);
                     thread::spawn(move || {
-                        let _ = serve_ftps(stream, config, uploads, stop);
+                        let _ = serve_ftps(stream, config, uploads, files, stop);
                     });
                 }
             });
@@ -321,10 +326,116 @@ fn encode_remaining_length(mut len: usize, out: &mut Vec<u8>) {
 
 // ---------------------------------------------------------------------- FTPS
 
+fn seed_files() -> BTreeMap<String, Vec<u8>> {
+    let mut files = BTreeMap::new();
+    files.insert(
+        "/cache/bench.gcode".into(),
+        b";===== machine: A1 =========================\nG1 X0 Y0\n".to_vec(),
+    );
+    files.insert("/cache/plate.3mf".into(), b"PK\x03\x04fake-3mf".to_vec());
+    files.insert(
+        "/timelapse/bench.mp4".into(),
+        b"\0ftypmp42-fake-timelapse".to_vec(),
+    );
+    files
+}
+
+fn ftp_path(cwd: &str, arg: &str) -> Option<String> {
+    let raw = if arg.is_empty() {
+        cwd.to_string()
+    } else if arg.starts_with('/') {
+        arg.to_string()
+    } else if cwd == "/" {
+        format!("/{arg}")
+    } else {
+        format!("{cwd}/{arg}")
+    };
+    let mut parts = Vec::new();
+    for part in raw.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            return None;
+        }
+        parts.push(part);
+    }
+    if parts.is_empty() {
+        Some("/".to_string())
+    } else {
+        Some(format!("/{}", parts.join("/")))
+    }
+}
+
+fn is_directory(files: &BTreeMap<String, Vec<u8>>, path: &str) -> bool {
+    if path == "/" {
+        return true;
+    }
+    let prefix = format!("{path}/");
+    files.keys().any(|key| key.starts_with(&prefix))
+}
+
+fn listing(files: &BTreeMap<String, Vec<u8>>, dir: &str) -> String {
+    let prefix = if dir == "/" {
+        "/".to_string()
+    } else {
+        format!("{dir}/")
+    };
+    let mut names: BTreeMap<String, (bool, usize)> = BTreeMap::new();
+    for (path, bytes) in files {
+        let Some(rest) = path.strip_prefix(&prefix) else {
+            continue;
+        };
+        if rest.is_empty() {
+            continue;
+        }
+        if let Some((child, _)) = rest.split_once('/') {
+            names.entry(child.to_string()).or_insert((true, 0));
+        } else {
+            names.insert(rest.to_string(), (false, bytes.len()));
+        }
+    }
+    let mut out = String::new();
+    for (name, (directory, size)) in names {
+        if directory {
+            out.push_str(&format!(
+                "drwxr-xr-x 1 bblp bblp {size:>12} Jan 1 00:00 {name}\r\n",
+                size = 0
+            ));
+        } else {
+            out.push_str(&format!(
+                "-rw-r--r-- 1 bblp bblp {size:>12} Jan 1 00:00 {name}\r\n"
+            ));
+        }
+    }
+    out
+}
+
+fn write_data(
+    listener: TcpListener,
+    config: Arc<ServerConfig>,
+    payload: &[u8],
+) -> std::io::Result<()> {
+    listener.set_nonblocking(false)?;
+    let (data, _) = listener.accept()?;
+    data.set_write_timeout(Some(Duration::from_secs(10)))?;
+    data.set_read_timeout(Some(Duration::from_secs(10)))?;
+    let dconn = ServerConnection::new(config).expect("a data connection");
+    let mut dstream = StreamOwned::new(dconn, data);
+    dstream.write_all(payload)?;
+    dstream.flush()?;
+    dstream.conn.send_close_notify();
+    let _ = dstream.flush();
+    let mut drain = [0u8; 256];
+    let _ = dstream.read(&mut drain);
+    Ok(())
+}
+
 fn serve_ftps(
     stream: TcpStream,
     config: Arc<ServerConfig>,
     uploads: Arc<Mutex<Vec<(String, Vec<u8>)>>>,
+    files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     stop: Arc<AtomicBool>,
 ) -> std::io::Result<()> {
     stream.set_nodelay(true)?;
@@ -341,6 +452,7 @@ fn serve_ftps(
     let mut pending: Vec<u8> = Vec::new();
     let mut buf = [0u8; 1024];
     let mut passive: Option<TcpListener> = None;
+    let mut cwd = "/".to_string();
 
     while !stop.load(Ordering::Relaxed) {
         match tls.read(&mut buf) {
@@ -380,6 +492,82 @@ fn serve_ftps(
                 );
                 tls.write_all(reply.as_bytes())?;
                 passive = Some(listener);
+            } else if upper.starts_with("PWD") {
+                tls.write_all(format!("257 \"{cwd}\" is the current directory\r\n").as_bytes())?;
+            } else if upper.starts_with("CWD") {
+                let arg = text
+                    .split_once(' ')
+                    .map(|(_, rest)| rest.trim())
+                    .unwrap_or("");
+                match ftp_path(&cwd, arg) {
+                    Some(path) if is_directory(&files.lock().unwrap(), &path) => {
+                        cwd = path;
+                        tls.write_all(b"250 directory changed\r\n")?;
+                    }
+                    _ => tls.write_all(b"550 no such directory\r\n")?,
+                }
+            } else if upper.starts_with("DELE") {
+                let arg = text
+                    .split_once(' ')
+                    .map(|(_, rest)| rest.trim())
+                    .unwrap_or("");
+                match ftp_path(&cwd, arg) {
+                    Some(path) if files.lock().unwrap().remove(&path).is_some() => {
+                        tls.write_all(b"250 deleted\r\n")?;
+                    }
+                    _ => tls.write_all(b"550 no such file\r\n")?,
+                }
+            } else if upper.starts_with("LIST") || upper.starts_with("NLST") {
+                let arg = text
+                    .split_once(' ')
+                    .map(|(_, rest)| rest.trim())
+                    .unwrap_or("");
+                let Some(path) = ftp_path(&cwd, arg) else {
+                    tls.write_all(b"550 bad path\r\n")?;
+                    passive = None;
+                    continue;
+                };
+                let card = files.lock().unwrap();
+                if !is_directory(&card, &path) {
+                    tls.write_all(b"550 no such directory\r\n")?;
+                    drop(card);
+                    passive = None;
+                    continue;
+                }
+                let body = listing(&card, &path);
+                drop(card);
+                tls.write_all(b"150 listing\r\n")?;
+                tls.flush()?;
+                let Some(listener) = passive.take() else {
+                    tls.write_all(b"425 no passive channel\r\n")?;
+                    continue;
+                };
+                write_data(listener, Arc::clone(&data_config), body.as_bytes())?;
+                tls.write_all(b"226 listed\r\n")?;
+            } else if upper.starts_with("RETR") {
+                let arg = text
+                    .split_once(' ')
+                    .map(|(_, rest)| rest.trim())
+                    .unwrap_or("");
+                let Some(path) = ftp_path(&cwd, arg) else {
+                    tls.write_all(b"550 bad path\r\n")?;
+                    passive = None;
+                    continue;
+                };
+                let body = files.lock().unwrap().get(&path).cloned();
+                let Some(body) = body else {
+                    tls.write_all(b"550 no such file\r\n")?;
+                    passive = None;
+                    continue;
+                };
+                tls.write_all(b"150 sending\r\n")?;
+                tls.flush()?;
+                let Some(listener) = passive.take() else {
+                    tls.write_all(b"425 no passive channel\r\n")?;
+                    continue;
+                };
+                write_data(listener, Arc::clone(&data_config), &body)?;
+                tls.write_all(b"226 sent\r\n")?;
             } else if upper.starts_with("STOR") {
                 let name = text
                     .split_whitespace()
@@ -412,7 +600,8 @@ fn serve_ftps(
                 // answered, which is what makes it read `226` instead of a reset.
                 dstream.conn.send_close_notify();
                 let _ = dstream.flush();
-                uploads.lock().unwrap().push((name, file));
+                uploads.lock().unwrap().push((name.clone(), file.clone()));
+                files.lock().unwrap().insert(name, file);
                 tls.write_all(b"226 file received\r\n")?;
             } else if upper.starts_with("QUIT") {
                 tls.write_all(b"221 bye\r\n")?;

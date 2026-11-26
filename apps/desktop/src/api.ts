@@ -142,6 +142,8 @@ export interface PlateView {
   name: string;
   models: number;
   active: boolean;
+  /** True once this plate has a G-code file of its own. */
+  sliced?: boolean;
 }
 
 export interface SuggestionFix {
@@ -262,6 +264,13 @@ export interface PaintView {
   blocked: number;
 }
 
+/** A box on the plate that becomes a support modifier. */
+export interface SupportBoxView {
+  min: [number, number, number];
+  max: [number, number, number];
+  block: boolean;
+}
+
 /** A measured distance: the line, and how much of it lies on each axis. */
 export interface MeasureSpan {
   distance_mm: number;
@@ -304,6 +313,30 @@ export interface HostStatus {
   note: string;
   reports: number;
   updatedAt: number;
+  /** HMS alerts from the latest report that included them. */
+  hms?: HmsAlert[];
+}
+
+/** One Bambu HMS alert, already turned into a sentence. */
+export interface HmsAlert {
+  /** `0300-0100-0001-0007` */
+  code: string;
+  /** The wiki page Bambu Studio opens for this code. */
+  wiki: string;
+  /** `error`, `warning`, `notice`, or `alert`. */
+  severity: string;
+  message: string;
+  runout: boolean;
+}
+
+/** A file on the printer's storage. */
+export interface RemoteFile {
+  path: string;
+  name: string;
+  bytes: number;
+  /** `gcode`, `model`, `timelapse`, or `file`. */
+  kind: string;
+  printable: boolean;
 }
 
 export interface HostConfig {
@@ -335,8 +368,49 @@ export const cloudSignOut = () => invoke<void>("cloud_sign_out");
 export const cloudSetRegion = (region: string) =>
   invoke<CloudSession>("cloud_set_region", { region });
 export const cloudDevices = () => invoke<CloudDeviceRow[]>("cloud_devices");
-export const cloudSend = (devId: string, taskName: string) =>
-  invoke<string>("cloud_send", { devId, taskName });
+export interface PrintOptions {
+  timelapse: boolean;
+  bedLevelling: boolean;
+  flowCali: boolean;
+  flowAvailable: boolean;
+  vibrationCali: boolean;
+  vibrationAvailable: boolean;
+  useAms: boolean;
+  automaticBed: boolean;
+  automaticFlow: boolean;
+}
+
+/** Studio's starting send choices for the printer on screen. */
+export const printDefaults = () => invoke<PrintOptions>("print_option_defaults");
+
+export const cloudSend = (
+  devId: string,
+  taskName: string,
+  options?: {
+    amsMapping?: number[];
+    timelapse?: boolean;
+    bedLevelling?: boolean;
+    flowCali?: boolean;
+    vibrationCali?: boolean;
+    useAms?: boolean;
+    material?: string;
+    colour?: string;
+    nozzle?: string;
+  },
+) =>
+  invoke<string>("cloud_send", {
+    devId,
+    taskName,
+    amsMapping: options?.amsMapping,
+    timelapse: options?.timelapse,
+    bedLevelling: options?.bedLevelling,
+    flowCali: options?.flowCali,
+    vibrationCali: options?.vibrationCali,
+    useAms: options?.useAms,
+    material: options?.material,
+    colour: options?.colour,
+    nozzle: options?.nozzle,
+  });
 
 export const secretClear = (key: string) => invoke<void>("secret_clear", { key });
 
@@ -355,8 +429,71 @@ export const hostForget = (serial: string, address: string) =>
 
 export const hostStatus = () => invoke<HostStatus>("host_status");
 
-export const hostSend = (bedType: string) =>
-  invoke<{ remote: string; bytes: number }>("host_send", { bedType });
+export const hostFiles = () => invoke<RemoteFile[]>("host_files");
+
+export const hostDownload = (remote: string, destination: string) =>
+  invoke<number>("host_download", { remote, destination });
+
+export const hostDelete = (remote: string) => invoke<void>("host_delete", { remote });
+
+/** Print a file that is already on the printer. Nothing is uploaded. */
+export const hostReprint = (remote: string, bedType: string) =>
+  invoke<void>("host_reprint", { remote, bedType });
+
+/** A Windows toast, via Tauri. Other desktops get the platform's own notification. */
+export const desktopNotify = (title: string, body: string) =>
+  invoke<void>("desktop_notify", { title, body });
+
+export const hostSend = (
+  bedType: string,
+  amsMapping: number[] = [],
+  scope: "plate" | "all" = "plate",
+  plateIndex?: number,
+  options?: {
+    timelapse?: boolean;
+    bedLevelling?: boolean;
+    flowCali?: boolean;
+    vibrationCali?: boolean;
+    useAms?: boolean;
+    material?: string;
+    colour?: string;
+    nozzle?: string;
+  },
+) =>
+  invoke<{ remote: string; bytes: number; queued?: number }>("host_send", {
+    bedType,
+    amsMapping,
+    scope,
+    plateIndex,
+    timelapse: options?.timelapse,
+    bedLevelling: options?.bedLevelling,
+    flowCali: options?.flowCali,
+    vibrationCali: options?.vibrationCali,
+    useAms: options?.useAms,
+    material: options?.material,
+    colour: options?.colour,
+    nozzle: options?.nozzle,
+  });
+
+/// Time and filament for one feature kind in the sliced file.
+export interface FeatureUse {
+  kind: string;
+  seconds: number;
+  metres: number;
+}
+
+export const featureBreakdown = () => invoke<FeatureUse[]>("feature_breakdown");
+
+export interface HistoryRow {
+  at_ms: number;
+  name: string;
+  source: string;
+  status: string;
+  detail: string;
+}
+
+export const printHistory = () =>
+  invoke<{ rows: HistoryRow[]; cloud_note: string | null }>("print_history");
 
 /// What the sliced file needs: which tools it selects, how often, and how much
 /// filament each one takes, in metres.
@@ -623,6 +760,7 @@ export const api = {
     }),
   updateTransform: (id: number, transform: Transform) => invoke<void>("update_transform", { id, transform }),
   autoOrient: (id: number) => invoke<Transform>("auto_orient", { id }),
+  autoOrientAll: () => invoke<ModelView[]>("auto_orient_all"),
   /// Rest the chosen face on the plate. The normal is in world space.
   /** What the part is now: triangles, material, and whether it closes. */
   meshHealth: (id: number) =>
@@ -638,6 +776,7 @@ export const api = {
     pinRadius = 2,
     pinHeight = 5,
     dovetail = 0,
+    faceDown = true,
   ) =>
     invoke<{ views: ModelView[]; joint: string | null }>("cut_model", {
       id,
@@ -648,6 +787,7 @@ export const api = {
       pinRadius,
       pinHeight,
       dovetail,
+      faceDown,
     }),
   /* One part against the others: subtract keeps what the others do not cover,
      union and common are the other two answers to the same question. */
@@ -729,6 +869,32 @@ export const api = {
       settings,
       ignoreProjectSettings,
     }),
+  slicePlates: (
+    indexes: number[],
+    atOnce: number,
+    printerId: string,
+    variantName: string | null,
+    qualityType: string | null,
+    materialId: string | null,
+    ams: string[],
+    settings: SliceSettings,
+    ignoreProjectSettings = false,
+  ) =>
+    invoke<{ plates: { index: number; name: string; layer_count: number; layers: { index: number; z: number }[]; print_time_seconds: number | null; filament_metres: number | null; active: boolean }[] }>(
+      "slice_plates",
+      {
+        indexes,
+        atOnce,
+        printerId,
+        variantName,
+        qualityType,
+        materialId,
+        ams,
+        settings,
+        ignoreProjectSettings,
+      },
+    ),
+  cancelSlice: () => invoke<void>("cancel_slice"),
   plateFit: (printerId: string | null) => invoke<FitWarning>("plate_fit", { printerId }),
   suggestions: (args: SuggestionQuery) => invoke<Suggestion[]>("suggestions", { args }),
   moveModelToPlate: (id: number, plate: number) =>
@@ -750,6 +916,11 @@ export const api = {
   // back costs nothing and a brush that cannot be undone is a trap.
   undoPaint: () => invoke<PaintView>("undo_paint"),
   redoPaint: () => invoke<PaintView>("redo_paint"),
+  supportBoxes: () => invoke<SupportBoxView[]>("support_boxes"),
+  addSupportBox: (min: [number, number, number], max: [number, number, number], block: boolean) =>
+    invoke<SupportBoxView[]>("add_support_box", { min, max, block }),
+  undoSupportBox: () => invoke<SupportBoxView[]>("undo_support_box"),
+  clearSupportBoxes: () => invoke<SupportBoxView[]>("clear_support_boxes"),
   proposeSupports: (id: number, overhangAngleDeg: number, maxBridgeMm: number) =>
     invoke<SupportView>("propose_supports", {
       id,
@@ -777,6 +948,7 @@ export const api = {
   removeInstruction: (id: number) => invoke<StoredInstruction[]>("remove_instruction", { id }),
   previewUntil: (layer: number) => invoke<PreviewPath[]>("preview_until", { layer }),
   previewAll: () => invoke<PreviewPath[]>("preview_all"),
+  featureBreakdown,
   /** True when the printer ships a head envelope the curved pass can check. */
   nonplanarSupported: (printerId: string) => invoke<boolean>("nonplanar_supported", { printerId }),
   exportPlate: (destination: string, format: "stl" | "3mf") =>
@@ -856,6 +1028,8 @@ export interface SaveProject {
   quiet?: boolean;
   dismissed_suggestions?: string[];
   suggestions_shown?: string[];
+  /// Tool index to AMS tray. `-1` is the external spool.
+  ams_mapping?: number[];
 }
 
 export interface OpenedProject {
@@ -876,6 +1050,7 @@ export interface OpenedProject {
   warnings: string[];
   dismissed_suggestions?: string[];
   suggestions_shown?: string[];
+  ams_mapping?: number[];
 }
 
 /** The editable half of the cost estimate: price, power, tariff, currency. */

@@ -1068,6 +1068,8 @@ impl Session {
             thumbnail: Vec::new(),
             dismissed_suggestions: self.dismissed.clone(),
             suggestions_shown: Vec::new(),
+            support_boxes: Vec::new(),
+            ams_mapping: Vec::new(),
         };
         crate::project::write_project(path, &data)?;
         self.project_path = Some(path.to_path_buf());

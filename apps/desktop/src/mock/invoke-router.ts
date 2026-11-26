@@ -70,6 +70,12 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
     case "imported_settings":
       return null as T;
     case "add_plate":
+    case "auto_orient":
+      return (
+        models[0]?.transform ?? { translation: [0, 0, 0], rotation_deg: [0, 0, 0], scale: [1, 1, 1] }
+      ) as T;
+    case "auto_orient_all":
+      return models as T;
     case "switch_plate":
       return { plates: mockPlates(models.length), models } as T;
     case "delete_plate":
@@ -135,12 +141,28 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
     case "slice_model":
       sliceSummary = mockSlice(models.map((m) => m.id));
       return sliceSummary as T;
+    case "slice_plates":
+      return {
+        plates: (Array.isArray(args.indexes) ? args.indexes : [0]).map((index) => ({
+          index: Number(index),
+          name: `plate ${Number(index) + 1}`,
+          layer_count: 12,
+          print_time_seconds: 90,
+          filament_metres: 1.2,
+          active: Number(index) === 0,
+        })),
+      } as T;
+    case "cancel_slice":
+      return undefined as T;
     case "slice_tools":
       return {
-        tools: [0],
-        changes: 0,
+        tools: [0, 1],
+        changes: 3,
         file: "C:\\mock\\plate.gcode",
-        usage: [{ tool: 0, metres: 4.2 }],
+        usage: [
+          { tool: 0, metres: 3.1 },
+          { tool: 1, metres: 1.1 },
+        ],
       } as T;
     case "export_gcode":
       return String(args.destination ?? "C:\\mock\\plate.gcode") as T;
@@ -154,7 +176,54 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
     case "host_connect":
       return mockHost(true) as T;
     case "host_status":
-      return mockHost(flags.hostConnected) as T;
+      return {
+        ...mockHost(flags.hostConnected),
+        hms:
+          flags.hms && flags.hostConnected
+            ? [
+                {
+                  code: "0700-2000-0002-0001",
+                  wiki: "https://wiki.bambulab.com/en/x1/troubleshooting/hmscode/0700_2000_0002_0001",
+                  severity: "warning",
+                  message:
+                    "AMS 1 slot 1 has run out of filament. Load a new spool in that slot and resume the print.",
+                  runout: true,
+                },
+              ]
+            : [],
+      } as T;
+    case "host_files":
+      return (flags.hostConnected
+        ? [
+            {
+              path: "/cache/bench.gcode",
+              name: "bench.gcode",
+              bytes: 1280,
+              kind: "gcode",
+              printable: true,
+            },
+            {
+              path: "/cache/plate.3mf",
+              name: "plate.3mf",
+              bytes: 4096,
+              kind: "model",
+              printable: true,
+            },
+            {
+              path: "/timelapse/bench.mp4",
+              name: "bench.mp4",
+              bytes: 8_000_000,
+              kind: "timelapse",
+              printable: false,
+            },
+          ]
+        : []) as T;
+    case "host_download":
+      return Number(1024) as T;
+    case "host_delete":
+    case "host_reprint":
+    case "desktop_notify":
+      return undefined as T;
     case "cloud_state":
       return cloudSession as T;
     case "cloud_set_region":
@@ -190,8 +259,47 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
     case "queue_observe":
     case "queue_stop":
       return { armed: false, running: false, waiting_for_plate: false, message: "" } as T;
+    case "print_option_defaults":
+      return {
+        timelapse: false,
+        bedLevelling: true,
+        flowCali: true,
+        flowAvailable: true,
+        vibrationCali: false,
+        vibrationAvailable: true,
+        useAms: true,
+        automaticBed: false,
+        automaticFlow: false,
+      } as T;
     case "host_send":
-      return { remote: "mock.gcode", bytes: 522_285 } as T;
+      return { remote: "/cache/mock.gcode.3mf", bytes: 522_285, queued: 0 } as T;
+    case "feature_breakdown":
+      return [
+        { kind: "wall-outer", seconds: 140, metres: 1.2 },
+        { kind: "infill", seconds: 80, metres: 2.4 },
+        { kind: "skin", seconds: 40, metres: 0.6 },
+        { kind: "travel", seconds: 20, metres: 0 },
+      ] as T;
+    case "print_history":
+      return {
+        rows: [
+          {
+            at_ms: Date.parse("2026-11-25T21:10:00Z"),
+            name: "Cable clip",
+            source: "This computer",
+            status: "Sent",
+            detail: "Textured PEI",
+          },
+          {
+            at_ms: 0,
+            name: "Bracket",
+            source: "Cloud",
+            status: "finished",
+            detail: "",
+          },
+        ],
+        cloud_note: null,
+      } as T;
     case "scratch_path":
       return `C:\\mock\\scratch\\${String(args.name ?? "untitled")}.shale` as T;
     case "save_project":
@@ -279,6 +387,11 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
       return { configured: false } as T;
     case "open_model_link":
       return undefined as T;
+    case "support_boxes":
+    case "add_support_box":
+    case "undo_support_box":
+    case "clear_support_boxes":
+      return [] as T;
     default:
       return null as T;
   }

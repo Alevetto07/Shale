@@ -2,6 +2,8 @@
 //!
 //! The walk is one pass over the text. It does not build a toolpath.
 
+use std::collections::BTreeMap;
+
 #[derive(Clone, Debug, Default)]
 pub struct GcodeFacts {
     pub seconds: f64,
@@ -25,6 +27,11 @@ pub struct GcodeFacts {
     pub purge_mm: f64,
     /// Seconds spent on each `;LAYER:` block, in order.
     pub layer_seconds: Vec<f64>,
+    /// Seconds per preview kind (`wall-outer`, `infill`, `travel`, …).
+    /// Travel is every move that does not extrude, whatever `;TYPE:` is current.
+    pub feature_seconds: BTreeMap<String, f64>,
+    /// Filament millimetres per preview kind. Travel is absent: it lays nothing down.
+    pub feature_mm: BTreeMap<String, f64>,
 }
 
 pub fn facts(gcode: &str) -> GcodeFacts {
@@ -136,6 +143,12 @@ pub fn facts(gcode: &str) -> GcodeFacts {
                     *bucket += seconds;
                 }
             }
+            let feature = if !extruding {
+                "travel".to_string()
+            } else {
+                preview_kind(&kind)
+            };
+            *out.feature_seconds.entry(feature).or_default() += seconds;
             if !extruding {
                 out.travel_seconds += seconds;
             } else if kind.contains("SUPPORT") {
@@ -159,6 +172,7 @@ pub fn facts(gcode: &str) -> GcodeFacts {
                 out.per_tool_mm.resize(tool + 1, 0.0);
             }
             out.per_tool_mm[tool] += length;
+            *out.feature_mm.entry(preview_kind(&kind)).or_default() += length;
             let purge = kind.contains("PRIME") || kind.contains("WIPE") || kind.contains("PURGE");
             if purge {
                 out.purge_mm += length;
@@ -173,6 +187,32 @@ pub fn facts(gcode: &str) -> GcodeFacts {
         out.average_speed_mm_s = speed_sum / speed_n;
     }
     out
+}
+
+/// The names the preview legend uses. Unknown types keep a readable lowercase form.
+fn preview_kind(raw: &str) -> String {
+    match raw {
+        "WALL-OUTER" => "wall-outer".to_string(),
+        "WALL-INNER" => "wall-inner".to_string(),
+        "SKIN" | "TOP" | "BOTTOM" => "skin".to_string(),
+        "FILL" | "INFILL" => "infill".to_string(),
+        "SUPPORT" => "support".to_string(),
+        "SUPPORT-INTERFACE" => "support-interface".to_string(),
+        "SKIRT" => "skirt".to_string(),
+        "BRIM" => "brim".to_string(),
+        "RAFT" => "raft".to_string(),
+        "PRIME-TOWER" | "WIPE_TOWER" => "prime-tower".to_string(),
+        "IRONING" => "ironing".to_string(),
+        "" => "other".to_string(),
+        other => {
+            let lower = other.to_ascii_lowercase().replace('_', "-");
+            if lower.is_empty() {
+                "other".to_string()
+            } else {
+                lower
+            }
+        }
+    }
 }
 
 /// Real tool indexes. Bambu writes `T255` for a flush and `T1000` to restore
@@ -257,6 +297,16 @@ G0 X40 Y0
         assert!(facts.wall_seconds > 0.0);
         assert!(facts.infill_seconds > 0.0);
         assert!(facts.travel_seconds > 0.0);
+        let feature_sum: f64 = facts.feature_seconds.values().sum();
+        assert!(
+            (feature_sum - facts.seconds).abs() < 1e-6,
+            "features {feature_sum} total {}",
+            facts.seconds
+        );
+        assert!(facts.feature_mm.get("wall-outer").copied().unwrap_or(0.0) > 0.0);
+        assert!(facts.feature_mm.get("infill").copied().unwrap_or(0.0) > 0.0);
+        assert!(facts.feature_seconds.get("travel").copied().unwrap_or(0.0) > 0.0);
+        assert!(!facts.feature_mm.contains_key("travel"));
     }
 
     #[test]

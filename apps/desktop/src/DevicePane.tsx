@@ -1,12 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { CloudPanel } from "./CloudPanel";
 import * as api from "./api";
-import { Button, Dialog, Input, Select, Tooltip } from "./ui";
+import { save } from "./platform/dialog";
+import { defaultAmsMapping, plateWarnings } from "./print-check";
+import { printNotices, type NoticeSnapshot } from "./print-notices";
+import { SendReview } from "./send-review";
+import { Button, Dialog, Input, Select, SwitchRow, Tooltip } from "./ui";
 
 export interface Spool {
   /** 1-based bay, as the machine numbers them. */
   bay: number;
   material: string;
+  colour?: string;
 }
 
 export interface JobFacts {
@@ -37,6 +43,30 @@ export interface DevicePaneProps {
   gcodeReady: boolean;
   /** The name of the document on screen, so a queued job is called something. */
   plate: string;
+  /** Every plate in the project. The active one is what "this plate" sends. */
+  plates: api.PlateView[];
+  /// Slice plates that have parts but no G-code yet. "Every plate" calls this
+  /// before it sends, and waits. `false` means a plate failed and the send stops.
+  onSliceMissing?: () => Promise<boolean>;
+  /// Tool to AMS tray, kept with the project. `-1` is the external spool.
+  mapping?: number[];
+  onMapping?: (mapping: number[]) => void;
+}
+
+function spoolColour(mapping: number[], spools: Spool[]): string {
+  const tray = mapping.find((slot) => slot >= 0);
+  const spool =
+    spools.find((item) => tray != null && item.bay === tray + 2) ??
+    spools.find((item) => item.bay === 1) ??
+    spools[0];
+  return spool?.colour || "#FFFFFF";
+}
+
+function fileKind(kind: string): string {
+  if (kind === "timelapse") return "Timelapse";
+  if (kind === "gcode") return "G-code";
+  if (kind === "model") return "3MF";
+  return "File";
 }
 
 function clock(seconds: number | null): string {
@@ -67,6 +97,10 @@ export function DevicePane({
   engineReady,
   gcodeReady,
   plate,
+  plates,
+  onSliceMissing,
+  mapping: mappingFromProject,
+  onMapping,
 }: DevicePaneProps) {
   const [host, setHost] = useState(() => localStorage.getItem("shale.device.host") ?? "");
   const [serial, setSerial] = useState(() => localStorage.getItem("shale.device.serial") ?? "");
@@ -78,12 +112,32 @@ export function DevicePane({
   const [sending, setSending] = useState(false);
   const [asking, setAsking] = useState(false);
   const [tools, setTools] = useState<api.SliceTools | null>(null);
+  const [localMapping, setLocalMapping] = useState<number[]>([]);
+  const mapping = mappingFromProject ?? localMapping;
+  const setMapping = (next: number[] | ((current: number[]) => number[])) => {
+    const resolved = typeof next === "function" ? next(mapping) : next;
+    if (onMapping) onMapping(resolved);
+    else setLocalMapping(resolved);
+  };
+  const [scope, setScope] = useState<"plate" | "all">("plate");
+  const [printOptions, setPrintOptions] = useState<api.PrintOptions | null>(null);
+  const [plateIndex, setPlateIndex] = useState(0);
+  const [history, setHistory] = useState<api.HistoryRow[]>([]);
+  const [cloudNote, setCloudNote] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [queue, setQueue] = useState<api.QueueJob[]>([]);
   const [queueAsking, setQueueAsking] = useState(false);
   /// What the run is allowed to do. The rules are in `shale_core::queue` and
   /// the gate is in Rust; this is only what the pane was told last.
   const [queueRun, setQueueRun] = useState("idle");
+  const [files, setFiles] = useState<api.RemoteFile[]>([]);
+  const [filesNote, setFilesNote] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<api.RemoteFile | null>(null);
+  const [pendingPrint, setPendingPrint] = useState<api.RemoteFile | null>(null);
+  const notifyKey = `shale.device.notify.${serial || "this-printer"}`;
+  const [notify, setNotify] = useState(true);
+  const seenHms = useRef<Set<string>>(new Set());
+  const noticeSnapshot = useRef<NoticeSnapshot | null>(null);
 
   useEffect(() => {
     localStorage.setItem("shale.device.host", host);
@@ -126,6 +180,12 @@ export function DevicePane({
   useEffect(() => {
     localStorage.setItem("shale.device.bed", bedType);
   }, [bedType]);
+  useEffect(() => {
+    setNotify(localStorage.getItem(notifyKey) !== "off");
+  }, [notifyKey]);
+  useEffect(() => {
+    localStorage.setItem(notifyKey, notify ? "on" : "off");
+  }, [notify, notifyKey]);
 
   // Fill the form from the environment once, if it was launched with a printer.
   useEffect(() => {
@@ -176,6 +236,35 @@ export function DevicePane({
       live = false;
     };
   }, []);
+
+  // A new HMS code is said once, in the pane and as a toast. A code that clears
+  // can be said again if the printer raises it later.
+  useEffect(() => {
+    const alerts = status?.hms ?? [];
+    for (const alert of alerts) {
+      if (seenHms.current.has(alert.code)) continue;
+      seenHms.current.add(alert.code);
+      toast(alert.message, { description: alert.code, id: `hms-${alert.code}` });
+    }
+    for (const code of [...seenHms.current]) {
+      if (!alerts.some((alert) => alert.code === code)) seenHms.current.delete(code);
+    }
+  }, [status]);
+
+  useEffect(() => {
+    if (!status) return;
+    const next: NoticeSnapshot = {
+      state: status.state,
+      runout: (status.hms ?? []).filter((alert) => alert.runout).map((alert) => alert.code),
+    };
+    const notices = printNotices(noticeSnapshot.current, next, status.file, notify);
+    noticeSnapshot.current = next;
+    for (const notice of notices) {
+      void api.desktopNotify(notice.title, notice.body).catch(() => {
+        toast(notice.title, { description: notice.body });
+      });
+    }
+  }, [status, notify]);
 
   const statusOf = status ?? null;
   // A report can arrive before the machine has filled every field, so every
@@ -244,15 +333,48 @@ export function DevicePane({
     }
   }
 
+  async function refreshHistory() {
+    try {
+      const page = await api.printHistory();
+      setHistory(page.rows);
+      setCloudNote(page.cloud_note);
+    } catch (err) {
+      setCloudNote(String(err));
+    }
+  }
+
+  useEffect(() => {
+    void refreshHistory();
+  }, []);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .printDefaults()
+      .then((defaults) => {
+        if (live) setPrintOptions(defaults);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [machine]);
+
   // The confirmation is built from the file itself: how many spools the slice
   // really uses, not how many the plate was configured with.
   async function ask() {
     setNote(null);
     try {
-      setTools(await api.sliceTools());
+      const found = await api.sliceTools();
+      setTools(found);
+      setMapping(defaultAmsMapping(found.tools, spools.filter((spool) => spool.bay >= 2).length));
     } catch {
       setTools(null);
+      setMapping([]);
     }
+    const active = plates.find((item) => item.active);
+    setPlateIndex(active?.index ?? 0);
+    setScope("plate");
     setAsking(true);
   }
 
@@ -261,8 +383,38 @@ export function DevicePane({
     setSending(true);
     setNote(null);
     try {
-      const sent = await api.hostSend(bedType);
-      setNote(`sent ${Math.round(sent.bytes / 1024)} kB as ${sent.remote}`);
+      if (scope === "all") {
+        const pending = plates.filter((item) => item.models > 0 && item.sliced !== true);
+        if (pending.length > 0) {
+          if (!onSliceMissing) {
+            setNote("Slice the other plates before sending every plate.");
+            return;
+          }
+          setNote(
+            `Slicing ${pending.length} ${pending.length === 1 ? "plate" : "plates"} before sending`,
+          );
+          const ready = await onSliceMissing();
+          if (!ready) {
+            setNote("Sending stopped because a plate did not slice.");
+            return;
+          }
+        }
+      }
+      const sent = await api.hostSend(bedType, mapping, scope, plateIndex, {
+        timelapse: printOptions?.timelapse,
+        bedLevelling: printOptions?.bedLevelling,
+        flowCali: printOptions?.flowCali,
+        vibrationCali: printOptions?.vibrationCali,
+        useAms: printOptions?.useAms,
+        material: job.material,
+        colour: spoolColour(mapping, spools),
+        nozzle: String(nozzleSize || 0.4),
+      });
+      const waiting = sent.queued
+        ? ` ${sent.queued} more ${sent.queued === 1 ? "plate is" : "plates are"} waiting in the queue.`
+        : "";
+      setNote(`sent ${Math.round(sent.bytes / 1024)} kB as ${sent.remote}.${waiting}`);
+      void refreshHistory();
     } catch (err) {
       setNote(String(err));
     } finally {
@@ -383,6 +535,64 @@ export function DevicePane({
     await startNext();
   }
 
+  async function refreshFiles() {
+    if (!connected) {
+      setFiles([]);
+      return;
+    }
+    try {
+      const rows = await api.hostFiles();
+      setFiles(Array.isArray(rows) ? rows : []);
+      setFilesNote(null);
+    } catch (err) {
+      setFilesNote(String(err));
+    }
+  }
+
+  useEffect(() => {
+    if (connected) void refreshFiles();
+    else setFiles([]);
+    // The list is refreshed on connect and by the button, not on every report.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected]);
+
+  async function downloadFile(file: api.RemoteFile) {
+    setFilesNote(null);
+    try {
+      const destination = await save({ defaultPath: file.name });
+      if (!destination || Array.isArray(destination)) return;
+      await api.hostDownload(file.path, destination);
+      setFilesNote(`Saved ${file.name}`);
+    } catch (err) {
+      setFilesNote(String(err));
+    }
+  }
+
+  async function confirmDelete() {
+    const file = pendingDelete;
+    setPendingDelete(null);
+    if (!file) return;
+    try {
+      await api.hostDelete(file.path);
+      setFilesNote(`Deleted ${file.name}`);
+      await refreshFiles();
+    } catch (err) {
+      setFilesNote(String(err));
+    }
+  }
+
+  async function confirmReprint() {
+    const file = pendingPrint;
+    setPendingPrint(null);
+    if (!file) return;
+    try {
+      await api.hostReprint(file.path, bedType);
+      setFilesNote(`Printing ${file.name} from the printer`);
+    } catch (err) {
+      setFilesNote(String(err));
+    }
+  }
+
   async function control(command: "pause" | "resume" | "stop") {
     setNote(null);
     try {
@@ -429,7 +639,15 @@ export function DevicePane({
         ) : null}
       </section>
 
-      <CloudPanel taskName={plate} />
+      <CloudPanel
+        taskName={plate}
+        options={printOptions ?? undefined}
+        onOptions={setPrintOptions}
+        mapping={mapping}
+        material={job.material}
+        colour={spoolColour(mapping, spools)}
+        nozzle={String(nozzleSize || 0.4)}
+      />
 
       <section className="device-live">
         <div className="device-bar" aria-label="Print progress">
@@ -457,18 +675,35 @@ export function DevicePane({
             title="Print this plate?"
             description={`Print ${job.layers > 0 ? `${job.layers} layers` : "the plate"} for ${clock(job.seconds)} on the ${bedType.replace(/_/g, " ")}.`}
           >
-            {tools && (tools.tools?.length ?? 0) > 1 ? (
-              <p className="device-warn">
-                This slice uses {tools.tools.length} spools ({tools.changes} tool changes)
-                {(tools.usage?.length ?? 0) > 0
-                  ? ` — ${tools.usage
-                      .map((used) => `T${used.tool + 1}:\u00a0${used.metres.toFixed(2)}\u00a0m`)
-                      .join(", ")}`
-                  : ""}
-                . Bambu takes a sliced 3MF with an AMS mapping for a multi-colour plate, and Shale sends
-                plain G-code, so the machine will print this in one colour.
-              </p>
-            ) : null}
+            <SendReview
+              filament={job.material}
+              bedTempC={job.bedTemp}
+              bedType={bedType}
+              onBedType={setBedType}
+              tools={tools}
+              spools={spools}
+              mapping={mapping}
+              onMapping={(tool, tray) =>
+                setMapping((current) => {
+                  const next = current.slice();
+                  while (next.length <= tool) next.push(-1);
+                  next[tool] = tray;
+                  return next;
+                })
+              }
+              plates={plates.map((item) => ({
+                index: item.index,
+                name: item.name,
+                active: item.active,
+                sliced: item.active ? gcodeReady || item.sliced === true : item.sliced === true,
+              }))}
+              scope={scope}
+              onScope={setScope}
+              plateIndex={plateIndex}
+              onPlate={setPlateIndex}
+              options={printOptions ?? undefined}
+              onOptions={setPrintOptions}
+            />
             <div className="device-controls">
               <Button type="button" variant="primary" onClick={send}>
                 Print it
@@ -481,7 +716,7 @@ export function DevicePane({
           <Button
             type="button"
             variant="primary"
-            disabled={!connected || !gcodeReady || sending || printing}
+            disabled={!connected || sending || printing || !(gcodeReady || plates.some((item) => item.sliced))}
             onClick={ask}
           >
             {sending ? "Sending…" : "Send and print"}
@@ -498,6 +733,22 @@ export function DevicePane({
         </div>
         {note ? <p className="device-note">{note}</p> : null}
       </section>
+
+      {(statusOf?.hms?.length ?? 0) > 0 ? (
+        <section className="device-panel" aria-label="Printer messages">
+          <p className="device-label">Printer messages</p>
+          <ul className="device-hms">
+            {statusOf?.hms?.map((alert) => (
+              <li key={alert.code} className={alert.severity === "error" ? "error" : alert.severity}>
+                <p>{alert.message}</p>
+                <a href={alert.wiki} target="_blank" rel="noreferrer">
+                  {alert.code}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="device-panel">
         <p className="device-label">Connection</p>
@@ -547,6 +798,11 @@ export function DevicePane({
               onChange={setBedType}
             />
           </label>
+          {plateWarnings(job.material, bedType, job.bedTemp).map((note) => (
+            <p key={note} className="device-warn" role="status">
+              {note}
+            </p>
+          ))}
         </div>
         <div className="device-controls">
           <Button type="button" variant="secondary" size="sm" disabled={connected} onClick={connect}>
@@ -566,6 +822,12 @@ export function DevicePane({
               : "The printer must be in LAN mode with the access code enabled"}
           </span>
         </div>
+        <SwitchRow checked={notify} onChange={setNotify}>
+          Desktop notifications
+        </SwitchRow>
+        <p className="device-note">
+          A toast when a print finishes, fails, pauses, or runs out of filament. This printer only.
+        </p>
         <p className="device-note">
           The access code is kept in the Windows credential manager, never in the repository. The link is read-write:
           send, pause, resume and stop all go to the machine over its own local interface.
@@ -649,6 +911,120 @@ export function DevicePane({
             Clear
           </Button>
         </div>
+      </section>
+
+      <section className="device-queue">
+        <p className="device-label">On the printer</p>
+        {files.length === 0 ? (
+          <p className="device-note">
+            {connected
+              ? "Nothing stored on the printer yet."
+              : "Connect to see files on the printer's storage."}
+          </p>
+        ) : (
+          <ul className="device-queue-list device-files">
+            {files.map((file) => (
+              <li key={file.path}>
+                <span className="queue-name">{file.name}</span>
+                <span className="history-meta">
+                  {fileKind(file.kind)} · {file.bytes >= 1_048_576
+                    ? `${(file.bytes / 1_048_576).toFixed(1)} MB`
+                    : `${Math.max(1, Math.round(file.bytes / 1024))} kB`}
+                </span>
+                <span className="device-file-actions">
+                  <button type="button" onClick={() => void downloadFile(file)}>
+                    Download
+                  </button>
+                  {file.printable ? (
+                    <button type="button" onClick={() => setPendingPrint(file)}>
+                      Print
+                    </button>
+                  ) : null}
+                  <button type="button" onClick={() => setPendingDelete(file)}>
+                    Delete
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {filesNote ? <p className="device-note">{filesNote}</p> : null}
+        <Dialog
+          open={pendingDelete != null}
+          onOpenChange={(open) => {
+            if (!open) setPendingDelete(null);
+          }}
+          title="Delete this file?"
+          description={
+            pendingDelete
+              ? `${pendingDelete.name} will be removed from the printer. This cannot be undone.`
+              : ""
+          }
+        >
+          <div className="device-controls">
+            <Button type="button" variant="destructive" onClick={() => void confirmDelete()}>
+              Delete it
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setPendingDelete(null)}>
+              Cancel
+            </Button>
+          </div>
+        </Dialog>
+        <Dialog
+          open={pendingPrint != null}
+          onOpenChange={(open) => {
+            if (!open) setPendingPrint(null);
+          }}
+          title="Print this file?"
+          description={
+            pendingPrint
+              ? `${pendingPrint.name} is already on the printer. Printing it starts the job. Nothing is uploaded.`
+              : ""
+          }
+        >
+          <div className="device-controls">
+            <Button type="button" variant="primary" onClick={() => void confirmReprint()}>
+              Print it
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setPendingPrint(null)}>
+              Cancel
+            </Button>
+          </div>
+        </Dialog>
+        <div className="device-controls">
+          <Button type="button" variant="secondary" size="sm" disabled={!connected} onClick={() => void refreshFiles()}>
+            Refresh
+          </Button>
+        </div>
+      </section>
+
+      <section className="device-queue device-history">
+        <p className="device-label">History</p>
+        {history.length === 0 ? (
+          <p className="device-note">No prints from this computer yet.</p>
+        ) : (
+          <ol className="device-queue-list">
+            {history.map((row, index) => (
+              <li key={`${row.source}-${row.name}-${row.at_ms}-${index}`}>
+                <span className="queue-name">{row.name}</span>
+                <span className="history-meta">
+                  {row.source}
+                  {row.status ? ` · ${row.status}` : ""}
+                  {row.detail ? ` · ${row.detail}` : ""}
+                  {row.at_ms
+                    ? ` · ${new Date(row.at_ms).toLocaleString("en-GB", {
+                        day: "numeric",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}`
+                    : ""}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+        {cloudNote ? <p className="device-note">{cloudNote}</p> : null}
       </section>
 
       <section className="device-grid">

@@ -10,6 +10,8 @@ Shale is a **Bambu Lab–focused 3D-printing slicer** built around an unmodified
 
 Version **0.1.3** is the first public release on `main`: Bambu profiles from Bambu Studio, Cura 5.13 resource data, machine-specific start/end G-code, LAN device control, and agent-facing slice tools.
 
+Work that has not reached `main` yet is listed in [CHANGELOG.md](CHANGELOG.md).
+
 ## Download
 
 Pre-built binaries are on GitHub Releases:

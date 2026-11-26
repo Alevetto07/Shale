@@ -218,13 +218,70 @@ pub fn cloud_send(
     app: tauri::State<crate::AppState>,
     dev_id: String,
     task_name: String,
+    ams_mapping: Option<Vec<i32>>,
+    timelapse: Option<bool>,
+    bed_levelling: Option<bool>,
+    flow_cali: Option<bool>,
+    vibration_cali: Option<bool>,
+    use_ams: Option<bool>,
+    material: Option<String>,
+    colour: Option<String>,
+    nozzle: Option<String>,
 ) -> Result<String, String> {
     let path = crate::last_gcode_path(&app)?
         .ok_or_else(|| "there is nothing to send: slice the plate first".to_string())?;
     let gcode = std::fs::read(&path)
         .map_err(|err| format!("cannot read the G-code at {}: {err}", path.display()))?;
+    let (printer_id, solids) = {
+        let inner = crate::lock(&app)?;
+        let solids = crate::preview_for_path(
+            &inner,
+            &path,
+            colour.as_deref().unwrap_or("#FFFFFF"),
+        );
+        (inner.printer_id.clone().unwrap_or_default(), solids)
+    };
+    let mapping = ams_mapping.unwrap_or_default();
+    if !shale_host::ams_mapping_ok(&mapping) {
+        return Err("Each tool must map to the external spool or an AMS tray.".into());
+    }
+    let options = shale_host::print_options::resolve(
+        &printer_id,
+        &shale_host::print_options::PartialOptions {
+            timelapse,
+            bed_levelling,
+            flow_cali,
+            vibration_cali,
+            use_ams,
+        },
+    );
+    let mut plate = shale_host::gcode3mf::plate_from_gcode(
+        &gcode,
+        &task_name,
+        shale_host::print_options::model_id_for(&printer_id),
+        nozzle.as_deref().unwrap_or("0.4"),
+        material.as_deref().unwrap_or(""),
+        colour.as_deref().unwrap_or("#FFFFFF"),
+        &mapping,
+        "",
+    );
+    plate.index = 1;
+    plate.solids = solids;
+    let mapping = plate.ams_mapping.clone();
+    let bed_on = options.bed_levelling && !options.automatic_bed;
+    let flow_on = options.flow_available && options.flow_cali && !options.automatic_flow;
+    let task = serde_json::json!({
+        "ams_mapping": mapping,
+        "use_ams": shale_host::print_options::use_ams(&options, &mapping),
+        "timelapse": options.timelapse,
+        "bed_leveling": bed_on,
+        "bed_levelling": bed_on,
+        "flow_cali": flow_on,
+        "vibration_cali": options.vibration_available && options.vibration_cali,
+    });
+    let archive = shale_host::gcode3mf::write(&[plate])?;
     let mut cloud = lock(&state)?;
     cloud
-        .send_print(&dev_id, &task_name, &gcode)
+        .send_print_task(&dev_id, &task_name, "plate.gcode.3mf", &archive, &task)
         .map_err(|err| err.to_string())
 }
