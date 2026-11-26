@@ -86,6 +86,7 @@ acknowledged.
   sliced 3MF that carries the plate's G-code, an `md5`, and an `ams_mapping`
   array — that needs a sliced-3MF writer, which Shale does not have yet.
 - **Camera.** The A1 and P1 series are JPEG on port 6000. The P2S is RTSPS
-  on port 322. Shale decodes that H.264 and stores a JPEG. See [camera.md](camera.md).
+  on port 322. Shale decodes that H.264 with Cisco's OpenH264 binary,
+  downloaded on first use, and stores a JPEG. See [camera.md](camera.md).
 - **No firmware or account calls.** Those go through Bambu's cloud, not the LAN.
 - **One printer at a time.** A second connect closes the first.

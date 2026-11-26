@@ -9,7 +9,9 @@ The Device pane can show the printer's camera. Nothing in this path starts a pri
 | A1, A1 mini, P1P, P1S | JPEG over TLS. An 80-byte packet (`bblp` and the LAN access code), then a 16-byte header and a JPEG. | 6000 |
 | P2S, X1, X1C, X1E, H2, H2D, H2S | RTSPS, `rtsps://<ip>:322/streaming/live/1`, user `bblp`, the same access code. The picture is H.264. | 322 |
 
-The P2S does not speak the port-6000 JPEG protocol. Shale opens port 322, completes the RTSP handshake, and decodes the H.264 access units with OpenH264 compiled from its BSD-2 source. Each decoded picture is stored as a JPEG, so the overlay, the failure watch, a snapshot, and the plate check use the same path as an A1 frame. A packet that is not a picture yet is skipped. LAN-only live view has to be on, or port 322 closes immediately. Cisco's patent promise covers only the official binary downloaded from Cisco at install time; this build does not ship that binary. See THIRD-PARTY-NOTICES.md.
+The P2S does not speak the port-6000 JPEG protocol. Shale opens port 322, completes the RTSP handshake, and decodes the H.264 access units with Cisco's official OpenH264 binary. The first time it is needed, Shale downloads that binary for this computer, checks its SHA-256 against the sums the OpenH264 bindings already trust, and stores it in the app data directory. It is not part of the installer. Each decoded picture is stored as a JPEG, so the overlay, the failure watch, a snapshot, and the plate check use the same path as an A1 frame. A packet that is not a picture yet is skipped. LAN-only live view has to be on, or port 322 closes immediately.
+
+The camera panel credits the codec with the sentence Cisco's binary licence requires: "OpenH264 Video Codec provided by Cisco Systems, Inc." The `openh264-source` build feature compiles OpenH264 from source instead. Leave it off in a release build. Cisco's patent promise does not cover that build. See THIRD-PARTY-NOTICES.md.
 
 An unknown printer name stays on the JPEG socket. A wrong guess fails as a camera error.
 
@@ -25,9 +27,13 @@ The watch samples a frame every few seconds. The default is a small grid detecto
 
 The detector control can switch to the Obico failure model. That file is about 193 MB, AGPL-3.0, and it is not in the repository. **Download the Obico failure model** fetches it into the app data directory, shows the progress, and keeps it only when the SHA-256 matches. Until that finishes, and whenever you press **Use the built-in detector**, the grid detector is what runs. The model’s only class is `failure`. A frame it marks is treated as spaghetti for the notice and the optional pause.
 
-Pause is off. Opting in is per printer, remembered on this computer, and the pane sends the pause only after that opt-in and a finding that has held. The MCP tools do not pause, do not move a printer, and do not download the model.
+Pause is off. Opting in is per printer, remembered on this computer, and the pane sends the pause only after that opt-in and a finding that has held. The last few frames before a finding that holds are kept with the warning, and the queue shows them, so you can see what the detector was looking at. The MCP tools do not pause, do not move a printer, and do not download the model or Cisco's library.
 
 The address and the checksum are in `THIRD-PARTY-NOTICES.md`. Tests use a loopback file and never request the release. The sample images the grid detector is checked against are synthetic pictures generated in the test, not photographs.
+
+## Timelapse
+
+**Record this print** is off until you turn it on for the job in front of you. Choose a folder first. While it is on, Shale keeps one frame each time the printer reports a new layer, and otherwise one frame on the interval you set. **Save the timelapse** writes a JPEG sequence and an animated preview into that folder. When Cisco's OpenH264 library is already installed, it also writes an MP4. The save does not download the library, and it does not move the printer. At most 180 frames are kept. The catalogue cache is not a valid folder.
 
 ## Empty plate
 

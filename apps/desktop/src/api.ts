@@ -409,6 +409,25 @@ export interface ModelStatus {
   message: string;
 }
 
+/** Cisco's binary licence requires this sentence wherever the codec is used. */
+export const OPENH264_CREDIT = "OpenH264 Video Codec provided by Cisco Systems, Inc.";
+
+export interface CodecStatus {
+  phase: string;
+  ready: boolean;
+  fromSource: boolean;
+  credit: string;
+  message: string;
+}
+
+export interface TimelapseSaved {
+  frames: number;
+  directory: string;
+  preview: string;
+  video: string | null;
+  note: string;
+}
+
 export interface RemovalPreview {
   offered: boolean;
   accepted: boolean;
@@ -438,6 +457,14 @@ export const cameraWatch = (args: {
 }) => invoke<WatchView>("camera_watch", args);
 export const cameraModelStatus = () => invoke<ModelStatus>("camera_model_status");
 export const cameraModelDownload = () => invoke<ModelStatus>("camera_model_download");
+export const cameraCodecStatus = () => invoke<CodecStatus>("camera_codec_status");
+export const cameraCodecDownload = () => invoke<CodecStatus>("camera_codec_download");
+export const cameraTimelapseSave = (args: {
+  folder: string;
+  name: string;
+  frames: string[];
+  intervalMs: number;
+}) => invoke<TimelapseSaved>("camera_timelapse_save", args);
 export const cameraCloudStill = (devId: string) =>
   invoke<string>("camera_cloud_still", { devId });
 export const cameraSaveReference = (serial: string) =>

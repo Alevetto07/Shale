@@ -2349,6 +2349,16 @@ select {
   padding: 0.1rem 0.25rem;
 }
 .camera-watch { display: flex; flex-direction: column; gap: 0.45rem; }
+.camera-credit { margin: 0; }
+.camera-snaps { display: flex; flex-direction: column; gap: 0.35rem; }
+.camera-snap-row { display: flex; gap: 0.35rem; overflow-x: auto; }
+.camera-snap-row img {
+  width: 4.6rem;
+  height: 2.6rem;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
 .camera-removal { display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.7rem; }
 .camera-gcode pre {
   margin: 0.35rem 0 0;

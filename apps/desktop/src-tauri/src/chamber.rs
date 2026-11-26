@@ -70,6 +70,7 @@ fn camera_slot(
 
 #[tauri::command]
 pub fn camera_start(
+    app: AppHandle,
     printer: State<PrinterHost>,
     host: String,
     model: String,
@@ -80,7 +81,8 @@ pub fn camera_start(
     if let Some(old) = slot.take() {
         old.stop();
     }
-    let session = camera::CameraSession::start(target);
+    let library = codec_library(&app);
+    let session = camera::CameraSession::start_with(target, library);
     let status = session.status();
     *slot = Some(session);
     Ok(view_of(status))
@@ -117,6 +119,7 @@ pub fn camera_frame(printer: State<PrinterHost>) -> Result<Option<String>, Strin
 /// otherwise opens the socket just long enough for a single picture.
 #[tauri::command]
 pub fn camera_snapshot(
+    app: AppHandle,
     printer: State<PrinterHost>,
     host: String,
     model: String,
@@ -126,8 +129,9 @@ pub fn camera_snapshot(
         return Ok(jpeg);
     }
     let target = target(host, model, code)?;
-    let jpeg =
-        camera::snapshot_jpeg(&target, Duration::from_secs(8)).map_err(|err| err.message())?;
+    let library = codec_library(&app);
+    let jpeg = camera::snapshot_jpeg_with(&target, Duration::from_secs(8), library.as_deref())
+        .map_err(|err| err.message())?;
     Ok(camera::base64(&jpeg))
 }
 
@@ -284,6 +288,15 @@ fn model_progress() -> &'static Mutex<ModelProgress> {
     &PROGRESS
 }
 
+fn codec_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(config_dir(app)?.join("openh264"))
+}
+
+fn codec_library(app: &AppHandle) -> Option<std::path::PathBuf> {
+    let dir = codec_dir(app).ok()?;
+    camera::installed_library(&dir)
+}
+
 fn model_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(config_dir(app)?.join("failure-models").join(camera::MODEL_FILE))
 }
@@ -380,6 +393,181 @@ pub fn camera_model_download(app: AppHandle) -> Result<ModelStatus, String> {
         }
     });
     Ok(status_of(&path))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodecStatus {
+    pub phase: String,
+    pub ready: bool,
+    pub from_source: bool,
+    pub credit: String,
+    pub message: String,
+}
+
+struct CodecProgress {
+    phase: String,
+    message: String,
+}
+
+fn codec_progress() -> &'static Mutex<CodecProgress> {
+    static PROGRESS: Mutex<CodecProgress> = Mutex::new(CodecProgress {
+        phase: String::new(),
+        message: String::new(),
+    });
+    &PROGRESS
+}
+
+fn codec_status_of(app: &AppHandle) -> Result<CodecStatus, String> {
+    let credit = camera::OPENH264_CREDIT.to_string();
+    if camera::codec_from_source() {
+        return Ok(CodecStatus {
+            phase: "ready".into(),
+            ready: true,
+            from_source: true,
+            credit,
+            message: "This build compiles OpenH264 from source. Cisco's patent promise does not cover that build.".into(),
+        });
+    }
+    let dir = codec_dir(app)?;
+    let path = camera::codec_library_path(&dir)?;
+    let asset = camera::codec_asset()?;
+    if camera::codec_is_verified(&path, asset.sha256) {
+        return Ok(CodecStatus {
+            phase: "ready".into(),
+            ready: true,
+            from_source: false,
+            credit,
+            message: "Cisco's OpenH264 library is ready.".into(),
+        });
+    }
+    let progress = codec_progress()
+        .lock()
+        .map_err(|_| "the codec lock is poisoned".to_string())?;
+    let phase = if progress.phase.is_empty() {
+        "missing"
+    } else {
+        progress.phase.as_str()
+    };
+    let message = if progress.message.is_empty() {
+        "Cisco's OpenH264 library is not installed yet. Shale downloads it on first use."
+    } else {
+        progress.message.as_str()
+    };
+    Ok(CodecStatus {
+        phase: phase.into(),
+        ready: false,
+        from_source: false,
+        credit,
+        message: message.into(),
+    })
+}
+
+#[tauri::command]
+pub fn camera_codec_status(app: AppHandle) -> Result<CodecStatus, String> {
+    codec_status_of(&app)
+}
+
+/// Download Cisco's binary into the app data directory. A test does not call
+/// this with Cisco's URL. A second click while a download is running reports
+/// the same progress instead of starting another copy.
+#[tauri::command]
+pub fn camera_codec_download(app: AppHandle) -> Result<CodecStatus, String> {
+    if camera::codec_from_source() {
+        return codec_status_of(&app);
+    }
+    let dir = codec_dir(&app)?;
+    let dest = camera::codec_library_path(&dir)?;
+    let asset = camera::codec_asset()?;
+    if camera::codec_is_verified(&dest, asset.sha256) {
+        return codec_status_of(&app);
+    }
+    {
+        let progress = codec_progress()
+            .lock()
+            .map_err(|_| "the codec lock is poisoned".to_string())?;
+        if progress.phase == "downloading" {
+            drop(progress);
+            return codec_status_of(&app);
+        }
+    }
+    {
+        let mut progress = codec_progress()
+            .lock()
+            .map_err(|_| "the codec lock is poisoned".to_string())?;
+        progress.phase = "downloading".into();
+        progress.message = "Downloading OpenH264 from Cisco.".into();
+    }
+    let url = camera::codec_download_url(&asset);
+    let sha = asset.sha256.to_string();
+    thread::spawn(move || {
+        let result = camera::fetch_codec(&url, &dest, &sha, |_, _| {});
+        if let Ok(mut progress) = codec_progress().lock() {
+            match result {
+                Ok(()) => {
+                    progress.phase = "ready".into();
+                    progress.message = "Cisco's OpenH264 library is ready.".into();
+                }
+                Err(err) => {
+                    progress.phase = "failed".into();
+                    progress.message = err;
+                }
+            }
+        }
+    });
+    codec_status_of(&app)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelapseView {
+    pub frames: usize,
+    pub directory: String,
+    pub preview: String,
+    pub video: Option<String>,
+    pub note: String,
+}
+
+/// Write the frames the window has kept. The folder is the one the user chose.
+/// The catalogue cache is refused. The MP4 is written only when Cisco's
+/// library is already installed; this command does not download it.
+#[tauri::command]
+pub fn camera_timelapse_save(
+    app: AppHandle,
+    folder: String,
+    name: String,
+    frames: Vec<String>,
+    interval_ms: u32,
+) -> Result<TimelapseView, String> {
+    if frames.is_empty() {
+        return Err("There are no frames to save.".into());
+    }
+    if frames.len() > 180 {
+        return Err("A timelapse keeps at most 180 frames.".into());
+    }
+    let mut jpegs = Vec::with_capacity(frames.len());
+    for frame in &frames {
+        let raw = frame
+            .split_once(',')
+            .map(|(_, body)| body)
+            .unwrap_or(frame.as_str());
+        jpegs.push(camera::base64_decode(raw)?);
+    }
+    let library = codec_library(&app);
+    let saved = camera::save_timelapse(
+        std::path::Path::new(&folder),
+        &name,
+        &jpegs,
+        library.as_deref(),
+        interval_ms,
+    )?;
+    Ok(TimelapseView {
+        frames: saved.frames,
+        directory: saved.directory.display().to_string(),
+        preview: saved.preview.display().to_string(),
+        video: saved.video.map(|path| path.display().to_string()),
+        note: saved.note,
+    })
 }
 
 fn plate_file(app: &AppHandle, serial: &str) -> Result<std::path::PathBuf, String> {

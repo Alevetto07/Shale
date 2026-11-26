@@ -369,7 +369,7 @@ Use this for one JPEG from the chamber.
 { "host": "192.168.1.42", "model": "bambu_lab_a1", "code": "12345678" }
 ```
 
-`model` chooses the protocol. `bambu_lab_a1` and the P1 series are JPEG over TLS on port 6000. `bambu_lab_p2s` (and X1, H2) is RTSPS on port 322. An H.264 stream is decoded and returned as a JPEG. A frame that does not decode returns an error that says so, rather than a made-up picture. The access code is not repeated in the answer. The result is an image, plus a short line naming the path and the port.
+`model` chooses the protocol. `bambu_lab_a1` and the P1 series are JPEG over TLS on port 6000. `bambu_lab_p2s` (and X1, H2) is RTSPS on port 322. An H.264 stream is decoded with Cisco's OpenH264 binary, when that library has already been downloaded by the app, and returned as a JPEG. This tool does not download the library. A frame that does not decode returns an error that says so, rather than a made-up picture. The access code is not repeated in the answer. The result is an image, plus a short line naming the path and the port.
 
 A wrong access code, LAN-only live view switched off, or a camera switched off on the printer, each come back as an error that says which one it is.
 

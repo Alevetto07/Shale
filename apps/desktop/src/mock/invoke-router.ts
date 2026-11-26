@@ -32,9 +32,13 @@ function chamberBase64(): Promise<string> {
     });
 }
 
+function cameraQuery(name: string): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get(name);
+}
+
 function cameraFault(): boolean {
-  if (typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).get("camera") === "fault";
+  return cameraQuery("camera") === "fault";
 }
 
 const flags = readMockFlags();
@@ -254,14 +258,38 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
       return {
         kind: "spaghetti",
         confidence: 0.82,
-        alert: false,
-        action: "none",
+        alert: cameraQuery("camera") === "alert",
+        action: cameraQuery("camera") === "alert" ? "notify" : "none",
         boxes: [{ x: 0.22, y: 0.3, w: 0.28, h: 0.22, label: "spaghetti", confidence: 0.82 }],
         heatmap: Array.from({ length: 12 * 9 }, (_, index) => (index % 7 === 0 ? 0.45 : 0.05)),
         heatmapCols: 12,
         heatmapRows: 9,
         note: "Stringy strands on the part. This may be spaghetti.",
         detector: "builtin",
+      } as T;
+    case "camera_codec_status":
+      return {
+        phase: "missing",
+        ready: false,
+        fromSource: false,
+        credit: "OpenH264 Video Codec provided by Cisco Systems, Inc.",
+        message: "Cisco's OpenH264 library is not installed yet. Shale downloads it on first use.",
+      } as T;
+    case "camera_codec_download":
+      return {
+        phase: "missing",
+        ready: false,
+        fromSource: false,
+        credit: "OpenH264 Video Codec provided by Cisco Systems, Inc.",
+        message: "This preview does not download Cisco's library.",
+      } as T;
+    case "camera_timelapse_save":
+      return {
+        frames: Array.isArray(args.frames) ? args.frames.length : 0,
+        directory: String(args.folder ?? ""),
+        preview: `${String(args.folder ?? "")}/preview.gif`,
+        video: null,
+        note: "Saved the JPEG sequence and an animated preview. The MP4 needs Cisco's OpenH264 library, which this preview does not download.",
       } as T;
     case "camera_model_status":
     case "camera_model_download":
