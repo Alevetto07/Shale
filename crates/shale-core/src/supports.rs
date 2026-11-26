@@ -341,6 +341,20 @@ pub fn modifier_settings(role: RegionRole) -> Vec<(String, String)> {
     }
 }
 
+/// A solid box in plate coordinates. Support painting uses one as a modifier.
+pub fn box_mesh(min: [f64; 3], max: [f64; 3]) -> TriangleMesh {
+    let mut mesh = TriangleMesh {
+        vertices: Vec::new(),
+        triangles: Vec::new(),
+    };
+    append_box(
+        &mut mesh,
+        [min[0] as f32, min[1] as f32, min[2] as f32],
+        [max[0] as f32, max[1] as f32, max[2] as f32],
+    );
+    mesh
+}
+
 pub fn region_mesh(region: &SupportRegion) -> TriangleMesh {
     let mut mesh = TriangleMesh {
         vertices: Vec::new(),

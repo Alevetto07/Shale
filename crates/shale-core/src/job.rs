@@ -525,6 +525,41 @@ pub fn slice(
     output_path: PathBuf,
     on_progress: &mut dyn FnMut(EngineProgress),
 ) -> Result<SliceOutcome, Error> {
+    slice_with_boxes(
+        catalog,
+        engine,
+        printer_id,
+        variant_name,
+        quality_type,
+        materials,
+        settings,
+        models,
+        instructions,
+        support,
+        painted,
+        &[],
+        output_path,
+        on_progress,
+    )
+}
+
+/// [`slice`], plus boxes drawn on the plate as enforcer or blocker volumes.
+pub fn slice_with_boxes(
+    catalog: &Catalog,
+    engine: &dyn SlicingEngine,
+    printer_id: &str,
+    variant_name: Option<String>,
+    quality_type: Option<String>,
+    materials: &[Option<String>],
+    settings: UserSettings,
+    models: &[PlacedModel],
+    instructions: &[CustomInstruction],
+    support: Option<&SupportPlan>,
+    painted: &[paint::PaintedPatch],
+    boxes: &[paint::SupportBox],
+    output_path: PathBuf,
+    on_progress: &mut dyn FnMut(EngineProgress),
+) -> Result<SliceOutcome, Error> {
     if models.is_empty() {
         return Err(Error::message("import a model before slicing"));
     }
@@ -810,6 +845,39 @@ pub fn slice(
         };
         let path = model_dir.join(format!("painted-{}-{}.stl", patch.model, role.name()));
         mesh::write_binary_stl(&path, &prisms)?;
+        modifiers.push(EngineMesh {
+            path,
+            settings: supports::modifier_settings(role),
+            extruder: None,
+        });
+    }
+    let box_enforce = boxes
+        .iter()
+        .any(|region| region.role == paint::PaintRole::Enforce);
+    if box_enforce {
+        force_setting(&mut resolved, "support_enable", "false");
+        force_setting(&mut resolved, "support_meshes_present", "true");
+    }
+    for (index, region) in boxes.iter().enumerate() {
+        let Some((min, max)) = paint::normalise_box(region.min, region.max) else {
+            continue;
+        };
+        let mut mesh = supports::box_mesh(min, max);
+        if mesh.triangles.is_empty() {
+            continue;
+        }
+        mesh::to_engine_space(
+            &mut mesh,
+            resolved.summary.machine_width,
+            resolved.summary.machine_depth,
+            resolved.summary.machine_center_is_zero,
+        );
+        let role = match region.role {
+            paint::PaintRole::Enforce => supports::RegionRole::Enforce,
+            paint::PaintRole::Block => supports::RegionRole::Block,
+        };
+        let path = model_dir.join(format!("support-box-{index}-{}.stl", role.name()));
+        mesh::write_binary_stl(&path, &mesh)?;
         modifiers.push(EngineMesh {
             path,
             settings: supports::modifier_settings(role),

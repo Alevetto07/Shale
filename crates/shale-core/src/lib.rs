@@ -66,7 +66,7 @@ pub use engine::{
 pub use error::Error;
 pub use gcode::Toolpath;
 pub use instructions::{CustomInstruction, GcodeFlavour};
-pub use job::{compare_support, slice, PlacedModel, SliceOutcome};
+pub use job::{compare_support, slice, slice_with_boxes, PlacedModel, SliceOutcome};
 pub use mesh::{
     apply_transform, assign_plates, bake, drop_to_bed, load_build_objects, load_mesh,
     load_mesh_reporting, load_mesh_with, load_named_bytes, place_assembly, place_on_bed,

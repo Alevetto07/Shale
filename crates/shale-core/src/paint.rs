@@ -73,6 +73,35 @@ pub enum PaintRole {
     Block,
 }
 
+/// A box drawn on the plate. The engine receives it as a modifier volume, the
+/// same way a painted face becomes a column: an enforcer is a `support_mesh`,
+/// a blocker is an `anti_overhang_mesh`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SupportBox {
+    pub min: [f64; 3],
+    pub max: [f64; 3],
+    pub role: PaintRole,
+}
+
+/// Order the corners and reject a box too thin to be a volume. The floor is
+/// kept on or above the bed.
+pub fn normalise_box(min: [f64; 3], max: [f64; 3]) -> Option<([f64; 3], [f64; 3])> {
+    let mut lo = min;
+    let mut hi = max;
+    for axis in 0..3 {
+        if lo[axis] > hi[axis] {
+            std::mem::swap(&mut lo[axis], &mut hi[axis]);
+        }
+    }
+    if lo[2] < 0.0 {
+        lo[2] = 0.0;
+    }
+    if hi[0] - lo[0] < 0.4 || hi[1] - lo[1] < 0.4 || hi[2] - lo[2] < 0.2 {
+        return None;
+    }
+    Some((lo, hi))
+}
+
 fn normal(mesh: &TriangleMesh, index: usize) -> [f64; 3] {
     let [a, b, c] = triangle_points(mesh, index);
     let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
@@ -595,5 +624,23 @@ mod tests {
         );
         // And a brush pressed outside the part paints nothing at all.
         assert!(brush_stroke(&mesh, [40.0, 40.0, 0.0], reach).is_empty());
+    }
+
+    #[test]
+    fn a_support_box_is_a_volume_and_a_sliver_is_refused() {
+        let (lo, hi) = normalise_box([10.0, 4.0, -1.0], [2.0, 12.0, 8.0]).unwrap();
+        assert_eq!(lo, [2.0, 4.0, 0.0]);
+        assert_eq!(hi, [10.0, 12.0, 8.0]);
+        assert!(normalise_box([0.0, 0.0, 0.0], [0.1, 8.0, 8.0]).is_none());
+        let mesh = crate::supports::box_mesh(lo, hi);
+        assert_eq!(mesh.triangles.len(), 12);
+        let enforce = crate::supports::modifier_settings(crate::supports::RegionRole::Enforce);
+        let block = crate::supports::modifier_settings(crate::supports::RegionRole::Block);
+        assert!(enforce
+            .iter()
+            .any(|(key, value)| key == "support_mesh" && value == "true"));
+        assert!(block
+            .iter()
+            .any(|(key, value)| key == "anti_overhang_mesh" && value == "true"));
     }
 }
