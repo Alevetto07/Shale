@@ -52,6 +52,8 @@ impl SlicingEngine for ArcusEngine {
         if request.models.is_empty() {
             return Err(Error::Engine("nothing to slice".into()));
         }
+        #[cfg(test)]
+        let _engine_test = super::cli::engine_test_guard();
         if let Some(parent) = request.output_gcode.parent() {
             std::fs::create_dir_all(parent)?;
         }

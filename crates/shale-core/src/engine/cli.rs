@@ -173,6 +173,10 @@ impl SlicingEngine for CliEngine {
         if request.models.is_empty() {
             return Err(Error::Engine("nothing to slice".into()));
         }
+        // Unit tests share this process. Hold the engine lock for the whole
+        // run so a cancel test cannot kill this CuraEngine.
+        #[cfg(test)]
+        let _engine_test = engine_test_guard();
         let output_gcode = absolutize_path(&request.output_gcode)?;
         if let Some(parent) = output_gcode.parent() {
             fs::create_dir_all(parent)?;
@@ -805,6 +809,18 @@ fn export_fraction(layers: u32, estimated: u32) -> f32 {
 static ENGINE_CANCEL: AtomicBool = AtomicBool::new(false);
 static ENGINE_PIDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
+/// Unit tests run in one process. `cancel_engine_children` stops every
+/// registered engine, so a cancel test and a real slice must not overlap.
+#[cfg(test)]
+static ENGINE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn engine_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    ENGINE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Stop every CuraEngine this process started. A later slice calls
 /// [`clear_engine_cancel`] first.
 pub fn cancel_engine_children() {
@@ -1155,6 +1171,14 @@ mod export_tests {
 
     #[test]
     fn cancelling_stops_a_registered_child() {
+        let _lock = super::engine_test_guard();
+        struct ResetCancel;
+        impl Drop for ResetCancel {
+            fn drop(&mut self) {
+                clear_engine_cancel();
+            }
+        }
+        let _reset = ResetCancel;
         let mut command = if cfg!(windows) {
             let mut command = Command::new("ping");
             command.args(["-n", "40", "127.0.0.1"]);
