@@ -106,6 +106,11 @@ struct PlateStash {
     models: Vec<LoadedModel>,
     support: Option<SupportPlan>,
     support_model_id: Option<u32>,
+    /// The slice belongs to the plate. Switching plates parks it here and
+    /// brings it back, so a second plate can be sent without slicing again.
+    gcode_path: Option<PathBuf>,
+    toolpath: Option<Toolpath>,
+    nonplanar_view: Option<nonplanar::NonplanarView>,
 }
 
 struct LoadedModel {
@@ -2935,6 +2940,18 @@ fn preview_all(state: State<AppState>) -> Result<Vec<PreviewPath>, String> {
     Ok(paths)
 }
 
+/// Time and filament for each feature in the sliced file, for the preview legend.
+#[tauri::command]
+fn feature_breakdown(state: State<AppState>) -> Result<Vec<shale_core::FeatureUse>, String> {
+    let inner = lock(&state)?;
+    let Some(path) = &inner.gcode_path else {
+        return Ok(Vec::new());
+    };
+    let text = fs::read_to_string(path)
+        .map_err(|err| format!("Could not read the slice: {err}"))?;
+    Ok(shale_core::features_from_gcode(&text))
+}
+
 /// Whether this printer has a head envelope, so the panel can say so before a slice.
 #[tauri::command]
 fn nonplanar_supported(printer_id: String) -> bool {
@@ -3266,12 +3283,163 @@ fn stored_pin(serial: &str, host: &str) -> Option<shale_host::Pin> {
     shale_host::parse_hex(&stored)
 }
 
+fn remember_send(name: &str, bed_type: &str, remote: &str, bytes: u64) {
+    let path = shale_core::config_dir().join("print-history.json");
+    let _ = shale_host::history::append(
+        &path,
+        shale_host::history::LocalSend {
+            at_ms: shale_core::now_ms() as i64,
+            name: name.to_string(),
+            bed_type: bed_type.to_string(),
+            remote: remote.to_string(),
+            bytes,
+        },
+    );
+}
+
+fn bed_label(bed_type: &str) -> String {
+    match bed_type {
+        "textured_plate" => "Textured PEI".to_string(),
+        "smooth_plate" => "Smooth PEI".to_string(),
+        "engineering_plate" => "Engineering".to_string(),
+        "cool_plate" => "Cool plate".to_string(),
+        other => other.replace('_', " "),
+    }
+}
+
+struct PlateSend {
+    index: usize,
+    name: String,
+    path: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+struct SendPlan {
+    now: PathBuf,
+    now_name: String,
+    queue: Vec<(String, PathBuf)>,
+}
+
+fn plate_sends(inner: &Inner) -> Vec<PlateSend> {
+    inner
+        .plates
+        .iter()
+        .enumerate()
+        .map(|(index, plate)| {
+            let path = if index == inner.active_plate {
+                inner.gcode_path.clone()
+            } else {
+                plate.gcode_path.clone()
+            };
+            let name = if plate.name.trim().is_empty() {
+                format!("plate {}", index + 1)
+            } else {
+                plate.name.clone()
+            };
+            PlateSend { index, name, path }
+        })
+        .collect()
+}
+
+/// Which file prints now, and which files wait in the queue.
+///
+/// "plate" sends one plate. "all" sends the plate on screen now and queues
+/// the rest, and it refuses while any plate has not been sliced.
+fn plan_send(
+    plates: &[PlateSend],
+    active: usize,
+    scope: &str,
+    chosen: Option<usize>,
+) -> Result<SendPlan, String> {
+    if plates.is_empty() {
+        return Err("There is no plate to send.".into());
+    }
+    if scope == "all" {
+        let missing: Vec<&str> = plates
+            .iter()
+            .filter(|plate| plate.path.is_none())
+            .map(|plate| plate.name.as_str())
+            .collect();
+        if !missing.is_empty() {
+            return Err(format!("Slice these plates first: {}.", missing.join(", ")));
+        }
+        let start = plates
+            .iter()
+            .find(|plate| plate.index == active)
+            .or_else(|| plates.first())
+            .ok_or_else(|| "There is no plate to send.".to_string())?;
+        let path = start
+            .path
+            .clone()
+            .ok_or_else(|| "Slice the plate first: there is no G-code to send.".to_string())?;
+        let queue = plates
+            .iter()
+            .filter(|plate| plate.index != start.index)
+            .filter_map(|plate| plate.path.clone().map(|path| (plate.name.clone(), path)))
+            .collect();
+        return Ok(SendPlan {
+            now: path,
+            now_name: start.name.clone(),
+            queue,
+        });
+    }
+    let index = chosen.unwrap_or(active);
+    let plate = plates.iter().find(|plate| plate.index == index).ok_or_else(|| {
+        format!("There is no plate {}.", index + 1)
+    })?;
+    let path = plate.path.clone().ok_or_else(|| {
+        format!("Slice {} first: there is no G-code to send.", plate.name)
+    })?;
+    Ok(SendPlan {
+        now: path,
+        now_name: plate.name.clone(),
+        queue: Vec::new(),
+    })
+}
+
+fn enqueue_copy(
+    app: &AppHandle,
+    inner: &mut Inner,
+    source: &std::path::Path,
+    name: &str,
+    ams_mapping: Vec<i32>,
+) -> Result<(), String> {
+    let bytes = fs::metadata(source)
+        .map_err(|err| format!("Could not read the slice: {err}"))?
+        .len();
+    let id = inner.queue_next_id;
+    inner.queue_next_id += 1;
+    let dir = config_dir(app)?.join("queue");
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let target = dir.join(format!("{id}.gcode"));
+    fs::copy(source, &target).map_err(|err| format!("Could not copy the slice: {err}"))?;
+    let trimmed = name.trim();
+    let name = if trimmed.is_empty() {
+        format!("job {id}")
+    } else {
+        trimmed.to_string()
+    };
+    inner.queue.push(QueuedJob {
+        id,
+        name,
+        path: target,
+        bytes,
+        ams_mapping,
+    });
+    Ok(())
+}
+
 async fn send_file(
     state: &State<'_, AppState>,
     host: &State<'_, PrinterHost>,
     path: PathBuf,
     bed_type: String,
+    ams_mapping: Vec<i32>,
+    history_name: String,
 ) -> Result<serde_json::Value, String> {
+    if !shale_host::ams_mapping_ok(&ams_mapping) {
+        return Err("Each tool must map to the external spool or an AMS tray.".into());
+    }
     let (config, bambu) = {
         let mut inner = lock(state)?;
         let printer = inner.printer_id.clone();
@@ -3315,27 +3483,129 @@ async fn send_file(
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         + 1;
     host.with(|link| {
-        link.send(shale_host::gcode_file_command(sequence, &remote, &bed_type))
-            .map_err(|err| err.to_string())
+        link.send(shale_host::gcode_file_command_mapped(
+            sequence,
+            &remote,
+            &bed_type,
+            &ams_mapping,
+        ))
+        .map_err(|err| err.to_string())
     })?;
+    remember_send(&history_name, &bed_type, &remote, upload as u64);
     Ok(serde_json::json!({ "remote": remote, "bytes": upload }))
 }
 
 /// The send button: whatever the plate last sliced.
 #[tauri::command]
 async fn host_send(
+    app: AppHandle,
     state: State<'_, AppState>,
     host: State<'_, PrinterHost>,
     bed_type: String,
+    ams_mapping: Option<Vec<i32>>,
+    scope: Option<String>,
+    plate_index: Option<usize>,
 ) -> Result<serde_json::Value, String> {
-    let path = {
+    let mapping = ams_mapping.unwrap_or_default();
+    if !shale_host::ams_mapping_ok(&mapping) {
+        return Err("Each tool must map to the external spool or an AMS tray.".into());
+    }
+    let scope = scope.unwrap_or_else(|| "plate".to_string());
+    let plan = {
         let inner = lock(&state)?;
-        inner
-            .gcode_path
-            .clone()
-            .ok_or_else(|| "Slice the plate first: there is no G-code to send.".to_string())?
+        plan_send(&plate_sends(&inner), inner.active_plate, &scope, plate_index)?
     };
-    send_file(&state, &host, path, bed_type).await
+    let queued = plan.queue.len();
+    if queued > 0 {
+        let mut inner = lock(&state)?;
+        for (name, path) in &plan.queue {
+            enqueue_copy(&app, &mut inner, path, name, mapping.clone())?;
+        }
+    }
+    let mut sent = send_file(
+        &state,
+        &host,
+        plan.now,
+        bed_type,
+        mapping,
+        plan.now_name,
+    )
+    .await?;
+    sent["queued"] = serde_json::json!(queued);
+    Ok(sent)
+}
+
+#[derive(serde::Serialize)]
+struct HistoryRow {
+    at_ms: i64,
+    name: String,
+    source: String,
+    status: String,
+    detail: String,
+}
+
+#[derive(serde::Serialize)]
+struct PrintHistory {
+    rows: Vec<HistoryRow>,
+    cloud_note: Option<String>,
+}
+
+fn history_cloud_note(err: &shale_host::cloud::CloudError) -> String {
+    match err {
+        shale_host::cloud::CloudError::SignedOut | shale_host::cloud::CloudError::Store(_) => {
+            "Sign in with your Bambu Lab account to include cloud tasks.".to_string()
+        }
+        _ => "Cloud tasks could not be loaded. Sends from this computer are still listed."
+            .to_string(),
+    }
+}
+
+/// Local sends, newest first, then the account's recent cloud tasks.
+#[tauri::command]
+fn print_history(cloud_state: State<'_, cloud::CloudState>) -> Result<PrintHistory, String> {
+    let local = shale_host::history::read(&shale_core::config_dir().join("print-history.json"));
+    let mut rows: Vec<HistoryRow> = local
+        .into_iter()
+        .map(|entry| HistoryRow {
+            at_ms: entry.at_ms,
+            name: entry.name,
+            source: "This computer".to_string(),
+            status: "Sent".to_string(),
+            detail: bed_label(&entry.bed_type),
+        })
+        .collect();
+    let cloud_note = match cloud::lock(&cloud_state) {
+        Ok(mut session) => match session.tasks() {
+            Ok(tasks) => {
+                for task in tasks {
+                    let status = task.state();
+                    let named = !task.title.trim().is_empty() || task.id().is_some();
+                    if !named {
+                        continue;
+                    }
+                    let title = task.title.trim().to_string();
+                    rows.push(HistoryRow {
+                        at_ms: 0,
+                        name: if title.is_empty() {
+                            "Cloud print".to_string()
+                        } else {
+                            title
+                        },
+                        source: "Cloud".to_string(),
+                        status,
+                        detail: String::new(),
+                    });
+                }
+                None
+            }
+            Err(err) => Some(history_cloud_note(&err)),
+        },
+        Err(_) => Some(
+            "Cloud tasks could not be loaded. Sends from this computer are still listed."
+                .to_string(),
+        ),
+    };
+    Ok(PrintHistory { rows, cloud_note })
 }
 
 fn queue_views(inner: &Inner) -> Vec<QueueView> {
@@ -3365,25 +3635,8 @@ fn queue_add(
         .gcode_path
         .clone()
         .ok_or_else(|| "Slice the plate first: there is no G-code to queue.".to_string())?;
-    let bytes = fs::metadata(&source)
-        .map_err(|err| format!("Could not read the slice: {err}"))?
-        .len();
-    let id = inner.queue_next_id;
-    inner.queue_next_id += 1;
-    let dir = config_dir(&app)?.join("queue");
-    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
-    let target = dir.join(format!("{id}.gcode"));
-    fs::copy(&source, &target).map_err(|err| format!("Could not copy the slice: {err}"))?;
-    let name = name
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| format!("job {id}"));
-    inner.queue.push(QueuedJob {
-        id,
-        name,
-        path: target,
-        bytes,
-    });
+    let label = name.unwrap_or_default();
+    enqueue_copy(&app, &mut inner, &source, &label, Vec::new())?;
     Ok(queue_views(&inner))
 }
 
@@ -3443,7 +3696,16 @@ async fn queue_start_next(
         }
         inner.queue.remove(0)
     };
-    match send_file(&state, &host, job.path.clone(), bed_type).await {
+    match send_file(
+        &state,
+        &host,
+        job.path.clone(),
+        bed_type,
+        job.ams_mapping.clone(),
+        job.name.clone(),
+    )
+    .await
+    {
         Ok(sent) => {
             let mut inner = lock(&state)?;
             inner.queue_run.started();
@@ -3560,6 +3822,8 @@ struct QueuedJob {
     name: String,
     path: PathBuf,
     bytes: u64,
+    /// Tray per tool, kept with the job so the queue starts it the way it was confirmed.
+    ams_mapping: Vec<i32>,
 }
 
 #[derive(Serialize)]
@@ -4215,6 +4479,7 @@ struct PlateView {
     name: String,
     models: usize,
     active: bool,
+    sliced: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -4255,6 +4520,11 @@ impl Inner {
                     plate.models.iter().filter(|model| model.visible).count()
                 },
                 active: index == self.active_plate,
+                sliced: if index == self.active_plate {
+                    self.gcode_path.is_some()
+                } else {
+                    plate.gcode_path.is_some()
+                },
             })
             .collect()
     }
@@ -4266,6 +4536,9 @@ impl Inner {
             slot.models = std::mem::take(&mut self.models);
             slot.support = self.support.take();
             slot.support_model_id = self.support_model_id.take();
+            slot.gcode_path = self.gcode_path.take();
+            slot.toolpath = self.toolpath.take();
+            slot.nonplanar_view = self.nonplanar_view.take();
         }
     }
 
@@ -4281,9 +4554,10 @@ impl Inner {
         self.models = std::mem::take(&mut slot.models);
         self.support = slot.support.take();
         self.support_model_id = slot.support_model_id.take();
-        // A slice belongs to the plate that was sliced.
-        self.toolpath = None;
-        self.gcode_path = None;
+        // A slice belongs to the plate that was sliced, and comes back with it.
+        self.toolpath = slot.toolpath.take();
+        self.gcode_path = slot.gcode_path.take();
+        self.nonplanar_view = slot.nonplanar_view.take();
     }
 }
 
@@ -4494,6 +4768,9 @@ fn restore_front(inner: &mut Inner) {
     inner.models = models;
     inner.support = support;
     inner.support_model_id = support_model_id;
+    inner.gcode_path = slot.gcode_path.take();
+    inner.toolpath = slot.toolpath.take();
+    inner.nonplanar_view = slot.nonplanar_view.take();
 }
 
 #[tauri::command]
@@ -4511,6 +4788,10 @@ fn move_model_to_plate(state: State<AppState>, id: u32, plate: usize) -> Result<
     for stash in &mut inner.plates {
         if let Some(position) = stash.models.iter().position(|model| model.id == id) {
             taken = Some(stash.models.remove(position));
+            // The plate that lost a part no longer matches its slice.
+            stash.gcode_path = None;
+            stash.toolpath = None;
+            stash.nonplanar_view = None;
             break;
         }
     }
@@ -4519,9 +4800,13 @@ fn move_model_to_plate(state: State<AppState>, id: u32, plate: usize) -> Result<
         return Err("That part is not on a plate.".into());
     };
     inner.plates[plate].models.push(model);
+    inner.plates[plate].gcode_path = None;
+    inner.plates[plate].toolpath = None;
+    inner.plates[plate].nonplanar_view = None;
     restore_front(&mut inner);
     inner.toolpath = None;
     inner.gcode_path = None;
+    inner.nonplanar_view = None;
     let models = inner
         .models
         .iter()
@@ -5208,6 +5493,7 @@ pub fn run() {
                         name: format!("Cube plate {id}"),
                         path: path.clone(),
                         bytes,
+                        ams_mapping: Vec::new(),
                     })
                     .collect()
             })
@@ -5379,6 +5665,8 @@ pub fn run() {
             host_forget_pin,
             host_pin,
             host_send,
+            print_history,
+            feature_breakdown,
             host_control,
             queue_add,
             queue_list,
@@ -5583,5 +5871,66 @@ mod tests {
             !starts_with_machine_sequence(&missing),
             "a file that cannot be read is not a machine sequence"
         );
+    }
+
+    #[test]
+    fn one_plate_sends_that_file_and_queues_nothing() {
+        let plates = vec![super::PlateSend {
+            index: 0,
+            name: "plate 1".into(),
+            path: Some(std::path::PathBuf::from("/tmp/a.gcode")),
+        }];
+        let plan = super::plan_send(&plates, 0, "plate", None).unwrap();
+        assert_eq!(plan.now, std::path::PathBuf::from("/tmp/a.gcode"));
+        assert!(plan.queue.is_empty());
+    }
+
+    #[test]
+    fn every_plate_prints_the_one_on_screen_and_queues_the_rest() {
+        let plates = vec![
+            super::PlateSend {
+                index: 0,
+                name: "plate 1".into(),
+                path: Some(std::path::PathBuf::from("/tmp/a.gcode")),
+            },
+            super::PlateSend {
+                index: 1,
+                name: "plate 2".into(),
+                path: Some(std::path::PathBuf::from("/tmp/b.gcode")),
+            },
+        ];
+        let plan = super::plan_send(&plates, 1, "all", None).unwrap();
+        assert_eq!(plan.now_name, "plate 2");
+        assert_eq!(plan.queue.len(), 1);
+        assert_eq!(plan.queue[0].0, "plate 1");
+    }
+
+    #[test]
+    fn every_plate_refuses_while_one_is_unsliced() {
+        let plates = vec![
+            super::PlateSend {
+                index: 0,
+                name: "plate 1".into(),
+                path: Some(std::path::PathBuf::from("/tmp/a.gcode")),
+            },
+            super::PlateSend {
+                index: 1,
+                name: "plate 2".into(),
+                path: None,
+            },
+        ];
+        let err = super::plan_send(&plates, 0, "all", None).unwrap_err();
+        assert!(err.contains("plate 2"), "{err}");
+    }
+
+    #[test]
+    fn a_chosen_plate_needs_its_own_slice() {
+        let plates = vec![super::PlateSend {
+            index: 1,
+            name: "plate 2".into(),
+            path: None,
+        }];
+        let err = super::plan_send(&plates, 0, "plate", Some(1)).unwrap_err();
+        assert!(err.contains("plate 2"), "{err}");
     }
 }

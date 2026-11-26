@@ -142,6 +142,8 @@ export interface PlateView {
   name: string;
   models: number;
   active: boolean;
+  /** True once this plate has a G-code file of its own. */
+  sliced?: boolean;
 }
 
 export interface SuggestionFix {
@@ -355,8 +357,38 @@ export const hostForget = (serial: string, address: string) =>
 
 export const hostStatus = () => invoke<HostStatus>("host_status");
 
-export const hostSend = (bedType: string) =>
-  invoke<{ remote: string; bytes: number }>("host_send", { bedType });
+export const hostSend = (
+  bedType: string,
+  amsMapping: number[] = [],
+  scope: "plate" | "all" = "plate",
+  plateIndex?: number,
+) =>
+  invoke<{ remote: string; bytes: number; queued?: number }>("host_send", {
+    bedType,
+    amsMapping,
+    scope,
+    plateIndex,
+  });
+
+/// Time and filament for one feature kind in the sliced file.
+export interface FeatureUse {
+  kind: string;
+  seconds: number;
+  metres: number;
+}
+
+export const featureBreakdown = () => invoke<FeatureUse[]>("feature_breakdown");
+
+export interface HistoryRow {
+  at_ms: number;
+  name: string;
+  source: string;
+  status: string;
+  detail: string;
+}
+
+export const printHistory = () =>
+  invoke<{ rows: HistoryRow[]; cloud_note: string | null }>("print_history");
 
 /// What the sliced file needs: which tools it selects, how often, and how much
 /// filament each one takes, in metres.
@@ -777,6 +809,7 @@ export const api = {
   removeInstruction: (id: number) => invoke<StoredInstruction[]>("remove_instruction", { id }),
   previewUntil: (layer: number) => invoke<PreviewPath[]>("preview_until", { layer }),
   previewAll: () => invoke<PreviewPath[]>("preview_all"),
+  featureBreakdown,
   /** True when the printer ships a head envelope the curved pass can check. */
   nonplanarSupported: (printerId: string) => invoke<boolean>("nonplanar_supported", { printerId }),
   exportPlate: (destination: string, format: "stl" | "3mf") =>

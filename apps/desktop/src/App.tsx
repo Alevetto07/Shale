@@ -19,6 +19,7 @@ import {
   type FitWarning,
   type PlateView,
   type ProjectSettingsImport,
+  type FeatureUse,
   type PreviewPath,
   type PrinterInfo,
   type QualityInfo,
@@ -42,6 +43,8 @@ import { AppSidebar, readSidebarCollapsed, writeSidebarCollapsed } from "./AppSi
 import { TitleBarNav } from "./TitleBarNav";
 import { TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
 import { FeatureLegend } from "./Legend";
+import { ObjectOverrides } from "./object-overrides";
+import { plateWarnings } from "./print-check";
 import { thumbnailJpeg } from "./thumbnail";
 import { variantOptionLabel } from "./profile-labels";
 import { toast } from "sonner";
@@ -383,6 +386,7 @@ export function App() {
   }, [status?.demo, layerCount]);
   const [layerZ, setLayerZ] = useState<number[]>([]);
   const [paths, setPaths] = useState<PreviewPath[]>([]);
+  const [features, setFeatures] = useState<FeatureUse[]>([]);
   /// Kinds turned off in the legend. The toolpath stays loaded; this only
   /// decides what is drawn, so switching a kind back on is instant.
   // Travel is not something a person wants to see by default: it is the
@@ -1202,6 +1206,25 @@ export function App() {
     };
   }, [preview, busy, layerCount]);
 
+  useEffect(() => {
+    if (layerCount <= 0) {
+      setFeatures([]);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .featureBreakdown()
+      .then((rows) => {
+        if (!cancelled) setFeatures(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setFeatures([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [layerCount]);
+
   // A slice restored at boot (or mock data) fills the plate but not the history
   // list until the user presses slice again — keep the sidebar in sync with the
   // job card.
@@ -1777,6 +1800,7 @@ export function App() {
         ignoreEmbedded,
       );
       setLayerCount(summary.layer_count);
+      setPlates((current) => current.map((item) => (item.active ? { ...item, sliced: true } : item)));
       slicedPlate.current = plateKey;
       setLayerZ(summary.layers.map((item) => item.z));
       setLayer(Math.max(0, summary.layer_count - 1));
@@ -1877,6 +1901,36 @@ export function App() {
     syncHistory();
   }
 
+  function queuePartSettings(id: number, settings: Record<string, string>) {
+    partSettingsPending.current = { id, settings };
+    if (partSettingsTimer.current != null) window.clearTimeout(partSettingsTimer.current);
+    partSettingsTimer.current = window.setTimeout(() => {
+      partSettingsTimer.current = null;
+      const pending = partSettingsPending.current;
+      partSettingsPending.current = null;
+      if (!pending) return;
+      void api
+        .setModelSettings(pending.id, pending.settings)
+        .then((updated) => {
+          setModels((current) => current.map((model) => (model.id === updated.id ? updated : model)));
+        })
+        .catch((err: unknown) => setError(messageOf(err)));
+    }, 160);
+  }
+
+  function writeObjectOverride(part: ModelView, key: string, value: string) {
+    if ((part.settings[key] ?? "") !== value) rememberPartSettings(part);
+    const next = { ...part.settings };
+    if (value === "") delete next[key];
+    else next[key] = value;
+    setModels((current) => current.map((model) => (model.id === part.id ? { ...model, settings: next } : model)));
+    queuePartSettings(part.id, next);
+    setPreview(false);
+    setPaths([]);
+    setLayerCount(0);
+    forgetSlice();
+  }
+
   async function applyPartSettings(id: number, settings: Record<string, string>) {
     try {
       const updated = await api.setModelSettings(id, settings);
@@ -1908,20 +1962,7 @@ export function App() {
     );
     // Sliders report every pointer move. Keep the plate state immediate and
     // send the part settings once the drag settles, still as set_model_settings.
-    partSettingsPending.current = { id: scopedPart.id, settings: next };
-    if (partSettingsTimer.current != null) window.clearTimeout(partSettingsTimer.current);
-    partSettingsTimer.current = window.setTimeout(() => {
-      partSettingsTimer.current = null;
-      const pending = partSettingsPending.current;
-      partSettingsPending.current = null;
-      if (!pending) return;
-      void api
-        .setModelSettings(pending.id, pending.settings)
-        .then((updated) => {
-          setModels((current) => current.map((model) => (model.id === updated.id ? updated : model)));
-        })
-        .catch((err: unknown) => setError(messageOf(err)));
-    }, 160);
+    queuePartSettings(scopedPart.id, next);
   }
 
   async function resetScopedOverrides() {
@@ -2209,13 +2250,25 @@ export function App() {
       setPreview(false);
       // The model is drawn only while `showModel` is on, and the slice that was
       // on screen belonged to the plate we just left: its layer count and its
-      // toolpaths have to go with it.
+      // toolpaths have to go with it. A plate that was sliced before keeps its
+      // file, so the numbers come back when that plate is in front again.
       setShowModel(turned.models.length > 0);
       setPaths([]);
       setLayer(0);
       setLayerCount(0);
       setLayerZ([]);
       forgetSlice();
+      try {
+        const existing = await api.existingSlice();
+        if (existing && existing.layer_count > 0) {
+          setLayerCount(existing.layer_count);
+          setLayerZ(existing.layers.map((item) => item.z));
+          setPrintSeconds(existing.print_time_seconds);
+          setFilamentMetres(existing.filament_metres);
+        }
+      } catch {
+        // A plate with no slice is the ordinary case.
+      }
       setTower(null);
       setCalibration(null);
       setMeasureSpan(null);
@@ -2446,6 +2499,11 @@ export function App() {
     return materials.find((item) => item.id === id)?.label ?? id;
   }
 
+  function materialColour(id: string | null): string {
+    if (!id) return "";
+    return materials.find((item) => item.id === id)?.color ?? "";
+  }
+
   function dismissSuggestion(item: Suggestion) {
     setDismissedSuggestions((current) => (current.includes(item.id) ? current : [...current, item.id]));
     setSuggestions((current) => current.filter((entry) => entry.id !== item.id));
@@ -2565,8 +2623,10 @@ export function App() {
   /// The bays as the machine numbers them: T1 is the plate's own material, and
   /// T2..T4 are the AMS. An empty string is an empty bay, not a blank label.
   function spoolsForDevice(): Spool[] {
-    const bays: Spool[] = [{ bay: 1, material: materialLabel(material) }];
-    ams.forEach((slot, index) => bays.push({ bay: index + 2, material: materialLabel(slot || null) }));
+    const bays: Spool[] = [{ bay: 1, material: materialLabel(material), colour: materialColour(material) }];
+    ams.forEach((slot, index) =>
+      bays.push({ bay: index + 2, material: materialLabel(slot || null), colour: materialColour(slot || null) }),
+    );
     return bays;
   }
 
@@ -3440,6 +3500,7 @@ export function App() {
           engineReady={enginePath.length > 0}
           gcodeReady={layerCount > 0}
           plate={docTabs.find((tab) => tab.id === activeTab)?.name ?? "plate"}
+          plates={plates.map((item) => (item.active ? { ...item, sliced: layerCount > 0 } : item))}
         />
         </Suspense>
       ) : (
@@ -3524,6 +3585,12 @@ export function App() {
                     >
                       ×
                     </button>
+                    {model.id === selectedId && (
+                      <ObjectOverrides
+                        settings={model.settings}
+                        onChange={(key, value) => writeObjectOverride(model, key, value)}
+                      />
+                    )}
                   </li>
                 ))}
               </ul>
@@ -3839,6 +3906,13 @@ export function App() {
                 }
               />
             </label>
+            {plateWarnings(materialName(), localStorage.getItem("shale.device.bed") ?? "textured_plate", bedTemp).map(
+              (note) => (
+                <p key={note} className="plate-advice" role="status">
+                  {note}
+                </p>
+              ),
+            )}
             <p className="hint">Layer height also sets the first layer. Changing quality reloads these values.</p>
             <label>
               Chord
@@ -4572,6 +4646,7 @@ export function App() {
               }
               onAll={() => setHiddenKinds(new Set())}
               onNone={() => setHiddenKinds(new Set(paths.map((path) => path.kind)))}
+              features={features}
             />
           )}
           {preview && status?.demo === "cost" && (

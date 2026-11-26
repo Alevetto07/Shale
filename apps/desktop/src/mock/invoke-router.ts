@@ -137,10 +137,13 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
       return sliceSummary as T;
     case "slice_tools":
       return {
-        tools: [0],
-        changes: 0,
+        tools: [0, 1],
+        changes: 3,
         file: "C:\\mock\\plate.gcode",
-        usage: [{ tool: 0, metres: 4.2 }],
+        usage: [
+          { tool: 0, metres: 3.1 },
+          { tool: 1, metres: 1.1 },
+        ],
       } as T;
     case "export_gcode":
       return String(args.destination ?? "C:\\mock\\plate.gcode") as T;
@@ -191,7 +194,34 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
     case "queue_stop":
       return { armed: false, running: false, waiting_for_plate: false, message: "" } as T;
     case "host_send":
-      return { remote: "mock.gcode", bytes: 522_285 } as T;
+      return { remote: "mock.gcode", bytes: 522_285, queued: 0 } as T;
+    case "feature_breakdown":
+      return [
+        { kind: "wall-outer", seconds: 140, metres: 1.2 },
+        { kind: "infill", seconds: 80, metres: 2.4 },
+        { kind: "skin", seconds: 40, metres: 0.6 },
+        { kind: "travel", seconds: 20, metres: 0 },
+      ] as T;
+    case "print_history":
+      return {
+        rows: [
+          {
+            at_ms: Date.parse("2026-11-25T21:10:00Z"),
+            name: "Cable clip",
+            source: "This computer",
+            status: "Sent",
+            detail: "Textured PEI",
+          },
+          {
+            at_ms: 0,
+            name: "Bracket",
+            source: "Cloud",
+            status: "finished",
+            detail: "",
+          },
+        ],
+        cloud_note: null,
+      } as T;
     case "scratch_path":
       return `C:\\mock\\scratch\\${String(args.name ?? "untitled")}.shale` as T;
     case "save_project":

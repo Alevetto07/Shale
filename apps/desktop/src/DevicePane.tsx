@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { CloudPanel } from "./CloudPanel";
 import * as api from "./api";
+import { defaultAmsMapping, plateWarnings } from "./print-check";
+import { SendReview } from "./send-review";
 import { Button, Dialog, Input, Select, Tooltip } from "./ui";
 
 export interface Spool {
   /** 1-based bay, as the machine numbers them. */
   bay: number;
   material: string;
+  colour?: string;
 }
 
 export interface JobFacts {
@@ -37,6 +40,8 @@ export interface DevicePaneProps {
   gcodeReady: boolean;
   /** The name of the document on screen, so a queued job is called something. */
   plate: string;
+  /** Every plate in the project. The active one is what "this plate" sends. */
+  plates: api.PlateView[];
 }
 
 function clock(seconds: number | null): string {
@@ -67,6 +72,7 @@ export function DevicePane({
   engineReady,
   gcodeReady,
   plate,
+  plates,
 }: DevicePaneProps) {
   const [host, setHost] = useState(() => localStorage.getItem("shale.device.host") ?? "");
   const [serial, setSerial] = useState(() => localStorage.getItem("shale.device.serial") ?? "");
@@ -78,6 +84,11 @@ export function DevicePane({
   const [sending, setSending] = useState(false);
   const [asking, setAsking] = useState(false);
   const [tools, setTools] = useState<api.SliceTools | null>(null);
+  const [mapping, setMapping] = useState<number[]>([]);
+  const [scope, setScope] = useState<"plate" | "all">("plate");
+  const [plateIndex, setPlateIndex] = useState(0);
+  const [history, setHistory] = useState<api.HistoryRow[]>([]);
+  const [cloudNote, setCloudNote] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [queue, setQueue] = useState<api.QueueJob[]>([]);
   const [queueAsking, setQueueAsking] = useState(false);
@@ -244,15 +255,35 @@ export function DevicePane({
     }
   }
 
+  async function refreshHistory() {
+    try {
+      const page = await api.printHistory();
+      setHistory(page.rows);
+      setCloudNote(page.cloud_note);
+    } catch (err) {
+      setCloudNote(String(err));
+    }
+  }
+
+  useEffect(() => {
+    void refreshHistory();
+  }, []);
+
   // The confirmation is built from the file itself: how many spools the slice
   // really uses, not how many the plate was configured with.
   async function ask() {
     setNote(null);
     try {
-      setTools(await api.sliceTools());
+      const found = await api.sliceTools();
+      setTools(found);
+      setMapping(defaultAmsMapping(found.tools, spools.filter((spool) => spool.bay >= 2).length));
     } catch {
       setTools(null);
+      setMapping([]);
     }
+    const active = plates.find((item) => item.active);
+    setPlateIndex(active?.index ?? 0);
+    setScope("plate");
     setAsking(true);
   }
 
@@ -261,8 +292,12 @@ export function DevicePane({
     setSending(true);
     setNote(null);
     try {
-      const sent = await api.hostSend(bedType);
-      setNote(`sent ${Math.round(sent.bytes / 1024)} kB as ${sent.remote}`);
+      const sent = await api.hostSend(bedType, mapping, scope, plateIndex);
+      const waiting = sent.queued
+        ? ` ${sent.queued} more ${sent.queued === 1 ? "plate is" : "plates are"} waiting in the queue.`
+        : "";
+      setNote(`sent ${Math.round(sent.bytes / 1024)} kB as ${sent.remote}.${waiting}`);
+      void refreshHistory();
     } catch (err) {
       setNote(String(err));
     } finally {
@@ -457,18 +492,33 @@ export function DevicePane({
             title="Print this plate?"
             description={`Print ${job.layers > 0 ? `${job.layers} layers` : "the plate"} for ${clock(job.seconds)} on the ${bedType.replace(/_/g, " ")}.`}
           >
-            {tools && (tools.tools?.length ?? 0) > 1 ? (
-              <p className="device-warn">
-                This slice uses {tools.tools.length} spools ({tools.changes} tool changes)
-                {(tools.usage?.length ?? 0) > 0
-                  ? ` — ${tools.usage
-                      .map((used) => `T${used.tool + 1}:\u00a0${used.metres.toFixed(2)}\u00a0m`)
-                      .join(", ")}`
-                  : ""}
-                . Bambu takes a sliced 3MF with an AMS mapping for a multi-colour plate, and Shale sends
-                plain G-code, so the machine will print this in one colour.
-              </p>
-            ) : null}
+            <SendReview
+              filament={job.material}
+              bedTempC={job.bedTemp}
+              bedType={bedType}
+              onBedType={setBedType}
+              tools={tools}
+              spools={spools}
+              mapping={mapping}
+              onMapping={(tool, tray) =>
+                setMapping((current) => {
+                  const next = current.slice();
+                  while (next.length <= tool) next.push(-1);
+                  next[tool] = tray;
+                  return next;
+                })
+              }
+              plates={plates.map((item) => ({
+                index: item.index,
+                name: item.name,
+                active: item.active,
+                sliced: item.active ? gcodeReady || item.sliced === true : item.sliced === true,
+              }))}
+              scope={scope}
+              onScope={setScope}
+              plateIndex={plateIndex}
+              onPlate={setPlateIndex}
+            />
             <div className="device-controls">
               <Button type="button" variant="primary" onClick={send}>
                 Print it
@@ -481,7 +531,7 @@ export function DevicePane({
           <Button
             type="button"
             variant="primary"
-            disabled={!connected || !gcodeReady || sending || printing}
+            disabled={!connected || sending || printing || !(gcodeReady || plates.some((item) => item.sliced))}
             onClick={ask}
           >
             {sending ? "Sending…" : "Send and print"}
@@ -547,6 +597,11 @@ export function DevicePane({
               onChange={setBedType}
             />
           </label>
+          {plateWarnings(job.material, bedType, job.bedTemp).map((note) => (
+            <p key={note} className="device-warn" role="status">
+              {note}
+            </p>
+          ))}
         </div>
         <div className="device-controls">
           <Button type="button" variant="secondary" size="sm" disabled={connected} onClick={connect}>
@@ -649,6 +704,35 @@ export function DevicePane({
             Clear
           </Button>
         </div>
+      </section>
+
+      <section className="device-queue device-history">
+        <p className="device-label">History</p>
+        {history.length === 0 ? (
+          <p className="device-note">No prints from this computer yet.</p>
+        ) : (
+          <ol className="device-queue-list">
+            {history.map((row, index) => (
+              <li key={`${row.source}-${row.name}-${row.at_ms}-${index}`}>
+                <span className="queue-name">{row.name}</span>
+                <span className="history-meta">
+                  {row.source}
+                  {row.status ? ` · ${row.status}` : ""}
+                  {row.detail ? ` · ${row.detail}` : ""}
+                  {row.at_ms
+                    ? ` · ${new Date(row.at_ms).toLocaleString("en-GB", {
+                        day: "numeric",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}`
+                    : ""}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+        {cloudNote ? <p className="device-note">{cloudNote}</p> : null}
       </section>
 
       <section className="device-grid">

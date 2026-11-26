@@ -107,7 +107,7 @@ export function mockBed(): Bed {
 }
 
 export function mockPlates(modelCount = 1): import("../api").PlateView[] {
-  return [{ index: 0, name: "Plate 1", models: modelCount, active: true }];
+  return [{ index: 0, name: "Plate 1", models: modelCount, active: true, sliced: false }];
 }
 
 export function mockModel(id = 1): ModelView {
@@ -173,7 +173,7 @@ export function mockPreviewPaths(): PreviewPath[] {
   for (let layer = 0; layer < 20; layer += 1) {
     const z = (layer + 1) * 0.2;
     paths.push({
-      kind: layer % 3 === 0 ? "wall" : "infill",
+      kind: layer % 3 === 0 ? "wall-outer" : layer % 3 === 1 ? "infill" : "skin",
       layer,
       points: [
         [-8, -8, z],

@@ -11,6 +11,12 @@ import type { PreviewPath } from "./api";
  * the toolpath is already in memory, so hiding a kind is a filter, not a job.
  */
 
+export interface FeatureUse {
+  kind: string;
+  seconds: number;
+  metres: number;
+}
+
 export interface FeatureLegendProps {
   paths: PreviewPath[];
   hidden: Set<string>;
@@ -20,6 +26,31 @@ export interface FeatureLegendProps {
   /// When the plate is coloured by speed, the swatches stop describing it; the
   /// legend says so and shows the scale the ramp is using instead of pretending.
   colour: ColourMode;
+  /// Time and filament from the G-code, one row per feature kind.
+  features?: FeatureUse[];
+}
+
+function featureClock(seconds: number): string {
+  if (seconds < 1) return "<1 s";
+  if (seconds < 60) return `${Math.round(seconds)} s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} h ${rest} min` : `${hours} h`;
+}
+
+function featureLength(metres: number): string {
+  if (metres < 0.005) return "";
+  if (metres < 1) return `${Math.round(metres * 1000)} mm`;
+  return `${metres.toFixed(metres < 10 ? 2 : 1)} m`;
+}
+
+function featureCost(feature: FeatureUse | undefined): string {
+  if (!feature) return "";
+  const time = feature.seconds > 0 ? featureClock(feature.seconds) : "";
+  const length = featureLength(feature.metres);
+  return [time, length].filter(Boolean).join(" · ");
 }
 
 const PREFERRED = [
@@ -121,13 +152,19 @@ export function FeatureLegend(props: FeatureLegendProps) {
       )}
       {kinds.map((kind) => {
         const off = props.hidden.has(kind);
+        const cost = featureCost(props.features?.find((item) => item.kind === kind));
+        const paths = counts.get(kind) ?? 0;
         return (
           <button
             type="button"
             key={kind}
             className={off ? "legend-row off" : "legend-row"}
             data-kind={kind}
-            title={off ? `show ${label(kind)}` : `hide ${label(kind)}`}
+            title={
+              cost
+                ? `${off ? "show" : "hide"} ${label(kind)}, ${paths} paths, ${cost}`
+                : `${off ? "show" : "hide"} ${label(kind)}`
+            }
             onClick={() => props.onToggle(kind)}
           >
             <i
@@ -135,7 +172,7 @@ export function FeatureLegend(props: FeatureLegendProps) {
               style={{ background: KIND_COLOR[kind] ?? "#9c9aab" }}
             />
             <span>{label(kind)}</span>
-            <em>{counts.get(kind)}</em>
+            {cost ? <em className="legend-cost">{cost}</em> : <em>{paths}</em>}
           </button>
         );
       })}

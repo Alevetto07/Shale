@@ -2287,6 +2287,10 @@ button.recent-row.dim { color: var(--ink-3); }
   font-size: 10px;
   color: var(--ink-3);
 }
+.legend-row .legend-cost {
+  color: var(--ink-2);
+  font-size: 0.72rem;
+}
 .legend-row.off { color: var(--ink-3); }
 .legend-row.off i { opacity: 0.2; }
 .legend-row.off span { text-decoration: line-through; text-decoration-thickness: 1px; }
@@ -2301,6 +2305,69 @@ select {
   background-repeat: no-repeat;
   background-position: right 0.2rem center;
   padding-right: 1.15rem;
+}
+
+.plate-advice {
+  margin: 0.2rem 0 0;
+  color: var(--accent);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+.send-review {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+}
+.send-review .send-plate,
+.send-map label,
+.object-overrides label {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.78rem;
+}
+.send-map {
+  display: grid;
+  gap: 0.4rem;
+}
+.send-choice {
+  border: 0;
+  margin: 0.2rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  font-size: 0.78rem;
+}
+.send-choice legend {
+  padding: 0;
+  margin-bottom: 0.25rem;
+  width: 100%;
+}
+.object-overrides {
+  flex: 1 0 100%;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.15rem 0.2rem 0.45rem 1.7rem;
+}
+.object-overrides input {
+  width: 100%;
+  min-width: 0;
+}
+.device-history {
+  display: grid;
+  gap: 0.35rem;
+}
+.device-history li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.15rem 0.6rem;
+  font-size: 0.78rem;
+}
+.device-history .history-meta {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
 }
 
 .device-confirm p.device-warn {
@@ -2405,6 +2472,7 @@ select {
 }
 .object-line {
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 1px;
 }
