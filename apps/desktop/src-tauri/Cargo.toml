@@ -16,6 +16,7 @@ shale-core = { path = "../../../crates/shale-core" }
 shale-host = { path = "../../../crates/shale-host" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
 
 [features]
 default = ["custom-protocol"]

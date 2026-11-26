@@ -163,7 +163,54 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
     case "host_connect":
       return mockHost(true) as T;
     case "host_status":
-      return mockHost(flags.hostConnected) as T;
+      return {
+        ...mockHost(flags.hostConnected),
+        hms:
+          flags.hms && flags.hostConnected
+            ? [
+                {
+                  code: "0700-2000-0002-0001",
+                  wiki: "https://wiki.bambulab.com/en/x1/troubleshooting/hmscode/0700_2000_0002_0001",
+                  severity: "warning",
+                  message:
+                    "AMS 1 slot 1 has run out of filament. Load a new spool in that slot and resume the print.",
+                  runout: true,
+                },
+              ]
+            : [],
+      } as T;
+    case "host_files":
+      return (flags.hostConnected
+        ? [
+            {
+              path: "/cache/bench.gcode",
+              name: "bench.gcode",
+              bytes: 1280,
+              kind: "gcode",
+              printable: true,
+            },
+            {
+              path: "/cache/plate.3mf",
+              name: "plate.3mf",
+              bytes: 4096,
+              kind: "model",
+              printable: true,
+            },
+            {
+              path: "/timelapse/bench.mp4",
+              name: "bench.mp4",
+              bytes: 8_000_000,
+              kind: "timelapse",
+              printable: false,
+            },
+          ]
+        : []) as T;
+    case "host_download":
+      return Number(1024) as T;
+    case "host_delete":
+    case "host_reprint":
+    case "desktop_notify":
+      return undefined as T;
     case "cloud_state":
       return cloudSession as T;
     case "cloud_set_region":
@@ -315,6 +362,11 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
       return { configured: false } as T;
     case "open_model_link":
       return undefined as T;
+    case "support_boxes":
+    case "add_support_box":
+    case "undo_support_box":
+    case "clear_support_boxes":
+      return [] as T;
     default:
       return null as T;
   }

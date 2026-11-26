@@ -19,10 +19,10 @@ use serde::{Deserialize, Serialize};
 use shale_core::{
     compare_support, drop_to_bed, forget_recent, load_mesh_with, load_named_bytes, load_recents,
     now_ms, overlays, place_on_bed, propose, read_project, remember_recent, set_enabled, slice,
-    Catalog, CustomInstruction, Engine, EngineBackend, ImportReport, MaterialInfo, PlacedModel,
-    PrinterInfo, ProjectData, ProjectModel, QualityInfo, RecentEntry, ResourcePaths,
-    StoredInstruction, SupportOverlay, SupportParams, SupportPlan, TessellationTolerance, Toolpath,
-    Transform, TriangleMesh, UserSettings, VariantInfo,
+    slice_with_boxes, Catalog, CustomInstruction, Engine, EngineBackend, ImportReport,
+    MaterialInfo, PlacedModel, PrinterInfo, ProjectData, ProjectModel, QualityInfo, RecentEntry,
+    ResourcePaths, StoredInstruction, SupportOverlay, SupportParams, SupportPlan,
+    TessellationTolerance, Toolpath, Transform, TriangleMesh, UserSettings, VariantInfo,
 };
 mod bambu_login;
 mod cloud;
@@ -62,6 +62,9 @@ struct Inner {
     paint_past: Vec<std::collections::BTreeMap<u32, Paint>>,
     /// Strokes that were taken back, newest last, so one can come forward again.
     paint_future: Vec<std::collections::BTreeMap<u32, Paint>>,
+    /// Boxes drawn on this plate. An enforcer is a support volume; a blocker
+    /// keeps support out of its volume. They travel with the plate.
+    support_boxes: Vec<shale_core::paint::SupportBox>,
     next_id: u32,
     instructions: Vec<(u32, CustomInstruction)>,
     next_instruction: u32,
@@ -111,6 +114,7 @@ struct PlateStash {
     gcode_path: Option<PathBuf>,
     toolpath: Option<Toolpath>,
     nonplanar_view: Option<nonplanar::NonplanarView>,
+    support_boxes: Vec<shale_core::paint::SupportBox>,
 }
 
 struct LoadedModel {
@@ -658,7 +662,8 @@ async fn import_model(
                 serde_json::json!({ "fraction": 0.2, "message": "reading 3MF" }),
             );
             let objects = shale_core::load_build_objects(&source_bytes)?;
-            let groups = shale_core::assign_plates(objects, shale_core::read_plate_groups(&source_bytes));
+            let groups =
+                shale_core::assign_plates(objects, shale_core::read_plate_groups(&source_bytes));
             let project = shale_core::read_project_settings(&source_bytes);
             (groups, project)
         } else {
@@ -2619,6 +2624,68 @@ fn undo_paint(state: State<AppState>) -> Result<PaintView, String> {
     })
 }
 
+fn box_views(boxes: &[shale_core::paint::SupportBox]) -> Vec<SupportBoxView> {
+    boxes
+        .iter()
+        .map(|region| SupportBoxView {
+            min: region.min,
+            max: region.max,
+            block: region.role == shale_core::paint::PaintRole::Block,
+        })
+        .collect()
+}
+
+#[derive(serde::Serialize, Clone)]
+struct SupportBoxView {
+    min: [f64; 3],
+    max: [f64; 3],
+    block: bool,
+}
+
+/// Place an enforcer or blocker box. The next slice sends it as a modifier mesh.
+#[tauri::command]
+fn add_support_box(
+    state: State<AppState>,
+    min: [f64; 3],
+    max: [f64; 3],
+    block: Option<bool>,
+) -> Result<Vec<SupportBoxView>, String> {
+    let Some((min, max)) = shale_core::paint::normalise_box(min, max) else {
+        return Err("Draw a larger box.".into());
+    };
+    let mut inner = lock(&state)?;
+    inner.support_boxes.push(shale_core::paint::SupportBox {
+        min,
+        max,
+        role: if block.unwrap_or(false) {
+            shale_core::paint::PaintRole::Block
+        } else {
+            shale_core::paint::PaintRole::Enforce
+        },
+    });
+    Ok(box_views(&inner.support_boxes))
+}
+
+#[tauri::command]
+fn support_boxes(state: State<AppState>) -> Result<Vec<SupportBoxView>, String> {
+    Ok(box_views(&lock(&state)?.support_boxes))
+}
+
+/// Take the last box back.
+#[tauri::command]
+fn undo_support_box(state: State<AppState>) -> Result<Vec<SupportBoxView>, String> {
+    let mut inner = lock(&state)?;
+    inner.support_boxes.pop();
+    Ok(box_views(&inner.support_boxes))
+}
+
+#[tauri::command]
+fn clear_support_boxes(state: State<AppState>) -> Result<Vec<SupportBoxView>, String> {
+    let mut inner = lock(&state)?;
+    inner.support_boxes.clear();
+    Ok(box_views(&inner.support_boxes))
+}
+
 /// Put the last taken-back stroke forward again.
 #[tauri::command]
 fn redo_paint(state: State<AppState>) -> Result<PaintView, String> {
@@ -2726,7 +2793,7 @@ async fn slice_model(
     }
     nonplanar::prepare_slice(&settings, &printer_id)?;
     let nonplanar_options = settings.nonplanar.clone();
-    let (catalog_paths, engine, placed, painted, output) = {
+    let (catalog_paths, engine, placed, painted, boxes, output) = {
         let mut inner = lock(&state)?;
         inner.printer_id = Some(printer_id.clone());
         if inner.slicing {
@@ -2791,11 +2858,13 @@ async fn slice_model(
             })
             .collect();
         let output = std::env::temp_dir().join("shale").join("slice.gcode");
+        let boxes = inner.support_boxes.clone();
         (
             catalog(&mut inner).ok().map(|c| c.paths.clone()),
             inner.engine.clone(),
             placed,
             painted,
+            boxes,
             output,
         )
     };
@@ -2833,7 +2902,7 @@ async fn slice_model(
     }
     let app_progress = app.clone();
     let resolved_and_models = tauri::async_runtime::spawn_blocking(move || {
-        slice(
+        slice_with_boxes(
             &catalog,
             &engine,
             &printer_id,
@@ -2845,6 +2914,7 @@ async fn slice_model(
             &instructions,
             support.as_ref(),
             &painted,
+            &boxes,
             output,
             &mut |progress| {
                 let layer = progress.layer.as_ref().map(|layer| {
@@ -2990,8 +3060,8 @@ fn feature_breakdown(state: State<AppState>) -> Result<Vec<shale_core::FeatureUs
     let Some(path) = &inner.gcode_path else {
         return Ok(Vec::new());
     };
-    let text = fs::read_to_string(path)
-        .map_err(|err| format!("Could not read the slice: {err}"))?;
+    let text =
+        fs::read_to_string(path).map_err(|err| format!("Could not read the slice: {err}"))?;
     Ok(shale_core::features_from_gcode(&text))
 }
 
@@ -3065,6 +3135,19 @@ impl PrinterHost {
             None => Err("Connect a printer first.".to_string()),
         }
     }
+}
+
+/// The trust and the address of the printer that is connected now.
+fn printer_session(
+    state: &AppState,
+    host: &PrinterHost,
+) -> Result<(shale_host::Trust, shale_host::HostConfig), String> {
+    let config = lock(state)?
+        .host_config
+        .clone()
+        .ok_or_else(|| "Connect a printer first.".to_string())?;
+    let trust = host.with(|link| Ok(link.trust()))?;
+    Ok((trust, config))
 }
 
 /// Host, serial and access code from the environment, so a run can be started
@@ -3427,12 +3510,14 @@ fn plan_send(
         });
     }
     let index = chosen.unwrap_or(active);
-    let plate = plates.iter().find(|plate| plate.index == index).ok_or_else(|| {
-        format!("There is no plate {}.", index + 1)
-    })?;
-    let path = plate.path.clone().ok_or_else(|| {
-        format!("Slice {} first: there is no G-code to send.", plate.name)
-    })?;
+    let plate = plates
+        .iter()
+        .find(|plate| plate.index == index)
+        .ok_or_else(|| format!("There is no plate {}.", index + 1))?;
+    let path = plate
+        .path
+        .clone()
+        .ok_or_else(|| format!("Slice {} first: there is no G-code to send.", plate.name))?;
     Ok(SendPlan {
         now: path,
         now_name: plate.name.clone(),
@@ -3556,7 +3641,12 @@ async fn host_send(
     let scope = scope.unwrap_or_else(|| "plate".to_string());
     let plan = {
         let inner = lock(&state)?;
-        plan_send(&plate_sends(&inner), inner.active_plate, &scope, plate_index)?
+        plan_send(
+            &plate_sends(&inner),
+            inner.active_plate,
+            &scope,
+            plate_index,
+        )?
     };
     let queued = plan.queue.len();
     if queued > 0 {
@@ -3565,15 +3655,7 @@ async fn host_send(
             enqueue_copy(&app, &mut inner, path, name, mapping.clone())?;
         }
     }
-    let mut sent = send_file(
-        &state,
-        &host,
-        plan.now,
-        bed_type,
-        mapping,
-        plan.now_name,
-    )
-    .await?;
+    let mut sent = send_file(&state, &host, plan.now, bed_type, mapping, plan.now_name).await?;
     sent["queued"] = serde_json::json!(queued);
     Ok(sent)
 }
@@ -3892,6 +3974,90 @@ fn host_control(host: State<PrinterHost>, command: String) -> Result<(), String>
         link.send(shale_host::simple_command(sequence, &command))
             .map_err(|err| err.to_string())
     })
+}
+
+/// Files on the printer's storage. The transfer is the same FTPS session an
+/// upload uses, on whatever port the printer (or the loopback double) bound.
+#[tauri::command]
+async fn host_files(
+    state: State<'_, AppState>,
+    host: State<'_, PrinterHost>,
+) -> Result<Vec<shale_host::files::RemoteFile>, String> {
+    let (trust, config) = printer_session(&state, &host)?;
+    tauri::async_runtime::spawn_blocking(move || shale_host::files::list_files(&trust, &config))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(|err| err.to_string())
+}
+
+/// Copy one file off the printer. `destination` is a path the window already chose.
+#[tauri::command]
+async fn host_download(
+    state: State<'_, AppState>,
+    host: State<'_, PrinterHost>,
+    remote: String,
+    destination: String,
+) -> Result<u64, String> {
+    let (trust, config) = printer_session(&state, &host)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        shale_host::files::download_file(
+            &trust,
+            &config,
+            &remote,
+            std::path::Path::new(&destination),
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())
+}
+
+/// Delete one file. The window asks before it calls this.
+#[tauri::command]
+async fn host_delete(
+    state: State<'_, AppState>,
+    host: State<'_, PrinterHost>,
+    remote: String,
+) -> Result<(), String> {
+    let (trust, config) = printer_session(&state, &host)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        shale_host::files::delete_file(&trust, &config, &remote)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())
+}
+
+/// Print a file that is already on the printer. This publishes one MQTT
+/// command and does not upload anything.
+#[tauri::command]
+fn host_reprint(host: State<PrinterHost>, remote: String, bed_type: String) -> Result<(), String> {
+    if remote.trim().is_empty() || remote.contains("..") {
+        return Err("That is not a file on the printer.".into());
+    }
+    let sequence = host
+        .sequence
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        + 1;
+    host.with(|link| {
+        link.send(shale_host::files::reprint_command(
+            sequence, &remote, &bed_type,
+        ))
+        .map_err(|err| err.to_string())
+    })
+}
+
+/// A desktop notification. On Windows this is a toast; elsewhere it is the
+/// platform notification Tauri provides. A failure here is not a print failure.
+#[tauri::command]
+fn desktop_notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -4406,9 +4572,11 @@ async fn slicer_detect() -> Vec<shale_core::slicer_import::SlicerInstall> {
 async fn slicer_list_presets(
     slicer_id: String,
 ) -> Result<Vec<shale_core::slicer_import::PresetOffer>, String> {
-    tauri::async_runtime::spawn_blocking(move || shale_core::slicer_import::list_preset_offers(&slicer_id))
-        .await
-        .map_err(|err| err.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        shale_core::slicer_import::list_preset_offers(&slicer_id)
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
@@ -4582,6 +4750,7 @@ impl Inner {
             slot.gcode_path = self.gcode_path.take();
             slot.toolpath = self.toolpath.take();
             slot.nonplanar_view = self.nonplanar_view.take();
+            slot.support_boxes = std::mem::take(&mut self.support_boxes);
         }
     }
 
@@ -4601,6 +4770,7 @@ impl Inner {
         self.toolpath = slot.toolpath.take();
         self.gcode_path = slot.gcode_path.take();
         self.nonplanar_view = slot.nonplanar_view.take();
+        self.support_boxes = std::mem::take(&mut slot.support_boxes);
     }
 }
 
@@ -4620,7 +4790,9 @@ struct FitWarning {
 #[tauri::command]
 fn plate_fit(state: State<AppState>, printer_id: Option<String>) -> Result<FitWarning, String> {
     let mut inner = lock(&state)?;
-    let printer_id = printer_id.filter(|id| !id.is_empty()).or_else(|| inner.printer_id.clone());
+    let printer_id = printer_id
+        .filter(|id| !id.is_empty())
+        .or_else(|| inner.printer_id.clone());
     let resolved = printer_id.and_then(|printer_id| {
         catalog(&mut inner)
             .ok()?
@@ -4644,7 +4816,8 @@ fn plate_fit(state: State<AppState>, printer_id: Option<String>) -> Result<FitWa
     };
     let mut overflow = [0.0_f64; 3];
     for model in inner.models.iter().filter(|model| model.visible) {
-        let part = shale_core::mesh::bed_overflow(&model.mesh, &model.transform, width, depth, height);
+        let part =
+            shale_core::mesh::bed_overflow(&model.mesh, &model.transform, width, depth, height);
         for axis in 0..3 {
             overflow[axis] = overflow[axis].max(part[axis]);
         }
@@ -4701,7 +4874,10 @@ struct SuggestArgs {
 }
 
 #[tauri::command]
-fn suggestions(state: State<AppState>, args: SuggestArgs) -> Result<Vec<shale_core::Suggestion>, String> {
+fn suggestions(
+    state: State<AppState>,
+    args: SuggestArgs,
+) -> Result<Vec<shale_core::Suggestion>, String> {
     let mut inner = lock(&state)?;
     let resolved = catalog(&mut inner)?
         .resolve(&shale_core::ResolveRequest {
@@ -4762,7 +4938,10 @@ fn suggestions(state: State<AppState>, args: SuggestArgs) -> Result<Vec<shale_co
             loaded: true,
         }]
     } else {
-        args.slots.into_iter().map(shale_core::SlotQuery::into_slot).collect()
+        args.slots
+            .into_iter()
+            .map(shale_core::SlotQuery::into_slot)
+            .collect()
     };
     let scene = shale_core::Scene {
         objects,
@@ -4780,9 +4959,12 @@ fn suggestions(state: State<AppState>, args: SuggestArgs) -> Result<Vec<shale_co
             multi_material: slots.iter().filter(|slot| slot.loaded).count() > 1,
         },
         slots,
-        device_slots: args
-            .device_slots
-            .map(|slots| slots.into_iter().map(shale_core::SlotQuery::into_slot).collect()),
+        device_slots: args.device_slots.map(|slots| {
+            slots
+                .into_iter()
+                .map(shale_core::SlotQuery::into_slot)
+                .collect()
+        }),
         humidity_percent: args.humidity_percent,
         hours_since_dry: args.hours_since_dry,
         settings,
@@ -4797,7 +4979,10 @@ fn suggestions(state: State<AppState>, args: SuggestArgs) -> Result<Vec<shale_co
         global_dismissed: args.global_dismissed,
         shown_once: args.shown_once,
     };
-    Ok(shale_core::present_suggestions(&scene, shale_core::suggest::VISIBLE_LIMIT))
+    Ok(shale_core::present_suggestions(
+        &scene,
+        shale_core::suggest::VISIBLE_LIMIT,
+    ))
 }
 
 fn restore_front(inner: &mut Inner) {
@@ -4814,10 +4999,15 @@ fn restore_front(inner: &mut Inner) {
     inner.gcode_path = slot.gcode_path.take();
     inner.toolpath = slot.toolpath.take();
     inner.nonplanar_view = slot.nonplanar_view.take();
+    inner.support_boxes = std::mem::take(&mut slot.support_boxes);
 }
 
 #[tauri::command]
-fn move_model_to_plate(state: State<AppState>, id: u32, plate: usize) -> Result<PlateSwitch, String> {
+fn move_model_to_plate(
+    state: State<AppState>,
+    id: u32,
+    plate: usize,
+) -> Result<PlateSwitch, String> {
     let mut inner = lock(&state)?;
     while inner.plates.len() <= plate {
         let next = inner.plates.len() + 1;
@@ -4899,6 +5089,7 @@ fn add_plate(state: State<AppState>) -> Result<PlateSwitch, String> {
     let index = inner.plates.len() - 1;
     inner.active_plate = index;
     inner.models.clear();
+    inner.support_boxes.clear();
     inner.support = None;
     inner.support_model_id = None;
     inner.toolpath = None;
@@ -5548,6 +5739,7 @@ pub fn run() {
     let demo_queue_running = demo_queue.first().map(|job| job.name.clone());
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState(Mutex::new(Inner {
             catalog,
             catalog_error,
@@ -5562,6 +5754,7 @@ pub fn run() {
             painted: std::collections::BTreeMap::new(),
             paint_past: Vec::new(),
             paint_future: Vec::new(),
+            support_boxes: Vec::new(),
             next_id,
             instructions,
             next_instruction,
@@ -5712,6 +5905,11 @@ pub fn run() {
             print_history,
             feature_breakdown,
             host_control,
+            host_files,
+            host_download,
+            host_delete,
+            host_reprint,
+            desktop_notify,
             queue_add,
             queue_list,
             queue_remove,
@@ -5730,6 +5928,10 @@ pub fn run() {
             clear_paint,
             undo_paint,
             redo_paint,
+            add_support_box,
+            support_boxes,
+            undo_support_box,
+            clear_support_boxes,
             preview_until,
             preview_all,
             loaded_models,
@@ -5803,21 +6005,19 @@ pub fn run() {
             return;
         }
     };
-    app.run(|app, event| {
-        match event {
-            RunEvent::Ready => {
-                #[cfg(windows)]
-                {
-                    let _ = windows_chrome::subclass_thread_windows();
-                }
+    app.run(|app, event| match event {
+        RunEvent::Ready => {
+            #[cfg(windows)]
+            {
+                let _ = windows_chrome::subclass_thread_windows();
             }
-            RunEvent::WindowEvent {
-                label,
-                event: WindowEvent::CloseRequested { .. },
-                ..
-            } if label == "main" => app.exit(0),
-            _ => {}
         }
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { .. },
+            ..
+        } if label == "main" => app.exit(0),
+        _ => {}
     });
 }
 

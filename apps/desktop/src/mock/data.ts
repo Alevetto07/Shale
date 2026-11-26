@@ -245,6 +245,7 @@ export function mockHost(connected: boolean): HostStatus {
     note: connected ? "" : "not connected",
     reports: connected ? 3 : 0,
     updatedAt: Date.now(),
+    hms: [],
   };
 }
 

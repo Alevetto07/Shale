@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { CloudPanel } from "./CloudPanel";
 import * as api from "./api";
+import { save } from "./platform/dialog";
 import { defaultAmsMapping, plateWarnings } from "./print-check";
+import { printNotices, type NoticeSnapshot } from "./print-notices";
 import { SendReview } from "./send-review";
-import { Button, Dialog, Input, Select, Tooltip } from "./ui";
+import { Button, Dialog, Input, Select, SwitchRow, Tooltip } from "./ui";
 
 export interface Spool {
   /** 1-based bay, as the machine numbers them. */
@@ -45,6 +48,13 @@ export interface DevicePaneProps {
   /// Slice plates that have parts but no G-code yet. "Every plate" calls this
   /// before it sends, and waits. `false` means a plate failed and the send stops.
   onSliceMissing?: () => Promise<boolean>;
+}
+
+function fileKind(kind: string): string {
+  if (kind === "timelapse") return "Timelapse";
+  if (kind === "gcode") return "G-code";
+  if (kind === "model") return "3MF";
+  return "File";
 }
 
 function clock(seconds: number | null): string {
@@ -99,6 +109,14 @@ export function DevicePane({
   /// What the run is allowed to do. The rules are in `shale_core::queue` and
   /// the gate is in Rust; this is only what the pane was told last.
   const [queueRun, setQueueRun] = useState("idle");
+  const [files, setFiles] = useState<api.RemoteFile[]>([]);
+  const [filesNote, setFilesNote] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<api.RemoteFile | null>(null);
+  const [pendingPrint, setPendingPrint] = useState<api.RemoteFile | null>(null);
+  const notifyKey = `shale.device.notify.${serial || "this-printer"}`;
+  const [notify, setNotify] = useState(true);
+  const seenHms = useRef<Set<string>>(new Set());
+  const noticeSnapshot = useRef<NoticeSnapshot | null>(null);
 
   useEffect(() => {
     localStorage.setItem("shale.device.host", host);
@@ -141,6 +159,12 @@ export function DevicePane({
   useEffect(() => {
     localStorage.setItem("shale.device.bed", bedType);
   }, [bedType]);
+  useEffect(() => {
+    setNotify(localStorage.getItem(notifyKey) !== "off");
+  }, [notifyKey]);
+  useEffect(() => {
+    localStorage.setItem(notifyKey, notify ? "on" : "off");
+  }, [notify, notifyKey]);
 
   // Fill the form from the environment once, if it was launched with a printer.
   useEffect(() => {
@@ -191,6 +215,35 @@ export function DevicePane({
       live = false;
     };
   }, []);
+
+  // A new HMS code is said once, in the pane and as a toast. A code that clears
+  // can be said again if the printer raises it later.
+  useEffect(() => {
+    const alerts = status?.hms ?? [];
+    for (const alert of alerts) {
+      if (seenHms.current.has(alert.code)) continue;
+      seenHms.current.add(alert.code);
+      toast(alert.message, { description: alert.code, id: `hms-${alert.code}` });
+    }
+    for (const code of [...seenHms.current]) {
+      if (!alerts.some((alert) => alert.code === code)) seenHms.current.delete(code);
+    }
+  }, [status]);
+
+  useEffect(() => {
+    if (!status) return;
+    const next: NoticeSnapshot = {
+      state: status.state,
+      runout: (status.hms ?? []).filter((alert) => alert.runout).map((alert) => alert.code),
+    };
+    const notices = printNotices(noticeSnapshot.current, next, status.file, notify);
+    noticeSnapshot.current = next;
+    for (const notice of notices) {
+      void api.desktopNotify(notice.title, notice.body).catch(() => {
+        toast(notice.title, { description: notice.body });
+      });
+    }
+  }, [status, notify]);
 
   const statusOf = status ?? null;
   // A report can arrive before the machine has filled every field, so every
@@ -439,6 +492,64 @@ export function DevicePane({
     await startNext();
   }
 
+  async function refreshFiles() {
+    if (!connected) {
+      setFiles([]);
+      return;
+    }
+    try {
+      const rows = await api.hostFiles();
+      setFiles(Array.isArray(rows) ? rows : []);
+      setFilesNote(null);
+    } catch (err) {
+      setFilesNote(String(err));
+    }
+  }
+
+  useEffect(() => {
+    if (connected) void refreshFiles();
+    else setFiles([]);
+    // The list is refreshed on connect and by the button, not on every report.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected]);
+
+  async function downloadFile(file: api.RemoteFile) {
+    setFilesNote(null);
+    try {
+      const destination = await save({ defaultPath: file.name });
+      if (!destination || Array.isArray(destination)) return;
+      await api.hostDownload(file.path, destination);
+      setFilesNote(`Saved ${file.name}`);
+    } catch (err) {
+      setFilesNote(String(err));
+    }
+  }
+
+  async function confirmDelete() {
+    const file = pendingDelete;
+    setPendingDelete(null);
+    if (!file) return;
+    try {
+      await api.hostDelete(file.path);
+      setFilesNote(`Deleted ${file.name}`);
+      await refreshFiles();
+    } catch (err) {
+      setFilesNote(String(err));
+    }
+  }
+
+  async function confirmReprint() {
+    const file = pendingPrint;
+    setPendingPrint(null);
+    if (!file) return;
+    try {
+      await api.hostReprint(file.path, bedType);
+      setFilesNote(`Printing ${file.name} from the printer`);
+    } catch (err) {
+      setFilesNote(String(err));
+    }
+  }
+
   async function control(command: "pause" | "resume" | "stop") {
     setNote(null);
     try {
@@ -570,6 +681,22 @@ export function DevicePane({
         {note ? <p className="device-note">{note}</p> : null}
       </section>
 
+      {(statusOf?.hms?.length ?? 0) > 0 ? (
+        <section className="device-panel" aria-label="Printer messages">
+          <p className="device-label">Printer messages</p>
+          <ul className="device-hms">
+            {statusOf?.hms?.map((alert) => (
+              <li key={alert.code} className={alert.severity === "error" ? "error" : alert.severity}>
+                <p>{alert.message}</p>
+                <a href={alert.wiki} target="_blank" rel="noreferrer">
+                  {alert.code}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <section className="device-panel">
         <p className="device-label">Connection</p>
         <div className="device-form">
@@ -642,6 +769,12 @@ export function DevicePane({
               : "The printer must be in LAN mode with the access code enabled"}
           </span>
         </div>
+        <SwitchRow checked={notify} onChange={setNotify}>
+          Desktop notifications
+        </SwitchRow>
+        <p className="device-note">
+          A toast when a print finishes, fails, pauses, or runs out of filament. This printer only.
+        </p>
         <p className="device-note">
           The access code is kept in the Windows credential manager, never in the repository. The link is read-write:
           send, pause, resume and stop all go to the machine over its own local interface.
@@ -723,6 +856,91 @@ export function DevicePane({
           )}
           <Button type="button" variant="ghost" size="sm" disabled={queue.length === 0} onClick={clearQueue}>
             Clear
+          </Button>
+        </div>
+      </section>
+
+      <section className="device-queue">
+        <p className="device-label">On the printer</p>
+        {files.length === 0 ? (
+          <p className="device-note">
+            {connected
+              ? "Nothing stored on the printer yet."
+              : "Connect to see files on the printer's storage."}
+          </p>
+        ) : (
+          <ul className="device-queue-list device-files">
+            {files.map((file) => (
+              <li key={file.path}>
+                <span className="queue-name">{file.name}</span>
+                <span className="history-meta">
+                  {fileKind(file.kind)} · {file.bytes >= 1_048_576
+                    ? `${(file.bytes / 1_048_576).toFixed(1)} MB`
+                    : `${Math.max(1, Math.round(file.bytes / 1024))} kB`}
+                </span>
+                <span className="device-file-actions">
+                  <button type="button" onClick={() => void downloadFile(file)}>
+                    Download
+                  </button>
+                  {file.printable ? (
+                    <button type="button" onClick={() => setPendingPrint(file)}>
+                      Print
+                    </button>
+                  ) : null}
+                  <button type="button" onClick={() => setPendingDelete(file)}>
+                    Delete
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {filesNote ? <p className="device-note">{filesNote}</p> : null}
+        <Dialog
+          open={pendingDelete != null}
+          onOpenChange={(open) => {
+            if (!open) setPendingDelete(null);
+          }}
+          title="Delete this file?"
+          description={
+            pendingDelete
+              ? `${pendingDelete.name} will be removed from the printer. This cannot be undone.`
+              : ""
+          }
+        >
+          <div className="device-controls">
+            <Button type="button" variant="destructive" onClick={() => void confirmDelete()}>
+              Delete it
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setPendingDelete(null)}>
+              Cancel
+            </Button>
+          </div>
+        </Dialog>
+        <Dialog
+          open={pendingPrint != null}
+          onOpenChange={(open) => {
+            if (!open) setPendingPrint(null);
+          }}
+          title="Print this file?"
+          description={
+            pendingPrint
+              ? `${pendingPrint.name} is already on the printer. Printing it starts the job. Nothing is uploaded.`
+              : ""
+          }
+        >
+          <div className="device-controls">
+            <Button type="button" variant="primary" onClick={() => void confirmReprint()}>
+              Print it
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setPendingPrint(null)}>
+              Cancel
+            </Button>
+          </div>
+        </Dialog>
+        <div className="device-controls">
+          <Button type="button" variant="secondary" size="sm" disabled={!connected} onClick={() => void refreshFiles()}>
+            Refresh
           </Button>
         </div>
       </section>

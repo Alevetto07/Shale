@@ -264,6 +264,13 @@ export interface PaintView {
   blocked: number;
 }
 
+/** A box on the plate that becomes a support modifier. */
+export interface SupportBoxView {
+  min: [number, number, number];
+  max: [number, number, number];
+  block: boolean;
+}
+
 /** A measured distance: the line, and how much of it lies on each axis. */
 export interface MeasureSpan {
   distance_mm: number;
@@ -306,6 +313,30 @@ export interface HostStatus {
   note: string;
   reports: number;
   updatedAt: number;
+  /** HMS alerts from the latest report that included them. */
+  hms?: HmsAlert[];
+}
+
+/** One Bambu HMS alert, already turned into a sentence. */
+export interface HmsAlert {
+  /** `0300-0100-0001-0007` */
+  code: string;
+  /** The wiki page Bambu Studio opens for this code. */
+  wiki: string;
+  /** `error`, `warning`, `notice`, or `alert`. */
+  severity: string;
+  message: string;
+  runout: boolean;
+}
+
+/** A file on the printer's storage. */
+export interface RemoteFile {
+  path: string;
+  name: string;
+  bytes: number;
+  /** `gcode`, `model`, `timelapse`, or `file`. */
+  kind: string;
+  printable: boolean;
 }
 
 export interface HostConfig {
@@ -356,6 +387,21 @@ export const hostForget = (serial: string, address: string) =>
   invoke<void>("host_forget", { serial, address });
 
 export const hostStatus = () => invoke<HostStatus>("host_status");
+
+export const hostFiles = () => invoke<RemoteFile[]>("host_files");
+
+export const hostDownload = (remote: string, destination: string) =>
+  invoke<number>("host_download", { remote, destination });
+
+export const hostDelete = (remote: string) => invoke<void>("host_delete", { remote });
+
+/** Print a file that is already on the printer. Nothing is uploaded. */
+export const hostReprint = (remote: string, bedType: string) =>
+  invoke<void>("host_reprint", { remote, bedType });
+
+/** A Windows toast, via Tauri. Other desktops get the platform's own notification. */
+export const desktopNotify = (title: string, body: string) =>
+  invoke<void>("desktop_notify", { title, body });
 
 export const hostSend = (
   bedType: string,
@@ -785,6 +831,11 @@ export const api = {
   // back costs nothing and a brush that cannot be undone is a trap.
   undoPaint: () => invoke<PaintView>("undo_paint"),
   redoPaint: () => invoke<PaintView>("redo_paint"),
+  supportBoxes: () => invoke<SupportBoxView[]>("support_boxes"),
+  addSupportBox: (min: [number, number, number], max: [number, number, number], block: boolean) =>
+    invoke<SupportBoxView[]>("add_support_box", { min, max, block }),
+  undoSupportBox: () => invoke<SupportBoxView[]>("undo_support_box"),
+  clearSupportBoxes: () => invoke<SupportBoxView[]>("clear_support_boxes"),
   proposeSupports: (id: number, overhangAngleDeg: number, maxBridgeMm: number) =>
     invoke<SupportView>("propose_supports", {
       id,

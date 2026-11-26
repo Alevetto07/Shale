@@ -262,6 +262,11 @@ export function App() {
   /// The brush is a mode: while it is in hand a drag paints the surface under
   /// the cursor, and a click is not a selection.
   const [paintArmed, setPaintArmed] = useState(false);
+  const [boxArmed, setBoxArmed] = useState(false);
+  const [boxHeight, setBoxHeight] = useState("8");
+  const [supportBoxes, setSupportBoxes] = useState<
+    Array<{ min: [number, number, number]; max: [number, number, number]; block: boolean }>
+  >([]);
   const [faceArmed, setFaceArmed] = useState(false);
   const [paintRadius, setPaintRadius] = useState("6");
   /// The plates in this project. The one flagged `active` is the one `models`
@@ -2340,6 +2345,7 @@ export function App() {
       setModels(turned.models);
       platesRef.current = turned.plates;
       setPlates(turned.plates);
+      setSupportBoxes(await api.supportBoxes().catch(() => []));
       setSelectedId(null);
       setScope("all");
       setPreview(false);
@@ -2423,6 +2429,7 @@ export function App() {
         const swapped = await api.switchPlate(turned.index);
         setModels(swapped.models);
         setPlates(swapped.plates);
+        setSupportBoxes(await api.supportBoxes().catch(() => []));
         setShowModel(swapped.models.length > 0);
       } else {
         setPlates(left);
@@ -3757,9 +3764,24 @@ export function App() {
                     className={`paint-brush-button${paintArmed ? " on" : ""}`}
                     aria-pressed={paintArmed}
                     title="Drag over the part to paint the surface under the cursor"
-                    onClick={() => setPaintArmed((armed) => !armed)}
+                    onClick={() => {
+                      setBoxArmed(false);
+                      setPaintArmed((armed) => !armed);
+                    }}
                   >
                     Brush
+                  </button>
+                  <button
+                    type="button"
+                    className={`paint-brush-button${boxArmed ? " on" : ""}`}
+                    aria-pressed={boxArmed}
+                    title="Drag on the plate to place a support box"
+                    onClick={() => {
+                      setPaintArmed(false);
+                      setBoxArmed((armed) => !armed);
+                    }}
+                  >
+                    Box
                   </button>
                   <label className="paint-radius ui-field">
                     <span className="ui-field__label">Reach</span>
@@ -3775,6 +3797,39 @@ export function App() {
                     />
                   </label>
                 </div>
+                {boxArmed && (
+                  <>
+                    <div className="row paint-brush">
+                      <label className="paint-radius ui-field">
+                        <span className="ui-field__label">Height</span>
+                        <Slider
+                          label="Box height in millimetres"
+                          value={[Math.max(1, Math.min(80, Number(boxHeight) || 8))]}
+                          min={1}
+                          max={80}
+                          step={1}
+                          unit="mm"
+                          inputDigits={0}
+                          onValueChange={(value) => setBoxHeight(String(Math.round(value)))}
+                        />
+                      </label>
+                    </div>
+                    <p className="paint-hint">
+                      drag on the plate — {paintMode === "block" ? "kept clear" : "held up"},{" "}
+                      {Math.max(1, Number(boxHeight) || 8)} mm tall
+                    </p>
+                  </>
+                )}
+                {supportBoxes.length > 0 && (
+                  <div className="row paint-brush">
+                    <button type="button" className="paint-back" onClick={() => void api.undoSupportBox().then(setSupportBoxes)}>
+                      Undo box
+                    </button>
+                    <button type="button" className="paint-clear" onClick={() => void api.clearSupportBoxes().then(setSupportBoxes)}>
+                      Clear boxes
+                    </button>
+                  </div>
+                )}
                 {(paintArmed || patches.length > 0 || painted > 0 || blocked > 0) && (
                 <div className="row paint-patches">
                   {paintArmed && (
@@ -4823,6 +4878,15 @@ export function App() {
             paintArmed={paintArmed}
             paintRadius={Math.max(0.5, Number(paintRadius) || 6)}
             onBrush={(id, points) => void paintStroke(id, points)}
+            boxArmed={boxArmed}
+            boxHeight={Math.max(1, Number(boxHeight) || 8)}
+            supportBoxes={supportBoxes}
+            onSupportBox={(min, max) => {
+              void api
+                .addSupportBox(min, max, paintMode === "block")
+                .then((boxes) => setSupportBoxes(Array.isArray(boxes) ? boxes : []))
+                .catch((failure) => setError(String(failure)));
+            }}
             onMeasure={(id, point) => void addMeasurePoint(id, point)}
             onSelect={(id) => {
               // An armed pick that outlives its panel is an armed pick nobody
