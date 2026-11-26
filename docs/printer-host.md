@@ -79,6 +79,33 @@ acknowledged.
   lost. The client now sends `close_notify` and drains the stream first. A real
   printer would have eaten every upload this way.
 
+## Printer messages
+
+`print.hms` is a list of `{attr, code}` pairs. Shale shows each one as the four
+groups Bambu prints (`0300-0100-0001-0007`) and links
+`https://wiki.bambulab.com/en/x1/troubleshooting/hmscode/0300_0100_0001_0007`,
+the same URL Bambu Studio builds.
+
+The sentence comes from Bambu's table. On startup Shale asks
+`https://e.bambulab.com/query.php?lang=en` — Studio's own call — and stores the
+answer at `hms/hms_en.json` in the app config directory. That folder is not the
+printer-profile cache. A later start sends the cached version and keeps the
+file when the server says it is current. If the request fails, the sentences
+already cached are used, and a code the table does not name falls back to a
+short British-English line that names the module and the code.
+
+The table itself is not in this repository. Bambu Studio is AGPL-3.0, and the
+JSON ships inside that program, but the live endpoint does not publish a
+separate licence for the message text. Copying the file in would be a guess
+about that licence, so Shale fetches it instead.
+
+## Files on the printer
+
+The same FTPS session lists the card, downloads a timelapse or a sliced file,
+deletes after a confirmation, and starts a file that is already there. A
+`.gcode` uses `gcode_file`. A 3MF uses `project_file` and names
+`Metadata/plate_1.gcode` inside the archive. Reprint does not upload.
+
 ## Known gaps
 
 - **`use_ams: false`.** This sends a plain G-code file, so the machine prints
