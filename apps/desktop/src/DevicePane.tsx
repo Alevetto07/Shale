@@ -42,6 +42,9 @@ export interface DevicePaneProps {
   plate: string;
   /** Every plate in the project. The active one is what "this plate" sends. */
   plates: api.PlateView[];
+  /// Slice plates that have parts but no G-code yet. "Every plate" calls this
+  /// before it sends, and waits. `false` means a plate failed and the send stops.
+  onSliceMissing?: () => Promise<boolean>;
 }
 
 function clock(seconds: number | null): string {
@@ -73,6 +76,7 @@ export function DevicePane({
   gcodeReady,
   plate,
   plates,
+  onSliceMissing,
 }: DevicePaneProps) {
   const [host, setHost] = useState(() => localStorage.getItem("shale.device.host") ?? "");
   const [serial, setSerial] = useState(() => localStorage.getItem("shale.device.serial") ?? "");
@@ -292,6 +296,23 @@ export function DevicePane({
     setSending(true);
     setNote(null);
     try {
+      if (scope === "all") {
+        const pending = plates.filter((item) => item.models > 0 && item.sliced !== true);
+        if (pending.length > 0) {
+          if (!onSliceMissing) {
+            setNote("Slice the other plates before sending every plate.");
+            return;
+          }
+          setNote(
+            `Slicing ${pending.length} ${pending.length === 1 ? "plate" : "plates"} before sending`,
+          );
+          const ready = await onSliceMissing();
+          if (!ready) {
+            setNote("Sending stopped because a plate did not slice.");
+            return;
+          }
+        }
+      }
       const sent = await api.hostSend(bedType, mapping, scope, plateIndex);
       const waiting = sent.queued
         ? ` ${sent.queued} more ${sent.queued === 1 ? "plate is" : "plates are"} waiting in the queue.`

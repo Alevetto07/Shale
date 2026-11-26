@@ -45,6 +45,7 @@ import { TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
 import { FeatureLegend } from "./Legend";
 import { ObjectOverrides } from "./object-overrides";
 import { plateWarnings } from "./print-check";
+import { batchFraction, batchMessage, platesToSlice } from "./slice-all";
 import { thumbnailJpeg } from "./thumbnail";
 import { variantOptionLabel } from "./profile-labels";
 import { toast } from "sonner";
@@ -861,7 +862,16 @@ export function App() {
       setImportProgress(event.payload);
     });
     const unlisten = listen<Progress>("slice-progress", (event) => {
-      setProgress(event.payload);
+      const job = batch.current;
+      setProgress(
+        job && job.total > 0
+          ? {
+              fraction: batchFraction(job.done, job.total, event.payload.fraction),
+              message: batchMessage(job.done, job.total, job.name, event.payload.message),
+              layer: event.payload.layer,
+            }
+          : event.payload,
+      );
       const live = event.payload.layer;
       if (live && live.paths.length > 0) {
         setPreview(true);
@@ -901,6 +911,10 @@ export function App() {
   const partSettingsTimer = useRef<number | null>(null);
   const partSettingsPending = useRef<{ id: number; settings: Record<string, string> } | null>(null);
   const modelsRef = useRef<ModelView[]>(models);
+  const platesRef = useRef<PlateView[]>(plates);
+  /// Set while "slice all" walks the plates, so one engine fraction becomes a
+  /// fraction of the whole batch and the bar can name the plate.
+  const batch = useRef<{ done: number; total: number; name: string } | null>(null);
   const lastEdit = useRef<{ key: string; at: number } | null>(null);
   const [historyDepth, setHistoryDepth] = useState({ past: 0, future: 0 });
 
@@ -909,7 +923,8 @@ export function App() {
 
   useEffect(() => {
     modelsRef.current = models;
-  }, [models]);
+    platesRef.current = plates;
+  }, [models, plates]);
 
   /// The tab bar's bookkeeping. `markTabDirty` is called from `remember`, so
   /// every edit that can be undone also marks the file as behind — one place,
@@ -1779,16 +1794,30 @@ export function App() {
     }
   }
 
-  async function slice(options?: { quiet?: boolean }) {
+  function reportProgress(fraction: number, message: string) {
+    const job = batch.current;
+    if (!job || job.total <= 0) {
+      setProgress({ fraction, message });
+      return;
+    }
+    setProgress({
+      fraction: batchFraction(job.done, job.total, fraction),
+      message: batchMessage(job.done, job.total, job.name, message),
+    });
+  }
+
+  async function slice(options?: { quiet?: boolean; hold?: boolean }) {
     const quiet = options?.quiet === true;
+    const hold = options?.hold === true;
     if (!printerId) {
       if (!quiet) setError("Choose a printer first.");
+      if (hold) throw new Error("Choose a printer first.");
       return;
     }
     setError(null);
     if (!quiet) setBusy(true);
     setCalibration(null);
-    setProgress({ fraction: 0.02, message: "Starting" });
+    reportProgress(0.02, "Starting");
     try {
       const summary = await api.slice(
         printerId,
@@ -1800,7 +1829,11 @@ export function App() {
         ignoreEmbedded,
       );
       setLayerCount(summary.layer_count);
-      setPlates((current) => current.map((item) => (item.active ? { ...item, sliced: true } : item)));
+      setPlates((current) => {
+        const next = current.map((item) => (item.active ? { ...item, sliced: true } : item));
+        platesRef.current = next;
+        return next;
+      });
       slicedPlate.current = plateKey;
       setLayerZ(summary.layers.map((item) => item.z));
       setLayer(Math.max(0, summary.layer_count - 1));
@@ -1849,12 +1882,53 @@ export function App() {
         setShowModel(false);
         setFrameToken((token) => token + 1);
       }
-      setProgress({ fraction: 1, message: `${summary.layer_count} layers` });
+      reportProgress(1, `${summary.layer_count} layers`);
     } catch (err) {
+      if (hold) throw err;
       if (!quiet) setError(messageOf(err));
       setProgress(null);
     } finally {
-      if (!quiet) setBusy(false);
+      if (!quiet && !hold) setBusy(false);
+    }
+  }
+
+  /// Slice every plate that has a part on it, one after another. `onlyUnsliced`
+  /// is what "send every plate" uses: a plate that already has G-code is left.
+  async function sliceAll(options?: { onlyUnsliced?: boolean }): Promise<boolean> {
+    if (!printerId) {
+      setError("Choose a printer first.");
+      return false;
+    }
+    const onlyUnsliced = options?.onlyUnsliced === true;
+    const targets = platesToSlice(platesRef.current, onlyUnsliced);
+    if (targets.length === 0) {
+      if (!onlyUnsliced) setError("Nothing on any plate to slice.");
+      return true;
+    }
+    const start = platesRef.current.find((plate) => plate.active)?.index ?? targets[0].index;
+    setBusy(true);
+    setError(null);
+    batch.current = { done: 0, total: targets.length, name: targets[0].name };
+    try {
+      for (let index = 0; index < targets.length; index += 1) {
+        const plate = targets[index];
+        batch.current = { done: index, total: targets.length, name: plate.name };
+        reportProgress(0.02, "Starting");
+        const active = platesRef.current.find((item) => item.active)?.index;
+        if (active !== plate.index) await showPlate(plate.index);
+        await slice({ quiet: true, hold: true });
+      }
+      const back = platesRef.current.find((item) => item.active)?.index;
+      if (back !== start) await showPlate(start);
+      setNotice(targets.length === 1 ? `Sliced ${targets[0].name}` : `Sliced ${targets.length} plates`);
+      return true;
+    } catch (err) {
+      setError(messageOf(err));
+      setProgress(null);
+      return false;
+    } finally {
+      batch.current = null;
+      setBusy(false);
     }
   }
 
@@ -2244,6 +2318,7 @@ export function App() {
     try {
       const turned: PlateSwitch = await api.switchPlate(index);
       setModels(turned.models);
+      platesRef.current = turned.plates;
       setPlates(turned.plates);
       setSelectedId(null);
       setScope("all");
@@ -3501,6 +3576,7 @@ export function App() {
           gcodeReady={layerCount > 0}
           plate={docTabs.find((tab) => tab.id === activeTab)?.name ?? "plate"}
           plates={plates.map((item) => (item.active ? { ...item, sliced: layerCount > 0 } : item))}
+          onSliceMissing={() => sliceAll({ onlyUnsliced: true })}
         />
         </Suspense>
       ) : (
@@ -3544,9 +3620,17 @@ export function App() {
               <button type="button" title="Add a plate" onClick={() => void newPlate()}>
                 +
               </button>
+              <button
+                type="button"
+                title="Slice every plate that has a part on it"
+                disabled={busy || models.length + plates.reduce((sum, plate) => sum + (plate.active ? 0 : plate.models), 0) === 0}
+                onClick={() => void sliceAll()}
+              >
+                Slice all
+              </button>
             </div>
             <p className="hint">
-              Each plate holds its own parts and is sliced on its own. A project saves every plate with it.
+              Each plate holds its own parts. Slice all walks them in order and shows which plate it is on.
             </p>
           </Frame>
           <ProjectSummary

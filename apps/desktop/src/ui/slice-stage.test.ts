@@ -8,5 +8,6 @@ describe("sliceStage", () => {
     expect(sliceStage("Slicing layer 40")).toBe("Slicing layers");
     expect(sliceStage("nonplanar post pass")).toBe("Curving layers");
     expect(sliceStage("")).toBe("Preparing");
+    expect(sliceStage("Plate 2 of 3: plate 2 — Slicing layer 40")).toBe("Plate 2 of 3 · Slicing layers");
   });
 });
