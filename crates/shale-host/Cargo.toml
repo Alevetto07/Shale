@@ -31,6 +31,11 @@ thiserror = "1"
 # JPEG frames from the chamber camera, and the pictures the failure watch and
 # the plate check compare. MIT OR Apache-2.0. JPEG only: nothing else is used.
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# Cisco OpenH264, compiled from the BSD-2 source the crate vendors. The
+# default `source` feature builds that C library. Shale does not download or
+# ship Cisco's prebuilt binary: that blob is the only form Cisco's MPEG-LA
+# promise covers, and it has to be fetched from Cisco at install time.
+openh264 = "0.9"
 # SHA-256 for the certificate pin. Already in the lockfile through rustls.
 sha2 = "0.10"
 

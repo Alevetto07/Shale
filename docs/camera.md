@@ -9,7 +9,7 @@ The Device pane can show the printer's camera. Nothing in this path starts a pri
 | A1, A1 mini, P1P, P1S | JPEG over TLS. An 80-byte packet (`bblp` and the LAN access code), then a 16-byte header and a JPEG. | 6000 |
 | P2S, X1, X1C, X1E, H2, H2D, H2S | RTSPS, `rtsps://<ip>:322/streaming/live/1`, user `bblp`, the same access code. The picture is H.264. | 322 |
 
-The P2S does not speak the port-6000 JPEG protocol. Shale opens port 322 for it, completes the RTSP handshake, and can pull a JPEG out of RTP when the stream carries one. This build does not decode H.264, so a P2S that only sends H.264 shows that as an error instead of a blank picture presented as a still. LAN-only live view has to be on, or port 322 closes immediately.
+The P2S does not speak the port-6000 JPEG protocol. Shale opens port 322, completes the RTSP handshake, and decodes the H.264 access units with OpenH264 compiled from its BSD-2 source. Each decoded picture is stored as a JPEG, so the overlay, the failure watch, a snapshot, and the plate check use the same path as an A1 frame. A packet that is not a picture yet is skipped. LAN-only live view has to be on, or port 322 closes immediately. Cisco's patent promise covers only the official binary downloaded from Cisco at install time; this build does not ship that binary. See THIRD-PARTY-NOTICES.md.
 
 An unknown printer name stays on the JPEG socket. A wrong guess fails as a camera error.
 

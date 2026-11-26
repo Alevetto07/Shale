@@ -69,7 +69,21 @@ a printed notice; it is not an abridged substitute for those files.
 
 JPEG frames are decoded with the [`image`](https://github.com/image-rs/image) crate,
 version 0.25, default features off, `jpeg` only. Its licence is MIT OR Apache-2.0.
-That is the only new library this camera work links.
+
+P2S, X1, and H2 pictures are H.264. They are decoded with
+[OpenH264](https://github.com/cisco/openh264) through the
+[`openh264`](https://github.com/ralfbiedert/openh264-rs) crate, version 0.9.
+Both the C library and the Rust wrapper are BSD-2-Clause. Shale compiles the
+C library from the source the crate vendors (`source` feature). It does not
+download or redistribute Cisco's prebuilt binary.
+
+Cisco's promise to cover MPEG LA (now Via LA) AVC/H.264 pool fees applies to
+that official binary, and only when a product downloads the binary from Cisco
+at install time. It does not apply to a build from source. Shale takes the
+source path because shipping Cisco's binary inside an AGPL installer is not
+what that promise allows. Anyone who distributes Shale is responsible for
+whatever patent licences their jurisdiction requires for an H.264 decoder.
+OpenH264 is Copyright Cisco Systems, Inc. The wrapper is Copyright Ralf Biedert.
 
 The watch for spaghetti, detachment, and blobs is Shale's own grid detector. It
 does not download or link a model. ONNX Runtime is not a dependency of this build.

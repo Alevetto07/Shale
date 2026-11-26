@@ -9,8 +9,10 @@
 //! * **P2S, X1, H2** — RTSPS on port **322**,
 //!   `rtsps://<ip>:322/streaming/live/1`, user `bblp`, the same access code.
 //!   OpenBambuAPI and the P2S bridge notes agree: the P2S does **not** speak
-//!   the port-6000 JPEG protocol. The picture is H.264. LAN-only live view
-//!   has to be on, or the port closes immediately.
+//!   the port-6000 JPEG protocol. The picture is H.264. Shale decodes it with
+//!   OpenH264, built from source, and stores a JPEG so the rest of the camera
+//!   path is the same as the A1. LAN-only live view has to be on, or the port
+//!   closes immediately.
 //!
 //! The access code is the credential. It is never written into an error, a
 //! log line, or [`Debug`] of a target.
@@ -19,6 +21,7 @@
 
 mod cloud;
 mod detect;
+mod h264;
 mod jpeg;
 mod plate;
 mod rtsps;
@@ -75,6 +78,7 @@ pub fn base64(bytes: &[u8]) -> String {
 }
 pub use jpeg::{auth_packet, read_header, JpegHeader};
 pub use plate::{decode_jpeg, plates_match, PlateVerdict};
+pub use h264::nal_payloads;
 pub use rtsps::{depacketise_h264, encode_interleaved_rtp, encode_rtp};
 
 /// Which socket a model speaks.
@@ -325,9 +329,12 @@ impl Drop for CameraSession {
 }
 
 fn drive(target: CameraTarget, stop: Arc<AtomicBool>, shared: Arc<Mutex<Shared>>) {
+    let mut pictures = h264::H264Pictures::new().ok();
     let outcome = match target.path {
         CameraPath::JpegTls => jpeg::stream(&target, &stop, |frame| note_frame(&shared, frame)),
-        CameraPath::Rtsps => rtsps::stream(&target, &stop, |frame| note_frame(&shared, frame)),
+        CameraPath::Rtsps => rtsps::stream(&target, &stop, |frame| {
+            note_stream_frame(&shared, &mut pictures, frame)
+        }),
     };
     let mut shared = shared.lock().unwrap();
     shared.running = false;
@@ -355,6 +362,28 @@ fn note_frame(shared: &Mutex<Shared>, frame: Frame) -> bool {
         }
     }
     true
+}
+
+fn note_stream_frame(
+    shared: &Mutex<Shared>,
+    pictures: &mut Option<h264::H264Pictures>,
+    frame: Frame,
+) -> bool {
+    match frame {
+        Frame::Jpeg(bytes) => note_frame(shared, Frame::Jpeg(bytes)),
+        Frame::H264(unit) => {
+            let still = pictures.as_mut().and_then(|decoder| decoder.push(&unit));
+            if let Some(jpeg) = still {
+                let mut shared = shared.lock().unwrap();
+                shared.frames += 1;
+                let elapsed = shared.started.elapsed().as_secs_f64().max(0.05);
+                shared.fps = shared.frames as f64 / elapsed;
+                shared.codec = "h264".into();
+                shared.jpeg = Some(jpeg);
+            }
+            true
+        }
+    }
 }
 
 pub(crate) fn connect_tls(
@@ -459,14 +488,19 @@ pub fn snapshot_jpeg(target: &CameraTarget, timeout: Duration) -> Result<Vec<u8>
             let stop = AtomicBool::new(false);
             let mut jpeg = None;
             let mut saw_h264 = false;
+            let mut pictures = h264::H264Pictures::new().ok();
             let result = rtsps::stream(target, &stop, |frame| match frame {
                 Frame::Jpeg(bytes) => {
                     jpeg = Some(bytes);
                     false
                 }
-                Frame::H264(_) => {
+                Frame::H264(unit) => {
                     saw_h264 = true;
-                    false
+                    if let Some(still) = pictures.as_mut().and_then(|decoder| decoder.push(&unit)) {
+                        jpeg = Some(still);
+                        return false;
+                    }
+                    true
                 }
             });
             if let Some(bytes) = jpeg {
@@ -475,8 +509,7 @@ pub fn snapshot_jpeg(target: &CameraTarget, timeout: Duration) -> Result<Vec<u8>
             if saw_h264 {
                 return Err(CameraFault::Protocol(
                     "The P2S camera is an H.264 stream over RTSPS. Shale reached it, but this \
-                     build has no H.264 decoder, so it cannot return a still. The live panel \
-                     shows the stream status. A JPEG camera (A1, P1) returns a picture."
+                     frame did not decode into a picture."
                         .into(),
                 ));
             }

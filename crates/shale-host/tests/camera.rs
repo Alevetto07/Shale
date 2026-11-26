@@ -193,6 +193,7 @@ impl RtspServer {
 enum RtspReply {
     Jpeg(Vec<u8>),
     H264,
+    AnnexB(Vec<u8>),
     Unauthorised,
     Closed,
 }
@@ -248,6 +249,14 @@ v=0\r\nm=video 0 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=control:trackID=1\r\n
             let end = shale_host::camera::encode_rtp(96, true, &[0x7c, 0x41, 0x33]);
             tls.write_all(&shale_host::camera::encode_interleaved_rtp(0, &start))?;
             tls.write_all(&shale_host::camera::encode_interleaved_rtp(0, &end))?;
+        }
+        RtspReply::AnnexB(bytes) => {
+            for payload in shale_host::camera::nal_payloads(&bytes) {
+                let kind = payload.first().copied().unwrap_or(0) & 0x1f;
+                let marker = kind != 7 && kind != 8;
+                let rtp = shale_host::camera::encode_rtp(96, marker, payload);
+                tls.write_all(&shale_host::camera::encode_interleaved_rtp(0, &rtp))?;
+            }
         }
         RtspReply::Unauthorised | RtspReply::Closed => {}
     }
@@ -307,4 +316,25 @@ fn an_h264_stream_is_accepted_and_does_not_pretend_to_be_a_jpeg() {
     .unwrap_err();
     assert!(err.to_string().contains("H.264"), "{err}");
     assert!(!err.to_string().contains("12345678"));
+}
+
+#[test]
+fn a_p2s_h264_fixture_decodes_to_the_same_jpeg_pipeline() {
+    let fixture = include_bytes!("fixtures/red-32.h264").to_vec();
+    let server = RtspServer::start(RtspReply::AnnexB(fixture));
+    let jpeg = snapshot_jpeg(
+        &target(server.port, "12345678", CameraPath::Rtsps),
+        Duration::from_secs(5),
+    )
+    .expect("decoded still");
+    assert!(jpeg.starts_with(&[0xff, 0xd8]), "the overlay path stores a JPEG");
+    let image = image::ImageReader::new(std::io::Cursor::new(jpeg))
+        .with_guessed_format()
+        .expect("format")
+        .decode()
+        .expect("jpeg")
+        .to_rgb8();
+    assert_eq!(image.dimensions(), (32, 32));
+    let pixel = image.get_pixel(16, 16);
+    assert!(pixel[0] > 180 && pixel[1] < 80 && pixel[2] < 80, "{pixel:?}");
 }
