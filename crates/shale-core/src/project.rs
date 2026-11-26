@@ -78,6 +78,25 @@ pub struct ProjectData {
     /// Rules that show at most once, recorded the first time they appear.
     #[serde(default)]
     pub suggestions_shown: Vec<String>,
+    /// Support boxes drawn on the plates. A project written before boxes
+    /// existed has none, and opens with none.
+    #[serde(default)]
+    pub support_boxes: Vec<ProjectSupportBox>,
+    /// Which AMS tray each sliced tool uses. `-1` is the external spool.
+    /// Missing means the send dialog has not chosen yet.
+    #[serde(default)]
+    pub ams_mapping: Vec<i32>,
+}
+
+/// A support box kept with the plate it was drawn on.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProjectSupportBox {
+    #[serde(default)]
+    pub plate: usize,
+    pub min: [f64; 3],
+    pub max: [f64; 3],
+    #[serde(default)]
+    pub role: crate::paint::PaintRole,
 }
 
 #[derive(Clone, Debug)]
@@ -120,6 +139,10 @@ struct Document {
     dismissed_suggestions: Vec<String>,
     #[serde(default)]
     suggestions_shown: Vec<String>,
+    #[serde(default)]
+    support_boxes: Vec<ProjectSupportBox>,
+    #[serde(default)]
+    ams_mapping: Vec<i32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -225,6 +248,8 @@ pub fn write_project(path: &Path, data: &ProjectData) -> Result<(), Error> {
             support_model: data.support_model,
             dismissed_suggestions: data.dismissed_suggestions.clone(),
             suggestions_shown: data.suggestions_shown.clone(),
+            support_boxes: data.support_boxes.clone(),
+            ams_mapping: data.ams_mapping.clone(),
         };
     let json = serde_json::to_vec_pretty(&document).map_err(|source| Error::Json {
         path: path.display().to_string(),
@@ -337,6 +362,8 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
             thumbnail,
             dismissed_suggestions: document.dismissed_suggestions,
             suggestions_shown: document.suggestions_shown,
+            support_boxes: document.support_boxes,
+            ams_mapping: document.ams_mapping,
         },
         warnings,
     })
@@ -638,6 +665,8 @@ mod tests {
             thumbnail: Vec::new(),
             dismissed_suggestions: Vec::new(),
             suggestions_shown: Vec::new(),
+            support_boxes: Vec::new(),
+            ams_mapping: Vec::new(),
         };
         write_project(&path, &saved).unwrap();
         let loaded = read_project(&path).unwrap().data;
@@ -714,6 +743,8 @@ mod tests {
             thumbnail: b"thumbnail-bytes".to_vec(),
             dismissed_suggestions: vec!["brim_contact:cube".into()],
             suggestions_shown: vec!["filament_fit".into()],
+            support_boxes: Vec::new(),
+            ams_mapping: Vec::new(),
         };
         write_project(&path, &saved).unwrap();
         let loaded = read_project(&path).unwrap();
@@ -753,6 +784,103 @@ mod tests {
         assert_eq!(support.regions[0].summary, "tip");
         assert_eq!(data.support_model, Some(0));
         assert_eq!(data.thumbnail, b"thumbnail-bytes");
+    }
+
+    #[test]
+    fn boxes_object_overrides_brim_ears_and_the_ams_map_round_trip() {
+        let (_root, dir) = temp_dir("kept");
+        let path = dir.join("kept.shale");
+        let (_file, stl) = triangle();
+        let mut settings = std::collections::BTreeMap::new();
+        settings.insert("wall_line_count".into(), "3".into());
+        settings.insert("support_enable".into(), "false".into());
+        settings.insert("brim_ears".into(), "1".into());
+        settings.insert("brim_ear_radius".into(), "6".into());
+        let saved = ProjectData {
+            name: "kept".into(),
+            printer_id: "bambu_lab_a1".into(),
+            printer_label: "Bambu Lab A1".into(),
+            variant_name: None,
+            quality_type: None,
+            material_id: Some("generic_pla".into()),
+            ams: vec!["generic_petg".into()],
+            settings: UserSettings::default(),
+            chord_mm: 0.1,
+            turn_deg: 15.0,
+            models: vec![ProjectModel {
+                name: "cube.stl".into(),
+                bytes: stl,
+                transform: Transform::default(),
+                settings,
+                slot: Some(2),
+                plate: 1,
+                painted: vec![4],
+                blocked: vec![9],
+            }],
+            plate_names: vec!["plate 1".into(), "plate 2".into()],
+            instructions: Vec::new(),
+            support: None,
+            support_model: None,
+            thumbnail: Vec::new(),
+            dismissed_suggestions: Vec::new(),
+            suggestions_shown: Vec::new(),
+            support_boxes: vec![
+                ProjectSupportBox {
+                    plate: 0,
+                    min: [1.0, 2.0, 0.0],
+                    max: [11.0, 12.0, 8.0],
+                    role: crate::paint::PaintRole::Enforce,
+                },
+                ProjectSupportBox {
+                    plate: 1,
+                    min: [4.0, 4.0, 0.0],
+                    max: [9.0, 9.0, 4.0],
+                    role: crate::paint::PaintRole::Block,
+                },
+            ],
+            ams_mapping: vec![-1, 0, 2],
+        };
+        write_project(&path, &saved).unwrap();
+        let loaded = read_project(&path).unwrap().data;
+        assert_eq!(loaded.models[0].settings.get("brim_ears").map(String::as_str), Some("1"));
+        assert_eq!(loaded.models[0].settings.get("brim_ear_radius").map(String::as_str), Some("6"));
+        assert_eq!(loaded.models[0].settings.get("wall_line_count").map(String::as_str), Some("3"));
+        assert_eq!(loaded.models[0].settings.get("support_enable").map(String::as_str), Some("false"));
+        assert_eq!(loaded.models[0].slot, Some(2));
+        assert_eq!(loaded.ams, vec!["generic_petg".to_string()]);
+        assert_eq!(loaded.ams_mapping, vec![-1, 0, 2]);
+        assert_eq!(loaded.support_boxes, saved.support_boxes);
+    }
+
+    #[test]
+    fn an_older_project_without_the_new_fields_still_opens() {
+        let (_root, dir) = temp_dir("old");
+        let path = dir.join("old.shale");
+        let (_file, stl) = triangle();
+        let json = br#"{
+            "format": 1,
+            "name": "old",
+            "printer_id": "bambu_lab_a1",
+            "models": [{
+                "file": "models/0-cube.stl",
+                "name": "cube.stl",
+                "transform": {"translation": [0.0, 0.0, 0.0], "rotation_deg": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}
+            }]
+        }"#;
+        let file = std::fs::File::create(&path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("project.json", options).unwrap();
+        std::io::Write::write_all(&mut zip, json).unwrap();
+        zip.start_file("models/0-cube.stl", options).unwrap();
+        std::io::Write::write_all(&mut zip, &stl).unwrap();
+        zip.finish().unwrap();
+        let loaded = read_project(&path).unwrap().data;
+        assert!(loaded.support_boxes.is_empty());
+        assert!(loaded.ams_mapping.is_empty());
+        assert!(loaded.models[0].settings.is_empty());
+        assert_eq!(loaded.models[0].slot, None);
+        assert_eq!(loaded.name, "old");
     }
 
     #[test]

@@ -943,6 +943,8 @@ export interface SaveProject {
   quiet?: boolean;
   dismissed_suggestions?: string[];
   suggestions_shown?: string[];
+  /// Tool index to AMS tray. `-1` is the external spool.
+  ams_mapping?: number[];
 }
 
 export interface OpenedProject {
@@ -963,6 +965,7 @@ export interface OpenedProject {
   warnings: string[];
   dismissed_suggestions?: string[];
   suggestions_shown?: string[];
+  ams_mapping?: number[];
 }
 
 /** The editable half of the cost estimate: price, power, tariff, currency. */

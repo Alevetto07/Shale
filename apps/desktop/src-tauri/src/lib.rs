@@ -4450,6 +4450,9 @@ struct SaveRequest {
     dismissed_suggestions: Vec<String>,
     #[serde(default)]
     suggestions_shown: Vec<String>,
+    /// Tool to AMS tray. `-1` is the external spool.
+    #[serde(default)]
+    ams_mapping: Vec<i32>,
 }
 
 #[derive(Serialize)]
@@ -4471,6 +4474,7 @@ struct OpenedJob {
     warnings: Vec<String>,
     dismissed_suggestions: Vec<String>,
     suggestions_shown: Vec<String>,
+    ams_mapping: Vec<i32>,
 }
 
 fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -5306,6 +5310,26 @@ fn save_project(
         thumbnail: project.thumbnail,
         dismissed_suggestions: project.dismissed_suggestions,
         suggestions_shown: project.suggestions_shown,
+        support_boxes: {
+            let mut boxes = Vec::new();
+            for (index, plate) in inner.plates.iter().enumerate() {
+                let list = if index == inner.active_plate {
+                    &inner.support_boxes
+                } else {
+                    &plate.support_boxes
+                };
+                for region in list {
+                    boxes.push(shale_core::project::ProjectSupportBox {
+                        plate: index,
+                        min: region.min,
+                        max: region.max,
+                        role: region.role,
+                    });
+                }
+            }
+            boxes
+        },
+        ams_mapping: project.ams_mapping,
     };
     drop(inner);
     let path = PathBuf::from(&project.path);
@@ -5369,6 +5393,7 @@ async fn open_project(
     let mut inner = lock(&state)?;
     inner.models.clear();
     inner.painted.clear();
+    inner.support_boxes.clear();
     inner.instructions.clear();
     inner.support = None;
     inner.support_model_id = None;
@@ -5382,6 +5407,15 @@ async fn open_project(
     let plate_count = names
         .len()
         .max(built.iter().map(|entry| entry.6 + 1).max().unwrap_or(1))
+        .max(
+            project
+                .data
+                .support_boxes
+                .iter()
+                .map(|region| region.plate + 1)
+                .max()
+                .unwrap_or(1),
+        )
         .max(1);
     inner.plates = (0..plate_count)
         .map(|index| PlateStash {
@@ -5432,6 +5466,18 @@ async fn open_project(
             views.push(view);
         } else if let Some(stash) = inner.plates.get_mut(plate) {
             stash.models.push(model);
+        }
+    }
+    for region in &project.data.support_boxes {
+        let stored = shale_core::paint::SupportBox {
+            min: region.min,
+            max: region.max,
+            role: region.role,
+        };
+        if region.plate == 0 {
+            inner.support_boxes.push(stored);
+        } else if let Some(stash) = inner.plates.get_mut(region.plate) {
+            stash.support_boxes.push(stored);
         }
     }
     for instruction in project.data.instructions.clone() {
@@ -5487,6 +5533,7 @@ async fn open_project(
         warnings,
         dismissed_suggestions: project.data.dismissed_suggestions,
         suggestions_shown: project.data.suggestions_shown,
+        ams_mapping: project.data.ams_mapping,
     })
 }
 

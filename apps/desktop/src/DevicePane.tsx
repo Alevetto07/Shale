@@ -48,6 +48,9 @@ export interface DevicePaneProps {
   /// Slice plates that have parts but no G-code yet. "Every plate" calls this
   /// before it sends, and waits. `false` means a plate failed and the send stops.
   onSliceMissing?: () => Promise<boolean>;
+  /// Tool to AMS tray, kept with the project. `-1` is the external spool.
+  mapping?: number[];
+  onMapping?: (mapping: number[]) => void;
 }
 
 function fileKind(kind: string): string {
@@ -87,6 +90,8 @@ export function DevicePane({
   plate,
   plates,
   onSliceMissing,
+  mapping: mappingFromProject,
+  onMapping,
 }: DevicePaneProps) {
   const [host, setHost] = useState(() => localStorage.getItem("shale.device.host") ?? "");
   const [serial, setSerial] = useState(() => localStorage.getItem("shale.device.serial") ?? "");
@@ -98,7 +103,13 @@ export function DevicePane({
   const [sending, setSending] = useState(false);
   const [asking, setAsking] = useState(false);
   const [tools, setTools] = useState<api.SliceTools | null>(null);
-  const [mapping, setMapping] = useState<number[]>([]);
+  const [localMapping, setLocalMapping] = useState<number[]>([]);
+  const mapping = mappingFromProject ?? localMapping;
+  const setMapping = (next: number[] | ((current: number[]) => number[])) => {
+    const resolved = typeof next === "function" ? next(mapping) : next;
+    if (onMapping) onMapping(resolved);
+    else setLocalMapping(resolved);
+  };
   const [scope, setScope] = useState<"plate" | "all">("plate");
   const [plateIndex, setPlateIndex] = useState(0);
   const [history, setHistory] = useState<api.HistoryRow[]>([]);

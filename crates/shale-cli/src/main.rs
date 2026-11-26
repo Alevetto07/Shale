@@ -797,6 +797,8 @@ fn save_command(args: &[String]) -> Result<(), String> {
         thumbnail: Vec::new(),
         dismissed_suggestions: Vec::new(),
         suggestions_shown: Vec::new(),
+        support_boxes: Vec::new(),
+        ams_mapping: Vec::new(),
     };
     shale_core::write_project(std::path::Path::new(&output), &data).map_err(|err| err.to_string())?;
     let _ = shale_core::remember_recent(

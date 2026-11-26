@@ -225,6 +225,7 @@ export function App() {
   // The AMS holds three more spools beside the plate's own material. An empty
   // string is an empty bay, so the slot count is derived instead of stored.
   const [ams, setAms] = useState<string[]>(["", "", ""]);
+  const [amsMapping, setAmsMapping] = useState<number[]>([]);
   const [bed, setBed] = useState<Bed>(FALLBACK_BED);
   // Cura settings the user changed in the menu; anything absent is the profile's.
   const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -2758,6 +2759,7 @@ export function App() {
         quiet: !adopt,
         dismissed_suggestions: dismissedSuggestions,
         suggestions_shown: suggestionsShown,
+        ams_mapping: amsMapping,
       });
       // A quiet save is a place to put a plate down, not a file to adopt: the
       // tab keeps its name and its (empty) path, and the project does not start
@@ -2900,6 +2902,7 @@ export function App() {
     setQuality(opened.quality_type);
     setMaterial(opened.material_id);
     setAms([0, 1, 2].map((index) => opened.ams?.[index] ?? ""));
+    setAmsMapping(opened.ams_mapping ?? []);
     setOverrides(overridesFromSliceSettings(opened.settings));
     setNonplanar(nonplanarFromSliceSettings(opened.settings));
     setNonplanarReport(null);
@@ -2955,6 +2958,7 @@ export function App() {
     try {
       const opened = await api.openProject(picked);
       applyOpened(opened);
+      setSupportBoxes(await api.supportBoxes().catch(() => []));
       recents.refresh();
     } catch (err) {
       setError(messageOf(err));
@@ -3604,6 +3608,8 @@ export function App() {
           plate={docTabs.find((tab) => tab.id === activeTab)?.name ?? "plate"}
           plates={plates.map((item) => (item.active ? { ...item, sliced: layerCount > 0 } : item))}
           onSliceMissing={() => sliceAll({ onlyUnsliced: true })}
+          mapping={amsMapping}
+          onMapping={setAmsMapping}
         />
         </Suspense>
       ) : (

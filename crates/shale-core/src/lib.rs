@@ -78,7 +78,7 @@ pub use project_settings::{
 };
 pub use project::{
     config_dir, forget_recent, load_recents, now_ms, read_project, remember_recent, write_project,
-    LoadedProject, ProjectData, ProjectModel, RecentEntry,
+    LoadedProject, ProjectData, ProjectModel, ProjectSupportBox, RecentEntry,
 };
 pub use stats::{
     features_from_gcode, from_gcode as slice_stats_from_gcode, ExtruderUse, FeatureUse, SliceStats,
