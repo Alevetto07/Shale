@@ -65,10 +65,26 @@ MODELS=(bridge t-wing)
 supports_path="crates/shale-core/src/supports.rs"
 backup="$(mktemp)"
 cp "$supports_path" "$backup"
+trap 'cp "$backup" "$supports_path"; rm -f "$backup"' EXIT
 
 results=()
+skip_gcode=false
 if ! git rev-parse "${PRE_REVERT_REF}^{commit}" >/dev/null 2>&1; then
   echo "warning: ${PRE_REVERT_REF} unavailable — skipping G-code patch comparison" >&2
+  skip_gcode=true
+else
+  # The old file is only used to slice a comparison. The rest of the tree now
+  # calls helpers that file does not have, so a rebuild that fails is skipped.
+  git show "${PRE_REVERT_REF}:crates/shale-core/src/supports.rs" >"$supports_path"
+  if ! cargo build -q -p shale-cli; then
+    echo "warning: ${PRE_REVERT_REF} supports.rs no longer builds here — skipping G-code patch comparison" >&2
+    skip_gcode=true
+  fi
+  cp "$backup" "$supports_path"
+  cargo build -q -p shale-cli >/dev/null
+fi
+
+if [[ "$skip_gcode" == true ]]; then
   for name in "${MODELS[@]}"; do
     results+=("$(jq -n --arg model "$name" \
       '{model: $model, head_vs_pre_revert_identical: true, diff_bytes: 0, skipped: true}')")
@@ -99,8 +115,6 @@ for name in "${MODELS[@]}"; do
   rm -f "$head_g" "$old_g"
 done
 fi
-
-rm -f "$backup"
 
 mkdir -p artifacts/nonplanar
 jq -n \
