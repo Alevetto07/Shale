@@ -21,11 +21,13 @@ Start and stop, the frame rate, a snapshot, and fullscreen. A wrong access code,
 
 ## Failed-print watch
 
-The watch samples a frame every few seconds and looks, on this computer, for spaghetti, a part that has come off the bed, or a blob. It is a small grid detector written for Shale, not a downloaded model. A finding has to clear the confidence threshold and then repeat for the number of frames you set (three, by default) before it notifies.
+The watch samples a frame every few seconds. The default is a small grid detector written for Shale: spaghetti, a part that has come off the bed, or a blob. A finding has to clear the confidence threshold and then repeat for the number of frames you set (three, by default) before it notifies.
 
-Pause is off. Opting in is per printer, remembered on this computer, and the pane sends the pause only after that opt-in and a finding that has held. The MCP tools do not pause and do not move a printer.
+The detector control can switch to the Obico failure model. That file is about 193 MB, AGPL-3.0, and it is not in the repository. **Download the Obico failure model** fetches it into the app data directory, shows the progress, and keeps it only when the SHA-256 matches. Until that finishes, and whenever you press **Use the built-in detector**, the grid detector is what runs. The model’s only class is `failure`. A frame it marks is treated as spaghetti for the notice and the optional pause.
 
-The weights published with Obico's server are AGPL-3.0 and about 193 MB. They are not in this build, and ONNX Runtime is not linked. The address and the checksum are in `THIRD-PARTY-NOTICES.md` so a later build can download them once and check them. The sample images the detector is checked against are synthetic pictures generated in the test, not photographs.
+Pause is off. Opting in is per printer, remembered on this computer, and the pane sends the pause only after that opt-in and a finding that has held. The MCP tools do not pause, do not move a printer, and do not download the model.
+
+The address and the checksum are in `THIRD-PARTY-NOTICES.md`. Tests use a loopback file and never request the release. The sample images the grid detector is checked against are synthetic pictures generated in the test, not photographs.
 
 ## Empty plate
 

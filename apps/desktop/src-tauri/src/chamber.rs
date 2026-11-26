@@ -3,6 +3,8 @@
 //! A frame never moves a printer. The sweep lines are sent only by
 //! `removal_send`, and only when the queue is in the state that allows it.
 
+use std::sync::Mutex;
+use std::thread;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -141,6 +143,7 @@ pub struct WatchView {
     pub heatmap_cols: usize,
     pub heatmap_rows: usize,
     pub note: String,
+    pub detector: String,
 }
 
 #[derive(Serialize)]
@@ -165,6 +168,7 @@ fn quiet() -> WatchView {
         heatmap_cols: 0,
         heatmap_rows: 0,
         note: "No picture yet.".into(),
+        detector: "builtin".into(),
     }
 }
 
@@ -172,11 +176,13 @@ fn quiet() -> WatchView {
 /// pause only when this printer was opted in.
 #[tauri::command]
 pub fn camera_watch(
+    app: AppHandle,
     printer: State<PrinterHost>,
     confidence: f64,
     sensitivity: String,
     debounce_frames: u32,
     pause: bool,
+    detector: Option<String>,
 ) -> Result<WatchView, String> {
     let jpeg = {
         let slot = camera_slot(&printer)?;
@@ -200,7 +206,23 @@ pub fn camera_watch(
         debounce_frames,
         pause,
     };
-    let finding = camera::inspect(&current, before.as_ref(), &settings);
+    let want_model = detector.as_deref() == Some("obico");
+    let model_file = config_dir(&app)?.join("failure-models").join(camera::MODEL_FILE);
+    let (finding, detector_name) = if want_model {
+        match camera::score_obico(&model_file, &current, &settings) {
+            Ok(finding) => (finding, "obico".to_string()),
+            Err(reason) => {
+                let mut finding = camera::inspect(&current, before.as_ref(), &settings);
+                finding.note = format!("{reason} Using the built-in detector.");
+                (finding, "builtin".to_string())
+            }
+        }
+    } else {
+        (
+            camera::inspect(&current, before.as_ref(), &settings),
+            "builtin".to_string(),
+        )
+    };
     *previous_bytes = Some(jpeg);
     drop(previous_bytes);
     let mut watch = printer
@@ -231,7 +253,133 @@ pub fn camera_watch(
         heatmap_cols: finding.heatmap_cols,
         heatmap_rows: finding.heatmap_rows,
         note: finding.note,
+        detector: detector_name,
     })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelStatus {
+    pub phase: String,
+    pub ready: bool,
+    pub received: u64,
+    pub total: u64,
+    pub message: String,
+}
+
+struct ModelProgress {
+    phase: String,
+    received: u64,
+    total: u64,
+    message: String,
+}
+
+fn model_progress() -> &'static Mutex<ModelProgress> {
+    static PROGRESS: Mutex<ModelProgress> = Mutex::new(ModelProgress {
+        phase: String::new(),
+        received: 0,
+        total: 0,
+        message: String::new(),
+    });
+    &PROGRESS
+}
+
+fn model_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(config_dir(app)?.join("failure-models").join(camera::MODEL_FILE))
+}
+
+fn status_of(path: &std::path::Path) -> ModelStatus {
+    if camera::model_is_verified(path) {
+        return ModelStatus {
+            phase: "ready".into(),
+            ready: true,
+            received: camera::OBICO_ONNX_BYTES,
+            total: camera::OBICO_ONNX_BYTES,
+            message: "The failure model is ready.".into(),
+        };
+    }
+    let progress = model_progress().lock().unwrap();
+    let phase = if progress.phase.is_empty() {
+        "missing"
+    } else {
+        progress.phase.as_str()
+    };
+    ModelStatus {
+        phase: phase.into(),
+        ready: false,
+        received: progress.received,
+        total: if progress.total == 0 {
+            camera::OBICO_ONNX_BYTES
+        } else {
+            progress.total
+        },
+        message: if progress.message.is_empty() {
+            "The failure model is not downloaded. The built-in detector is in use.".into()
+        } else {
+            progress.message.clone()
+        },
+    }
+}
+
+#[tauri::command]
+pub fn camera_model_status(app: AppHandle) -> Result<ModelStatus, String> {
+    let path = model_file(&app)?;
+    Ok(status_of(&path))
+}
+
+/// Download the published weights into the app data directory. The catalogue
+/// cache is never the destination. A second click while a download is running
+/// reports the same progress instead of starting another copy.
+#[tauri::command]
+pub fn camera_model_download(app: AppHandle) -> Result<ModelStatus, String> {
+    let path = model_file(&app)?;
+    if camera::model_is_verified(&path) {
+        return Ok(status_of(&path));
+    }
+    {
+        let progress = model_progress().lock().map_err(|_| "the model lock is poisoned".to_string())?;
+        if progress.phase == "downloading" {
+            drop(progress);
+            return Ok(status_of(&path));
+        }
+    }
+    {
+        let mut progress = model_progress().lock().map_err(|_| "the model lock is poisoned".to_string())?;
+        progress.phase = "downloading".into();
+        progress.received = 0;
+        progress.total = camera::OBICO_ONNX_BYTES;
+        progress.message = "Downloading the failure model.".into();
+    }
+    let dest = path.clone();
+    thread::spawn(move || {
+        let result = camera::install_model(
+            camera::release_url(),
+            &dest,
+            camera::OBICO_ONNX_SHA256,
+            Some(camera::OBICO_ONNX_BYTES),
+            |received, total| {
+                if let Ok(mut progress) = model_progress().lock() {
+                    progress.received = received;
+                    if let Some(total) = total {
+                        progress.total = total;
+                    }
+                }
+            },
+        );
+        if let Ok(mut progress) = model_progress().lock() {
+            match result {
+                Ok(()) => {
+                    progress.phase = "ready".into();
+                    progress.message = "The failure model is ready.".into();
+                }
+                Err(err) => {
+                    progress.phase = "failed".into();
+                    progress.message = err;
+                }
+            }
+        }
+    });
+    Ok(status_of(&path))
 }
 
 fn plate_file(app: &AppHandle, serial: &str) -> Result<std::path::PathBuf, String> {

@@ -5560,6 +5560,8 @@ pub fn run() {
             chamber::camera_frame,
             chamber::camera_snapshot,
             chamber::camera_watch,
+            chamber::camera_model_status,
+            chamber::camera_model_download,
             chamber::camera_save_reference,
             chamber::camera_compare,
             chamber::removal_preview,

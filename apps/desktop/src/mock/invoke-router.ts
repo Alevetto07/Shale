@@ -261,6 +261,16 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
         heatmapCols: 12,
         heatmapRows: 9,
         note: "Stringy strands on the part. This may be spaghetti.",
+        detector: "builtin",
+      } as T;
+    case "camera_model_status":
+    case "camera_model_download":
+      return {
+        phase: "missing",
+        ready: false,
+        received: 0,
+        total: 202223918,
+        message: "The failure model is not downloaded. The built-in detector is in use.",
       } as T;
     case "camera_cloud_still":
       throw new Error(

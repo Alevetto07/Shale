@@ -23,8 +23,10 @@ mod cloud;
 mod detect;
 mod h264;
 mod jpeg;
+mod obico;
 mod plate;
 mod rtsps;
+mod weights;
 
 use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -79,7 +81,9 @@ pub fn base64(bytes: &[u8]) -> String {
 pub use jpeg::{auth_packet, read_header, JpegHeader};
 pub use plate::{decode_jpeg, plates_match, PlateVerdict};
 pub use h264::nal_payloads;
+pub use obico::score as score_obico;
 pub use rtsps::{depacketise_h264, encode_interleaved_rtp, encode_rtp};
+pub use weights::{install as install_model, is_verified as model_is_verified, model_path, release_url, FILE_NAME as MODEL_FILE};
 
 /// Which socket a model speaks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

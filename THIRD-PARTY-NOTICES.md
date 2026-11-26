@@ -86,11 +86,21 @@ whatever patent licences their jurisdiction requires for an H.264 decoder.
 OpenH264 is Copyright Cisco Systems, Inc. The wrapper is Copyright Ralf Biedert.
 
 The watch for spaghetti, detachment, and blobs is Shale's own grid detector. It
-does not download or link a model. ONNX Runtime is not a dependency of this build.
+is the default, and it stays the default until the Obico weights have been
+downloaded and the checksum matches. A button in the camera panel, "Use the
+built-in detector", switches back to the grid at any time.
+
+[ONNX Runtime](https://github.com/microsoft/onnxruntime) is linked through the
+[`ort`](https://github.com/pykeio/ort) crate, version 2.0.0-rc.15, and only by
+the desktop app. Both are MIT OR Apache-2.0. The crate downloads the ONNX
+Runtime library at build time. It does not download the Obico weights. Tests
+never request the weights URL.
 
 Obico's failure-detection weights are AGPL-3.0, the same licence as Obico Server,
-and they are **not** shipped here. The file is about 193 MB. A later build may
-download it on first use and must check the checksum before loading it:
+and they are **not** shipped here. The file is about 193 MB. The camera panel
+downloads it on request into the app data directory (`failure-models/`, not the
+catalogue cache), shows how far the download has got, and keeps the file only
+when the SHA-256 matches:
 
 | Asset | Size | SHA-256 |
 | --- | --- | --- |

@@ -14,9 +14,9 @@
 //! Obico's failure-detection weights are AGPL-3.0, the same licence as
 //! `obico-server`, and the ONNX file is about 193 MB
 //! ([`OBICO_ONNX_URL`], [`OBICO_ONNX_SHA256`]). Shale does not ship those
-//! weights and does not link ONNX Runtime. The detector here is Shale's own.
-//! The constants are recorded so a later build can download the file once,
-//! check the sum, and refuse it when the sum does not match.
+//! weights. The grid detector here is the default until a download of that
+//! file checks out. ONNX Runtime is an optional backend and is not used by
+//! these tests.
 
 use image::{Rgb, RgbImage};
 

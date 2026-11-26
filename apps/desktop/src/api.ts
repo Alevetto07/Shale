@@ -398,6 +398,15 @@ export interface WatchView {
   heatmapCols: number;
   heatmapRows: number;
   note: string;
+  detector: string;
+}
+
+export interface ModelStatus {
+  phase: string;
+  ready: boolean;
+  received: number;
+  total: number;
+  message: string;
 }
 
 export interface RemovalPreview {
@@ -425,7 +434,10 @@ export const cameraWatch = (args: {
   sensitivity: string;
   debounceFrames: number;
   pause: boolean;
+  detector: string;
 }) => invoke<WatchView>("camera_watch", args);
+export const cameraModelStatus = () => invoke<ModelStatus>("camera_model_status");
+export const cameraModelDownload = () => invoke<ModelStatus>("camera_model_download");
 export const cameraCloudStill = (devId: string) =>
   invoke<string>("camera_cloud_still", { devId });
 export const cameraSaveReference = (serial: string) =>

@@ -17,12 +17,16 @@ function protocol(printerId: string): string {
   const id = printerId.toLowerCase();
   const rtsps = ["p2s", "n2s", "x1", "x2", "h2", "h3", "n7"].some((name) => id.includes(name));
   return rtsps
-    ? "RTSPS on port 322. This build does not decode H.264, so a still appears only when the stream carries a JPEG."
+    ? "RTSPS on port 322. The picture is H.264, decoded on this computer."
     : "JPEG over TLS on port 6000, using the LAN access code.";
 }
 
 function dataUrl(jpeg: string): string {
   return `data:image/jpeg;base64,${jpeg}`;
+}
+
+function megabytes(bytes: number): string {
+  return `${Math.max(0, Math.round(bytes / 1_048_576))} MB`;
 }
 
 /**
@@ -48,6 +52,8 @@ export function CameraPanel({
   const [busy, setBusy] = useState(false);
   const [watchOn, setWatchOn] = useState(false);
   const [sensitivity, setSensitivity] = useState("medium");
+  const [detector, setDetector] = useState("builtin");
+  const [model, setModel] = useState<api.ModelStatus | null>(null);
   const [confidence, setConfidence] = useState(0.6);
   const [sampleSeconds, setSampleSeconds] = useState("5");
   const [debounceFrames, setDebounceFrames] = useState("3");
@@ -102,6 +108,7 @@ export function CameraPanel({
           sensitivity,
           debounceFrames: Number(debounceFrames),
           pause: pauseOptIn,
+          detector,
         })
         .then((view) => {
           if (!live) return;
@@ -136,9 +143,26 @@ export function CameraPanel({
     debounceFrames,
     sampleSeconds,
     pauseOptIn,
+    detector,
     onPause,
     onNotify,
   ]);
+
+  useEffect(() => {
+    if (!watchOn || detector !== "obico") return;
+    let live = true;
+    const tick = () => {
+      void api.cameraModelStatus().then((status) => {
+        if (live) setModel(status);
+      });
+    };
+    tick();
+    const timer = window.setInterval(tick, 700);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [watchOn, detector, model?.phase]);
 
   async function start() {
     setBusy(true);
@@ -288,6 +312,33 @@ export function CameraPanel({
       </SwitchRow>
       {watchOn ? (
         <div className="camera-watch">
+          <Select
+            label="Detector"
+            showLabel
+            value={detector}
+            options={[
+              { value: "builtin", label: "Built-in" },
+              { value: "obico", label: "Obico model" },
+            ]}
+            onChange={setDetector}
+          />
+          {detector === "obico" && model && !model.ready ? (
+            <>
+              <p className="device-note">{model.message}</p>
+              {model.phase === "downloading" ? (
+                <p className="device-note">
+                  {megabytes(model.received)} of {megabytes(model.total)}
+                </p>
+              ) : (
+                <Button type="button" variant="secondary" size="sm" onClick={() => void api.cameraModelDownload()}>
+                  Download the Obico failure model
+                </Button>
+              )}
+              <Button type="button" variant="secondary" size="sm" onClick={() => setDetector("builtin")}>
+                Use the built-in detector
+              </Button>
+            </>
+          ) : null}
           <Select
             label="Sensitivity"
             showLabel
