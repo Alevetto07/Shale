@@ -78,36 +78,60 @@ pub fn delete_file(trust: &Trust, config: &HostConfig, remote: &str) -> Result<(
     Ok(())
 }
 
-/// Start a file that is already on the printer. A `.gcode` uses `gcode_file`.
-/// A 3MF uses `project_file` and names the plate inside the archive. Nothing
-/// here opens a socket: the link publishes the JSON.
+/// Read one remote file into memory. Reprint uses this for a 3MF so the plate
+/// list can be read before the start command is published.
+pub fn read_file(trust: &Trust, config: &HostConfig, remote: &str) -> Result<Vec<u8>> {
+    let remote = clean_path(remote)?;
+    let mut wire = logged_in(trust, config)?;
+    let bytes = retrieve(&mut wire, trust, config, &remote)?;
+    let _ = send_cmd(&mut wire, "QUIT", "221");
+    Ok(bytes)
+}
+
+/// Start a G-code file that is already on the printer. A 3MF is
+/// [`reprint_archived`]: the plate is inside the file, not assumed.
 pub fn reprint_command(sequence: u64, remote: &str, bed_type: &str) -> serde_json::Value {
     let remote = if remote.starts_with('/') {
         remote.to_string()
     } else {
         format!("/{remote}")
     };
-    let lower = remote.to_ascii_lowercase();
-    if lower.ends_with(".gcode") && !lower.ends_with(".gcode.3mf") {
-        return crate::gcode_file_command(sequence, &remote, bed_type);
-    }
+    crate::gcode_file_command(sequence, &remote, bed_type)
+}
+
+/// Start a `.gcode.3mf` that is already on the printer. The plate comes from
+/// `slice_info.config` and the G-code entries, lowest index first. The tray
+/// map in the file is the one on the command.
+pub fn reprint_archived(
+    sequence: u64,
+    remote: &str,
+    bed_type: &str,
+    archive: &[u8],
+) -> Result<serde_json::Value> {
+    let plates = crate::gcode3mf::plates_in(archive).map_err(HostError::Bad)?;
+    let plate = plates
+        .first()
+        .ok_or_else(|| HostError::Bad("This 3MF has no sliced plate.".into()))?;
+    let remote = if remote.starts_with('/') {
+        remote.to_string()
+    } else {
+        format!("/{remote}")
+    };
     let name = remote.rsplit('/').next().unwrap_or(&remote);
-    serde_json::json!({
-        "print": {
-            "sequence_id": sequence.to_string(),
-            "command": "project_file",
-            "param": "Metadata/plate_1.gcode",
-            "url": format!("ftp://{remote}"),
-            "bed_type": bed_type,
-            "timelapse": false,
-            "bed_levelling": true,
-            "flow_cali": false,
-            "vibration_cali": false,
-            "layer_inspect": false,
-            "use_ams": false,
-            "subtask_name": name,
-        }
-    })
+    let mut options = crate::print_options::defaults_for("");
+    options.timelapse = false;
+    options.flow_cali = false;
+    options.vibration_cali = false;
+    options.use_ams = plate.ams_mapping.iter().any(|slot| *slot >= 0);
+    Ok(crate::print_options::project_file_command(
+        sequence,
+        &remote,
+        &plate.gcode_path,
+        bed_type,
+        &options,
+        &plate.ams_mapping,
+        name,
+    ))
 }
 
 struct Listed {
@@ -333,12 +357,26 @@ mod tests {
         let gcode = reprint_command(4, "/cache/bench.gcode", "textured_plate");
         assert_eq!(gcode["print"]["command"], "gcode_file");
         assert_eq!(gcode["print"]["param"], "/cache/bench.gcode");
-        let model = reprint_command(5, "/cache/plate.3mf", "smooth_plate");
+        let mut plate = crate::gcode3mf::plate_from_gcode(
+            b";TIME:12\nG1 E1\n",
+            "plate",
+            "N2S",
+            "0.4",
+            "PLA",
+            "#FFFFFF",
+            &[1],
+            "smooth_plate",
+        );
+        plate.index = 2;
+        let archive = crate::gcode3mf::write(&[plate]).unwrap();
+        let model = reprint_archived(5, "/cache/plate.gcode.3mf", "smooth_plate", &archive)
+            .unwrap();
         assert_eq!(model["print"]["command"], "project_file");
-        assert_eq!(model["print"]["url"], "ftp:///cache/plate.3mf");
-        assert_eq!(model["print"]["param"], "Metadata/plate_1.gcode");
+        assert_eq!(model["print"]["url"], "ftp:///cache/plate.gcode.3mf");
+        assert_eq!(model["print"]["param"], "Metadata/plate_2.gcode");
         assert_eq!(model["print"]["bed_type"], "smooth_plate");
-        assert_eq!(model["print"]["use_ams"], false);
+        assert_eq!(model["print"]["use_ams"], true);
+        assert_eq!(model["print"]["ams_mapping"], serde_json::json!([1]));
     }
 
     #[test]

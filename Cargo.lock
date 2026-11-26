@@ -4150,6 +4150,7 @@ dependencies = [
  "shale-core",
  "thiserror 1.0.69",
  "webpki-roots",
+ "zip",
 ]
 
 [[package]]

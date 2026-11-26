@@ -9,7 +9,9 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use shale_host::files::{delete_file, download_file, list_files, reprint_command};
+use shale_host::files::{
+    delete_file, download_file, list_files, read_file, reprint_archived, reprint_command,
+};
 use shale_host::{Link, Trust};
 use support::fake_printer::{FakePrinter, CERT_A, KEY_A};
 
@@ -59,7 +61,7 @@ fn reprinting_a_file_already_there_sends_no_upload() {
     let printer = FakePrinter::start(CERT_A, KEY_A);
     let config = printer.config();
     assert_eq!(config.host, "127.0.0.1");
-    let link = Link::spawn(config);
+    let link = Link::spawn(config.clone());
     assert!(
         printer
             .wait_for(WAIT, || link.status().connected.then_some(()))
@@ -82,7 +84,28 @@ fn reprinting_a_file_already_there_sends_no_upload() {
         "reprinting must not upload"
     );
 
-    link.send(reprint_command(4, "/cache/plate.3mf", "textured_plate"))
+    let mut plate = shale_host::gcode3mf::plate_from_gcode(
+        b";TIME:12\nG1 E1\n",
+        "bracket",
+        "N2S",
+        "0.4",
+        "PLA",
+        "#FFFFFF",
+        &[0],
+        "textured_plate",
+    );
+    plate.index = 2;
+    let archive = shale_host::gcode3mf::write(&[plate]).expect("3mf");
+    let local = std::env::temp_dir().join(format!("shale-reprint-{}.gcode.3mf", std::process::id()));
+    std::fs::write(&local, &archive).expect("write");
+    shale_host::upload(&config, &local, "job.gcode.3mf").expect("upload");
+    let _ = std::fs::remove_file(&local);
+    let remote = format!("/{}/job.gcode.3mf", config.remote_dir.trim_matches('/'));
+    let trust = Trust::new(None);
+    let fetched = read_file(&trust, &config, &remote).expect("read the 3mf back");
+    let after_upload = printer.uploads.lock().unwrap().len();
+    assert!(after_upload > before, "the sliced file has to land first");
+    link.send(reprint_archived(4, &remote, "textured_plate", &fetched).unwrap())
         .unwrap();
     let model = printer
         .wait_for(WAIT, || {
@@ -94,6 +117,12 @@ fn reprinting_a_file_already_there_sends_no_upload() {
                 .cloned()
         })
         .expect("the 3MF reprint never arrived");
-    assert_eq!(model["print"]["url"], "ftp:///cache/plate.3mf");
-    assert_eq!(printer.uploads.lock().unwrap().len(), before);
+    assert_eq!(model["print"]["param"], "Metadata/plate_2.gcode");
+    assert_eq!(model["print"]["url"], format!("ftp://{remote}"));
+    assert_eq!(model["print"]["ams_mapping"], serde_json::json!([0]));
+    assert_eq!(
+        printer.uploads.lock().unwrap().len(),
+        after_upload,
+        "reprinting must not upload again"
+    );
 }

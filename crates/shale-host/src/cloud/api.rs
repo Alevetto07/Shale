@@ -435,13 +435,31 @@ pub struct DeviceList {
 /// The file goes up as `plate.gcode` whatever its name on disk, because the
 /// cloud keys the task on the part's filename and not on anything in the body.
 pub fn create_task(dev_id: &str, task_name: &str, file_name: &str, file: &[u8]) -> Call {
+    create_task_with(dev_id, task_name, file_name, file, &serde_json::json!({}))
+}
+
+/// The same task as [`create_task`], plus the print fields a sliced 3MF send
+/// carries: the tray map and Studio's calibration switches. An empty object
+/// leaves the body identical to [`create_task`].
+pub fn create_task_with(
+    dev_id: &str,
+    task_name: &str,
+    file_name: &str,
+    file: &[u8],
+    extra: &serde_json::Value,
+) -> Call {
     let boundary = format!("----shale{:x}", super::now_unix());
-    let task = serde_json::json!({
+    let mut task = serde_json::json!({
         "dev_id": dev_id,
         "task_name": task_name,
         "project_id": "0",
         "mode": "cloud_file",
     });
+    if let (Some(task), Some(extra)) = (task.as_object_mut(), extra.as_object()) {
+        for (key, value) in extra {
+            task.insert(key.clone(), value.clone());
+        }
+    }
     let mut bytes = Vec::new();
     let mut part = |name: &str, filename: Option<&str>, content_type: &str, body: &[u8]| {
         bytes.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
