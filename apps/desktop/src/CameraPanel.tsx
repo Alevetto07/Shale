@@ -290,6 +290,7 @@ export function CameraPanel({
         <div className="camera-watch">
           <Select
             label="Sensitivity"
+            showLabel
             value={sensitivity}
             options={[
               { value: "low", label: "Low" },
@@ -304,11 +305,13 @@ export function CameraPanel({
             min={40}
             max={90}
             step={5}
-            unit="%"
+            inputDigits={0}
+            formatValue={(value) => `${Math.round(value)} %`}
             onValueChange={(value) => setConfidence(value / 100)}
           />
           <Select
-            label="Sample every"
+            label="Sample interval"
+            showLabel
             value={sampleSeconds}
             options={[
               { value: "2", label: "2 seconds" },
@@ -318,7 +321,8 @@ export function CameraPanel({
             onChange={setSampleSeconds}
           />
           <Select
-            label="Frames before a warning"
+            label="Frames to confirm"
+            showLabel
             value={debounceFrames}
             options={[
               { value: "2", label: "2 frames" },

@@ -47,8 +47,8 @@ export function Dialog({
         >
           <motion.div
             className="ui-dialog__motion"
-            initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.98, y: 8 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
+            initial={reduce ? false : { y: 8 }}
+            animate={{ y: 0 }}
             transition={reduce ? { duration: 0 } : springPanel}
           >
             {kicker ? <p className="ui-dialog__kicker">{kicker}</p> : null}

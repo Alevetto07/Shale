@@ -12,18 +12,22 @@ export function Select({
   options,
   onChange,
   placeholder = "none",
+  showLabel = false,
 }: {
   label: string;
   value: string;
   options: SelectOption[];
   onChange: (value: string) => void;
   placeholder?: string;
+  /** Draw the name above the control. The name is always the accessible name. */
+  showLabel?: boolean;
 }) {
   const current = options.find((option) => option.value === value);
   const shown = current?.label || placeholder;
 
   return (
     <div className="ui-select" data-ui-select="">
+      {showLabel ? <span className="ui-field__label">{label}</span> : null}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger className="ui-select__trigger" aria-label={label}>
           <span className="ui-select__value">{shown}</span>

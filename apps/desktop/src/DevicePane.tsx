@@ -840,6 +840,7 @@ export function DevicePane({
             </p>
             <Select
               label="Print removal"
+              showLabel
               value={ejectMode}
               options={[
                 { value: "off", label: "Off" },
