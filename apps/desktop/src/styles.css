@@ -2376,6 +2376,11 @@ select {
   gap: 0.75rem 1rem;
   font-size: 0.78rem;
 }
+.send-options {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
+}
 .send-choice legend {
   padding: 0;
   margin-bottom: 0.25rem;

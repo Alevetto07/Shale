@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import * as api from "./api";
+import { PrintOptionFields } from "./send-review";
 import { Button, Input } from "./ui";
 
 /// The Bambu account, in the Device pane.
@@ -15,7 +16,23 @@ import { Button, Input } from "./ui";
 /// to the account, whether or not they are on this network. A machine that is
 /// offline is shown and cannot be sent to, because a task queued for a machine
 /// nobody can see is a mystery, not a print.
-export function CloudPanel({ taskName }: { taskName: string }) {
+export function CloudPanel({
+  taskName,
+  options,
+  onOptions,
+  mapping,
+  material,
+  colour,
+  nozzle,
+}: {
+  taskName: string;
+  options?: api.PrintOptions;
+  onOptions?: (next: api.PrintOptions) => void;
+  mapping?: number[];
+  material?: string;
+  colour?: string;
+  nozzle?: string;
+}) {
   const [session, setSession] = useState<api.CloudSession | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -136,7 +153,17 @@ export function CloudPanel({ taskName }: { taskName: string }) {
     setNote(null);
     setSent(null);
     try {
-      const id = await api.cloudSend(devId, taskName);
+      const id = await api.cloudSend(devId, taskName, {
+        amsMapping: mapping,
+        timelapse: options?.timelapse,
+        bedLevelling: options?.bedLevelling,
+        flowCali: options?.flowCali,
+        vibrationCali: options?.vibrationCali,
+        useAms: options?.useAms,
+        material,
+        colour,
+        nozzle,
+      });
       setSent(`task ${id} created`);
       toast.success(`Task ${id} created`);
       await loadDevices();
@@ -177,6 +204,8 @@ export function CloudPanel({ taskName }: { taskName: string }) {
               ))}
             </ul>
           )}
+
+          {options && onOptions && <PrintOptionFields options={options} onChange={onOptions} />}
 
           <div className="cloud-actions">
             <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void loadDevices()}>

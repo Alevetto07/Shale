@@ -53,6 +53,15 @@ export interface DevicePaneProps {
   onMapping?: (mapping: number[]) => void;
 }
 
+function spoolColour(mapping: number[], spools: Spool[]): string {
+  const tray = mapping.find((slot) => slot >= 0);
+  const spool =
+    spools.find((item) => tray != null && item.bay === tray + 2) ??
+    spools.find((item) => item.bay === 1) ??
+    spools[0];
+  return spool?.colour || "#FFFFFF";
+}
+
 function fileKind(kind: string): string {
   if (kind === "timelapse") return "Timelapse";
   if (kind === "gcode") return "G-code";
@@ -111,6 +120,7 @@ export function DevicePane({
     else setLocalMapping(resolved);
   };
   const [scope, setScope] = useState<"plate" | "all">("plate");
+  const [printOptions, setPrintOptions] = useState<api.PrintOptions | null>(null);
   const [plateIndex, setPlateIndex] = useState(0);
   const [history, setHistory] = useState<api.HistoryRow[]>([]);
   const [cloudNote, setCloudNote] = useState<string | null>(null);
@@ -337,6 +347,19 @@ export function DevicePane({
     void refreshHistory();
   }, []);
 
+  useEffect(() => {
+    let live = true;
+    api
+      .printDefaults()
+      .then((defaults) => {
+        if (live) setPrintOptions(defaults);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [machine]);
+
   // The confirmation is built from the file itself: how many spools the slice
   // really uses, not how many the plate was configured with.
   async function ask() {
@@ -377,7 +400,16 @@ export function DevicePane({
           }
         }
       }
-      const sent = await api.hostSend(bedType, mapping, scope, plateIndex);
+      const sent = await api.hostSend(bedType, mapping, scope, plateIndex, {
+        timelapse: printOptions?.timelapse,
+        bedLevelling: printOptions?.bedLevelling,
+        flowCali: printOptions?.flowCali,
+        vibrationCali: printOptions?.vibrationCali,
+        useAms: printOptions?.useAms,
+        material: job.material,
+        colour: spoolColour(mapping, spools),
+        nozzle: String(nozzleSize || 0.4),
+      });
       const waiting = sent.queued
         ? ` ${sent.queued} more ${sent.queued === 1 ? "plate is" : "plates are"} waiting in the queue.`
         : "";
@@ -607,7 +639,15 @@ export function DevicePane({
         ) : null}
       </section>
 
-      <CloudPanel taskName={plate} />
+      <CloudPanel
+        taskName={plate}
+        options={printOptions ?? undefined}
+        onOptions={setPrintOptions}
+        mapping={mapping}
+        material={job.material}
+        colour={spoolColour(mapping, spools)}
+        nozzle={String(nozzleSize || 0.4)}
+      />
 
       <section className="device-live">
         <div className="device-bar" aria-label="Print progress">
@@ -661,6 +701,8 @@ export function DevicePane({
               onScope={setScope}
               plateIndex={plateIndex}
               onPlate={setPlateIndex}
+              options={printOptions ?? undefined}
+              onOptions={setPrintOptions}
             />
             <div className="device-controls">
               <Button type="button" variant="primary" onClick={send}>

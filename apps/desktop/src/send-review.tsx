@@ -1,6 +1,6 @@
-import type { SliceTools } from "./api";
+import type { PrintOptions, SliceTools } from "./api";
 import { plateWarnings, slotWarnings, spoolForTray, type SpoolChoice } from "./print-check";
-import { Select } from "./ui";
+import { Select, SwitchRow } from "./ui";
 
 export interface SendPlate {
   index: number;
@@ -23,6 +23,52 @@ export interface SendReviewProps {
   onScope: (scope: "plate" | "all") => void;
   plateIndex: number;
   onPlate: (index: number) => void;
+  /** Studio's send choices. Omitted, the dialog is the plate and filament review only. */
+  options?: PrintOptions;
+  onOptions?: (next: PrintOptions) => void;
+}
+
+/** The calibration and recording switches Studio puts on the send dialog. */
+export function PrintOptionFields({
+  options,
+  onChange,
+}: {
+  options: PrintOptions;
+  onChange: (next: PrintOptions) => void;
+}) {
+  const set = (patch: Partial<PrintOptions>) => onChange({ ...options, ...patch });
+  return (
+    <fieldset className="send-choice send-options">
+      <legend>Print options</legend>
+      <SwitchRow checked={options.timelapse} onChange={(timelapse) => set({ timelapse })}>
+        Timelapse
+      </SwitchRow>
+      <SwitchRow checked={options.bedLevelling} onChange={(bedLevelling) => set({ bedLevelling })}>
+        Bed levelling
+      </SwitchRow>
+      {options.flowAvailable && (
+        <SwitchRow checked={options.flowCali} onChange={(flowCali) => set({ flowCali })}>
+          Flow dynamics calibration
+        </SwitchRow>
+      )}
+      {options.vibrationAvailable && (
+        <SwitchRow
+          checked={options.vibrationCali}
+          onChange={(vibrationCali) => set({ vibrationCali })}
+        >
+          Vibration compensation
+        </SwitchRow>
+      )}
+      <SwitchRow checked={options.useAms} onChange={(useAms) => set({ useAms })}>
+        Use AMS
+      </SwitchRow>
+      {(options.automaticBed || options.automaticFlow) && (
+        <p className="device-note">
+          Bed levelling and flow calibration run automatically on this printer when they are on.
+        </p>
+      )}
+    </fieldset>
+  );
 }
 
 const PLATES = [
@@ -157,6 +203,9 @@ export function SendReview(props: SendReviewProps) {
         <p className="device-warn">
           Every tool is on the external spool, so the printer uses one filament for all of them.
         </p>
+      )}
+      {props.options && props.onOptions && (
+        <PrintOptionFields options={props.options} onChange={props.onOptions} />
       )}
     </div>
   );

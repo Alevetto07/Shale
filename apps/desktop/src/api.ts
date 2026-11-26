@@ -368,8 +368,49 @@ export const cloudSignOut = () => invoke<void>("cloud_sign_out");
 export const cloudSetRegion = (region: string) =>
   invoke<CloudSession>("cloud_set_region", { region });
 export const cloudDevices = () => invoke<CloudDeviceRow[]>("cloud_devices");
-export const cloudSend = (devId: string, taskName: string) =>
-  invoke<string>("cloud_send", { devId, taskName });
+export interface PrintOptions {
+  timelapse: boolean;
+  bedLevelling: boolean;
+  flowCali: boolean;
+  flowAvailable: boolean;
+  vibrationCali: boolean;
+  vibrationAvailable: boolean;
+  useAms: boolean;
+  automaticBed: boolean;
+  automaticFlow: boolean;
+}
+
+/** Studio's starting send choices for the printer on screen. */
+export const printDefaults = () => invoke<PrintOptions>("print_option_defaults");
+
+export const cloudSend = (
+  devId: string,
+  taskName: string,
+  options?: {
+    amsMapping?: number[];
+    timelapse?: boolean;
+    bedLevelling?: boolean;
+    flowCali?: boolean;
+    vibrationCali?: boolean;
+    useAms?: boolean;
+    material?: string;
+    colour?: string;
+    nozzle?: string;
+  },
+) =>
+  invoke<string>("cloud_send", {
+    devId,
+    taskName,
+    amsMapping: options?.amsMapping,
+    timelapse: options?.timelapse,
+    bedLevelling: options?.bedLevelling,
+    flowCali: options?.flowCali,
+    vibrationCali: options?.vibrationCali,
+    useAms: options?.useAms,
+    material: options?.material,
+    colour: options?.colour,
+    nozzle: options?.nozzle,
+  });
 
 export const secretClear = (key: string) => invoke<void>("secret_clear", { key });
 
@@ -408,12 +449,30 @@ export const hostSend = (
   amsMapping: number[] = [],
   scope: "plate" | "all" = "plate",
   plateIndex?: number,
+  options?: {
+    timelapse?: boolean;
+    bedLevelling?: boolean;
+    flowCali?: boolean;
+    vibrationCali?: boolean;
+    useAms?: boolean;
+    material?: string;
+    colour?: string;
+    nozzle?: string;
+  },
 ) =>
   invoke<{ remote: string; bytes: number; queued?: number }>("host_send", {
     bedType,
     amsMapping,
     scope,
     plateIndex,
+    timelapse: options?.timelapse,
+    bedLevelling: options?.bedLevelling,
+    flowCali: options?.flowCali,
+    vibrationCali: options?.vibrationCali,
+    useAms: options?.useAms,
+    material: options?.material,
+    colour: options?.colour,
+    nozzle: options?.nozzle,
   });
 
 /// Time and filament for one feature kind in the sliced file.

@@ -3531,6 +3531,10 @@ fn enqueue_copy(
     source: &std::path::Path,
     name: &str,
     ams_mapping: Vec<i32>,
+    options: shale_host::print_options::PrintOptions,
+    material: String,
+    colour: String,
+    nozzle: String,
 ) -> Result<(), String> {
     let bytes = fs::metadata(source)
         .map_err(|err| format!("Could not read the slice: {err}"))?
@@ -3553,8 +3557,52 @@ fn enqueue_copy(
         path: target,
         bytes,
         ams_mapping,
+        options,
+        material,
+        colour,
+        nozzle,
     });
     Ok(())
+}
+
+/// Wrap one G-code file as the `.gcode.3mf` Bambu Studio uploads. The plate
+/// inside the archive is plate 1 of that file, even when the project plate
+/// has another number: each send is its own archive.
+fn prepare_bambu_3mf(
+    gcode_path: &std::path::Path,
+    upload_name: &str,
+    printer_id: &str,
+    nozzle: &str,
+    material: &str,
+    colour: &str,
+    mapping: &[i32],
+    bed_type: &str,
+) -> Result<(PathBuf, String, Vec<i32>), String> {
+    let gcode = fs::read(gcode_path).map_err(|err| format!("Could not read the slice: {err}"))?;
+    let mut plate = shale_host::gcode3mf::plate_from_gcode(
+        &gcode,
+        upload_name,
+        shale_host::print_options::model_id_for(printer_id),
+        nozzle,
+        material,
+        colour,
+        mapping,
+        bed_type,
+    );
+    plate.index = 1;
+    let mapping = plate.ams_mapping.clone();
+    let bytes = shale_host::gcode3mf::write(&[plate])?;
+    let stem = upload_name
+        .trim_end_matches(".gcode")
+        .trim_end_matches(".GCODE");
+    let file_name = format!("{stem}.gcode.3mf");
+    let path = std::env::temp_dir().join(format!(
+        "shale-send-{}-{}",
+        std::process::id(),
+        file_name.replace('/', "-")
+    ));
+    fs::write(&path, bytes).map_err(|err| format!("Could not write the sliced 3MF: {err}"))?;
+    Ok((path, file_name, mapping))
 }
 
 async fn send_file(
@@ -3564,21 +3612,30 @@ async fn send_file(
     bed_type: String,
     ams_mapping: Vec<i32>,
     history_name: String,
+    options: shale_host::print_options::PrintOptions,
+    material: String,
+    colour: String,
+    nozzle: String,
+    printer_id: String,
 ) -> Result<serde_json::Value, String> {
     if !shale_host::ams_mapping_ok(&ams_mapping) {
         return Err("Each tool must map to the external spool or an AMS tray.".into());
     }
-    let (config, bambu) = {
+    let (config, bambu, printer_id) = {
         let mut inner = lock(state)?;
-        let printer = inner.printer_id.clone();
-        let bambu = match (catalog(&mut inner), printer.as_deref()) {
+        let printer_id = if printer_id.is_empty() {
+            inner.printer_id.clone().unwrap_or_default()
+        } else {
+            printer_id
+        };
+        let bambu = match (catalog(&mut inner), Some(printer_id.as_str()).filter(|id| !id.is_empty())) {
             (Ok(catalog), Some(id)) => catalog
                 .printers()
                 .iter()
                 .any(|printer| printer.id == id && printer.source == "bambu"),
             _ => false,
         };
-        (inner.host_config.clone(), bambu)
+        (inner.host_config.clone(), bambu, printer_id)
     };
     let config = config.ok_or_else(|| "Connect a printer first.".to_string())?;
     let name = path
@@ -3593,32 +3650,70 @@ async fn send_file(
              for 0.4 mm — or export the file and print it from Bambu Studio."
         ));
     }
-    let upload = {
+    let prepared = if bambu {
+        Some(prepare_bambu_3mf(
+            &path,
+            &name,
+            &printer_id,
+            &nozzle,
+            &material,
+            &colour,
+            &ams_mapping,
+            &bed_type,
+        )?)
+    } else {
+        None
+    };
+    let upload_path = prepared
+        .as_ref()
+        .map(|(path, _name, _mapping)| path.clone())
+        .unwrap_or_else(|| path.clone());
+    let upload_name = prepared
+        .as_ref()
+        .map(|(_path, name, _mapping)| name.clone())
+        .unwrap_or_else(|| name.clone());
+    let command_mapping = prepared
+        .as_ref()
+        .map(|(_path, _name, mapping)| mapping.clone())
+        .unwrap_or(ams_mapping);
+    let uploaded = {
         let config = config.clone();
-        let path = path.clone();
-        let name = name.clone();
+        let path = upload_path.clone();
+        let name = upload_name.clone();
         let pin = stored_pin(&config.serial, &config.host);
         tauri::async_runtime::spawn_blocking(move || {
             shale_host::upload_with(&shale_host::Trust::new(pin), &config, &path, &name)
         })
         .await
-        .map_err(|err| err.to_string())?
-        .map_err(|err| err.to_string())?
+        .map_err(|err| err.to_string())
     };
-    let remote = format!("/{}/{}", config.remote_dir.trim_matches('/'), name);
+    if let Some((temp, _, _)) = &prepared {
+        let _ = fs::remove_file(temp);
+    }
+    let upload = uploaded?.map_err(|err| err.to_string())?;
+    let remote = format!(
+        "/{}/{}",
+        config.remote_dir.trim_matches('/'),
+        upload_name
+    );
     let sequence = host
         .sequence
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         + 1;
-    host.with(|link| {
-        link.send(shale_host::gcode_file_command_mapped(
+    let command = if bambu {
+        shale_host::print_options::project_file_command(
             sequence,
             &remote,
+            "Metadata/plate_1.gcode",
             &bed_type,
-            &ams_mapping,
-        ))
-        .map_err(|err| err.to_string())
-    })?;
+            &options,
+            &command_mapping,
+            &history_name,
+        )
+    } else {
+        shale_host::gcode_file_command_mapped(sequence, &remote, &bed_type, &command_mapping)
+    };
+    host.with(|link| link.send(command).map_err(|err| err.to_string()))?;
     remember_send(&history_name, &bed_type, &remote, upload as u64);
     Ok(serde_json::json!({ "remote": remote, "bytes": upload }))
 }
@@ -3633,31 +3728,87 @@ async fn host_send(
     ams_mapping: Option<Vec<i32>>,
     scope: Option<String>,
     plate_index: Option<usize>,
+    timelapse: Option<bool>,
+    bed_levelling: Option<bool>,
+    flow_cali: Option<bool>,
+    vibration_cali: Option<bool>,
+    use_ams: Option<bool>,
+    material: Option<String>,
+    colour: Option<String>,
+    nozzle: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let mapping = ams_mapping.unwrap_or_default();
     if !shale_host::ams_mapping_ok(&mapping) {
         return Err("Each tool must map to the external spool or an AMS tray.".into());
     }
     let scope = scope.unwrap_or_else(|| "plate".to_string());
-    let plan = {
+    let (plan, printer_id) = {
         let inner = lock(&state)?;
-        plan_send(
+        let plan = plan_send(
             &plate_sends(&inner),
             inner.active_plate,
             &scope,
             plate_index,
-        )?
+        )?;
+        (plan, inner.printer_id.clone().unwrap_or_default())
     };
+    let options = shale_host::print_options::resolve(
+        &printer_id,
+        &shale_host::print_options::PartialOptions {
+            timelapse,
+            bed_levelling,
+            flow_cali,
+            vibration_cali,
+            use_ams,
+        },
+    );
+    let material = material.unwrap_or_default();
+    let colour = colour.unwrap_or_else(|| "#FFFFFF".to_string());
+    let nozzle = nozzle.unwrap_or_else(|| "0.4".to_string());
     let queued = plan.queue.len();
     if queued > 0 {
         let mut inner = lock(&state)?;
         for (name, path) in &plan.queue {
-            enqueue_copy(&app, &mut inner, path, name, mapping.clone())?;
+            enqueue_copy(
+                &app,
+                &mut inner,
+                path,
+                name,
+                mapping.clone(),
+                options.clone(),
+                material.clone(),
+                colour.clone(),
+                nozzle.clone(),
+            )?;
         }
     }
-    let mut sent = send_file(&state, &host, plan.now, bed_type, mapping, plan.now_name).await?;
+    let mut sent = send_file(
+        &state,
+        &host,
+        plan.now,
+        bed_type,
+        mapping,
+        plan.now_name,
+        options,
+        material,
+        colour,
+        nozzle,
+        printer_id,
+    )
+    .await?;
     sent["queued"] = serde_json::json!(queued);
     Ok(sent)
+}
+
+/// Studio's starting send choices for the printer on screen.
+#[tauri::command]
+fn print_option_defaults(
+    state: State<'_, AppState>,
+) -> Result<shale_host::print_options::PrintOptions, String> {
+    let inner = lock(&state)?;
+    Ok(shale_host::print_options::defaults_for(
+        inner.printer_id.as_deref().unwrap_or(""),
+    ))
 }
 
 #[derive(serde::Serialize)]
@@ -3761,7 +3912,19 @@ fn queue_add(
         .clone()
         .ok_or_else(|| "Slice the plate first: there is no G-code to queue.".to_string())?;
     let label = name.unwrap_or_default();
-    enqueue_copy(&app, &mut inner, &source, &label, Vec::new())?;
+    let options =
+        shale_host::print_options::defaults_for(inner.printer_id.as_deref().unwrap_or(""));
+    enqueue_copy(
+        &app,
+        &mut inner,
+        &source,
+        &label,
+        Vec::new(),
+        options,
+        String::new(),
+        "#FFFFFF".to_string(),
+        "0.4".to_string(),
+    )?;
     Ok(queue_views(&inner))
 }
 
@@ -3828,6 +3991,11 @@ async fn queue_start_next(
         bed_type,
         job.ams_mapping.clone(),
         job.name.clone(),
+        job.options.clone(),
+        job.material.clone(),
+        job.colour.clone(),
+        job.nozzle.clone(),
+        String::new(),
     )
     .await
     {
@@ -3949,6 +4117,10 @@ struct QueuedJob {
     bytes: u64,
     /// Tray per tool, kept with the job so the queue starts it the way it was confirmed.
     ams_mapping: Vec<i32>,
+    options: shale_host::print_options::PrintOptions,
+    material: String,
+    colour: String,
+    nozzle: String,
 }
 
 #[derive(Serialize)]
@@ -4028,10 +4200,16 @@ async fn host_delete(
     .map_err(|err| err.to_string())
 }
 
-/// Print a file that is already on the printer. This publishes one MQTT
-/// command and does not upload anything.
+/// Print a file that is already on the printer. A plain G-code file is started
+/// by name. A 3MF is read first, so the plate comes from `slice_info.config`
+/// rather than being assumed to be plate 1. Nothing is uploaded.
 #[tauri::command]
-fn host_reprint(host: State<PrinterHost>, remote: String, bed_type: String) -> Result<(), String> {
+async fn host_reprint(
+    state: State<'_, AppState>,
+    host: State<'_, PrinterHost>,
+    remote: String,
+    bed_type: String,
+) -> Result<(), String> {
     if remote.trim().is_empty() || remote.contains("..") {
         return Err("That is not a file on the printer.".into());
     }
@@ -4039,6 +4217,21 @@ fn host_reprint(host: State<PrinterHost>, remote: String, bed_type: String) -> R
         .sequence
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         + 1;
+    let lower = remote.to_ascii_lowercase();
+    if lower.ends_with(".3mf") {
+        let (trust, config) = printer_session(&state, &host)?;
+        let remote_for_read = remote.clone();
+        let bytes = tauri::async_runtime::spawn_blocking(move || {
+            shale_host::files::read_file(&trust, &config, &remote_for_read)
+        })
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(|err| err.to_string())?;
+        let command =
+            shale_host::files::reprint_archived(sequence, &remote, &bed_type, &bytes)
+                .map_err(|err| err.to_string())?;
+        return host.with(|link| link.send(command).map_err(|err| err.to_string()));
+    }
     host.with(|link| {
         link.send(shale_host::files::reprint_command(
             sequence, &remote, &bed_type,
@@ -5775,6 +5968,10 @@ pub fn run() {
                         path: path.clone(),
                         bytes,
                         ams_mapping: Vec::new(),
+                        options: shale_host::print_options::PrintOptions::default(),
+                        material: String::new(),
+                        colour: "#FFFFFF".to_string(),
+                        nozzle: "0.4".to_string(),
                     })
                     .collect()
             })
@@ -5958,6 +6155,7 @@ pub fn run() {
             host_forget_pin,
             host_pin,
             host_send,
+            print_option_defaults,
             print_history,
             feature_breakdown,
             host_control,

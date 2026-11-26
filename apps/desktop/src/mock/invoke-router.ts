@@ -246,8 +246,20 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
     case "queue_observe":
     case "queue_stop":
       return { armed: false, running: false, waiting_for_plate: false, message: "" } as T;
+    case "print_option_defaults":
+      return {
+        timelapse: false,
+        bedLevelling: true,
+        flowCali: true,
+        flowAvailable: true,
+        vibrationCali: false,
+        vibrationAvailable: true,
+        useAms: true,
+        automaticBed: false,
+        automaticFlow: false,
+      } as T;
     case "host_send":
-      return { remote: "mock.gcode", bytes: 522_285, queued: 0 } as T;
+      return { remote: "/cache/mock.gcode.3mf", bytes: 522_285, queued: 0 } as T;
     case "feature_breakdown":
       return [
         { kind: "wall-outer", seconds: 140, metres: 1.2 },

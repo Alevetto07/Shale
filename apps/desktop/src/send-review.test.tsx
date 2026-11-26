@@ -78,4 +78,42 @@ describe("SendReview", () => {
     expect((screen.getByRole("radio", { name: /Every plate/ }) as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByText(/Slice Plate 2/)).toBeTruthy();
   });
+
+  it("shows Studio's send options and hides flow when the printer has none", () => {
+    render(
+      <SendReview
+        filament="PLA Basic"
+        bedTempC={60}
+        bedType="textured_plate"
+        onBedType={vi.fn()}
+        tools={{ tools: [0], changes: 0, file: null, usage: [] }}
+        spools={spools}
+        mapping={[-1]}
+        onMapping={vi.fn()}
+        plates={[{ index: 0, name: "Plate 1", active: true, sliced: true }]}
+        scope="plate"
+        onScope={vi.fn()}
+        plateIndex={0}
+        onPlate={vi.fn()}
+        options={{
+          timelapse: false,
+          bedLevelling: true,
+          flowCali: false,
+          flowAvailable: false,
+          vibrationCali: false,
+          vibrationAvailable: true,
+          useAms: true,
+          automaticBed: false,
+          automaticFlow: false,
+        }}
+        onOptions={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Timelapse")).toBeTruthy();
+    expect(screen.getByText("Bed levelling")).toBeTruthy();
+    expect(screen.getByText("Vibration compensation")).toBeTruthy();
+    expect(screen.getByText("Use AMS")).toBeTruthy();
+    expect(screen.queryByText("Flow dynamics calibration")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/deep field/i);
+  });
 });
