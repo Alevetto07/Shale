@@ -14,6 +14,10 @@ fake-printer = []
 # ONNX Runtime for the optional Obico failure model. Off in the library's own
 # test build. The desktop app turns it on. The weights are not downloaded here.
 onnx = ["dep:ort"]
+# Compile OpenH264 from the BSD-2 source. Off in a release build: Cisco's
+# patent promise covers the official binary downloaded at first use, not a
+# library built here. `cargo build --release` must not pass this feature.
+openh264-source = ["openh264/source"]
 
 [[bin]]
 name = "shale-fake-printer"
@@ -31,14 +35,16 @@ rustls-pki-types = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
-# JPEG frames from the chamber camera, and the pictures the failure watch and
-# the plate check compare. MIT OR Apache-2.0. JPEG only: nothing else is used.
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
-# Cisco OpenH264, compiled from the BSD-2 source the crate vendors. The
-# default `source` feature builds that C library. Shale does not download or
-# ship Cisco's prebuilt binary: that blob is the only form Cisco's MPEG-LA
-# promise covers, and it has to be fetched from Cisco at install time.
-openh264 = "0.9"
+# JPEG frames from the chamber camera, the GIF preview of a timelapse, and the
+# pictures the failure watch and the plate check compare. MIT OR Apache-2.0.
+image = { version = "0.25", default-features = false, features = ["jpeg", "gif"] }
+# Cisco OpenH264. `libloading` is the release path: the official binary is
+# downloaded on first use and loaded from the app data directory. The
+# `openh264-source` feature of this crate is the only way the C library is
+# compiled, and a release build leaves it off.
+openh264 = { version = "0.9", default-features = false, features = ["libloading"] }
+# Unpacks Cisco's `.bz2` archive. MIT OR Apache-2.0, and it bundles libbzip2.
+bzip2 = "0.5"
 # SHA-256 for the certificate pin. Already in the lockfile through rustls.
 sha2 = "0.10"
 # ONNX Runtime, MIT OR Apache-2.0. Optional: the grid detector does not need

@@ -9,10 +9,10 @@
 //! * **P2S, X1, H2** — RTSPS on port **322**,
 //!   `rtsps://<ip>:322/streaming/live/1`, user `bblp`, the same access code.
 //!   OpenBambuAPI and the P2S bridge notes agree: the P2S does **not** speak
-//!   the port-6000 JPEG protocol. The picture is H.264. Shale decodes it with
-//!   OpenH264, built from source, and stores a JPEG so the rest of the camera
-//!   path is the same as the A1. LAN-only live view has to be on, or the port
-//!   closes immediately.
+//!   the port-6000 JPEG protocol. The picture is H.264. A release build
+//!   decodes it with Cisco's official OpenH264 binary, downloaded on first
+//!   use, and stores a JPEG so the rest of the camera path is the same as the
+//!   A1. LAN-only live view has to be on, or the port closes immediately.
 //!
 //! The access code is the credential. It is never written into an error, a
 //! log line, or [`Debug`] of a target.
@@ -20,12 +20,14 @@
 //! Nothing here starts a print or jogs an axis. A frame is a picture.
 
 mod cloud;
+mod codec;
 mod detect;
 mod h264;
 mod jpeg;
 mod obico;
 mod plate;
 mod rtsps;
+mod timelapse;
 mod weights;
 
 use std::io::{self, Read, Write};
@@ -78,9 +80,60 @@ pub fn base64(bytes: &[u8]) -> String {
     }
     out
 }
+
+/// Inverse of [`base64`]. A bad character is an error, not a truncated picture.
+pub fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
+    fn value(byte: u8) -> Result<u8, String> {
+        match byte {
+            b'A'..=b'Z' => Ok(byte - b'A'),
+            b'a'..=b'z' => Ok(byte - b'a' + 26),
+            b'0'..=b'9' => Ok(byte - b'0' + 52),
+            b'+' => Ok(62),
+            b'/' => Ok(63),
+            _ => Err("A frame was not valid base64.".into()),
+        }
+    }
+    let bytes = text
+        .bytes()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .collect::<Vec<_>>();
+    if bytes.len() % 4 != 0 {
+        return Err("A frame was not valid base64.".into());
+    }
+    let mut out = Vec::new();
+    for chunk in bytes.chunks(4) {
+        let pad = chunk.iter().filter(|byte| **byte == b'=').count();
+        if pad > 2 {
+            return Err("A frame was not valid base64.".into());
+        }
+        let mut n = 0u32;
+        for (index, byte) in chunk.iter().enumerate() {
+            if *byte == b'=' {
+                continue;
+            }
+            n |= u32::from(value(*byte)?) << (18 - 6 * index);
+        }
+        out.push((n >> 16) as u8);
+        if pad < 2 {
+            out.push((n >> 8) as u8);
+        }
+        if pad < 1 {
+            out.push(n as u8);
+        }
+    }
+    Ok(out)
+}
+
 pub use jpeg::{auth_packet, read_header, JpegHeader};
 pub use plate::{decode_jpeg, plates_match, PlateVerdict};
+pub use codec::{
+    asset_for_host as codec_asset, download_url as codec_download_url, fetch as fetch_codec,
+    installed_library, is_verified as codec_is_verified, library_path as codec_library_path,
+    CREDIT as OPENH264_CREDIT,
+};
+pub use codec::codec_from_source;
 pub use h264::nal_payloads;
+pub use timelapse::{save as save_timelapse, TimelapseSaved};
 pub use obico::score as score_obico;
 pub use rtsps::{depacketise_h264, encode_interleaved_rtp, encode_rtp};
 pub use weights::{install as install_model, is_verified as model_is_verified, model_path, release_url, FILE_NAME as MODEL_FILE};
@@ -275,6 +328,11 @@ pub struct CameraSession {
 
 impl CameraSession {
     pub fn start(target: CameraTarget) -> Self {
+        Self::start_with(target, None)
+    }
+
+    /// `library` is Cisco's OpenH264 binary, when this build loads one.
+    pub fn start_with(target: CameraTarget, library: Option<std::path::PathBuf>) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let shared = Arc::new(Mutex::new(Shared {
             running: true,
@@ -288,7 +346,7 @@ impl CameraSession {
         }));
         let stop_thread = Arc::clone(&stop);
         let shared_thread = Arc::clone(&shared);
-        let thread = thread::spawn(move || drive(target, stop_thread, shared_thread));
+        let thread = thread::spawn(move || drive(target, library, stop_thread, shared_thread));
         Self {
             stop,
             shared,
@@ -332,8 +390,17 @@ impl Drop for CameraSession {
     }
 }
 
-fn drive(target: CameraTarget, stop: Arc<AtomicBool>, shared: Arc<Mutex<Shared>>) {
-    let mut pictures = h264::H264Pictures::new().ok();
+fn drive(
+    target: CameraTarget,
+    library: Option<std::path::PathBuf>,
+    stop: Arc<AtomicBool>,
+    shared: Arc<Mutex<Shared>>,
+) {
+    let mut pictures = if target.path == CameraPath::Rtsps {
+        h264::H264Pictures::open(library.as_deref()).ok()
+    } else {
+        None
+    };
     let outcome = match target.path {
         CameraPath::JpegTls => jpeg::stream(&target, &stop, |frame| note_frame(&shared, frame)),
         CameraPath::Rtsps => rtsps::stream(&target, &stop, |frame| {
@@ -376,6 +443,17 @@ fn note_stream_frame(
     match frame {
         Frame::Jpeg(bytes) => note_frame(shared, Frame::Jpeg(bytes)),
         Frame::H264(unit) => {
+            if pictures.is_none() {
+                let mut shared = shared.lock().unwrap();
+                shared.codec = "h264".into();
+                if shared.fault.is_none() {
+                    shared.fault = Some(CameraFault::Protocol(
+                        "Cisco's OpenH264 library is not installed yet. Shale downloads it on first use."
+                            .into(),
+                    ));
+                }
+                return true;
+            }
             let still = pictures.as_mut().and_then(|decoder| decoder.push(&unit));
             if let Some(jpeg) = still {
                 let mut shared = shared.lock().unwrap();
@@ -488,13 +566,22 @@ pub(crate) fn write_all(stream: &mut impl Write, bytes: &[u8]) -> Result<(), Cam
 
 /// Read one JPEG from a port-6000 camera. Used by the snapshot tool and by tests.
 pub fn snapshot_jpeg(target: &CameraTarget, timeout: Duration) -> Result<Vec<u8>, CameraFault> {
+    snapshot_jpeg_with(target, timeout, None)
+}
+
+/// As [`snapshot_jpeg`], with Cisco's library when this build loads one.
+pub fn snapshot_jpeg_with(
+    target: &CameraTarget,
+    timeout: Duration,
+    library: Option<&std::path::Path>,
+) -> Result<Vec<u8>, CameraFault> {
     match target.path {
         CameraPath::JpegTls => jpeg::one_frame(target, timeout),
         CameraPath::Rtsps => {
             let stop = AtomicBool::new(false);
             let mut jpeg = None;
             let mut saw_h264 = false;
-            let mut pictures = h264::H264Pictures::new().ok();
+            let mut pictures = h264::H264Pictures::open(library).ok();
             let result = rtsps::stream(target, &stop, |frame| match frame {
                 Frame::Jpeg(bytes) => {
                     jpeg = Some(bytes);
@@ -513,11 +600,12 @@ pub fn snapshot_jpeg(target: &CameraTarget, timeout: Duration) -> Result<Vec<u8>
                 return Ok(bytes);
             }
             if saw_h264 {
-                return Err(CameraFault::Protocol(
-                    "The P2S camera is an H.264 stream over RTSPS. Shale reached it, but this \
-                     frame did not decode into a picture."
-                        .into(),
-                ));
+                let why = if pictures.is_none() {
+                    "The P2S camera is an H.264 stream. Cisco's OpenH264 library is not installed yet, so this frame was not decoded."
+                } else {
+                    "The P2S camera is an H.264 stream over RTSPS. Shale reached it, but this frame did not decode into a picture."
+                };
+                return Err(CameraFault::Protocol(why.into()));
             }
             result?;
             Err(CameraFault::Protocol(
@@ -543,6 +631,19 @@ mod tests {
         assert_eq!(path_for_model("H2D"), CameraPath::Rtsps);
         assert_eq!(CameraPath::JpegTls.default_port(), 6000);
         assert_eq!(CameraPath::Rtsps.default_port(), 322);
+    }
+
+    #[test]
+    fn base64_round_trips_a_short_jpeg() {
+        for length in 1..8 {
+            let bytes: Vec<u8> = (0..length).map(|n| 0xff - n).collect();
+            let encoded = base64(&bytes);
+            let decoded = match base64_decode(&encoded) {
+                Ok(decoded) => decoded,
+                Err(err) => panic!("{err}"),
+            };
+            assert_eq!(decoded, bytes, "{encoded}");
+        }
     }
 
     #[test]

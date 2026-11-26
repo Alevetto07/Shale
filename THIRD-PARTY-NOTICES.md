@@ -67,23 +67,37 @@ a printed notice; it is not an abridged substitute for those files.
 
 ## Camera pictures and failure detection
 
-JPEG frames are decoded with the [`image`](https://github.com/image-rs/image) crate,
-version 0.25, default features off, `jpeg` only. Its licence is MIT OR Apache-2.0.
+JPEG frames, and the animated preview of a timelapse, are handled with the
+[`image`](https://github.com/image-rs/image) crate, version 0.25, default
+features off, `jpeg` and `gif` only. Its licence is MIT OR Apache-2.0. The
+`gif` crate it uses for the preview is 0.14, also MIT OR Apache-2.0.
 
-P2S, X1, and H2 pictures are H.264. They are decoded with
-[OpenH264](https://github.com/cisco/openh264) through the
+P2S, X1, and H2 pictures are H.264. A release build decodes and encodes them
+with [OpenH264](https://github.com/cisco/openh264) 2.6.0, through the
 [`openh264`](https://github.com/ralfbiedert/openh264-rs) crate, version 0.9.
-Both the C library and the Rust wrapper are BSD-2-Clause. Shale compiles the
-C library from the source the crate vendors (`source` feature). It does not
-download or redistribute Cisco's prebuilt binary.
+The Rust wrapper is BSD-2-Clause. The C library is BSD-2-Clause and is
+Copyright Cisco Systems, Inc. The wrapper is Copyright Ralf Biedert. The
+library is loaded with `libloading` 0.8 (ISC).
+
+A release build does **not** compile OpenH264 and does **not** ship Cisco's
+binary. The first time an H.264 camera or a timelapse MP4 needs it, Shale
+downloads the official build for this computer from
+`http://ciscobinary.openh264.org/`, unpacks the `.bz2` with the `bzip2` crate
+0.5 (MIT OR Apache-2.0; it bundles libbzip2), and keeps the file in the app
+data directory (`openh264/`, not the catalogue cache) only when its SHA-256 is
+one the OpenH264 bindings already trust for 2.6.0. The same check runs again
+when the file is loaded (`OpenH264API::from_blob_path`). Tests use a loopback
+file and never request Cisco's host.
 
 Cisco's promise to cover MPEG LA (now Via LA) AVC/H.264 pool fees applies to
-that official binary, and only when a product downloads the binary from Cisco
-at install time. It does not apply to a build from source. Shale takes the
-source path because shipping Cisco's binary inside an AGPL installer is not
-what that promise allows. Anyone who distributes Shale is responsible for
-whatever patent licences their jurisdiction requires for an H.264 decoder.
-OpenH264 is Copyright Cisco Systems, Inc. The wrapper is Copyright Ralf Biedert.
+that official binary, downloaded from Cisco at install or first use. It does
+not apply to a build from source. The `openh264-source` feature compiles the
+vendored BSD-2 sources instead. That feature is off in a release build. Anyone
+who turns it on is outside Cisco's promise and is responsible for whatever
+patent licences their jurisdiction requires.
+
+Where the binary is used, the product shows Cisco's required credit:
+"OpenH264 Video Codec provided by Cisco Systems, Inc."
 
 The watch for spaghetti, detachment, and blobs is Shale's own grid detector. It
 is the default, and it stays the default until the Obico weights have been

@@ -322,19 +322,30 @@ fn an_h264_stream_is_accepted_and_does_not_pretend_to_be_a_jpeg() {
 fn a_p2s_h264_fixture_decodes_to_the_same_jpeg_pipeline() {
     let fixture = include_bytes!("fixtures/red-32.h264").to_vec();
     let server = RtspServer::start(RtspReply::AnnexB(fixture));
-    let jpeg = snapshot_jpeg(
+    // A release build has no decoder until Cisco's binary is downloaded, and
+    // CI does not download it. The `openh264-source` feature is what decodes
+    // the fixture here. Either way the access code stays out of the answer.
+    match snapshot_jpeg(
         &target(server.port, "12345678", CameraPath::Rtsps),
         Duration::from_secs(5),
-    )
-    .expect("decoded still");
-    assert!(jpeg.starts_with(&[0xff, 0xd8]), "the overlay path stores a JPEG");
-    let image = image::ImageReader::new(std::io::Cursor::new(jpeg))
-        .with_guessed_format()
-        .expect("format")
-        .decode()
-        .expect("jpeg")
-        .to_rgb8();
-    assert_eq!(image.dimensions(), (32, 32));
-    let pixel = image.get_pixel(16, 16);
-    assert!(pixel[0] > 180 && pixel[1] < 80 && pixel[2] < 80, "{pixel:?}");
+    ) {
+        Ok(jpeg) => {
+            assert!(jpeg.starts_with(&[0xff, 0xd8]), "the overlay path stores a JPEG");
+            let image = image::ImageReader::new(std::io::Cursor::new(jpeg))
+                .with_guessed_format()
+                .expect("format")
+                .decode()
+                .expect("jpeg")
+                .to_rgb8();
+            assert_eq!(image.dimensions(), (32, 32));
+            let pixel = image.get_pixel(16, 16);
+            assert!(pixel[0] > 180 && pixel[1] < 80 && pixel[2] < 80, "{pixel:?}");
+        }
+        Err(err) => {
+            let text = err.to_string();
+            assert!(text.contains("H.264"), "{text}");
+            assert!(text.contains("Cisco") || text.contains("OpenH264"), "{text}");
+            assert!(!text.contains("12345678"), "{text}");
+        }
+    }
 }

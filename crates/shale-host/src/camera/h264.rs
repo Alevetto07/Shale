@@ -1,24 +1,51 @@
 //! Turn an Annex-B H.264 access unit into the same JPEG the A1 path stores.
 //!
-//! OpenH264 is compiled from the BSD-2 source. A packet that is not a picture
-//! yet (a parameter set, or a broken unit) returns nothing, and the caller
-//! keeps reading. A decoded picture is a JPEG, so the overlay, the detector,
-//! the snapshot, and the plate check do not grow a second path.
+//! A release build loads Cisco's official binary, already checked and stored
+//! in the app data directory. The `openh264-source` feature compiles the
+//! BSD-2 library instead, and that feature is off in a release build. A
+//! packet that is not a picture yet returns nothing. A decoded picture is a
+//! JPEG, so the overlay, the detector, the snapshot, and the plate check do
+//! not grow a second path.
+
+use std::path::Path;
 
 use image::codecs::jpeg::JpegEncoder;
 use image::{ExtendedColorType, ImageEncoder};
 use openh264::decoder::{DecodedYUV, Decoder};
+#[cfg(not(feature = "openh264-source"))]
+use openh264::decoder::DecoderConfig;
 use openh264::formats::YUVSource;
+#[cfg(not(feature = "openh264-source"))]
+use openh264::OpenH264API;
 
 pub struct H264Pictures {
     decoder: Decoder,
 }
 
 impl H264Pictures {
-    pub fn new() -> Result<Self, String> {
-        Decoder::new()
-            .map(|decoder| Self { decoder })
-            .map_err(|error| error.to_string())
+    /// Open a decoder.
+    ///
+    /// `library` is Cisco's binary. A from-source build ignores it.
+    pub fn open(library: Option<&Path>) -> Result<Self, String> {
+        #[cfg(feature = "openh264-source")]
+        {
+            let _ = library;
+            let decoder = Decoder::new().map_err(|err| err.to_string())?;
+            return Ok(Self { decoder });
+        }
+        #[cfg(not(feature = "openh264-source"))]
+        {
+            let path = library.ok_or_else(|| {
+                "Cisco's OpenH264 library is not installed yet. Shale downloads it on first use."
+                    .to_string()
+            })?;
+            let api = OpenH264API::from_blob_path(path).map_err(|err| {
+                format!("Cisco's OpenH264 library was not accepted ({err}).")
+            })?;
+            let decoder = Decoder::with_api_config(api, DecoderConfig::default())
+                .map_err(|err| err.to_string())?;
+            Ok(Self { decoder })
+        }
     }
 
     /// Decode one Annex-B unit. `None` means "not a picture yet".
@@ -81,14 +108,23 @@ pub fn nal_payloads(annex_b: &[u8]) -> Vec<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "openh264-source")]
     use image::ImageReader;
+    #[cfg(feature = "openh264-source")]
     use std::io::Cursor;
 
     const RED: &[u8] = include_bytes!("../../tests/fixtures/red-32.h264");
 
     #[test]
+    fn the_red_fixture_is_annex_b() {
+        let payloads = nal_payloads(RED);
+        assert!(payloads.len() >= 3, "{}", payloads.len());
+    }
+
+    #[cfg(feature = "openh264-source")]
+    #[test]
     fn a_short_red_stream_becomes_a_red_jpeg() {
-        let mut pictures = H264Pictures::new().expect("decoder");
+        let mut pictures = H264Pictures::open(None).expect("decoder");
         let mut jpeg = None;
         for payload in nal_payloads(RED) {
             let mut unit = vec![0, 0, 0, 1];
@@ -112,9 +148,34 @@ mod tests {
         assert!(pixel[2] < 80, "blue {}", pixel[2]);
     }
 
+    #[cfg(feature = "openh264-source")]
     #[test]
     fn a_broken_unit_is_not_a_picture() {
-        let mut pictures = H264Pictures::new().expect("decoder");
+        let mut pictures = H264Pictures::open(None).expect("decoder");
         assert!(pictures.push(&[0, 0, 0, 1, 0x65, 0x11, 0x22]).is_none());
+    }
+
+    #[cfg(not(feature = "openh264-source"))]
+    #[test]
+    fn a_file_that_is_not_ciscos_library_is_refused() {
+        let dir = std::env::temp_dir().join(format!("shale-h264-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("not-openh264.so");
+        std::fs::write(&path, b"this is not the cisco binary").unwrap();
+        let err = match H264Pictures::open(Some(&path)) {
+            Err(err) => err,
+            Ok(_) => panic!("an unknown library was accepted"),
+        };
+        let text = err.to_lowercase();
+        assert!(
+            text.contains("openh264") || text.contains("cisco") || text.contains("hash"),
+            "{err}"
+        );
+        let missing = match H264Pictures::open(None) {
+            Err(err) => err,
+            Ok(_) => panic!("a missing library opened"),
+        };
+        assert!(missing.contains("not installed"), "{missing}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
