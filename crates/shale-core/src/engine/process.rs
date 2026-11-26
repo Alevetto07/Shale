@@ -27,16 +27,20 @@ fn lock_registry() -> std::sync::MutexGuard<'static, Vec<Arc<LiveEngine>>> {
     }
 }
 
+fn stop_engines(engines: Vec<Arc<LiveEngine>>) {
+    for engine in engines {
+        engine.cancelled.store(true, Ordering::SeqCst);
+        shutdown(&engine);
+    }
+}
+
 /// Stop every CuraEngine this process started and has not reaped yet.
 pub fn cancel_running_engines() {
     let engines = {
         let mut guard = lock_registry();
         std::mem::take(&mut *guard)
     };
-    for engine in engines {
-        engine.cancelled.store(true, Ordering::SeqCst);
-        shutdown(&engine);
-    }
+    stop_engines(engines);
 }
 
 fn shutdown(engine: &LiveEngine) {
@@ -135,23 +139,45 @@ mod tests {
         }
     }
 
+    fn stop_only(tracked: &[&TrackedChild]) {
+        let ours: Vec<Arc<LiveEngine>> = {
+            let mut guard = lock_registry();
+            let mut kept = Vec::new();
+            let mut ours = Vec::new();
+            for engine in guard.drain(..) {
+                if tracked.iter().any(|item| Arc::ptr_eq(&item.engine, &engine)) {
+                    ours.push(engine);
+                } else {
+                    kept.push(engine);
+                }
+            }
+            *guard = kept;
+            ours
+        };
+        stop_engines(ours);
+    }
+
     #[test]
     fn cancelling_stops_the_engine_process() {
-        let child = linger().spawn().expect("start a stand-in for CuraEngine");
-        let tracked = TrackedChild::adopt(child);
+        // The app-wide cancel stops every engine in this process. Other tests
+        // slice at the same time, so this one only stops the children it started.
+        let first = TrackedChild::adopt(linger().spawn().expect("start a stand-in"));
+        let second = TrackedChild::adopt(linger().spawn().expect("start a second stand-in"));
         let started = Instant::now();
-        cancel_running_engines();
-        let mut stopped = false;
-        for _ in 0..50 {
-            match tracked.poll().expect("poll") {
-                ChildPoll::Cancelled | ChildPoll::Finished(_) => {
-                    stopped = true;
-                    break;
+        stop_only(&[&first, &second]);
+        for tracked in [&first, &second] {
+            let mut stopped = false;
+            for _ in 0..50 {
+                match tracked.poll().expect("poll") {
+                    ChildPoll::Cancelled | ChildPoll::Finished(_) => {
+                        stopped = true;
+                        break;
+                    }
+                    ChildPoll::Running => std::thread::sleep(Duration::from_millis(20)),
                 }
-                ChildPoll::Running => std::thread::sleep(Duration::from_millis(20)),
             }
+            assert!(stopped, "the process was still running");
         }
-        assert!(stopped, "the process was still running");
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 }
