@@ -17,15 +17,26 @@ strip_tests() {
   awk '/^mod tests/{exit} {print}'
 }
 
+# A painted support box is a modifier volume. It is not part of classify, so
+# the comparison with the baseline leaves that helper out.
+drop_box_mesh() {
+  awk '
+    /^\/\/\/ A solid box in plate coordinates\. Support painting/ { skip=1; next }
+    skip && $0 == "}" { skip=0; next }
+    skip { next }
+    { print }
+  '
+}
+
 base_supports="$(git show "${BASE_REF}:crates/shale-core/src/supports.rs")"
 head_supports="$(cat crates/shale-core/src/supports.rs)"
 if echo "$base_supports" | grep -q 'angle < 70.0' || echo "$head_supports" | grep -q 'angle < 70.0'; then
   echo "steep cosmetic gate (angle < 70) must stay removed in head and ${BASE_REF}" >&2
   exit 1
 fi
-if ! diff -q <(printf '%s\n' "$base_supports" | strip_tests) <(printf '%s\n' "$head_supports" | strip_tests) >/dev/null; then
+if ! diff -q <(printf '%s\n' "$base_supports" | strip_tests | cat -s) <(printf '%s\n' "$head_supports" | drop_box_mesh | strip_tests | cat -s) >/dev/null; then
   echo "supports production code differs from ${BASE_REF}" >&2
-  diff -u <(printf '%s\n' "$base_supports" | strip_tests) <(printf '%s\n' "$head_supports" | strip_tests) | head -40 >&2 || true
+  diff -u <(printf '%s\n' "$base_supports" | strip_tests | cat -s) <(printf '%s\n' "$head_supports" | drop_box_mesh | strip_tests | cat -s) | head -40 >&2 || true
   exit 1
 fi
 echo "supports classify production code matches ${BASE_REF} (no angle < 70 gate)"
