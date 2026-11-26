@@ -141,6 +141,19 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
     case "slice_model":
       sliceSummary = mockSlice(models.map((m) => m.id));
       return sliceSummary as T;
+    case "slice_plates":
+      return {
+        plates: (Array.isArray(args.indexes) ? args.indexes : [0]).map((index) => ({
+          index: Number(index),
+          name: `plate ${Number(index) + 1}`,
+          layer_count: 12,
+          print_time_seconds: 90,
+          filament_metres: 1.2,
+          active: Number(index) === 0,
+        })),
+      } as T;
+    case "cancel_slice":
+      return undefined as T;
     case "slice_tools":
       return {
         tools: [0, 1],

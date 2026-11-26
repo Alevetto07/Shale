@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 pub mod files;
 pub mod gcode3mf;
 pub mod hms;
+pub mod plate_preview;
 pub mod print_options;
 
 /// Everything needed to reach one printer on the LAN.

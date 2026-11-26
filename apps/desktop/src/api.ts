@@ -869,6 +869,32 @@ export const api = {
       settings,
       ignoreProjectSettings,
     }),
+  slicePlates: (
+    indexes: number[],
+    atOnce: number,
+    printerId: string,
+    variantName: string | null,
+    qualityType: string | null,
+    materialId: string | null,
+    ams: string[],
+    settings: SliceSettings,
+    ignoreProjectSettings = false,
+  ) =>
+    invoke<{ plates: { index: number; name: string; layer_count: number; layers: { index: number; z: number }[]; print_time_seconds: number | null; filament_metres: number | null; active: boolean }[] }>(
+      "slice_plates",
+      {
+        indexes,
+        atOnce,
+        printerId,
+        variantName,
+        qualityType,
+        materialId,
+        ams,
+        settings,
+        ignoreProjectSettings,
+      },
+    ),
+  cancelSlice: () => invoke<void>("cancel_slice"),
   plateFit: (printerId: string | null) => invoke<FitWarning>("plate_fit", { printerId }),
   suggestions: (args: SuggestionQuery) => invoke<Suggestion[]>("suggestions", { args }),
   moveModelToPlate: (id: number, plate: number) =>

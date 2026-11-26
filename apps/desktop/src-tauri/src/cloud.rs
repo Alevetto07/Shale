@@ -232,9 +232,14 @@ pub fn cloud_send(
         .ok_or_else(|| "there is nothing to send: slice the plate first".to_string())?;
     let gcode = std::fs::read(&path)
         .map_err(|err| format!("cannot read the G-code at {}: {err}", path.display()))?;
-    let printer_id = {
+    let (printer_id, solids) = {
         let inner = crate::lock(&app)?;
-        inner.printer_id.clone().unwrap_or_default()
+        let solids = crate::preview_for_path(
+            &inner,
+            &path,
+            colour.as_deref().unwrap_or("#FFFFFF"),
+        );
+        (inner.printer_id.clone().unwrap_or_default(), solids)
     };
     let mapping = ams_mapping.unwrap_or_default();
     if !shale_host::ams_mapping_ok(&mapping) {
@@ -261,6 +266,7 @@ pub fn cloud_send(
         "",
     );
     plate.index = 1;
+    plate.solids = solids;
     let mapping = plate.ams_mapping.clone();
     let bed_on = options.bed_levelling && !options.automatic_bed;
     let flow_on = options.flow_available && options.flow_cali && !options.automatic_flow;

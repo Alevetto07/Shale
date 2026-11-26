@@ -1240,6 +1240,17 @@ button.recent-row.dim { color: var(--ink-3); }
   gap: 6px;
 }
 
+.slice-at-once {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.slice-at-once input {
+  width: 3.2rem;
+}
+
 .plate-chip {
   display: inline-flex;
   align-items: stretch;

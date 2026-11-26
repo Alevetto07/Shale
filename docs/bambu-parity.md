@@ -238,7 +238,10 @@ What is left: seams are not painted at all, re-cutting a part rotates a plane
 rather than describing a joint profile, the body of the G-code is Marlin-flavoured
 rather than Bambu's (its start and end are the machine's own), and the flush volumes
 behind a multi-spool tower are not priced. A multi-spool plate is sent as a
-`.gcode.3mf`, with the tray map in the file and on the start command.
+`.gcode.3mf`, with the tray map in the file and on the start command. The
+plate picture in that file is an isometric view of the parts. Slice all runs
+up to four plates at once, two unless you change it, each in its own
+CuraEngine. Cancel stops every engine that is still running.
 
 ## The host half
 

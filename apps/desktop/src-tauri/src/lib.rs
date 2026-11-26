@@ -2993,6 +2993,355 @@ async fn slice_model(
     Ok(summary)
 }
 
+struct ClearSlicing<'a>(&'a AppState);
+
+impl Drop for ClearSlicing<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut inner) = self.0 .0.lock() {
+            inner.slicing = false;
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct PlateSlice {
+    index: usize,
+    name: String,
+    layer_count: usize,
+    layers: Vec<LayerMark>,
+    print_time_seconds: Option<f64>,
+    filament_metres: Option<f64>,
+    active: bool,
+}
+
+#[derive(Serialize)]
+struct SliceBatch {
+    plates: Vec<PlateSlice>,
+}
+
+struct PlateJob {
+    index: usize,
+    name: String,
+    models: Vec<PlacedModel>,
+    support: Option<SupportPlan>,
+    boxes: Vec<shale_core::paint::SupportBox>,
+    painted: Vec<shale_core::paint::PaintedPatch>,
+    output: PathBuf,
+}
+
+fn painted_for(models: &[LoadedModel], painted: &std::collections::BTreeMap<u32, Paint>) -> Vec<shale_core::paint::PaintedPatch> {
+    models
+        .iter()
+        .filter(|model| model.visible)
+        .enumerate()
+        .flat_map(|(index, model)| {
+            let paint = painted.get(&model.id).cloned().unwrap_or_default();
+            let mut patches = Vec::new();
+            for (triangles, role) in [
+                (paint.enforce, shale_core::paint::PaintRole::Enforce),
+                (paint.block, shale_core::paint::PaintRole::Block),
+            ] {
+                if !triangles.is_empty() {
+                    patches.push(shale_core::paint::PaintedPatch {
+                        model: index,
+                        triangles,
+                        role,
+                    });
+                }
+            }
+            patches
+        })
+        .collect()
+}
+
+/// Slice several plates at once. Each plate is its own CuraEngine process.
+/// `at_once` is how many of those processes run together, from 1 to 4.
+/// Cancel, or closing the window, kills every one that is still running.
+#[tauri::command]
+async fn slice_plates(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    indexes: Vec<usize>,
+    at_once: Option<u32>,
+    printer_id: String,
+    variant_name: Option<String>,
+    quality_type: Option<String>,
+    material_id: Option<String>,
+    ams: Option<Vec<String>>,
+    mut settings: UserSettings,
+    ignore_project_settings: Option<bool>,
+) -> Result<SliceBatch, String> {
+    if indexes.is_empty() {
+        return Err("Nothing on any plate to slice.".into());
+    }
+    if ignore_project_settings != Some(true) {
+        let project = lock(&state)?.project_settings.clone();
+        if let Some(project) = project {
+            shale_core::apply_project_settings(&mut settings, &project);
+        }
+    }
+    nonplanar::prepare_slice(&settings, &printer_id)?;
+    let nonplanar_options = settings.nonplanar.clone();
+    let width = at_once.unwrap_or(2).clamp(1, 4) as usize;
+    let (jobs, catalog, cli, instructions, active) = {
+        let mut inner = lock(&state)?;
+        if inner.slicing {
+            return Err("A slice is already running".into());
+        }
+        if !inner.catalog_full
+            && inner
+                .catalog
+                .as_ref()
+                .is_some_and(|cat| !cat.is_external_printer(&printer_id))
+        {
+            return Err(
+                "The full printer library is still loading — wait before slicing on this printer."
+                    .into(),
+            );
+        }
+        inner.printer_id = Some(printer_id.clone());
+        let catalogue = catalog(&mut inner)?.clone();
+        let mut jobs = Vec::new();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or(0);
+        for index in indexes {
+            if index >= inner.plates.len() {
+                return Err(format!("There is no plate {}.", index + 1));
+            }
+            let name = {
+                let plate = &inner.plates[index];
+                if plate.name.trim().is_empty() {
+                    format!("plate {}", index + 1)
+                } else {
+                    plate.name.clone()
+                }
+            };
+            let models = if index == inner.active_plate {
+                &inner.models
+            } else {
+                &inner.plates[index].models
+            };
+            if !models.iter().any(|model| model.visible) {
+                continue;
+            }
+            let placed = models
+                .iter()
+                .filter(|model| model.visible)
+                .map(|model| PlacedModel {
+                    name: model.name.clone(),
+                    mesh: model.mesh.clone(),
+                    transform: model.transform.clone(),
+                    settings: model
+                        .settings
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect(),
+                    slot: model.slot,
+                })
+                .collect();
+            let painted = painted_for(models, &inner.painted);
+            let (support, boxes) = if index == inner.active_plate {
+                (inner.support.clone(), inner.support_boxes.clone())
+            } else {
+                let plate = &inner.plates[index];
+                (plate.support.clone(), plate.support_boxes.clone())
+            };
+            let output = std::env::temp_dir().join("shale").join(format!(
+                "plate-{}-{}-{stamp}.gcode",
+                std::process::id(),
+                index + 1
+            ));
+            jobs.push(PlateJob {
+                index,
+                name,
+                models: placed,
+                support,
+                boxes,
+                painted,
+                output,
+            });
+        }
+        if jobs.is_empty() {
+            return Err("Nothing on any plate to slice.".into());
+        }
+        inner.slicing = true;
+        (
+            jobs,
+            catalogue,
+            inner.engine.cli.clone(),
+            inner
+                .instructions
+                .iter()
+                .map(|(_, instruction)| instruction.clone())
+                .collect::<Vec<_>>(),
+            inner.active_plate,
+        )
+    };
+    let _clear = ClearSlicing(state.inner());
+    let mut materials: Vec<Option<String>> = vec![material_id];
+    for material in ams.unwrap_or_default() {
+        if !material.trim().is_empty() {
+            materials.push(Some(material));
+        }
+    }
+    let width = width.min(jobs.len()).max(1);
+    let app_progress = app.clone();
+    let outcomes = tauri::async_runtime::spawn_blocking(move || {
+        let mut outcomes: Vec<Option<Result<shale_core::SliceOutcome, String>>> =
+            (0..jobs.len()).map(|_| None).collect();
+        for start in (0..jobs.len()).step_by(width) {
+            let end = (start + width).min(jobs.len());
+            if outcomes.iter().flatten().any(|result| result.is_err()) {
+                break;
+            }
+            std::thread::scope(|scope| {
+                let mut handles = Vec::new();
+                for (offset, job) in jobs[start..end].iter().enumerate() {
+                    let job_index = start + offset;
+                    let catalog = &catalog;
+                    let cli = &cli;
+                    let instructions = &instructions;
+                    let settings = settings.clone();
+                    let materials = materials.clone();
+                    let printer_id = printer_id.clone();
+                    let variant_name = variant_name.clone();
+                    let quality_type = quality_type.clone();
+                    let app_progress = app_progress.clone();
+                    let name = job.name.clone();
+                    let plate_index = job.index;
+                    handles.push(scope.spawn(move || {
+                        let result = shale_core::slice_with_boxes(
+                            catalog,
+                            cli,
+                            &printer_id,
+                            variant_name,
+                            quality_type,
+                            &materials,
+                            settings,
+                            &job.models,
+                            instructions,
+                            job.support.as_ref(),
+                            &job.painted,
+                            &job.boxes,
+                            job.output.clone(),
+                            &mut |progress| {
+                                let _ = app_progress.emit(
+                                    "slice-progress",
+                                    serde_json::json!({
+                                        "fraction": progress.fraction,
+                                        "message": progress.message,
+                                        "plate": plate_index,
+                                        "name": name,
+                                        "layer": null,
+                                    }),
+                                );
+                            },
+                        );
+                        (job_index, result.map_err(|err| err.to_string()))
+                    }));
+                }
+                for handle in handles {
+                    match handle.join() {
+                        Ok((job_index, result)) => {
+                            if result.is_err() {
+                                shale_core::cancel_running_engines();
+                            }
+                            outcomes[job_index] = Some(result);
+                        }
+                        Err(_) => {
+                            shale_core::cancel_running_engines();
+                        }
+                    }
+                }
+            });
+        }
+        (jobs, outcomes)
+    })
+    .await
+    .map_err(|err| format!("slice task failed: {err}"))?;
+    let (jobs, outcomes) = outcomes;
+    let mut plates = Vec::new();
+    let mut first_error = None;
+    {
+        let mut inner = lock(&state)?;
+        for (job, outcome) in jobs.into_iter().zip(outcomes) {
+            let Some(outcome) = outcome else {
+                continue;
+            };
+            match outcome {
+                Ok(outcome) => {
+                    let facts =
+                        shale_core::gcode::header_facts(&read_head(&outcome.gcode_path, 64 * 1024));
+                    let seconds = outcome.print_time_seconds.or(facts.seconds);
+                    let metres = Some(outcome.filament_metres)
+                        .filter(|metres| *metres > 0.0)
+                        .or(facts.filament_metres);
+                    let layers = outcome.toolpath.layers.len();
+                    let marks: Vec<LayerMark> = outcome
+                        .toolpath
+                        .layers
+                        .iter()
+                        .map(|layer| LayerMark {
+                            index: layer.index,
+                            z: layer.z,
+                        })
+                        .collect();
+                    let active_plate = job.index == active;
+                    if active_plate {
+                        let nonplanar_view = if nonplanar_options.mode.active() {
+                            outcome.nonplanar_report.as_ref().map(|report| {
+                                let gcode =
+                                    fs::read_to_string(&outcome.gcode_path).unwrap_or_default();
+                                nonplanar::shape_report(report, &gcode, &nonplanar_options)
+                            })
+                        } else {
+                            None
+                        };
+                        inner.gcode_path = Some(outcome.gcode_path);
+                        inner.toolpath = Some(outcome.toolpath);
+                        inner.nonplanar_view = nonplanar_view;
+                    } else if let Some(slot) = inner.plates.get_mut(job.index) {
+                        slot.gcode_path = Some(outcome.gcode_path);
+                        slot.toolpath = Some(outcome.toolpath);
+                    }
+                    plates.push(PlateSlice {
+                        index: job.index,
+                        name: job.name,
+                        layer_count: layers,
+                        layers: marks,
+                        print_time_seconds: seconds,
+                        filament_metres: metres,
+                        active: active_plate,
+                    });
+                }
+                Err(err) => {
+                    if first_error.is_none() {
+                        let err = if err.contains("cancelled") {
+                            "Slice all was cancelled.".to_string()
+                        } else {
+                            format!("{} could not be sliced: {err}", job.name)
+                        };
+                        first_error = Some(err);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(err) = first_error {
+        return Err(err);
+    }
+    Ok(SliceBatch { plates })
+}
+
+/// Stop every CuraEngine this window started. A plate that already finished
+/// keeps its G-code.
+#[tauri::command]
+fn cancel_slice() {
+    shale_core::cancel_running_engines();
+}
+
 fn preview_path(kind: &str, points: &[[f32; 3]], feed: f32, layer: i32) -> PreviewPath {
     // Travel hops are not curved extrusions. Feature lines keep their own Z;
     // `slopes` only decides which of them take the slope colour.
@@ -3551,6 +3900,7 @@ fn enqueue_copy(
     } else {
         trimmed.to_string()
     };
+    let solids = preview_for_path(inner, source, &colour);
     inner.queue.push(QueuedJob {
         id,
         name,
@@ -3561,8 +3911,82 @@ fn enqueue_copy(
         material,
         colour,
         nozzle,
+        solids,
     });
     Ok(())
+}
+
+fn colour_rgb(text: &str) -> [u8; 3] {
+    let hex = text.trim().trim_start_matches('#');
+    if hex.len() == 6 {
+        if let (Ok(red), Ok(green), Ok(blue)) = (
+            u8::from_str_radix(&hex[0..2], 16),
+            u8::from_str_radix(&hex[2..4], 16),
+            u8::from_str_radix(&hex[4..6], 16),
+        ) {
+            return [red, green, blue];
+        }
+    }
+    [232, 196, 92]
+}
+
+/// Triangles of the plate whose slice is `path`, in plate millimetres.
+pub(crate) fn preview_for_path(
+    inner: &Inner,
+    path: &std::path::Path,
+    colour: &str,
+) -> Vec<shale_host::plate_preview::PreviewSolid> {
+    let models = if inner.gcode_path.as_deref() == Some(path) {
+        inner.models.as_slice()
+    } else if let Some(plate) = inner
+        .plates
+        .iter()
+        .find(|plate| plate.gcode_path.as_deref() == Some(path))
+    {
+        plate.models.as_slice()
+    } else {
+        return Vec::new();
+    };
+    let visible: Vec<&LoadedModel> = models.iter().filter(|model| model.visible).collect();
+    let total: usize = visible.iter().map(|model| model.mesh.triangles.len()).sum();
+    if total == 0 {
+        return Vec::new();
+    }
+    let step = total.div_ceil(4_000).max(1);
+    let mut seen = 0usize;
+    let mut triangles = Vec::new();
+    for model in visible {
+        for corners in &model.mesh.triangles {
+            if !seen.is_multiple_of(step) {
+                seen += 1;
+                continue;
+            }
+            seen += 1;
+            let mut placed = [[0.0_f32; 3]; 3];
+            for (slot, index) in corners.iter().enumerate() {
+                let vertex = model
+                    .mesh
+                    .vertices
+                    .get(*index as usize)
+                    .copied()
+                    .unwrap_or([0.0; 3]);
+                let point = shale_core::apply_transform(
+                    [f64::from(vertex[0]), f64::from(vertex[1]), f64::from(vertex[2])],
+                    &model.transform,
+                );
+                placed[slot] = [point[0] as f32, point[1] as f32, point[2] as f32];
+            }
+            triangles.push(placed);
+        }
+    }
+    if triangles.is_empty() {
+        Vec::new()
+    } else {
+        vec![shale_host::plate_preview::PreviewSolid {
+            triangles,
+            colour: colour_rgb(colour),
+        }]
+    }
 }
 
 /// Wrap one G-code file as the `.gcode.3mf` Bambu Studio uploads. The plate
@@ -3577,6 +4001,7 @@ fn prepare_bambu_3mf(
     colour: &str,
     mapping: &[i32],
     bed_type: &str,
+    solids: Vec<shale_host::plate_preview::PreviewSolid>,
 ) -> Result<(PathBuf, String, Vec<i32>), String> {
     let gcode = fs::read(gcode_path).map_err(|err| format!("Could not read the slice: {err}"))?;
     let mut plate = shale_host::gcode3mf::plate_from_gcode(
@@ -3590,6 +4015,7 @@ fn prepare_bambu_3mf(
         bed_type,
     );
     plate.index = 1;
+    plate.solids = solids;
     let mapping = plate.ams_mapping.clone();
     let bytes = shale_host::gcode3mf::write(&[plate])?;
     let stem = upload_name
@@ -3617,6 +4043,7 @@ async fn send_file(
     colour: String,
     nozzle: String,
     printer_id: String,
+    solids: Vec<shale_host::plate_preview::PreviewSolid>,
 ) -> Result<serde_json::Value, String> {
     if !shale_host::ams_mapping_ok(&ams_mapping) {
         return Err("Each tool must map to the external spool or an AMS tray.".into());
@@ -3660,6 +4087,7 @@ async fn send_file(
             &colour,
             &ams_mapping,
             &bed_type,
+            solids,
         )?)
     } else {
         None
@@ -3765,6 +4193,10 @@ async fn host_send(
     let material = material.unwrap_or_default();
     let colour = colour.unwrap_or_else(|| "#FFFFFF".to_string());
     let nozzle = nozzle.unwrap_or_else(|| "0.4".to_string());
+    let now_solids = {
+        let inner = lock(&state)?;
+        preview_for_path(&inner, &plan.now, &colour)
+    };
     let queued = plan.queue.len();
     if queued > 0 {
         let mut inner = lock(&state)?;
@@ -3794,6 +4226,7 @@ async fn host_send(
         colour,
         nozzle,
         printer_id,
+        now_solids,
     )
     .await?;
     sent["queued"] = serde_json::json!(queued);
@@ -3996,6 +4429,7 @@ async fn queue_start_next(
         job.colour.clone(),
         job.nozzle.clone(),
         String::new(),
+        job.solids.clone(),
     )
     .await
     {
@@ -4121,6 +4555,9 @@ struct QueuedJob {
     material: String,
     colour: String,
     nozzle: String,
+    /// The plate picture, captured when the job was queued. The copied G-code
+    /// no longer sits beside the meshes.
+    solids: Vec<shale_host::plate_preview::PreviewSolid>,
 }
 
 #[derive(Serialize)]
@@ -5972,6 +6409,7 @@ pub fn run() {
                         material: String::new(),
                         colour: "#FFFFFF".to_string(),
                         nozzle: "0.4".to_string(),
+                        solids: Vec::new(),
                     })
                     .collect()
             })
@@ -6146,6 +6584,8 @@ pub fn run() {
             current_support,
             compare_supports,
             slice_model,
+            slice_plates,
+            cancel_slice,
             nonplanar_supported,
             host_defaults,
             host_connect,
@@ -6266,11 +6706,17 @@ pub fn run() {
                 let _ = windows_chrome::subclass_thread_windows();
             }
         }
+        RunEvent::Exit => {
+            shale_core::cancel_running_engines();
+        }
         RunEvent::WindowEvent {
             label,
             event: WindowEvent::CloseRequested { .. },
             ..
-        } if label == "main" => app.exit(0),
+        } if label == "main" => {
+            shale_core::cancel_running_engines();
+            app.exit(0);
+        }
         _ => {}
     });
 }

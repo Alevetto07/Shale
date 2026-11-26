@@ -312,11 +312,11 @@ function AboutPanel({
         licensed under AGPL-3.0-or-later.
       </p>
       <p className="credit">
-        What&apos;s new: search MakerWorld and Thingiverse from Models. Prepare can slice every plate,
-        orient a part onto a hull face, drag a cut, and place a support box. Device shows printer
+        What&apos;s new: search MakerWorld and Thingiverse from Models. Prepare can slice several plates
+        at once, orient a part onto a hull face, drag a cut, and place a support box. Device shows printer
         messages, files on the machine, and a toast when a print finishes, fails, pauses, or runs out
-        of filament. A Bambu send uploads a sliced 3MF, with the tray map in the file. Support boxes,
-        the tray map, and the other plate choices are kept in the project file.
+        of filament. A Bambu send uploads a sliced 3MF, with the tray map in the file and a picture of
+        the parts. Support boxes, the tray map, and the other plate choices are kept in the project file.
       </p>
       <p className="credit">
         Home screen: {plate.plateCredit.name} ({plate.plateCredit.object}), {plate.plateCredit.credit}. Released{" "}

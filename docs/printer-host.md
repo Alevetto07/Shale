@@ -111,8 +111,8 @@ upload.
 A Bambu send uploads a `.gcode.3mf` in the layout Bambu Studio writes:
 `Metadata/plate_1.gcode` and its uppercase `.md5`, `slice_info.config` (filament
 identity and the tray map), plate thumbnails, `model_settings.config`, and
-`project_settings.config`. The thumbnails are a fixed plate preview, not a
-render of the mesh. The same `ams_mapping` array is on the `project_file`
+`project_settings.config`. The thumbnails are an isometric view of the
+meshes on that plate. An empty plate is a picture of the bed. The same `ams_mapping` array is on the `project_file`
 command. The dialog's timelapse, bed levelling, flow dynamics, vibration
 compensation, and use-AMS switches follow Studio's defaults for the printer.
 A P1 has no flow calibration. A P2, H2, or X2 sends automatic calibration

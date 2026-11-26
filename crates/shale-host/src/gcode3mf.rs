@@ -12,8 +12,9 @@
 //! so a file and the command that starts it name the same trays. Filament
 //! identity (type, colour, metres) is the part Studio puts in `slice_info`.
 //!
-//! The thumbnails are flat previews of a fixed size, not a render of the mesh.
-//! The printer uses them as the plate picture on its screen.
+//! The plate pictures are an isometric render of the meshes on the plate.
+//! An empty plate is a picture of the bed, not a flat swatch. The printer
+//! uses them as the plate picture on its screen.
 
 use std::io::{Cursor, Write};
 
@@ -45,6 +46,9 @@ pub struct PlateFile {
     /// the `project_file` command.
     pub ams_mapping: Vec<i32>,
     pub bed_type: String,
+    /// Meshes already transformed into plate millimetres. The thumbnails are
+    /// drawn from these. Empty is a picture of the bed alone.
+    pub solids: Vec<crate::plate_preview::PreviewSolid>,
 }
 
 /// A plate a reader found. `gcode_path` is the `param` a reprint command uses.
@@ -119,6 +123,7 @@ pub fn plate_from_gcode(
         filaments,
         ams_mapping: mapping,
         bed_type: bed_type.to_string(),
+        solids: Vec::new(),
     }
 }
 
@@ -166,15 +171,17 @@ pub fn write(plates: &[PlateFile]) -> Result<Vec<u8>, String> {
             digest.as_bytes(),
             deflated,
         )?;
-        // Studio stores thumbnails uncompressed.
+        // Studio stores thumbnails uncompressed. Both sizes are the same view.
+        let large = crate::plate_preview::isometric_rgba(&plate.solids, 128);
+        let small = crate::plate_preview::isometric_rgba(&plate.solids, 32);
         add(
             &format!("Metadata/plate_{index}.png"),
-            &png(128, 128, [40, 44, 52, 255]),
+            &encode_png(128, 128, &large),
             stored,
         )?;
         add(
             &format!("Metadata/plate_{index}_small.png"),
-            &png(32, 32, [40, 44, 52, 255]),
+            &encode_png(32, 32, &small),
             stored,
         )?;
     }
@@ -600,13 +607,13 @@ fn md5(message: &[u8]) -> [u8; 16] {
     out
 }
 
-fn png(width: u32, height: u32, rgba: [u8; 4]) -> Vec<u8> {
+pub(crate) fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
     let mut raw = Vec::with_capacity((width as usize + 1) * height as usize * 4);
-    for _row in 0..height {
+    for row in 0..height as usize {
         raw.push(0);
-        for _column in 0..width {
-            raw.extend_from_slice(&rgba);
-        }
+        let start = row * width as usize * 4;
+        let end = start + width as usize * 4;
+        raw.extend_from_slice(&rgba[start..end]);
     }
     let mut ihdr = Vec::new();
     ihdr.extend_from_slice(&width.to_be_bytes());
@@ -758,6 +765,33 @@ mod tests {
         .unwrap();
         assert!(model.contains("Metadata/plate_1.gcode"));
         assert!(model.contains("key=\"plater_id\" value=\"1\""));
+    }
+
+    #[test]
+    fn the_plate_picture_follows_the_mesh() {
+        let plain = sample(1, &[-1]);
+        let mut with_part = plain.clone();
+        with_part.solids = vec![crate::plate_preview::PreviewSolid {
+            colour: [220, 40, 40],
+            triangles: vec![
+                [[0.0, 0.0, 0.0], [20.0, 0.0, 0.0], [0.0, 20.0, 20.0]],
+                [[0.0, 0.0, 0.0], [20.0, 0.0, 0.0], [20.0, 20.0, 0.0]],
+            ],
+        }];
+        let empty = write(&[plain]).unwrap();
+        let filled = write(&[with_part]).unwrap();
+        let picture = |bytes: &[u8], name: &str| {
+            let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+            let mut png = Vec::new();
+            std::io::Read::read_to_end(&mut archive.by_name(name).unwrap(), &mut png).unwrap();
+            png
+        };
+        let large = picture(&filled, "Metadata/plate_1.png");
+        let small = picture(&filled, "Metadata/plate_1_small.png");
+        assert_eq!(&large[16..20], &128u32.to_be_bytes());
+        assert_eq!(&small[16..20], &32u32.to_be_bytes());
+        assert_ne!(picture(&empty, "Metadata/plate_1.png"), large);
+        assert_ne!(picture(&empty, "Metadata/plate_1_small.png"), small);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { batchFraction, batchMessage, platesToSlice } from "./slice-all";
+import { batchFraction, batchMessage, parallelFraction, platesToSlice, runningSummary, sliceAtOnce } from "./slice-all";
 
 describe("platesToSlice", () => {
   const plates = [
@@ -29,5 +29,23 @@ describe("batch progress", () => {
     expect(batchMessage(1, 3, "plate 2", "Slicing layer 4")).toBe(
       "Plate 2 of 3: plate 2 — Slicing layer 4",
     );
+  });
+
+  it("starts two at a time and will not run more than four", () => {
+    expect(sliceAtOnce(null)).toBe(2);
+    expect(sliceAtOnce(Number.NaN)).toBe(2);
+    expect(sliceAtOnce(0)).toBe(1);
+    expect(sliceAtOnce(3.4)).toBe(3);
+    expect(sliceAtOnce(9)).toBe(4);
+  });
+
+  it("names every plate that is running, not only the first", () => {
+    expect(
+      runningSummary([
+        { name: "plate 1", fraction: 0.5, detail: "Slicing" },
+        { name: "plate 2", fraction: 0.1, detail: "" },
+      ]),
+    ).toBe("plate 1 50% — Slicing · plate 2 10%");
+    expect(parallelFraction([0.5, 0.1])).toBeCloseTo(0.3);
   });
 });

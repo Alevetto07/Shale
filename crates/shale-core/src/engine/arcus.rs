@@ -68,14 +68,15 @@ impl SlicingEngine for ArcusEngine {
             .stderr(Stdio::piped());
         super::cli::apply_lib_dir(&mut command, self.lib_dir.as_deref());
         super::cli::hide_engine_console(&mut command);
-        let mut child = command.spawn().map_err(|err| {
+        let child = command.spawn().map_err(|err| {
             Error::Engine(format!(
                 "could not start CuraEngine for Arcus at '{}': {err}",
                 self.program.display()
             ))
         })?;
+        let tracked = super::process::TrackedChild::adopt(child);
 
-        let stream = accept_engine(&listener, &mut child)?;
+        let stream = accept_engine(&listener, &tracked)?;
         // On Windows an accepted socket inherits the listener's non-blocking
         // mode, which also disables the read timeout below. Put the connection
         // back into blocking mode with a short receive timeout.
@@ -110,7 +111,8 @@ impl SlicingEngine for ArcusEngine {
         let mut peak = 0.02f32;
         let mut last_keepalive = Instant::now();
         let started = Instant::now();
-        let stderr_log = spawn_log(child.stderr.take(), child.stdout.take());
+        let (stdout, stderr) = tracked.take_pipes();
+        let stderr_log = spawn_log(stderr, stdout);
 
         while started.elapsed() < Duration::from_secs(60 * 30) {
             if let Some(rx) = &stderr_log {
@@ -136,14 +138,20 @@ impl SlicingEngine for ArcusEngine {
                     if err.kind() == std::io::ErrorKind::TimedOut
                         || err.kind() == std::io::ErrorKind::WouldBlock =>
                 {
-                    if let Some(status) = child.try_wait()? {
-                        if !finished {
-                            return Err(Error::Engine(format!(
-                                "CuraEngine exited {status} before the slice finished.\n{}",
-                                log.join("\n")
-                            )));
+                    match tracked.poll()? {
+                        super::process::ChildPoll::Running => {}
+                        super::process::ChildPoll::Cancelled => {
+                            return Err(Error::Engine("The slice was cancelled.".into()));
                         }
-                        break;
+                        super::process::ChildPoll::Finished(status) => {
+                            if !finished {
+                                return Err(Error::Engine(format!(
+                                    "CuraEngine exited {status} before the slice finished.\n{}",
+                                    log.join("\n")
+                                )));
+                            }
+                            break;
+                        }
                     }
                     continue;
                 }
@@ -186,10 +194,16 @@ impl SlicingEngine for ArcusEngine {
                 }
             }
         }
-        if child.try_wait()?.is_none() {
-            let _ = child.kill();
-        }
-        let status = child.wait();
+        let status = match tracked.poll() {
+            Ok(super::process::ChildPoll::Finished(status)) => status.to_string(),
+            Ok(super::process::ChildPoll::Cancelled) => {
+                return Err(Error::Engine("The slice was cancelled.".into()));
+            }
+            Ok(super::process::ChildPoll::Running) | Err(_) => {
+                drop(tracked);
+                "stopped".to_string()
+            }
+        };
         if let Some(rx) = &stderr_log {
             while let Ok(line) = rx.recv_timeout(Duration::from_millis(200)) {
                 push_log(&mut log, line.trim_end().to_string());
@@ -197,7 +211,7 @@ impl SlicingEngine for ArcusEngine {
         }
         if !finished && gcode.is_empty() {
             return Err(Error::Engine(format!(
-                "Arcus ended before SlicingFinished ({status:?}).\n{}",
+                "Arcus ended before SlicingFinished ({status}).\n{}",
                 log.join("\n")
             )));
         }
@@ -273,20 +287,25 @@ fn mesh_from_path(
 
 fn accept_engine(
     listener: &TcpListener,
-    child: &mut std::process::Child,
+    tracked: &super::process::TrackedChild,
 ) -> Result<TcpStream, Error> {
     let started = Instant::now();
     loop {
         match listener.accept() {
             Ok((stream, _)) => return Ok(stream),
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                if let Some(status) = child.try_wait()? {
-                    return Err(Error::Engine(format!(
-                        "CuraEngine exited {status} before connecting. The CLI backend is still available (SHALE_ENGINE=cli)."
-                    )));
+                match tracked.poll()? {
+                    super::process::ChildPoll::Running => {}
+                    super::process::ChildPoll::Cancelled => {
+                        return Err(Error::Engine("The slice was cancelled.".into()));
+                    }
+                    super::process::ChildPoll::Finished(status) => {
+                        return Err(Error::Engine(format!(
+                            "CuraEngine exited {status} before connecting. The CLI backend is still available (SHALE_ENGINE=cli)."
+                        )));
+                    }
                 }
                 if started.elapsed() > ACCEPT_TIMEOUT {
-                    let _ = child.kill();
                     return Err(Error::Engine(
                         "CuraEngine did not connect over Arcus. Use the CLI backend with SHALE_ENGINE=cli.".into(),
                     ));

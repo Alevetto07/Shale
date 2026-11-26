@@ -45,7 +45,7 @@ import { TabBar, type DocTab, type Pane, type Spool } from "./Tabs";
 import { FeatureLegend } from "./Legend";
 import { ObjectOverrides } from "./object-overrides";
 import { plateWarnings } from "./print-check";
-import { batchFraction, batchMessage, platesToSlice } from "./slice-all";
+import { parallelFraction, platesToSlice, runningSummary, sliceAtOnce } from "./slice-all";
 import { thumbnailJpeg } from "./thumbnail";
 import { variantOptionLabel } from "./profile-labels";
 import { toast } from "sonner";
@@ -102,6 +102,8 @@ const SetupWizard = lazy(() =>
 interface Progress {
   fraction: number;
   message: string;
+  plate?: number;
+  name?: string;
   layer?: {
     index: number;
     z: number;
@@ -273,6 +275,9 @@ export function App() {
   /// The plates in this project. The one flagged `active` is the one `models`
   /// holds; the rest live in the backend until they are turned to.
   const [plates, setPlates] = useState<PlateView[]>([]);
+  const [sliceWidth, setSliceWidth] = useState(() =>
+    sliceAtOnce(Number(window.localStorage.getItem("shale.sliceAtOnce"))),
+  );
   const [fit, setFit] = useState<FitWarning | null>(null);
   const [embedded, setEmbedded] = useState<ProjectSettingsImport | null>(null);
   const [ignoreEmbedded, setIgnoreEmbedded] = useState(false);
@@ -871,15 +876,19 @@ export function App() {
     });
     const unlisten = listen<Progress>("slice-progress", (event) => {
       const job = batch.current;
-      setProgress(
-        job && job.total > 0
-          ? {
-              fraction: batchFraction(job.done, job.total, event.payload.fraction),
-              message: batchMessage(job.done, job.total, job.name, event.payload.message),
-              layer: event.payload.layer,
-            }
-          : event.payload,
-      );
+      if (job && typeof event.payload.plate === "number") {
+        const row = job.rows.find((item) => item.index === event.payload.plate);
+        if (row) {
+          row.fraction = event.payload.fraction;
+          row.detail = event.payload.message;
+        }
+        setProgress({
+          fraction: parallelFraction(job.rows.map((item) => item.fraction)),
+          message: runningSummary(job.rows),
+        });
+        return;
+      }
+      setProgress(event.payload);
       const live = event.payload.layer;
       if (live && live.paths.length > 0) {
         setPreview(true);
@@ -920,9 +929,8 @@ export function App() {
   const partSettingsPending = useRef<{ id: number; settings: Record<string, string> } | null>(null);
   const modelsRef = useRef<ModelView[]>(models);
   const platesRef = useRef<PlateView[]>(plates);
-  /// Set while "slice all" walks the plates, so one engine fraction becomes a
-  /// fraction of the whole batch and the bar can name the plate.
-  const batch = useRef<{ done: number; total: number; name: string } | null>(null);
+  /// Set while "slice all" is running, so each plate keeps its own fraction.
+  const batch = useRef<{ rows: { index: number; name: string; fraction: number; detail: string }[] } | null>(null);
   const lastEdit = useRef<{ key: string; at: number } | null>(null);
   const [historyDepth, setHistoryDepth] = useState({ past: 0, future: 0 });
 
@@ -1822,13 +1830,13 @@ export function App() {
 
   function reportProgress(fraction: number, message: string) {
     const job = batch.current;
-    if (!job || job.total <= 0) {
+    if (!job || job.rows.length === 0) {
       setProgress({ fraction, message });
       return;
     }
     setProgress({
-      fraction: batchFraction(job.done, job.total, fraction),
-      message: batchMessage(job.done, job.total, job.name, message),
+      fraction: parallelFraction(job.rows.map((item) => item.fraction)),
+      message: runningSummary(job.rows),
     });
   }
 
@@ -1918,8 +1926,9 @@ export function App() {
     }
   }
 
-  /// Slice every plate that has a part on it, one after another. `onlyUnsliced`
-  /// is what "send every plate" uses: a plate that already has G-code is left.
+  /// Slice every plate that has a part on it. Up to `shale.sliceAtOnce` plates
+  /// run at once, each in its own CuraEngine. `onlyUnsliced` is what "send
+  /// every plate" uses: a plate that already has G-code is left.
   async function sliceAll(options?: { onlyUnsliced?: boolean }): Promise<boolean> {
     if (!printerId) {
       setError("Choose a printer first.");
@@ -1931,30 +1940,67 @@ export function App() {
       if (!onlyUnsliced) setError("Nothing on any plate to slice.");
       return true;
     }
-    const start = platesRef.current.find((plate) => plate.active)?.index ?? targets[0].index;
+    const width = sliceAtOnce(Number(window.localStorage.getItem("shale.sliceAtOnce")));
     setBusy(true);
     setError(null);
-    batch.current = { done: 0, total: targets.length, name: targets[0].name };
+    batch.current = {
+      rows: targets.map((plate) => ({ index: plate.index, name: plate.name, fraction: 0.02, detail: "Starting" })),
+    };
+    reportProgress(0.02, "Starting");
     try {
-      for (let index = 0; index < targets.length; index += 1) {
-        const plate = targets[index];
-        batch.current = { done: index, total: targets.length, name: plate.name };
-        reportProgress(0.02, "Starting");
-        const active = platesRef.current.find((item) => item.active)?.index;
-        if (active !== plate.index) await showPlate(plate.index);
-        await slice({ quiet: true, hold: true });
+      const summary = await api.slicePlates(
+        targets.map((plate) => plate.index),
+        width,
+        printerId,
+        variant,
+        quality,
+        material,
+        ams,
+        engineSettings,
+        ignoreEmbedded,
+      );
+      const listed = await api.listPlates();
+      platesRef.current = listed;
+      setPlates(listed);
+      const active = summary.plates.find((plate) => plate.active);
+      if (active) {
+        setLayerCount(active.layer_count);
+        setLayerZ(active.layers.map((item) => item.z));
+        setLayer(Math.max(0, active.layer_count - 1));
+        setPrintSeconds(active.print_time_seconds);
+        setFilamentMetres(active.filament_metres);
+        const all = await api.previewAll();
+        setPaths(all);
+        setPreview(true);
       }
-      const back = platesRef.current.find((item) => item.active)?.index;
-      if (back !== start) await showPlate(start);
-      setNotice(targets.length === 1 ? `Sliced ${targets[0].name}` : `Sliced ${targets.length} plates`);
+      setNotice(
+        summary.plates.length === 1
+          ? `Sliced ${summary.plates[0].name}`
+          : `Sliced ${summary.plates.length} plates`,
+      );
       return true;
     } catch (err) {
       setError(messageOf(err));
       setProgress(null);
+      try {
+        const listed = await api.listPlates();
+        platesRef.current = listed;
+        setPlates(listed);
+      } catch {
+        // The plates already on screen stay.
+      }
       return false;
     } finally {
       batch.current = null;
       setBusy(false);
+    }
+  }
+
+  async function cancelSlice() {
+    try {
+      await api.cancelSlice();
+    } catch (err) {
+      setError(messageOf(err));
     }
   }
 
@@ -3661,9 +3707,29 @@ export function App() {
               >
                 Slice all
               </button>
+              <label className="slice-at-once">
+                At a time
+                <input
+                  type="number"
+                  min={1}
+                  max={4}
+                  value={sliceWidth}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const next = sliceAtOnce(Number(event.target.value));
+                    window.localStorage.setItem("shale.sliceAtOnce", String(next));
+                    setSliceWidth(next);
+                  }}
+                />
+              </label>
+              {busy && (
+                <button type="button" onClick={() => void cancelSlice()}>
+                  Cancel
+                </button>
+              )}
             </div>
             <p className="hint">
-              Each plate holds its own parts. Slice all walks them in order and shows which plate it is on.
+              Each plate holds its own parts. Slice all runs up to {sliceWidth} at a time, each in its own CuraEngine. Cancel stops every one that is still running.
             </p>
           </Frame>
           <ProjectSummary
