@@ -2351,7 +2351,8 @@ select {
   gap: 0.35rem;
   padding: 0.15rem 0.2rem 0.45rem 1.7rem;
 }
-.object-overrides input {
+.object-overrides input,
+.object-overrides select {
   width: 100%;
   min-width: 0;
 }

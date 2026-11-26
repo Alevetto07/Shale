@@ -565,11 +565,10 @@ pub fn slice(
     // hand-written handling below, so every other field in the sheet was a
     // facade: it moved, it was remembered, and the slice ignored it. Merged in
     // last, an override wins over the profile, which is what an override means.
-    for (key, value) in settings
-        .extra
-        .iter()
-        .chain(models.iter().flat_map(|model| model.settings.iter()))
-    {
+    // Plate overrides only. A value on one object stays on that object: it is
+    // handed to the engine after that object's `-l`, and copying it here would
+    // make the last object decide the whole plate.
+    for (key, value) in settings.extra.iter() {
         if !value.is_empty() {
             resolved.global.insert(key.clone(), value.clone());
         }

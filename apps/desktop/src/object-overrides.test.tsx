@@ -34,6 +34,23 @@ describe("ObjectOverrides", () => {
     expect(document.body.textContent).not.toMatch(/deep field/i);
   });
 
+  it("turns support off for this object and can follow the plate again", () => {
+    render(<Harness />);
+    const support = screen.getByRole("combobox", { name: "Support for this object" });
+    fireEvent.change(support, { target: { value: "0" } });
+    expect((support as HTMLSelectElement).value).toBe("0");
+    fireEvent.change(support, { target: { value: "" } });
+    expect((support as HTMLSelectElement).value).toBe("");
+  });
+
+  it("offers brim type and seam position", () => {
+    render(<Harness />);
+    expect(screen.getByRole("combobox", { name: "Brim type for this object" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Seam position for this object" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Brim width for this object, in millimetres" })).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/deep field/i);
+  });
+
   it("ignores a value that is not a number", () => {
     const onChange = vi.fn();
     render(<ObjectOverrides settings={{ speed_print: "80" }} onChange={onChange} />);
