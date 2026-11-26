@@ -68,12 +68,14 @@ impl SlicingEngine for ArcusEngine {
             .stderr(Stdio::piped());
         super::cli::apply_lib_dir(&mut command, self.lib_dir.as_deref());
         super::cli::hide_engine_console(&mut command);
+        super::cli::die_with_parent(&mut command);
         let mut child = command.spawn().map_err(|err| {
             Error::Engine(format!(
                 "could not start CuraEngine for Arcus at '{}': {err}",
                 self.program.display()
             ))
         })?;
+        let mut engine_guard = super::cli::EngineGuard::adopt(&child);
 
         let stream = accept_engine(&listener, &mut child)?;
         // On Windows an accepted socket inherits the listener's non-blocking
@@ -113,6 +115,14 @@ impl SlicingEngine for ArcusEngine {
         let stderr_log = spawn_log(child.stderr.take(), child.stdout.take());
 
         while started.elapsed() < Duration::from_secs(60 * 30) {
+            if super::cli::engine_cancel_requested() {
+                let _ = child.kill();
+                let _ = child.wait();
+                engine_guard.disarm();
+                return Err(Error::Engine(
+                    "the slice was cancelled and CuraEngine was stopped".into(),
+                ));
+            }
             if let Some(rx) = &stderr_log {
                 while let Ok(line) = rx.try_recv() {
                     push_log(&mut log, line.trim_end().to_string());
@@ -173,6 +183,7 @@ impl SlicingEngine for ArcusEngine {
                         fraction: peak,
                         message: format!("Layer {index}"),
                         layer: Some(LiveLayer { index, z, paths }),
+                        partial: None,
                     });
                 }
                 Incoming::Gcode(chunk) => gcode.extend(chunk),
@@ -190,6 +201,7 @@ impl SlicingEngine for ArcusEngine {
             let _ = child.kill();
         }
         let status = child.wait();
+        engine_guard.disarm();
         if let Some(rx) = &stderr_log {
             while let Ok(line) = rx.recv_timeout(Duration::from_millis(200)) {
                 push_log(&mut log, line.trim_end().to_string());

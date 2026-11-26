@@ -344,15 +344,17 @@ pub fn read_project(path: &Path) -> Result<LoadedProject, Error> {
 
 /// Where recents and "don't suggest this again" live.
 ///
-/// `SHALE_CONFIG_DIR` wins. Otherwise this is the desktop app's config
-/// directory (`dev.shale.desktop`), the same folder the window writes
-/// `recents.json` into. It is not the catalogue cache.
+/// `SHALE_CONFIG_DIR` wins. `SHALE_CACHE_DIR` is next, so an isolated eval
+/// cache does not read the desktop app's recents. Otherwise this is the
+/// desktop app's config directory (`dev.shale.desktop`), the same folder the
+/// window writes `recents.json` into. It is not the catalogue cache.
 pub fn config_dir() -> PathBuf {
     config_dir_from(&ConfigEnv::from_process())
 }
 
 struct ConfigEnv {
     shale: Option<String>,
+    cache: Option<String>,
     appdata: Option<String>,
     xdg: Option<String>,
     home: Option<String>,
@@ -363,6 +365,7 @@ impl ConfigEnv {
     fn from_process() -> Self {
         Self {
             shale: std::env::var("SHALE_CONFIG_DIR").ok(),
+            cache: std::env::var("SHALE_CACHE_DIR").ok(),
             appdata: std::env::var("APPDATA").ok(),
             xdg: std::env::var("XDG_CONFIG_HOME").ok(),
             home: std::env::var("HOME").ok(),
@@ -380,6 +383,10 @@ fn nonempty(value: Option<&String>) -> Option<&str> {
 fn config_dir_from(env: &ConfigEnv) -> PathBuf {
     if let Some(dir) = nonempty(env.shale.as_ref()) {
         return PathBuf::from(dir);
+    }
+    // An isolated cache must not fall through to the desktop recents file.
+    if let Some(dir) = nonempty(env.cache.as_ref()) {
+        return PathBuf::from(dir).join("session");
     }
     // Tauri's app_config_dir for identifier `dev.shale.desktop`.
     if let Some(appdata) = nonempty(env.appdata.as_ref()) {
@@ -521,6 +528,7 @@ mod tests {
     fn an_unset_config_dir_is_the_desktop_app_dir() {
         let windows = config_dir_from(&ConfigEnv {
             shale: None,
+            cache: None,
             appdata: Some(r"C:\Users\Alessio\AppData\Roaming".into()),
             xdg: None,
             home: Some(r"C:\Users\Alessio".into()),
@@ -533,6 +541,7 @@ mod tests {
 
         let linux = config_dir_from(&ConfigEnv {
             shale: None,
+            cache: None,
             appdata: None,
             xdg: None,
             home: Some("/home/alessio".into()),
@@ -545,6 +554,7 @@ mod tests {
 
         let forced = config_dir_from(&ConfigEnv {
             shale: Some("/tmp/shale-cfg".into()),
+            cache: Some(r"C:\eval\cache".into()),
             appdata: Some(r"C:\Users\Alessio\AppData\Roaming".into()),
             xdg: None,
             home: Some("/home/alessio".into()),
@@ -552,6 +562,20 @@ mod tests {
         });
         assert_eq!(forced, PathBuf::from("/tmp/shale-cfg"));
         assert!(!windows.ends_with("catalog-cache"));
+
+        let isolated = config_dir_from(&ConfigEnv {
+            shale: None,
+            cache: Some(r"C:\eval\cache".into()),
+            appdata: Some(r"C:\Users\Alessio\AppData\Roaming".into()),
+            xdg: None,
+            home: Some(r"C:\Users\Alessio".into()),
+            macos: false,
+        });
+        assert_eq!(
+            isolated,
+            PathBuf::from(r"C:\eval\cache").join("session")
+        );
+        assert!(!isolated.to_string_lossy().contains("dev.shale.desktop"));
     }
     use crate::instructions::CustomInstruction;
     use crate::mesh::{write_binary_stl, TriangleMesh};

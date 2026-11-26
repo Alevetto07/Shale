@@ -36,7 +36,9 @@ pub async fn serve_stdio(server: ShaleMcp) -> anyhow::Result<()> {
         .serve(rmcp::transport::stdio())
         .await
         .context("stdio transport failed")?;
-    running.waiting().await?;
+    let stopped = running.waiting().await;
+    shale_core::cancel_engine_children();
+    stopped?;
     Ok(())
 }
 
@@ -62,6 +64,7 @@ pub async fn serve_http(server: ShaleMcp, address: SocketAddr) -> anyhow::Result
             token.cancel();
         })
         .await?;
+    shale_core::cancel_engine_children();
     Ok(())
 }
 

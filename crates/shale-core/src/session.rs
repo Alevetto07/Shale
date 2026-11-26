@@ -109,6 +109,8 @@ pub struct Session {
     dismissed: Vec<String>,
     /// Patches from the last `slice_variants`, so one of them can be applied.
     variant_patches: Vec<SettingsPatch>,
+    /// G-code from the last comparison, addressed by the row index.
+    variant_outputs: Vec<VariantOutput>,
     project_path: Option<PathBuf>,
 }
 
@@ -147,6 +149,7 @@ impl Session {
             ignore_project_settings: false,
             dismissed: Vec::new(),
             variant_patches: Vec::new(),
+            variant_outputs: Vec::new(),
             project_path: None,
         }
     }
@@ -222,6 +225,17 @@ impl Session {
     /// Load one plate of a model. `plate` is the 1-based number from the file;
     /// `None` is plate 1. A 3MF replaces whatever was loaded. An STL is added.
     pub fn load_on_plate(&mut self, path: &Path, plate: Option<u32>) -> Result<LoadOutcome, Error> {
+        self.load_model_with(path, plate, false)
+    }
+
+    /// Like [`Self::load_on_plate`]. `add_to_plate` keeps models already on the
+    /// bed and appends the file. Without it, a 3MF replaces the plate.
+    pub fn load_model_with(
+        &mut self,
+        path: &Path,
+        plate: Option<u32>,
+        add_to_plate: bool,
+    ) -> Result<LoadOutcome, Error> {
         let extension = path
             .extension()
             .and_then(|ext| ext.to_str())
@@ -245,15 +259,24 @@ impl Session {
                         groups.len()
                     ))
                 })?;
-            self.models.clear();
-            self.support = None;
-            self.support_model = None;
+            let appending = add_to_plate && !self.models.is_empty();
+            if !appending {
+                self.models.clear();
+                self.support = None;
+                self.support_model = None;
+            }
             self.last = None;
             let records = self.push_plate(&chosen.1)?;
-            self.source_path = Some(path.to_path_buf());
-            self.listed_plates = self.plate_list(&groups);
-            self.source_plates = groups.iter().map(|(group, _)| group.clone()).collect();
-            self.project_settings = project_settings::read_project_settings(&bytes);
+            if appending {
+                if let Some(plate) = self.listed_plates.first_mut() {
+                    plate.objects = self.models.len();
+                }
+            } else {
+                self.source_path = Some(path.to_path_buf());
+                self.listed_plates = self.plate_list(&groups);
+                self.source_plates = groups.iter().map(|(group, _)| group.clone()).collect();
+                self.project_settings = project_settings::read_project_settings(&bytes);
+            }
             let first = records.first().cloned().ok_or_else(|| {
                 Error::message("that plate held no geometry")
             })?;
@@ -402,6 +425,7 @@ impl Session {
         self.ignore_project_settings = false;
         self.dismissed.clear();
         self.variant_patches.clear();
+        self.variant_outputs.clear();
         self.project_path = None;
     }
 
@@ -739,11 +763,19 @@ impl Session {
         price_per_kg: Option<f64>,
         include_layers: bool,
     ) -> Result<crate::SliceStats, Error> {
-        let outcome = self
-            .last
-            .as_ref()
-            .ok_or_else(|| Error::message("slice a model before asking for stats"))?;
-        let text = std::fs::read_to_string(&outcome.gcode_path)?;
+        self.slice_stats_variant(price_per_kg, include_layers, None)
+    }
+
+    /// `variant` is a row index from [`Self::slice_variants`]. Omit it for the
+    /// last ordinary slice.
+    pub fn slice_stats_variant(
+        &self,
+        price_per_kg: Option<f64>,
+        include_layers: bool,
+        variant: Option<usize>,
+    ) -> Result<crate::SliceStats, Error> {
+        let (path, warnings) = self.stats_source(variant)?;
+        let text = std::fs::read_to_string(&path)?;
         let diameter = self
             .resolve(None)
             .map(|resolved| resolved.summary.material_diameter)
@@ -753,8 +785,101 @@ impl Session {
             diameter,
             price_per_kg.unwrap_or(0.0),
             include_layers,
+            warnings,
+        ))
+    }
+
+    fn stats_source(&self, variant: Option<usize>) -> Result<(PathBuf, Vec<String>), Error> {
+        if let Some(index) = variant {
+            let kept = self.variant_output(index)?;
+            return Ok((kept.path.clone(), kept.warnings.clone()));
+        }
+        let outcome = self
+            .last
+            .as_ref()
+            .ok_or_else(|| Error::message("slice a model before asking for stats"))?;
+        Ok((
+            outcome.gcode_path.clone(),
             outcome.resolved.warnings.clone(),
         ))
+    }
+
+    fn variant_output(&self, index: usize) -> Result<&VariantOutput, Error> {
+        self.variant_outputs
+            .iter()
+            .find(|row| row.index == index)
+            .ok_or_else(|| {
+                Error::message(format!(
+                    "no variant {index}. compare_slices returned {} row(s). Call apply_variant with a row index, or pass that index to slice_stats, slice_summary, or export_gcode.",
+                    self.variant_outputs.len()
+                ))
+            })
+    }
+
+    /// Summary for one compared row. The current job is not changed.
+    pub fn variant_summary(&self, index: usize) -> Result<JobSliceSummary, Error> {
+        let kept = self.variant_output(index)?;
+        let text = std::fs::read_to_string(&kept.path).unwrap_or_default();
+        let stats = crate::slice_stats_from_gcode(&text, 1.75, 0.0, false, kept.warnings.clone());
+        let seconds = kept
+            .print_time_seconds
+            .or(stats.header_time_seconds)
+            .or(Some(stats.print_time_seconds));
+        let filament = if kept.filament_metres > 0.0 {
+            kept.filament_metres
+        } else {
+            stats.filament_metres
+        };
+        Ok(JobSliceSummary {
+            layer_count: stats.layers as usize,
+            print_time_seconds: seconds,
+            filament_metres: filament,
+            warning_count: kept.warnings.len(),
+            warnings: kept.warnings.clone(),
+            gcode_path: kept.path.display().to_string(),
+            flavour: String::new(),
+            nonplanar_safety_ok: None,
+            nonplanar_planar_equivalence_ok: None,
+            nonplanar_collision_fixes: None,
+            nonplanar_report: None,
+        })
+    }
+
+    /// How far the loaded models stick out of the bed, if at all.
+    pub fn bed_warnings(&self) -> Vec<String> {
+        let Ok(resolved) = self.resolve(None) else {
+            return Vec::new();
+        };
+        let width = resolved.summary.machine_width;
+        let depth = resolved.summary.machine_depth;
+        let height = resolved.summary.machine_height;
+        let centred = resolved.summary.machine_center_is_zero;
+        let mut overflow = [0.0_f64; 3];
+        for model in &self.models {
+            let baked = mesh::bake(&model.mesh, &model.transform);
+            let (min, max) = baked.bounds();
+            let limits = [width, depth, height];
+            for axis in 0..3 {
+                let low = min[axis] as f64;
+                let high = max[axis] as f64;
+                let limit = limits[axis];
+                let over = if centred && axis < 2 {
+                    let half = limit * 0.5;
+                    (-half - low).max(0.0).max(high - half)
+                } else {
+                    (-low).max(0.0).max(high - limit)
+                };
+                overflow[axis] = overflow[axis].max(over);
+            }
+        }
+        if overflow.iter().any(|millimetres| *millimetres > 0.5) {
+            vec![format!(
+                "plate extends outside the build volume (X {:.1} mm, Y {:.1} mm, Z {:.1} mm past the plate)",
+                overflow[0], overflow[1], overflow[2]
+            )]
+        } else {
+            Vec::new()
+        }
     }
 
     /// Slice the same models once per patch, a few at a time, and compare them.
@@ -806,11 +931,26 @@ impl Session {
                         support_seconds: 0.0,
                         warnings: Vec::new(),
                         error: Some("a variant thread panicked".into()),
+                        apply_variant: variant_hint(index),
+                        gcode_path: None,
                     }));
                 }
             });
             rows.extend(batch);
         }
+        self.variant_outputs = rows
+            .iter()
+            .filter_map(|row| {
+                let path = row.gcode_path.clone()?;
+                Some(VariantOutput {
+                    index: row.index,
+                    path,
+                    print_time_seconds: row.print_time_seconds,
+                    filament_metres: row.filament_metres,
+                    warnings: row.warnings.clone(),
+                })
+            })
+            .collect();
         Ok(rows)
     }
 
@@ -950,6 +1090,7 @@ impl Session {
         self.project_settings = None;
         self.dismissed = data.dismissed_suggestions.clone();
         self.variant_patches.clear();
+        self.variant_outputs.clear();
         self.settings = data.settings.clone();
         self.printer_id = Some(data.printer_id.clone());
         self.variant_name = data.variant_name.clone();
@@ -1114,6 +1255,8 @@ impl Session {
             support_seconds: 0.0,
             warnings: Vec::new(),
             error: Some(error),
+            apply_variant: variant_hint(index),
+            gcode_path: None,
         };
         let printer_id = match patch
             .printer_id
@@ -1193,6 +1336,8 @@ impl Session {
                     support_seconds: stats.support_seconds,
                     warnings: stats.warnings,
                     error: None,
+                    apply_variant: variant_hint(index),
+                    gcode_path: Some(outcome.gcode_path),
                 }
             }
             Err(err) => failed(err.to_string()),
@@ -1302,13 +1447,25 @@ impl Session {
     }
 
     pub fn export_gcode(&self, path: &Path) -> Result<PathBuf, Error> {
-        let Some(last) = &self.last else {
-            return Err(Error::message("slice a model before exporting G-code"));
+        self.export_variant(path, None)
+    }
+
+    /// `variant` copies that comparison's G-code. Omit it for the last slice.
+    pub fn export_variant(&self, path: &Path, variant: Option<usize>) -> Result<PathBuf, Error> {
+        let source = if let Some(index) = variant {
+            self.variant_output(index)?.path.clone()
+        } else {
+            let Some(last) = &self.last else {
+                return Err(Error::message(
+                    "slice a model before exporting G-code. After compare_slices, pass the row index.",
+                ));
+            };
+            last.gcode_path.clone()
         };
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::copy(&last.gcode_path, path)?;
+        std::fs::copy(&source, path)?;
         Ok(path.to_path_buf())
     }
 
@@ -1438,6 +1595,25 @@ pub struct VariantComparison {
     pub support_seconds: f64,
     pub warnings: Vec<String>,
     pub error: Option<String>,
+    /// Tells the caller to use [`Session::apply_variant`] with this index.
+    pub apply_variant: String,
+    /// Kept so `slice_stats` can read this row. Not part of the tool JSON.
+    #[serde(skip)]
+    pub gcode_path: Option<PathBuf>,
+}
+
+struct VariantOutput {
+    index: usize,
+    path: PathBuf,
+    print_time_seconds: Option<f64>,
+    filament_metres: f64,
+    warnings: Vec<String>,
+}
+
+fn variant_hint(index: usize) -> String {
+    format!(
+        "Call apply_variant with index {index} to make this patch the current settings. slice_stats, slice_summary, and export_gcode take the same index."
+    )
 }
 
 #[derive(Clone, Debug, Serialize)]

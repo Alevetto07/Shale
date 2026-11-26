@@ -162,6 +162,7 @@ async fn slice_cube(
         "open_project",
         "save_project",
         "export_gcode",
+        "tool_describe",
     ] {
         assert!(
             tools.iter().any(|tool| tool.name == name),
@@ -182,6 +183,25 @@ async fn slice_cube(
     );
     assert!(text("compare_slices").contains("0.12"));
     assert!(text("compare_slices").contains("Do not slice each one yourself"));
+    assert!(text("compare_slices").contains("apply_variant"));
+    assert!(text("load_model").contains("replaces the plate"));
+    assert!(text("propose_supports").contains("apply_supports"));
+    assert!(text("slice_stats").contains("feed-rate"));
+    assert!(text("list_my_printers").contains("do not attempt other routes"));
+    let described = call(
+        &client,
+        "tool_describe",
+        json!({
+            "names": [
+                "apply_supports", "compare_slices", "slice_stats", "slice_summary",
+                "export_gcode", "load_model", "new_job", "slice", "slice_progress",
+                "slice_result", "list_recent_projects"
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(described["tools"].as_array().map(Vec::len), Some(11), "{described}");
+    assert_eq!(described["limit"], 32);
     assert!(text("slice").contains("slice_progress"));
     assert!(text("slice").contains("10 minutes"));
     assert!(text("slice").contains("list_plates"));
@@ -391,6 +411,14 @@ fn variants_stats_and_a_saved_project_round_trip() {
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|row| row.error.is_none()), "{rows:?}");
     assert!(rows.iter().all(|row| row.print_time_seconds == Some(120.0)));
+    assert!(rows[0].apply_variant.contains("apply_variant"));
+    let variant_stats = session
+        .slice_stats_variant(Some(20.0), false, Some(0))
+        .expect("stats for the first variant");
+    assert!(variant_stats.header_time_seconds.is_some() || variant_stats.print_time_seconds > 0.0);
+    assert!(variant_stats.time_note.contains("feed-rate estimate"));
+    let variant_summary = session.variant_summary(1).expect("second variant summary");
+    assert!(variant_summary.print_time_seconds.is_some());
     session.apply_variant(1).expect("apply the second patch");
     let missing = session
         .apply_suggestion("missing", shale_core::SuggestQuery::default())
@@ -425,6 +453,11 @@ async fn printer_tools_ask_for_a_sign_in() {
         .expect_err("a signed-out account is an error");
     assert!(
         err.to_string().contains("sign in to Bambu in Shale first"),
+        "{err}"
+    );
+    assert!(
+        err.to_string()
+            .contains("no printer access without Shale sign-in; do not attempt other routes"),
         "{err}"
     );
     drop(client);
@@ -486,6 +519,25 @@ fn embedded_project_settings_show_in_get_settings() {
         (height - 0.28).abs() < 1e-6,
         "a user layer height must win, got {height}"
     );
+}
+
+#[test]
+fn a_3mf_replaces_the_plate_unless_add_to_plate_is_set() {
+    ensure_test_cache();
+    let dir = tempfile::tempdir().expect("dir");
+    let project = write_project_3mf(dir.path());
+    let mut session = shale_core::Session::new(fixture_catalog(), Box::new(FakeEngine));
+    session.load_model(&cube_path()).expect("stl");
+    let replaced = session.load_on_plate(&project, None).expect("3mf replaces");
+    assert_eq!(replaced.models.len(), 1);
+    assert_eq!(session.models().len(), 1);
+    session.load_model(&cube_path()).expect("stl stays");
+    assert_eq!(session.models().len(), 2);
+    let added = session
+        .load_model_with(&project, None, true)
+        .expect("3mf appends");
+    assert_eq!(added.models.len(), 1);
+    assert_eq!(session.models().len(), 3);
 }
 
 fn setting_number(session: &shale_core::Session, key: &str) -> f64 {

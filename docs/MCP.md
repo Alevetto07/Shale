@@ -14,7 +14,7 @@ One process keeps one job. Printer, settings, models, and non-planar mode stay u
 
 `slice` returns within a couple of seconds. If `status` is `running`, poll `slice_progress`, then read `slice_result`. A cube is under a minute. The aerospike is about 10 minutes, which is longer than a 600 second tool call. To compare layer height or infill, call `compare_slices` (the same tool as `slice_variants`) once. Call `list_plates` before `slice` with a plate number. `arrange_model` keeps rotation and scale.
 
-Projects and "don't suggest this again" are stored under `SHALE_CONFIG_DIR`. When that is unset, they use the desktop app's config directory (`dev.shale.desktop`: `%APPDATA%\dev.shale.desktop` on Windows, `$XDG_CONFIG_HOME/dev.shale.desktop` or `$HOME/.config/dev.shale.desktop` on Linux). That is the folder the window writes `recents.json` into. It is not the catalogue cache.
+Projects and "don't suggest this again" are stored under `SHALE_CONFIG_DIR`. When that is unset and `SHALE_CACHE_DIR` is set, they stay inside `SHALE_CACHE_DIR/session` and do not read the desktop recents. When both are unset, they use the desktop app's config directory (`dev.shale.desktop`: `%APPDATA%\dev.shale.desktop` on Windows, `$XDG_CONFIG_HOME/dev.shale.desktop` or `$HOME/.config/dev.shale.desktop` on Linux). That is the folder the window writes `recents.json` into. It is not the catalogue cache.
 
 ## Printers and materials
 
@@ -46,7 +46,7 @@ Use this to see nozzle variants and quality profiles.
 
 Use this for the printers bound to the signed-in Bambu account. Read only.
 
-No arguments. If this process is not signed in, the error is exactly `sign in to Bambu in Shale first`.
+No arguments. If this process is not signed in, the error is final: `sign in to Bambu in Shale first. no printer access without Shale sign-in; do not attempt other routes`. Do not read a config file or open a LAN session instead.
 
 ### `printer_status`
 
@@ -71,10 +71,10 @@ No arguments. The same sign-in error as `list_my_printers` when there is no acco
 Use this to put a model on the bed. STL, 3MF, and the other formats the app imports.
 
 ```json
-{ "path": "/home/me/bracket.stl", "plate": 1, "ignore_project_settings": false }
+{ "path": "/home/me/bracket.stl", "plate": 1, "add_to_plate": false }
 ```
 
-`plate` is 1-based and matches `list_plates`. Omit it for plate 1.
+`plate` is 1-based and matches `list_plates`. Omit it for plate 1. An STL is added. A 3MF replaces the plate unless `add_to_plate` is true, which keeps what is already loaded and appends this file.
 
 ### `list_plates`
 
@@ -201,15 +201,15 @@ Call `list_plates` before `plate`. `all_plates` true slices every plate. A cube 
 
 ### `slice_progress`
 
-Use this while `slice` says `running`. `status` is `running`, `done`, or `failed`. `fraction` is 0 to 1.
+Use this while `slice` says `running`. `status` is `running`, `done`, or `failed`. `fraction` is 0 to 1. During export the message is `Exporting layer N of M`, and `print_time_seconds`, `filament_metres`, and `layers_written` are from the G-code written so far. Bed overflow is in `warnings` as soon as the slice starts.
 
 No arguments.
 
 ### `slice_result`
 
-Use this for the summary once `slice_progress` says `done`: time, filament, layers, warnings.
+Use this for the summary once `slice_progress` says `done`: time, filament, layers, warnings. While export is still writing, the same call returns those figures so far with `partial: true`.
 
-No arguments. Errors while the slice is still running.
+No arguments. Errors when nothing has been sliced, or the slice failed.
 
 ### `compare_slices`
 
@@ -228,19 +228,25 @@ Up to 8 patches. The current settings are not changed. `apply_variant` makes one
 
 ### `slice_summary`
 
-Use this to read the last slice: layers, time, filament, warnings, and a short non-planar note.
+Use this to read the last slice: layers, time, filament, warnings, and a short non-planar note. Pass `variant` as the row index from `compare_slices` to read that row instead.
 
-No arguments. Errors if nothing has been sliced.
+```json
+{ "variant": 0 }
+```
+
+Omit `variant` for the last ordinary slice. Errors if nothing has been sliced.
 
 ### `slice_stats`
 
 Use this for a breakdown of the last slice. Nothing is sliced again.
 
 ```json
-{ "price_per_kg": 20, "layers": false }
+{ "price_per_kg": 20, "layers": false, "variant": 0 }
 ```
 
-Returns time, filament metres, grams, cost, layer count, max and average speed, seconds in walls, infill, supports, skirt, travel, ironing, and anything else, grams per extruder (only the tools that were selected), and purge waste. `layers` true adds one duration per layer. Omit `price_per_kg` for 20 EUR.
+Returns time, filament metres, grams, cost, layer count, max and average speed, seconds in walls, infill, supports, skirt, travel, ironing, and anything else, grams per extruder (only the tools that were selected), and purge waste. `print_time_seconds` is a feed-rate estimate (distance divided by the F value). `header_time_seconds` is the CuraEngine `;TIME:` header, which is the print estimate. `time_note` says the same thing. `layers` true adds one duration per layer. Omit `price_per_kg` for 20 EUR. `variant` is the row from `compare_slices`; omit it for the last ordinary slice. `slice_summary` and `export_gcode` take the same index.
+
+While a large export is still writing, `slice_progress` moves from "Exporting layer N of M" and includes `print_time_seconds` and `filament_metres` from the G-code so far. `slice_result` returns those partial figures with `partial: true` instead of waiting for the whole file. Stopping shale-mcp, or `new_job` while a slice is running, stops the CuraEngine child.
 
 ### `slice_variants`
 
@@ -261,7 +267,7 @@ Same tool as `compare_slices`. Use it to compare patches, not to slice one setti
 
 At most 8 patches. Each patch is sliced in its own engine process and its own temp file. `concurrency` is how many run at once: 1, 2, or 3. Omit it and Shale uses 2, or 3 when the machine has at least four cores and 6 GB free, or 1 when memory is tight.
 
-Each row has `index`, `label`, `print_time_seconds`, `filament_metres`, `grams`, `cost`, `support_seconds`, `warnings`, and `error`. A failed patch sets `error` and the others still come back.
+Each row has `index`, `label`, `print_time_seconds`, `filament_metres`, `grams`, `cost`, `support_seconds`, `warnings`, `error`, and `apply_variant`. A failed patch sets `error` and the others still come back. `apply_variant` names the index to pass to `apply_variant`, and the same index works on `slice_stats`, `slice_summary`, and `export_gcode` while that comparison is the latest one.
 
 ### `apply_variant`
 
@@ -293,7 +299,7 @@ Use this to see where a model overhangs.
 
 ### `propose_supports`
 
-Use this to build a support plan. It does not turn supports on until `apply_supports`.
+Use this to build a support plan. It does not turn supports on. The result includes `apply_supports`, which is the next call. Omit ids there to enable every region.
 
 ```json
 { "id": 1 }

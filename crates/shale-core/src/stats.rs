@@ -21,7 +21,14 @@ pub struct ExtruderUse {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SliceStats {
+    /// Move length divided by the feed rate on that move. This is not the
+    /// CuraEngine header estimate. See [`Self::header_time_seconds`].
     pub print_time_seconds: f64,
+    /// CuraEngine's `;TIME:` header, or the last `;TIME_ELAPSED:` when the
+    /// header is still the 6666 placeholder.
+    pub header_time_seconds: Option<f64>,
+    /// Says which field is the feed-rate estimate and which is the header.
+    pub time_note: String,
     pub filament_metres: f64,
     pub grams: f64,
     pub cost: f64,
@@ -72,6 +79,8 @@ pub fn from_gcode(
     let purge_grams = cost::filament_grams(facts.purge_mm / 1000.0, diameter, DEFAULT_DENSITY);
     SliceStats {
         print_time_seconds: facts.seconds,
+        header_time_seconds: crate::gcode::declared_time_seconds(gcode),
+        time_note: "print_time_seconds is a feed-rate estimate (distance divided by the F value). header_time_seconds is the CuraEngine ;TIME: header, or the last ;TIME_ELAPSED: when that header is still 6666.".into(),
         filament_metres: metres,
         grams,
         cost,
@@ -162,5 +171,20 @@ G1 X20 Y0 E2
             + stats.skirt_seconds
             + stats.other_seconds;
         assert!((sum - stats.print_time_seconds).abs() < 1e-6);
+    }
+
+    #[test]
+    fn header_time_sits_beside_the_feed_rate_estimate() {
+        let gcode = "\
+;TIME:990
+;LAYER:0
+;TYPE:WALL-OUTER
+G1 F3000 X30 Y0 E1
+";
+        let stats = from_gcode(gcode, 1.75, 20.0, false, Vec::new());
+        assert_eq!(stats.header_time_seconds, Some(990.0));
+        assert!(stats.print_time_seconds < 100.0, "{}", stats.print_time_seconds);
+        assert!(stats.time_note.contains("feed-rate estimate"));
+        assert!(stats.time_note.contains("header_time_seconds"));
     }
 }

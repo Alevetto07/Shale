@@ -60,7 +60,8 @@ mod value;
 pub use cad::{suggest_chord_mm, ImportReport, ImportedMesh, TessellationTolerance};
 pub use catalog::{Catalog, MaterialInfo, PrinterInfo, QualityInfo, ResourcePaths, VariantInfo};
 pub use engine::{
-    ArcusEngine, CliEngine, Engine, EngineBackend, EngineProgress, LiveLayer, SlicingEngine,
+    cancel_engine_children, clear_engine_cancel, ArcusEngine, CliEngine, Engine, EngineBackend,
+    EngineProgress, ExportSnapshot, LiveLayer, SlicingEngine,
 };
 pub use error::Error;
 pub use gcode::Toolpath;

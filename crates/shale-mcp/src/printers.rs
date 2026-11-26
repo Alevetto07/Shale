@@ -11,7 +11,8 @@ use serde::Serialize;
 use shale_host::cloud::{api, Cloud, CloudDevice, HttpTransport, MemoryStore};
 use shale_host::Status;
 
-pub const SIGN_IN: &str = "sign in to Bambu in Shale first";
+pub const SIGN_IN: &str =
+    "sign in to Bambu in Shale first. no printer access without Shale sign-in; do not attempt other routes";
 
 #[derive(Clone, Debug, Serialize)]
 pub struct AmsSlot {
