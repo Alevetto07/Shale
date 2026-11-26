@@ -46,7 +46,7 @@ Use this to see nozzle variants and quality profiles.
 
 Use this for the printers bound to the signed-in Bambu account. Read only.
 
-No arguments. If this process is not signed in, the error is final: `sign in to Bambu in Shale first. no printer access without Shale sign-in; do not attempt other routes`. Do not read a config file or open a LAN session instead.
+No arguments. A successful result is the full list, with `done` saying to stop. Do not probe port 8883, read a config file, or run `cmdkey`. If this process is not signed in, the error is final: `sign in to Bambu in Shale first. no printer access without Shale sign-in; do not attempt other routes`.
 
 ### `printer_status`
 
@@ -56,7 +56,7 @@ Use this for one machine: state, the current job, progress, time left, nozzle an
 { "id": "01P00C000000000" }
 ```
 
-The cloud device list does not include temperatures or AMS humidity. A LAN status report includes temperatures and still has no AMS humidity. Those fields are null rather than guessed. This tool does not start, pause, or stop a print.
+The cloud device list does not include temperatures or AMS humidity. A LAN status report includes temperatures and still has no AMS humidity. Those fields are null rather than guessed. This tool does not start, pause, or stop a print. `get_printer_status` is the same tool. A successful result includes `done` and is the full answer: do not probe port 8883, read a config file, or run `cmdkey`.
 
 ### `list_print_jobs`
 
@@ -201,7 +201,7 @@ Call `list_plates` before `plate`. `all_plates` true slices every plate. A cube 
 
 ### `slice_progress`
 
-Use this while `slice` says `running`. `status` is `running`, `done`, or `failed`. `fraction` is 0 to 1. During export the message is `Exporting layer N of M`, and `print_time_seconds`, `filament_metres`, and `layers_written` are from the G-code written so far. Bed overflow is in `warnings` as soon as the slice starts.
+Use this while `slice` says `running`. `status` is `running`, `done`, or `failed`. `fraction` is 0 to 1. During export the message is `Exporting layer N of M`. Layers, time, and filament come from the G-code when it is being written. When the file is still empty, the same layer count comes from the CuraEngine log (`Layer export [N]`). The seconds on that line are engine time, not print time. Bed overflow is in `warnings` as soon as the slice starts. A `done` result is the full answer.
 
 No arguments.
 
@@ -246,7 +246,7 @@ Use this for a breakdown of the last slice. Nothing is sliced again.
 
 Returns time, filament metres, grams, cost, layer count, max and average speed, seconds in walls, infill, supports, skirt, travel, ironing, and anything else, grams per extruder (only the tools that were selected), and purge waste. `print_time_seconds` is a feed-rate estimate (distance divided by the F value). `header_time_seconds` is the CuraEngine `;TIME:` header, which is the print estimate. `time_note` says the same thing. `layers` true adds one duration per layer. Omit `price_per_kg` for 20 EUR. `variant` is the row from `compare_slices`; omit it for the last ordinary slice. `slice_summary` and `export_gcode` take the same index.
 
-While a large export is still writing, `slice_progress` moves from "Exporting layer N of M" and includes `print_time_seconds` and `filament_metres` from the G-code so far. `slice_result` returns those partial figures with `partial: true` instead of waiting for the whole file. Stopping shale-mcp, or `new_job` while a slice is running, stops the CuraEngine child.
+While a large export is still writing, `slice_progress` moves from "Exporting layer N of M" and includes `print_time_seconds` and `filament_metres` from the G-code so far. If CuraEngine has not flushed the file yet, those layers come from its log instead. `slice_result` returns those partial figures with `partial: true` instead of waiting for the whole file. Stopping shale-mcp, or `new_job` while a slice is running, stops the CuraEngine child.
 
 ### `slice_variants`
 

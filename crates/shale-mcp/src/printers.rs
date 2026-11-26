@@ -11,8 +11,10 @@ use serde::Serialize;
 use shale_host::cloud::{api, Cloud, CloudDevice, HttpTransport, MemoryStore};
 use shale_host::Status;
 
-pub const SIGN_IN: &str =
-    "sign in to Bambu in Shale first. no printer access without Shale sign-in; do not attempt other routes";
+pub const SIGN_IN: &str = "sign in to Bambu in Shale first. no printer access without Shale sign-in; do not attempt other routes. do not probe port 8883, read a config file, or run cmdkey";
+
+/// Shown on a successful printer or cloud result so the caller stops there.
+pub const ACCOUNT_DONE: &str = "This is the full answer from the signed-in Bambu account. Stop here. Do not probe port 8883, read a config file, or run cmdkey.";
 
 #[derive(Clone, Debug, Serialize)]
 pub struct AmsSlot {

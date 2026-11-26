@@ -273,6 +273,7 @@ impl SlicingEngine for CliEngine {
         let mut fraction = 0.04;
         let mut log: Vec<String> = Vec::new();
         let mut export = ExportReader::open(&output_gcode);
+        let mut export_log = ExportLog::default();
         let mut exporting = false;
         on_progress(EngineProgress::new(fraction, "CuraEngine started"));
 
@@ -299,32 +300,47 @@ impl SlicingEngine for CliEngine {
                 if let Some(parsed) = fraction_from_log(&line) {
                     fraction = fraction.max(parsed);
                 }
+                export_log.note(&line);
                 push_log(line, &mut log);
             }
             if export.is_none() {
                 export = ExportReader::open(&output_gcode);
             }
-            let snapshot = export.as_mut().and_then(|reader| reader.pull());
+            // CuraEngine 5.13 keeps five layer plans and a block-buffered
+            // ofstream, and its CLI progress callback prints nothing. A slow
+            // export such as the aerospike stays at 0 bytes, so the log is
+            // what moves the fraction until the file is flushed.
+            let file_snapshot = export.as_mut().and_then(|reader| reader.pull());
+            let snapshot = export_progress(file_snapshot, &export_log, request.estimated_layers);
             if let Some(snapshot) = snapshot.as_ref() {
                 if snapshot.layers_written > 0 {
                     exporting = true;
                 }
+                let estimated = if snapshot.estimated_layers > 0 {
+                    snapshot.estimated_layers
+                } else {
+                    request.estimated_layers
+                };
                 if exporting {
-                    fraction = fraction.max(export_fraction(
-                        snapshot.layers_written,
-                        request.estimated_layers,
-                    ));
-                } else if request.estimated_layers > 0 && snapshot.layers_written > 0 {
-                    let estimate = (snapshot.layers_written as f32
-                        / request.estimated_layers as f32)
-                        .clamp(0.05, 0.92);
+                    fraction = fraction.max(export_fraction(snapshot.layers_written, estimated));
+                } else if estimated > 0 && snapshot.layers_written > 0 {
+                    let estimate =
+                        (snapshot.layers_written as f32 / estimated as f32).clamp(0.05, 0.92);
                     fraction = fraction.max(estimate);
                 }
             }
             let message = if exporting {
-                let written = snapshot.as_ref().map(|item| item.layers_written).unwrap_or(0);
-                if request.estimated_layers > 0 {
-                    format!("Exporting layer {written} of {}", request.estimated_layers)
+                let written = snapshot
+                    .as_ref()
+                    .map(|item| item.layers_written)
+                    .unwrap_or(0);
+                let estimated = snapshot
+                    .as_ref()
+                    .map(|item| item.estimated_layers)
+                    .filter(|count| *count > 0)
+                    .unwrap_or(request.estimated_layers);
+                if estimated > 0 {
+                    format!("Exporting layer {written} of {estimated}")
                 } else {
                     format!("Exporting layer {written}")
                 }
@@ -333,7 +349,9 @@ impl SlicingEngine for CliEngine {
             };
             let mut progress = EngineProgress::new(fraction, message);
             if let Some(mut snapshot) = snapshot {
-                snapshot.estimated_layers = request.estimated_layers;
+                if snapshot.estimated_layers == 0 {
+                    snapshot.estimated_layers = request.estimated_layers;
+                }
                 progress.partial = Some(snapshot);
             }
             on_progress(progress);
@@ -633,6 +651,149 @@ fn extrusion_word(line: &str) -> Option<f64> {
     None
 }
 
+/// Layers named by the CuraEngine log while the G-code file is still empty.
+///
+/// `Layer export [N]` is 0-based and the seconds on that line are engine
+/// compute time, not print time. Print time comes only from `Total print time`
+/// or `Print time (s)`.
+#[derive(Clone, Debug, Default)]
+struct ExportLog {
+    layers_reached: u32,
+    layer_count: u32,
+    print_time_seconds: Option<f64>,
+    filament_mm3: Option<f64>,
+}
+
+impl ExportLog {
+    fn note(&mut self, line: &str) {
+        if let Some(index) = bracket_index(line, "layer export [") {
+            self.layers_reached = self.layers_reached.max(index.saturating_add(1));
+        }
+        if let Some(index) = bracket_index(line, "skipped time reporting for layers [") {
+            self.layers_reached = self.layers_reached.max(index.saturating_add(1));
+        }
+        if let Some(count) = number_after(line, "layer count:") {
+            if count > 0.0 {
+                self.layer_count = count.round() as u32;
+            }
+        }
+        if let Some(seconds) = number_after(line, "print time (s):") {
+            if seconds > 0.0 {
+                self.print_time_seconds = Some(seconds);
+            }
+        } else if let Some(seconds) = number_after(line, "total print time:") {
+            if seconds > 0.0 {
+                self.print_time_seconds = Some(seconds);
+            }
+        }
+        if let Some(index) = line.to_ascii_lowercase().find("filament (mm") {
+            if let Some(volume) = number_after(&line[index..], ":") {
+                if volume > 0.0 {
+                    self.filament_mm3 = Some(volume);
+                }
+            }
+        }
+    }
+}
+
+fn bracket_index(line: &str, marker: &str) -> Option<u32> {
+    let lower = line.to_ascii_lowercase();
+    let index = lower.find(marker)?;
+    let rest = &line[index + marker.len()..];
+    let end = rest.find(']')?;
+    max_u32(&rest[..end])
+}
+
+fn max_u32(text: &str) -> Option<u32> {
+    let mut best = None;
+    let mut current = String::new();
+    for ch in text.chars().chain(std::iter::once(' ')) {
+        if ch.is_ascii_digit() {
+            current.push(ch);
+        } else if !current.is_empty() {
+            if let Ok(value) = current.parse::<u32>() {
+                best = Some(best.map(|seen: u32| seen.max(value)).unwrap_or(value));
+            }
+            current.clear();
+        }
+    }
+    best
+}
+
+fn number_after(line: &str, label: &str) -> Option<f64> {
+    let lower = line.to_ascii_lowercase();
+    let index = lower.find(&label.to_ascii_lowercase())?;
+    let rest = &line[index + label.len()..];
+    let token = rest.split_whitespace().next()?;
+    token
+        .trim_matches(|ch: char| ch == ',' || ch == 's' || ch == ':')
+        .parse()
+        .ok()
+}
+
+/// 1.75 mm filament. The log reports volume, and only at the end of the slice.
+fn filament_metres_from_mm3(volume_mm3: f64) -> f64 {
+    const RADIUS_MM: f64 = 1.75 / 2.0;
+    let area = std::f64::consts::PI * RADIUS_MM * RADIUS_MM;
+    if volume_mm3 <= 0.0 {
+        return 0.0;
+    }
+    volume_mm3 / area / 1000.0
+}
+
+/// Prefer the G-code file once it has bytes. Until then, use the engine log.
+fn export_progress(
+    file: Option<ExportSnapshot>,
+    log: &ExportLog,
+    estimated: u32,
+) -> Option<ExportSnapshot> {
+    let from_log = if log.layers_reached == 0
+        && log.print_time_seconds.is_none()
+        && log.filament_mm3.is_none()
+    {
+        None
+    } else {
+        let estimated_layers = if log.layer_count > 0 {
+            log.layer_count
+        } else {
+            estimated
+        };
+        Some(ExportSnapshot {
+            layers_written: log.layers_reached,
+            estimated_layers,
+            print_time_seconds: log.print_time_seconds,
+            filament_metres: log
+                .filament_mm3
+                .map(filament_metres_from_mm3)
+                .unwrap_or(0.0),
+        })
+    };
+    match (file, from_log) {
+        (None, None) => None,
+        (Some(file), None) => Some(file),
+        (None, Some(from_log)) => Some(from_log),
+        (Some(mut file), Some(from_log)) => {
+            if from_log.layers_written > file.layers_written {
+                file.layers_written = from_log.layers_written;
+            }
+            if file.print_time_seconds.is_none() {
+                file.print_time_seconds = from_log.print_time_seconds;
+            }
+            if file.filament_metres <= 0.0 {
+                file.filament_metres = from_log.filament_metres;
+            }
+            if file.estimated_layers == 0 {
+                file.estimated_layers = if from_log.estimated_layers > 0 {
+                    from_log.estimated_layers
+                } else {
+                    estimated
+                };
+            }
+            Some(file)
+        }
+    }
+}
+
 fn export_fraction(layers: u32, estimated: u32) -> f32 {
     if estimated == 0 {
         return 0.93;
@@ -906,7 +1067,10 @@ mod tests {
 
 #[cfg(test)]
 mod export_tests {
-    use super::{cancel_engine_children, clear_engine_cancel, export_fraction, ExportReader};
+    use super::{
+        cancel_engine_children, clear_engine_cancel, export_fraction, export_progress, ExportLog,
+        ExportReader,
+    };
     use std::io::Write;
     use std::process::Command;
     use std::thread;
@@ -937,6 +1101,55 @@ mod export_tests {
         assert_eq!(snapshot.print_time_seconds, Some(90.0));
         let fraction = export_fraction(2, 4);
         assert!(fraction > 0.93 && fraction < 0.99, "{fraction}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_empty_gcode_file_still_moves_from_the_engine_log() {
+        let dir = std::env::temp_dir().join(format!("shale-export-log-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("empty.gcode");
+        std::fs::write(&path, "").unwrap();
+        let mut reader = ExportReader::open(&path).expect("open");
+        assert!(
+            reader.pull().is_none(),
+            "a 0-byte file has no partial stats"
+        );
+        let mut log = ExportLog::default();
+        assert!(export_progress(None, &log, 400).is_none());
+        log.note("Starting export...");
+        log.note("Skipped time reporting for layers [0...4]");
+        log.note("┌ Layer export [4] accomplished in 12.400s");
+        let snapshot = export_progress(reader.pull(), &log, 400).expect("layers from the log");
+        assert_eq!(snapshot.layers_written, 5);
+        assert!(
+            snapshot.print_time_seconds.is_none(),
+            "engine compute time is not print time"
+        );
+        let fraction = export_fraction(snapshot.layers_written, 400);
+        assert!(fraction > 0.93 && fraction < 0.95, "{fraction}");
+        log.note("┌ Layer export [19] accomplished in 40.100s");
+        let later = export_progress(None, &log, 400).unwrap();
+        assert_eq!(later.layers_written, 20);
+        assert!(export_fraction(20, 400) > fraction);
+        log.note("Layer count: 400");
+        log.note("Print time (s): 12845");
+        log.note("Filament (mm^3): 12345");
+        let done = export_progress(None, &log, 0).unwrap();
+        assert_eq!(done.estimated_layers, 400);
+        assert_eq!(done.print_time_seconds, Some(12845.0));
+        let expected = 12345.0 / (std::f64::consts::PI * 0.875 * 0.875) / 1000.0;
+        assert!((done.filament_metres - expected).abs() < 1e-6);
+        let file = super::super::ExportSnapshot {
+            layers_written: 30,
+            estimated_layers: 0,
+            print_time_seconds: Some(90.0),
+            filament_metres: 1.2,
+        };
+        let merged = export_progress(Some(file), &log, 400).unwrap();
+        assert_eq!(merged.layers_written, 30);
+        assert_eq!(merged.print_time_seconds, Some(90.0));
+        assert!((merged.filament_metres - 1.2).abs() < 1e-6);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

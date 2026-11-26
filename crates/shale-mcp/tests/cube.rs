@@ -157,6 +157,7 @@ async fn slice_cube(
         "dismiss_suggestion",
         "list_my_printers",
         "printer_status",
+        "get_printer_status",
         "list_print_jobs",
         "list_recent_projects",
         "open_project",
@@ -188,6 +189,10 @@ async fn slice_cube(
     assert!(text("propose_supports").contains("apply_supports"));
     assert!(text("slice_stats").contains("feed-rate"));
     assert!(text("list_my_printers").contains("do not attempt other routes"));
+    assert!(text("list_my_printers").contains("8883"), "{}", text("list_my_printers"));
+    assert!(text("get_printer_status").contains("printer_status"));
+    assert!(text("get_printer_status").contains("cmdkey"), "{}", text("get_printer_status"));
+    assert!(text("printer_status").contains("8883"));
     let described = call(
         &client,
         "tool_describe",
@@ -460,6 +465,8 @@ async fn printer_tools_ask_for_a_sign_in() {
             .contains("no printer access without Shale sign-in; do not attempt other routes"),
         "{err}"
     );
+    assert!(err.to_string().contains("8883"), "{err}");
+    assert!(err.to_string().contains("cmdkey"), "{err}");
     drop(client);
     let _ = server_task.await;
 }

@@ -19,7 +19,7 @@ use shale_core::{
 };
 
 use crate::nonplanar::{self, NonplanarSettings};
-use crate::printers::{AccountPrinters, PrinterDirectory};
+use crate::printers::{AccountPrinters, PrinterDirectory, ACCOUNT_DONE};
 
 #[derive(Clone)]
 pub struct ShaleMcp {
@@ -65,7 +65,19 @@ impl ShaleMcp {
             .map(|guard| *guard)
             .map_err(|_| McpError::internal_error("non-planar settings lock was poisoned", None))
     }
+
+    fn printer_answer(&self, id: &str) -> Result<CallToolResult, McpError> {
+        let view = self.printers.status(id).map_err(fail)?;
+        let mut value = serde_json::to_value(view)
+            .map_err(|err| McpError::internal_error(err.to_string(), None))?;
+        if let Some(object) = value.as_object_mut() {
+            object.insert("done".into(), json!(ACCOUNT_DONE));
+        }
+        ok_json(value)
+    }
 }
+
+const SLICE_FINISHED: &str = "The slice is finished. This result is the full answer. Do not slice again unless the settings change.";
 
 fn ok_json(value: impl serde::Serialize) -> Result<CallToolResult, McpError> {
     let text = serde_json::to_string_pretty(&value)
@@ -119,6 +131,7 @@ fn slice_status(job: &SliceJob) -> serde_json::Value {
                     object.insert("status".into(), json!("done"));
                     object.insert("fraction".into(), json!(job.fraction));
                     object.insert("message".into(), json!(job.message));
+                    object.insert("done".into(), json!(SLICE_FINISHED));
                 }
                 return value;
             }
@@ -127,6 +140,7 @@ fn slice_status(job: &SliceJob) -> serde_json::Value {
                 "fraction": 1.0,
                 "message": job.message,
                 "plates": summary,
+                "done": SLICE_FINISHED,
             });
         }
     }
@@ -146,7 +160,7 @@ fn slice_status(job: &SliceJob) -> serde_json::Value {
         value["print_time_seconds"] = json!(partial.print_time_seconds);
         value["filament_metres"] = json!(partial.filament_metres);
         value["note"] = json!(
-            "Export is still writing the G-code. print_time_seconds and filament_metres are from the file so far, not the finished header."
+            "Export is still writing. print_time_seconds and filament_metres are partial. When the G-code file is still empty they come from the CuraEngine log, and a Layer export time is engine time, not print time."
         );
     }
     value
@@ -1125,7 +1139,7 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Progress of the slice started by slice. status is running, done, or failed. fraction is 0 to 1. During export the message is Exporting layer N of M, and print_time_seconds, filament_metres, and layers_written are from the G-code written so far."
+        description = "Progress of the slice started by slice. status is running, done, or failed. fraction is 0 to 1. During export the message is Exporting layer N of M. Layers, time, and filament come from the G-code when it is being written, or from the CuraEngine log when the file is still empty. The seconds on a Layer export line are engine time, not print time. A done result is the full answer."
     )]
     fn slice_progress(&self) -> Result<CallToolResult, McpError> {
         let job = self.slice_job.lock().map_err(|_| {
@@ -1220,27 +1234,43 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "List printers on the signed-in Bambu account. Read only. If this process is not signed in, the error is final: no printer access without Shale sign-in; do not attempt other routes."
+        description = "List printers on the signed-in Bambu account. Read only. A successful result is the full list: stop, and do not probe port 8883, read a config file, or run cmdkey. If this process is not signed in, the error is final: no printer access without Shale sign-in; do not attempt other routes."
     )]
     fn list_my_printers(&self) -> Result<CallToolResult, McpError> {
-        ok_json(self.printers.printers().map_err(fail)?)
+        ok_json(json!({
+            "printers": self.printers.printers().map_err(fail)?,
+            "done": ACCOUNT_DONE,
+        }))
     }
 
     #[tool(
-        description = "Read one printer: state, current job, progress, time left, temperatures, and AMS slots when the report has them. Example: {\"id\": \"01P00C000000000\"}. Read only. If this process is not signed in, that error is final: do not read a config file or open LAN MQTT."
+        description = "Read one printer: state, current job, progress, time left, temperatures, and AMS slots when the report has them. Example: {\"id\": \"01P00C000000000\"}. Read only. A successful result is the full answer: stop, and do not probe port 8883, read a config file, or run cmdkey. If this process is not signed in, that error is final: no printer access without Shale sign-in; do not attempt other routes. get_printer_status is this tool."
     )]
     fn printer_status(
         &self,
         Parameters(args): Parameters<PrinterIdArgs>,
     ) -> Result<CallToolResult, McpError> {
-        ok_json(self.printers.status(&args.id).map_err(fail)?)
+        self.printer_answer(&args.id)
     }
 
     #[tool(
-        description = "Recent and current print jobs from the signed-in account. Read only. Does not start, pause, or stop a print. If this process is not signed in, that error is final: no printer access without Shale sign-in; do not attempt other routes."
+        description = "Same as printer_status. Read one printer from the signed-in Bambu account. A successful result is the full answer: stop, and do not probe port 8883, read a config file, or run cmdkey. If this process is not signed in, that error is final: no printer access without Shale sign-in; do not attempt other routes."
+    )]
+    fn get_printer_status(
+        &self,
+        Parameters(args): Parameters<PrinterIdArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.printer_answer(&args.id)
+    }
+
+    #[tool(
+        description = "Recent and current print jobs from the signed-in account. Read only. Does not start, pause, or stop a print. A successful result is the full list: stop, and do not probe port 8883, read a config file, or run cmdkey. If this process is not signed in, that error is final: no printer access without Shale sign-in; do not attempt other routes."
     )]
     fn list_print_jobs(&self) -> Result<CallToolResult, McpError> {
-        ok_json(self.printers.jobs().map_err(fail)?)
+        ok_json(json!({
+            "jobs": self.printers.jobs().map_err(fail)?,
+            "done": ACCOUNT_DONE,
+        }))
     }
 
     #[tool(description = "Projects opened or saved recently, newest first. Uses SHALE_CONFIG_DIR, or SHALE_CACHE_DIR/session when that is set, otherwise the desktop app's config directory. Each entry has path, name, printer, and whether the file is missing.")]
@@ -1413,7 +1443,7 @@ impl ServerHandler for ShaleMcp {
         )
         .with_server_info(Implementation::from_build_env())
         .with_instructions(
-            "One Shale process keeps one job. Printer, settings, models, and non-planar mode stay until new_job or clear_job. A 3MF replaces the plate unless load_model sets add_to_plate. slice returns within a couple of seconds: if status is running, poll slice_progress. Export of a large model keeps moving and slice_progress carries partial time and filament before the file is finished. To compare layer height or infill, call compare_slices once, then apply_variant with the row index. slice_stats, slice_summary, and export_gcode take that same index. print_time_seconds is a feed-rate estimate; header_time_seconds is the CuraEngine header. If a printer tool says to sign in to Bambu in Shale first, that is the full answer: do not try another route. tool_describe accepts up to 32 names. Call list_plates before slice with a plate number. arrange_model keeps rotation and scale. propose_supports does not apply supports; call apply_supports.".to_string(),
+            "One Shale process keeps one job. Printer, settings, models, and non-planar mode stay until new_job or clear_job. A 3MF replaces the plate unless load_model sets add_to_plate. slice returns within a couple of seconds: if status is running, poll slice_progress. Export of a large model keeps moving and slice_progress carries partial time and filament before the file is finished, including when the G-code file is still empty. To compare layer height or infill, call compare_slices once, then apply_variant with the row index. slice_stats, slice_summary, and export_gcode take that same index. print_time_seconds is a feed-rate estimate; header_time_seconds is the CuraEngine header. A successful tool result is the full answer. get_printer_status is printer_status. Do not probe port 8883, read a config file, or run cmdkey. If a printer tool says to sign in to Bambu in Shale first, that is the full answer: do not try another route. tool_describe accepts up to 32 names. Call list_plates before slice with a plate number. arrange_model keeps rotation and scale. propose_supports does not apply supports; call apply_supports.".to_string(),
         )
     }
 

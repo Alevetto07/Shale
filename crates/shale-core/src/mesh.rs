@@ -1396,10 +1396,11 @@ fn flatten_object(
 }
 
 fn apply_affine(vertex: [f32; 3], matrix: &[f64; 12]) -> [f32; 3] {
-    // 3MF writes a 4x3 matrix in row-major order, so the twelve numbers are
-    // m00 m01 m02 | m10 m11 m12 | m20 m21 m22 | m30 m31 m32 and the last three
-    // are the translation. Reading it as 3x4 puts a translation into a
-    // rotation slot, which threw Bambu projects hundreds of metres off plate.
+    // Stored as a 4×3 matrix: columns (0,1,2), (3,4,5), (6,7,8) and translation
+    // at (9,10,11). Bambu writes that layout. The 3MF spec writes 3×4, with the
+    // translation in the fourth column of each row. `parse_transform` picks the
+    // rigid reading and converts a spec matrix into this layout. Treating a
+    // 4×3 translation as 3×4 threw Bambu projects hundreds of metres off plate.
     let x = vertex[0] as f64;
     let y = vertex[1] as f64;
     let z = vertex[2] as f64;
@@ -1411,22 +1412,105 @@ fn apply_affine(vertex: [f32; 3], matrix: &[f64; 12]) -> [f32; 3] {
 }
 
 fn compose(parent: [f64; 12], child: [f64; 12]) -> [f64; 12] {
-    let mut out = [0.0; 12];
-    for row in 0..3 {
-        for col in 0..3 {
-            let mut sum = 0.0;
-            for k in 0..3 {
-                sum += parent[row * 3 + k] * child[k * 3 + col];
-            }
-            out[row * 3 + col] = sum;
-        }
-        let mut translate = parent[row * 3 + 3];
-        for k in 0..3 {
-            translate += parent[row * 3 + k] * child[k * 3 + 3];
-        }
-        out[row * 3 + 3] = translate;
+    // Parent after child, in the same 4×3 layout as `apply_affine`. The old
+    // 3×4 multiply kept an X translation under an identity parent and dropped
+    // Y and Z, so plate components landed on top of each other.
+    let column = |matrix: &[f64; 12], x: f64, y: f64, z: f64| -> [f64; 3] {
+        [
+            matrix[0] * x + matrix[3] * y + matrix[6] * z,
+            matrix[1] * x + matrix[4] * y + matrix[7] * z,
+            matrix[2] * x + matrix[5] * y + matrix[8] * z,
+        ]
+    };
+    let x = column(&parent, child[0], child[1], child[2]);
+    let y = column(&parent, child[3], child[4], child[5]);
+    let z = column(&parent, child[6], child[7], child[8]);
+    let translate = column(&parent, child[9], child[10], child[11]);
+    [
+        x[0],
+        x[1],
+        x[2],
+        y[0],
+        y[1],
+        y[2],
+        z[0],
+        z[1],
+        z[2],
+        translate[0] + parent[9],
+        translate[1] + parent[10],
+        translate[2] + parent[11],
+    ]
+}
+
+/// How far a 3×3 is from a rigid transform (unit columns, orthogonal, det ±1).
+fn rigid_error(columns: [[f64; 3]; 3]) -> f64 {
+    let mut error = 0.0;
+    let mut lengths = [0.0; 3];
+    for (index, column) in columns.iter().enumerate() {
+        let length =
+            (column[0] * column[0] + column[1] * column[1] + column[2] * column[2]).sqrt();
+        lengths[index] = length;
+        error += (length - 1.0) * (length - 1.0);
     }
-    out
+    for (left, right) in [(0, 1), (0, 2), (1, 2)] {
+        let dot = columns[left][0] * columns[right][0]
+            + columns[left][1] * columns[right][1]
+            + columns[left][2] * columns[right][2];
+        let scale = (lengths[left] * lengths[right]).max(1e-9);
+        error += (dot / scale).abs();
+    }
+    let (cx, cy, cz) = (columns[0], columns[1], columns[2]);
+    let det = cx[0] * (cy[1] * cz[2] - cy[2] * cz[1])
+        - cx[1] * (cy[0] * cz[2] - cy[2] * cz[0])
+        + cx[2] * (cy[0] * cz[1] - cy[1] * cz[0]);
+    let det_error = det.abs() - 1.0;
+    error + det_error * det_error
+}
+
+fn columns_4x3(matrix: &[f64; 12]) -> [[f64; 3]; 3] {
+    [
+        [matrix[0], matrix[1], matrix[2]],
+        [matrix[3], matrix[4], matrix[5]],
+        [matrix[6], matrix[7], matrix[8]],
+    ]
+}
+
+fn columns_3x4(matrix: &[f64; 12]) -> [[f64; 3]; 3] {
+    // Spec 3×4 is m00 m01 m02 tx, m10 m11 m12 ty, m20 m21 m22 tz.
+    [
+        [matrix[0], matrix[4], matrix[8]],
+        [matrix[1], matrix[5], matrix[9]],
+        [matrix[2], matrix[6], matrix[10]],
+    ]
+}
+
+fn convert_3x4_to_4x3(matrix: [f64; 12]) -> [f64; 12] {
+    [
+        matrix[0],
+        matrix[4],
+        matrix[8],
+        matrix[1],
+        matrix[5],
+        matrix[9],
+        matrix[2],
+        matrix[6],
+        matrix[10],
+        matrix[3],
+        matrix[7],
+        matrix[11],
+    ]
+}
+
+fn canonicalise_transform(matrix: [f64; 12]) -> [f64; 12] {
+    let as_4x3 = rigid_error(columns_4x3(&matrix));
+    let as_3x4 = rigid_error(columns_3x4(&matrix));
+    // Keep the 4×3 layout when the two readings are close, including a
+    // uniform scale. Convert only when the spec 3×4 reading is clearly rigid.
+    if as_3x4 + 0.05 < as_4x3 {
+        convert_3x4_to_4x3(matrix)
+    } else {
+        matrix
+    }
 }
 
 fn identity_transform() -> [f64; 12] {
@@ -1446,7 +1530,7 @@ fn parse_transform(raw: Option<&str>) -> [f64; 12] {
     }
     let mut matrix = [0.0; 12];
     matrix.copy_from_slice(&numbers);
-    matrix
+    canonicalise_transform(matrix)
 }
 
 fn local_name(qname: &[u8]) -> String {
@@ -1788,6 +1872,76 @@ mod tests {
         // 15 mm along X, so the widest vertex sits at 15 + 2.
         let max_x = mesh.vertices.iter().map(|v| v[0]).fold(f32::MIN, f32::max);
         assert!((max_x - 17.0).abs() < 1e-3, "max x was {max_x}");
+    }
+
+    #[test]
+    fn composing_a_4x3_parent_with_a_3x4_child_keeps_plate_parts_apart() {
+        // Plate 1 is a 4×3 build item. One component is a 4×3 Y offset and
+        // the other is a spec 3×4 X offset. The old multiply dropped the Y
+        // offset and misread the 3×4 translation, so both parts stacked.
+        let xml = r#"<?xml version="1.0"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources>
+    <object id="1" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="0" y="0" z="0"/>
+          <vertex x="1" y="0" z="0"/>
+          <vertex x="0" y="1" z="0"/>
+        </vertices>
+        <triangles>
+          <triangle v1="0" v2="1" v3="2"/>
+        </triangles>
+      </mesh>
+    </object>
+    <object id="3" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="0" y="0" z="0"/>
+          <vertex x="1" y="0" z="0"/>
+          <vertex x="0" y="1" z="0"/>
+        </vertices>
+        <triangles>
+          <triangle v1="0" v2="1" v3="2"/>
+        </triangles>
+      </mesh>
+    </object>
+    <object id="2" type="model">
+      <components>
+        <component objectid="1" transform="1 0 0 0 1 0 0 0 1 0 30 0"/>
+        <component objectid="3" transform="1 0 0 40 0 1 0 0 0 0 1 0"/>
+      </components>
+    </object>
+  </resources>
+  <build>
+    <item objectid="2" transform="1 0 0 0 1 0 0 0 1 100 20 0"/>
+  </build>
+</model>"#;
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut buffer);
+            writer
+                .start_file("3D/3dmodel.model", SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(xml.as_bytes()).unwrap();
+            writer.finish().unwrap();
+        }
+        let mesh = load_3mf(&buffer.into_inner()).unwrap();
+        let near = |x: f32, y: f32| {
+            mesh.vertices
+                .iter()
+                .any(|vertex| (vertex[0] - x).abs() < 1e-3 && (vertex[1] - y).abs() < 1e-3)
+        };
+        assert!(
+            near(100.0, 50.0),
+            "the 4×3 part should sit at the parent plus its Y offset, vertices {:?}",
+            mesh.vertices
+        );
+        assert!(
+            near(140.0, 20.0),
+            "the 3×4 part should sit at the parent plus its X offset, vertices {:?}",
+            mesh.vertices
+        );
     }
 
     #[test]
