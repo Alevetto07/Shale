@@ -262,8 +262,15 @@ mod tests {
         assert_eq!(listed[0].frames.len(), MAX_FRAMES_EACH);
         assert!(listed[0].frames[0].starts_with(&[0xff, 0xd8]));
         assert!(!listed.iter().any(|item| item.note == "warning 0"));
-        let text = root.to_string_lossy().to_ascii_lowercase();
-        assert!(!text.contains("appdata"));
+        // The temp directory on Windows lives under AppData\Local\Temp. That is
+        // not the product folder %APPDATA%\Shale, which this test never opens.
+        assert!(
+            !root.components().any(|component| {
+                let name = component.as_os_str().to_string_lossy();
+                name.eq_ignore_ascii_case("Shale") || name.eq_ignore_ascii_case("catalog-cache")
+            }),
+            "{root:?}"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 }
