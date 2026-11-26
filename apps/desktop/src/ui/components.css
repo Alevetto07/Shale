@@ -871,6 +871,10 @@
 
 .ui-select {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.3rem;
 }
 .ui-select__trigger {
   display: flex;
@@ -992,8 +996,10 @@
 .ui-dialog-overlay {
   position: fixed;
   z-index: 80;
-  inset: 34px 0 0 0;
-  background: color-mix(in srgb, var(--bg) 46%, transparent);
+  inset: 0;
+  /* A solid dim, not a wash of the page colour. The same scrim works on the
+     light theme and the dark ones, and the page does not show through. */
+  background: rgba(0, 0, 0, 0.72);
   animation: ui-fade var(--duration-menu) var(--ease-out);
 }
 .ui-dialog {
@@ -1006,13 +1012,30 @@
   max-height: calc(100vh - 80px);
   overflow: auto;
   overscroll-behavior: contain;
-  background: var(--panel-raised);
+  background-color: var(--panel-raised);
+  opacity: 1;
+  backdrop-filter: none;
   color: var(--ink);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-float);
   padding: var(--space-5);
   outline: none;
+}
+.ui-dialog__motion {
+  opacity: 1;
+}
+.ui-dialog .device-warn {
+  color: var(--ink);
+}
+.ui-dialog .ui-btn[data-variant="ghost"] {
+  background: var(--panel);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.ui-dialog .ui-btn[data-variant="primary"] {
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 .ui-dialog__kicker {
   margin: 0 0 var(--space-2);

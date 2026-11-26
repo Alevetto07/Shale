@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { CameraPanel } from "./CameraPanel";
 import { CloudPanel } from "./CloudPanel";
 import * as api from "./api";
-import { Button, Dialog, Input, Select, Tooltip } from "./ui";
+import { Button, Dialog, Input, Select, Slider, Tooltip } from "./ui";
 
 export interface Spool {
   /** 1-based bay, as the machine numbers them. */
@@ -37,6 +38,10 @@ export interface DevicePaneProps {
   gcodeReady: boolean;
   /** The name of the document on screen, so a queued job is called something. */
   plate: string;
+  /** Printer definition id, such as `bambu_lab_a1`. Removal is offered for the A1 only. */
+  printerId: string;
+  centerIsZero: boolean;
+  adhesion: string;
 }
 
 function clock(seconds: number | null): string {
@@ -67,6 +72,9 @@ export function DevicePane({
   engineReady,
   gcodeReady,
   plate,
+  printerId,
+  centerIsZero,
+  adhesion,
 }: DevicePaneProps) {
   const [host, setHost] = useState(() => localStorage.getItem("shale.device.host") ?? "");
   const [serial, setSerial] = useState(() => localStorage.getItem("shale.device.serial") ?? "");
@@ -84,6 +92,15 @@ export function DevicePane({
   /// What the run is allowed to do. The rules are in `shale_core::queue` and
   /// the gate is in Rust; this is only what the pane was told last.
   const [queueRun, setQueueRun] = useState("idle");
+  const [ejectMode, setEjectMode] = useState<"off" | "in_file" | "after_print">("off");
+  const [ejectAsk, setEjectAsk] = useState<"in_file" | "after_print" | null>(null);
+  const [coolC, setCoolC] = useState(28);
+  const [removalNote, setRemovalNote] = useState<string | null>(null);
+  const [removalGcode, setRemovalGcode] = useState("");
+  const readyLatch = useRef(false);
+  const sweepLatch = useRef(false);
+  const checkLatch = useRef(false);
+  const a1 = printerId === "bambu_lab_a1";
 
   useEffect(() => {
     localStorage.setItem("shale.device.host", host);
@@ -334,11 +351,165 @@ export function DevicePane({
       const size = job.layers > 0 ? `${job.layers} layers` : "unsliced";
       // Two jobs from the same plate would otherwise share a name, and a
       // confirmation listing the same words twice names nothing.
-      setQueue(await api.queueAdd(`${queue.length + 1} · ${plate} · ${size}`));
+      setQueue(
+        await api.queueAdd(`${queue.length + 1} · ${plate} · ${size}`, {
+          coolC,
+          centerIsZero,
+          bedWidth,
+          bedDepth,
+          bedHeight,
+          adhesion,
+          printerId,
+        }),
+      );
     } catch (err) {
       setNote(String(err));
     }
   }
+
+  const pauseForFailure = useCallback(() => {
+    void api.hostControl("pause").catch((err: unknown) => setNote(String(err)));
+  }, []);
+  const notifyFailure = useCallback((message: string) => setNote(message), []);
+
+  function chooseEject(next: "off" | "in_file" | "after_print") {
+    if (next === "off") {
+      setEjectMode("off");
+      setEjectAsk(null);
+      void api.queueSetEject("off").catch((err: unknown) => setNote(String(err)));
+      return;
+    }
+    if (ejectMode === "off") {
+      setEjectAsk(next);
+      return;
+    }
+    setEjectMode(next);
+    void api.queueSetEject(next).catch((err: unknown) => setNote(String(err)));
+  }
+
+  async function confirmEject() {
+    if (!ejectAsk) return;
+    const next = ejectAsk;
+    setEjectAsk(null);
+    setEjectMode(next);
+    try {
+      const update = await api.queueSetEject(next);
+      setQueueRun(update.state);
+    } catch (err) {
+      setEjectMode("off");
+      setNote(String(err));
+    }
+  }
+
+  useEffect(() => {
+    if (!a1 || ejectMode === "off") {
+      setRemovalNote(null);
+      setRemovalGcode("");
+      return;
+    }
+    let live = true;
+    void api
+      .removalPreview({
+        printerId,
+        coolC,
+        centerIsZero,
+        bedWidth,
+        bedDepth,
+        bedHeight,
+        adhesion,
+      })
+      .then((view) => {
+        if (!live) return;
+        setRemovalGcode(view.gcode);
+        setRemovalNote(view.accepted ? null : view.reasons.join(" "));
+      })
+      .catch(() => {
+        if (live) setRemovalNote(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [a1, ejectMode, printerId, coolC, centerIsZero, bedWidth, bedDepth, bedHeight, adhesion]);
+
+  useEffect(() => {
+    if (queueRun !== "cooling" || ejectMode === "off") return;
+    let live = true;
+    void api
+      .queueCooled(status?.bed ?? 999, coolC)
+      .then((update) => {
+        if (!live) return;
+        setQueueRun(update.state);
+        if (update.note) setNote(update.note);
+      })
+      .catch((err: unknown) => {
+        if (live) setNote(String(err));
+      });
+    return () => {
+      live = false;
+    };
+  }, [queueRun, ejectMode, status?.bed, coolC]);
+
+  useEffect(() => {
+    if (queueRun !== "sweeping") {
+      sweepLatch.current = false;
+      return;
+    }
+    if (sweepLatch.current || ejectMode !== "after_print") return;
+    sweepLatch.current = true;
+    let live = true;
+    void api
+      .removalSend()
+      .then((update) => {
+        if (!live) return;
+        setQueueRun(update.state);
+        if (update.note) setNote(update.note);
+      })
+      .catch((err: unknown) => {
+        if (!live) return;
+        sweepLatch.current = false;
+        setNote(String(err));
+      });
+    return () => {
+      live = false;
+    };
+  }, [queueRun, ejectMode]);
+
+  useEffect(() => {
+    if (queueRun !== "checking_plate") {
+      checkLatch.current = false;
+      return;
+    }
+    if (checkLatch.current || ejectMode === "off") return;
+    checkLatch.current = true;
+    let live = true;
+    void api
+      .cameraCompare(serial)
+      .then(async (verdict) => {
+        const update = await api.queuePlateVerdict(verdict.clear);
+        if (!live) return;
+        setQueueRun(update.state);
+        setNote(verdict.note);
+      })
+      .catch(async (err: unknown) => {
+        if (!live) return;
+        const update = await api.queueStop(String(err)).catch(() => null);
+        setQueueRun(update?.state ?? "stopped");
+        setNote(String(err));
+      });
+    return () => {
+      live = false;
+    };
+  }, [queueRun, ejectMode, serial]);
+
+  useEffect(() => {
+    if (queueRun !== "ready") {
+      readyLatch.current = false;
+      return;
+    }
+    if (ejectMode === "off" || readyLatch.current) return;
+    readyLatch.current = true;
+    void startNext();
+  }, [queueRun, ejectMode]);
 
   async function dropQueued(id: number) {
     try {
@@ -430,6 +601,16 @@ export function DevicePane({
       </section>
 
       <CloudPanel taskName={plate} />
+
+      <CameraPanel
+        printerId={printerId}
+        host={host}
+        serial={serial}
+        code={code}
+        connected={connected}
+        onPause={pauseForFailure}
+        onNotify={notifyFailure}
+      />
 
       <section className="device-live">
         <div className="device-bar" aria-label="Print progress">
@@ -577,8 +758,8 @@ export function DevicePane({
         <p className="device-label">Queue</p>
         {queue.length === 0 ? (
           <p className="device-note">
-            Nothing queued. A job here starts on its own when the machine goes idle, so the
-            queue is the one place that happens.
+            Nothing queued. The first job starts when you press Start queue. The next one waits
+            until you say the plate is clear.
           </p>
         ) : (
           <ol className="device-queue-list">
@@ -609,8 +790,9 @@ export function DevicePane({
           }
         >
           <p className="device-warn">
-            This press authorises the first job. Nothing else starts on its own: a finished print
-            stays on the bed until you say it is off.
+            {ejectMode === "off"
+              ? "This press authorises the first job. Nothing else starts on its own: a finished print stays on the bed until you say it is off."
+              : "This press authorises the first job. Removal is on, so after a print the plate is checked with the camera before the next job. That path is experimental and untested on real hardware."}
           </p>
           <div className="device-controls">
             <Button type="button" variant="primary" onClick={beginQueue}>
@@ -649,6 +831,81 @@ export function DevicePane({
             Clear
           </Button>
         </div>
+        {a1 ? (
+          <div className="camera-removal">
+            <p className="device-warn">
+              Experimental print removal for the A1. Untested on real hardware. Off unless you
+              turn it on. The nozzle will move. Stay with the printer the first time and be ready
+              to switch it off.
+            </p>
+            <Select
+              label="Print removal"
+              showLabel
+              value={ejectMode}
+              options={[
+                { value: "off", label: "Off" },
+                { value: "in_file", label: "Append the sweep to the file" },
+                { value: "after_print", label: "Send the sweep after the bed cools" },
+              ]}
+              onChange={(value) => chooseEject(value as "off" | "in_file" | "after_print")}
+            />
+            {ejectMode !== "off" ? (
+              <>
+                <Slider
+                  label="Cool the bed to"
+                  value={[coolC]}
+                  min={20}
+                  max={40}
+                  step={1}
+                  unit="°C"
+                  onValueChange={setCoolC}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={!connected}
+                  onClick={() => {
+                    void api.cameraSaveReference(serial).then(
+                      () => setNote("Saved the empty-plate picture."),
+                      (err: unknown) => setNote(String(err)),
+                    );
+                  }}
+                >
+                  Save empty-plate picture
+                </Button>
+                {removalNote ? <p className="device-warn">{removalNote}</p> : null}
+                {removalGcode ? (
+                  <details className="camera-gcode">
+                    <summary>The sweep this part would get</summary>
+                    <pre>{removalGcode}</pre>
+                  </details>
+                ) : null}
+              </>
+            ) : null}
+            <Dialog
+              open={ejectAsk !== null}
+              onOpenChange={(open) => {
+                if (!open) setEjectAsk(null);
+              }}
+              title="Turn on experimental removal?"
+              description="After a print finishes, the bed cools, then the nozzle drops just above the plate and the bed moves so the part is pushed off the front. This has not been tried on a real A1. A part that is too tall, too small, too wide, or stuck too loosely is refused."
+            >
+              <p className="device-warn">
+                Stay with the printer. Keep a hand near the power switch. The sweep uses slow
+                moves and several passes, and it stops if the camera still sees a part.
+              </p>
+              <div className="device-controls">
+                <Button type="button" variant="primary" onClick={confirmEject}>
+                  I understand — turn it on
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setEjectAsk(null)}>
+                  Leave it off
+                </Button>
+              </div>
+            </Dialog>
+          </div>
+        ) : null}
       </section>
 
       <section className="device-grid">

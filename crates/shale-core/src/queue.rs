@@ -1,4 +1,5 @@
-//! What an overnight queue is allowed to do on its own — which is nothing.
+//! What an overnight queue is allowed to do on its own — which is nothing,
+//! unless a person has turned on the experimental A1 removal path.
 //!
 //! A queue is a list of jobs and one press that authorises the list. The press
 //! covers the first job; every job after it needs a second, explicit press,
@@ -7,8 +8,10 @@
 //! next one, and the operator finds three failed prints instead of one.
 //!
 //! The state machine lives here, away from the window, so the rule can be
-//! tested without a printer: [`QueueRun::observe`] never returns anything that
-//! starts a job — structurally, not by a check somebody can forget.
+//! tested without a printer. With removal left off, [`QueueRun::observe`] never
+//! returns a state that starts a job. The experimental path is a separate
+//! setting, default off, and even then a following job is allowed only after
+//! the plate check says the bed is empty.
 
 /// What the machine is doing, as far as the queue cares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,8 +55,28 @@ pub enum RunState {
     /// A job finished. The bed holds it, and nothing moves until a person
     /// says the plate is clear.
     WaitingForPlate,
+    /// Experimental removal: the print finished and the bed is still hot.
+    Cooling,
+    /// Experimental removal: the bed is cool and the sweep lines may be sent.
+    Sweeping,
+    /// Experimental removal: compare the camera with the empty plate.
+    CheckingPlate,
+    /// Experimental removal: the camera says the plate is empty, so one more
+    /// job may go. This is not the same as [`RunState::Armed`], which is a press.
+    Ready,
     /// Over: finished, cleared, failed, or stopped by the operator.
     Stopped,
+}
+
+/// The experimental A1 removal path. Off unless a person turns it on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EjectMode {
+    #[default]
+    Off,
+    /// The sweep is already at the end of the queued file.
+    InFile,
+    /// The sweep is sent as lines after the bed has cooled.
+    AfterPrint,
 }
 
 /// What an observation changed, and what to tell the operator.
@@ -83,6 +106,7 @@ pub struct QueueRun {
     /// that arrives without it is a stale report from the machine, not the end
     /// of the job this queue sent.
     seen_running: bool,
+    eject: EjectMode,
 }
 
 impl QueueRun {
@@ -102,10 +126,27 @@ impl QueueRun {
         Update::of(RunState::Armed)
     }
 
-    /// Whether a job may be sent right now. Only a fresh press or a plate
-    /// cleared by hand puts the run here.
+    /// Whether a job may be sent right now. A fresh press, a plate cleared by
+    /// hand, or — only on the experimental path — a camera that says the plate
+    /// is empty.
     pub fn may_start(&self) -> bool {
-        self.state() == RunState::Armed
+        matches!(self.state(), RunState::Armed | RunState::Ready)
+    }
+
+    pub fn eject(&self) -> EjectMode {
+        self.eject
+    }
+
+    /// Turn the experimental path on or off. This does not move a machine.
+    pub fn set_eject(&mut self, mode: EjectMode) -> Update {
+        self.eject = mode;
+        Update::of(self.state())
+    }
+
+    /// The sweep lines may be published. Only the after-print path, and only
+    /// once the bed has cooled.
+    pub fn may_send_sweep(&self) -> bool {
+        self.state() == RunState::Sweeping && self.eject == EjectMode::AfterPrint
     }
 
     /// The job went out.
@@ -139,14 +180,89 @@ impl QueueRun {
             }
             Machine::Finished | Machine::Idle => {
                 if self.state() == RunState::Printing && self.seen_running {
-                    self.state = Some(RunState::WaitingForPlate);
-                    return Update::with(
-                        RunState::WaitingForPlate,
-                        "print finished — clear the plate, then start the next job",
-                    );
+                    return self.finish();
                 }
                 Update::of(self.state())
             }
+        }
+    }
+
+    fn finish(&mut self) -> Update {
+        match self.eject {
+            EjectMode::Off => {
+                self.state = Some(RunState::WaitingForPlate);
+                Update::with(
+                    RunState::WaitingForPlate,
+                    "print finished — clear the plate, then start the next job",
+                )
+            }
+            EjectMode::InFile => {
+                self.state = Some(RunState::CheckingPlate);
+                Update::with(
+                    RunState::CheckingPlate,
+                    "print finished — the sweep was in the file, checking the plate with the camera",
+                )
+            }
+            EjectMode::AfterPrint => {
+                self.state = Some(RunState::Cooling);
+                Update::with(
+                    RunState::Cooling,
+                    "print finished — waiting for the bed to cool before the sweep",
+                )
+            }
+        }
+    }
+
+    /// A bed-temperature report. Motion stays forbidden until the bed is at or
+    /// below `target_c`.
+    pub fn cooled(&mut self, bed_c: f64, target_c: f64) -> Update {
+        if self.state() != RunState::Cooling {
+            return Update::of(self.state());
+        }
+        if bed_c > target_c {
+            return Update::with(
+                RunState::Cooling,
+                format!("bed is {bed_c:.0} °C — waiting until it reaches {target_c:.0} °C"),
+            );
+        }
+        self.state = Some(RunState::Sweeping);
+        Update::with(
+            RunState::Sweeping,
+            format!("bed is {bed_c:.0} °C — the sweep may be sent"),
+        )
+    }
+
+    /// The sweep lines have been handed to the link. The plate is checked next.
+    pub fn sweep_sent(&mut self) -> Update {
+        if self.state() == RunState::Sweeping {
+            self.state = Some(RunState::CheckingPlate);
+            return Update::with(
+                RunState::CheckingPlate,
+                "sweep sent — checking the plate with the camera",
+            );
+        }
+        Update::of(self.state())
+    }
+
+    /// The camera's comparison. A clear plate allows exactly one more job. An
+    /// occupied plate stops the run.
+    pub fn plate_verdict(&mut self, clear: bool) -> Update {
+        if self.state() != RunState::CheckingPlate {
+            return Update::of(self.state());
+        }
+        if clear {
+            self.state = Some(RunState::Ready);
+            Update::with(
+                RunState::Ready,
+                "the plate matches the empty-plate picture — the next job may go",
+            )
+        } else {
+            self.state = Some(RunState::Stopped);
+            self.seen_running = false;
+            Update::with(
+                RunState::Stopped,
+                "the plate is not clear — the queue has stopped",
+            )
         }
     }
 
@@ -280,6 +396,61 @@ mod tests {
         // A state this build has never heard of is not an event.
         assert_eq!(Machine::from_report("HEATING"), None);
         assert_eq!(Machine::from_report(""), None);
+    }
+
+    #[test]
+    fn removal_stays_off_and_a_finish_still_waits_for_a_person() {
+        let mut run = printing();
+        assert_eq!(run.eject(), EjectMode::Off);
+        assert!(!run.may_send_sweep());
+        run.observe(Machine::Running);
+        assert_eq!(
+            run.observe(Machine::Finished).state,
+            RunState::WaitingForPlate
+        );
+        assert!(!run.may_start());
+    }
+
+    #[test]
+    fn an_in_file_sweep_checks_the_plate_and_only_then_allows_the_next_job() {
+        let mut run = printing();
+        run.set_eject(EjectMode::InFile);
+        run.observe(Machine::Running);
+        assert_eq!(
+            run.observe(Machine::Finished).state,
+            RunState::CheckingPlate
+        );
+        assert!(!run.may_start());
+        assert!(!run.may_send_sweep());
+        assert_eq!(run.plate_verdict(false).state, RunState::Stopped);
+        assert!(!run.may_start());
+
+        let mut run = printing();
+        run.set_eject(EjectMode::InFile);
+        run.observe(Machine::Running);
+        run.observe(Machine::Finished);
+        assert_eq!(run.plate_verdict(true).state, RunState::Ready);
+        assert!(run.may_start());
+        run.started();
+        assert!(!run.may_start(), "the clear plate authorises one job");
+    }
+
+    #[test]
+    fn an_after_print_sweep_waits_for_the_bed_before_any_line_may_be_sent() {
+        let mut run = printing();
+        run.set_eject(EjectMode::AfterPrint);
+        run.observe(Machine::Running);
+        assert_eq!(run.observe(Machine::Finished).state, RunState::Cooling);
+        assert!(!run.may_send_sweep());
+        let waiting = run.cooled(40.0, 28.0);
+        assert_eq!(waiting.state, RunState::Cooling);
+        assert!(waiting.note.unwrap().contains("40"));
+        assert!(!run.may_send_sweep());
+        assert_eq!(run.cooled(27.5, 28.0).state, RunState::Sweeping);
+        assert!(run.may_send_sweep());
+        assert!(!run.may_start());
+        assert_eq!(run.sweep_sent().state, RunState::CheckingPlate);
+        assert!(!run.may_send_sweep(), "the lines are sent once");
     }
 
     #[test]

@@ -58,12 +58,58 @@ The installer also contains these components, all under permissive licences:
 | [`quick-xml`](https://github.com/tafia/quick-xml), `serde`, `serde_json`, `thiserror`, `toml` | MIT OR Apache-2.0 |
 | The Rust standard library and the `windows-sys` crate | MIT OR Apache-2.0 |
 | [`keyring`](https://github.com/hwchen/keyring-rs) 3.6.3 (Windows Credential Manager) | MIT OR Apache-2.0 |
-| `tokio`, `rustls`, `webpki-roots`, `flate2`, `zip`, `image` | MIT OR Apache-2.0 |
+| `tokio`, `rustls`, `webpki-roots`, `flate2`, `zip`, `image` 0.25 | MIT OR Apache-2.0 |
 
 The full dependency graph, with each crate's declared licence, is reproducible
 from the repository with `cargo metadata --format-version 1` and
 `cargo license`. This table is the part that is compiled in and worth naming in
 a printed notice; it is not an abridged substitute for those files.
+
+## Camera pictures and failure detection
+
+JPEG frames are decoded with the [`image`](https://github.com/image-rs/image) crate,
+version 0.25, default features off, `jpeg` only. Its licence is MIT OR Apache-2.0.
+
+P2S, X1, and H2 pictures are H.264. They are decoded with
+[OpenH264](https://github.com/cisco/openh264) through the
+[`openh264`](https://github.com/ralfbiedert/openh264-rs) crate, version 0.9.
+Both the C library and the Rust wrapper are BSD-2-Clause. Shale compiles the
+C library from the source the crate vendors (`source` feature). It does not
+download or redistribute Cisco's prebuilt binary.
+
+Cisco's promise to cover MPEG LA (now Via LA) AVC/H.264 pool fees applies to
+that official binary, and only when a product downloads the binary from Cisco
+at install time. It does not apply to a build from source. Shale takes the
+source path because shipping Cisco's binary inside an AGPL installer is not
+what that promise allows. Anyone who distributes Shale is responsible for
+whatever patent licences their jurisdiction requires for an H.264 decoder.
+OpenH264 is Copyright Cisco Systems, Inc. The wrapper is Copyright Ralf Biedert.
+
+The watch for spaghetti, detachment, and blobs is Shale's own grid detector. It
+is the default, and it stays the default until the Obico weights have been
+downloaded and the checksum matches. A button in the camera panel, "Use the
+built-in detector", switches back to the grid at any time.
+
+[ONNX Runtime](https://github.com/microsoft/onnxruntime) is linked through the
+[`ort`](https://github.com/pykeio/ort) crate, version 2.0.0-rc.15, and only by
+the desktop app. Both are MIT OR Apache-2.0. The crate downloads the ONNX
+Runtime library at build time. It does not download the Obico weights. Tests
+never request the weights URL.
+
+Obico's failure-detection weights are AGPL-3.0, the same licence as Obico Server,
+and they are **not** shipped here. The file is about 193 MB. The camera panel
+downloads it on request into the app data directory (`failure-models/`, not the
+catalogue cache), shows how far the download has got, and keeps the file only
+when the SHA-256 matches:
+
+| Asset | Size | SHA-256 |
+| --- | --- | --- |
+| [model-weights-5a6b1be1fa.onnx](https://github.com/TheSpaghettiDetective/obico-server/releases/download/ml-models-2026-11-23/model-weights-5a6b1be1fa.onnx) | 202223918 | `0a6ebd8e30dbf6a450c50f9c0a5406f04ba7eb1c99fd5996e888c78bb383b9aa` |
+
+The release `ml-models-2026-11-23` says the weights are licensed under AGPL-3.0,
+like the rest of obico-server. The sample frames the detector is tested against
+are synthetic images drawn in the test, not photographs, so no extra image
+licence is involved.
 
 ## Home-screen ASCII plate images
 

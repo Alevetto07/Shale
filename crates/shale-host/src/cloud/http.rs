@@ -240,6 +240,163 @@ fn parse(raw: &[u8]) -> Result<Response, HttpError> {
     Ok(Response { status, body })
 }
 
+/// GET a file, following a few redirects, and write the body as it arrives.
+///
+/// The model download uses this. A test points it at loopback. It does not
+/// add a query or a body, and it does not retry a failed host.
+pub fn download_to(
+    start: &str,
+    sink: &mut impl Write,
+    mut progress: impl FnMut(u64, Option<u64>),
+) -> Result<u64, HttpError> {
+    let mut url = start.to_string();
+    for _ in 0..5 {
+        let parsed = Url::parse(&url)?;
+        let mut reader = connect(&parsed)?;
+        let (status, headers) = write_get(&parsed, &mut reader)?;
+        if matches!(status, 301 | 302 | 303 | 307 | 308) {
+            let location = header_value(&headers, "location").ok_or_else(|| {
+                HttpError::Protocol("a redirect arrived with no location".into())
+            })?;
+            url = resolve_redirect(&parsed, location);
+            continue;
+        }
+        if status != 200 {
+            return Err(HttpError::Protocol(format!(
+                "the download answered {status}"
+            )));
+        }
+        let total = header_value(&headers, "content-length").and_then(|value| value.parse().ok());
+        return copy_body(&mut reader, sink, total, &mut progress);
+    }
+    Err(HttpError::Protocol(
+        "the download redirected more than five times".into(),
+    ))
+}
+
+fn connect(url: &Url) -> Result<Box<dyn ReadWrite>, HttpError> {
+    let timeout = Duration::from_secs(120);
+    let stream = TcpStream::connect((url.host.as_str(), url.port))
+        .map_err(|err| HttpError::Io(format!("cannot reach {}: {err}", url.host)))?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|err| HttpError::Io(err.to_string()))?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|err| HttpError::Io(err.to_string()))?;
+    if !url.secure {
+        return Ok(Box::new(stream));
+    }
+    let name = ServerName::try_from(url.host.clone())
+        .map_err(|_| HttpError::Url(format!("`{}` is not a server name", url.host)))?;
+    let connection = ClientConnection::new(std::sync::Arc::new(tls_config()), name)
+        .map_err(|err| HttpError::Io(format!("TLS: {err}")))?;
+    Ok(Box::new(StreamOwned::new(connection, stream)))
+}
+
+fn write_get(url: &Url, reader: &mut dyn ReadWrite) -> Result<(u16, Vec<(String, String)>), HttpError> {
+    let request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Shale/0.1\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+        url.path,
+        url.host_header()
+    );
+    reader
+        .write_all(request.as_bytes())
+        .map_err(|err| HttpError::Io(format!("cannot write the request: {err}")))?;
+    reader
+        .flush()
+        .map_err(|err| HttpError::Io(format!("cannot flush the request: {err}")))?;
+    read_header(reader)
+}
+
+fn read_header(reader: &mut dyn Read) -> Result<(u16, Vec<(String, String)>), HttpError> {
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        let n = reader
+            .read(&mut byte)
+            .map_err(|err| HttpError::Io(format!("cannot read the answer: {err}")))?;
+        if n == 0 {
+            return Err(HttpError::Protocol(
+                "the answer closed before the header ended".into(),
+            ));
+        }
+        buf.push(byte[0]);
+        if buf.ends_with(b"\r\n\r\n") {
+            break;
+        }
+        if buf.len() > 65_536 {
+            return Err(HttpError::Protocol("the header is too long".into()));
+        }
+    }
+    let head = String::from_utf8_lossy(&buf).to_string();
+    let mut lines = head.split("\r\n");
+    let status_line = lines.next().unwrap_or_default();
+    let status: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .ok_or_else(|| HttpError::Protocol(format!("`{status_line}` is not a status line")))?;
+    let mut headers = Vec::new();
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':') {
+            headers.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
+        }
+    }
+    Ok((status, headers))
+}
+
+fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value.as_str())
+}
+
+fn resolve_redirect(from: &Url, location: &str) -> String {
+    if location.starts_with("https://") || location.starts_with("http://") {
+        return location.to_string();
+    }
+    let scheme = if from.secure { "https" } else { "http" };
+    let path = if location.starts_with('/') {
+        location.to_string()
+    } else {
+        format!("/{}", location.trim_start_matches('/'))
+    };
+    let default = if from.secure { 443 } else { 80 };
+    if from.port == default {
+        format!("{scheme}://{}{path}", from.host)
+    } else {
+        format!("{scheme}://{}:{}{path}", from.host, from.port)
+    }
+}
+
+fn copy_body(
+    reader: &mut dyn Read,
+    sink: &mut impl Write,
+    total: Option<u64>,
+    progress: &mut impl FnMut(u64, Option<u64>),
+) -> Result<u64, HttpError> {
+    let mut received = 0u64;
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        if total.is_some_and(|total| received >= total) {
+            break;
+        }
+        let n = reader
+            .read(&mut buf)
+            .map_err(|err| HttpError::Io(format!("cannot read the file: {err}")))?;
+        if n == 0 {
+            break;
+        }
+        sink.write_all(&buf[..n])
+            .map_err(|err| HttpError::Io(format!("cannot write the file: {err}")))?;
+        received += n as u64;
+        progress(received, total);
+    }
+    Ok(received)
+}
+
 fn dechunk(mut raw: &[u8]) -> Result<Vec<u8>, HttpError> {
     let mut out = Vec::new();
     while let Some(end) = raw.windows(2).position(|window| window == b"\r\n") {

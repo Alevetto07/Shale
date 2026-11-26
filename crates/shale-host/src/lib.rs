@@ -272,6 +272,12 @@ impl Trust {
     pub fn seen(&self) -> Option<Pin> {
         *self.seen.lock().unwrap()
     }
+
+    /// The TLS configuration the camera uses. The printer's certificate is
+    /// self-signed; the access code is what authorises the session.
+    pub(crate) fn client_config(&self) -> Arc<ClientConfig> {
+        Arc::clone(&self.config)
+    }
 }
 
 /// A TCP connection with TLS on top, plus the byte buffer the MQTT framing needs.
@@ -901,6 +907,23 @@ pub fn simple_command(sequence: u64, command: &str) -> serde_json::Value {
     })
 }
 
+/// One line of G-code, as a Bambu LAN request. Building it does not send it.
+/// The line is sent only when a person has turned on an experimental action
+/// that is allowed to move the machine.
+pub fn gcode_line_command(sequence: u64, line: &str) -> serde_json::Value {
+    let mut line = line.trim().to_string();
+    if !line.ends_with('\n') {
+        line.push('\n');
+    }
+    serde_json::json!({
+        "print": {
+            "sequence_id": sequence.to_string(),
+            "command": "gcode_line",
+            "param": line,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -998,3 +1021,6 @@ mod tests {
 }
 /// Bambu's cloud: an account, a device list, and sending a print.
 pub mod cloud;
+
+/// The chamber camera: JPEG over TLS on port 6000, and RTSPS on port 322.
+pub mod camera;

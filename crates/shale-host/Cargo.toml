@@ -11,6 +11,9 @@ publish = false
 # at a machine that exists. Off by default: a release build has no use for it,
 # and `cargo build --workspace --release` should not put a printer on disk.
 fake-printer = []
+# ONNX Runtime for the optional Obico failure model. Off in the library's own
+# test build. The desktop app turns it on. The weights are not downloaded here.
+onnx = ["dep:ort"]
 
 [[bin]]
 name = "shale-fake-printer"
@@ -28,8 +31,20 @@ rustls-pki-types = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
+# JPEG frames from the chamber camera, and the pictures the failure watch and
+# the plate check compare. MIT OR Apache-2.0. JPEG only: nothing else is used.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# Cisco OpenH264, compiled from the BSD-2 source the crate vendors. The
+# default `source` feature builds that C library. Shale does not download or
+# ship Cisco's prebuilt binary: that blob is the only form Cisco's MPEG-LA
+# promise covers, and it has to be fetched from Cisco at install time.
+openh264 = "0.9"
 # SHA-256 for the certificate pin. Already in the lockfile through rustls.
 sha2 = "0.10"
+# ONNX Runtime, MIT OR Apache-2.0. Optional: the grid detector does not need
+# it, and a test never downloads the Obico weights. `download-binaries` fetches
+# the runtime library at build time, not the model.
+ort = { version = "=2.0.0-rc.15", optional = true, default-features = false, features = ["std", "download-binaries", "tls-rustls", "copy-dylibs", "api-31"] }
 
 [dev-dependencies]
 # The test double is a TLS server and speaks JSON, so it needs the same two

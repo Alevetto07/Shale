@@ -17,7 +17,25 @@ import {
   MOCK_QUALITIES,
   MOCK_VARIANTS,
 } from "./data";
+import chamberUrl from "./chamber.jpg";
 import { readMockFlags } from "./scenario";
+
+/** A synthetic chamber picture. Generated for the mock; it is not a photograph. */
+function chamberBase64(): Promise<string> {
+  return fetch(chamberUrl)
+    .then((response) => response.arrayBuffer())
+    .then((buffer) => {
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary);
+    });
+}
+
+function cameraFault(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("camera") === "fault";
+}
 
 const flags = readMockFlags();
 const models = flags.models ? [mockModel(1)] : [];
@@ -183,11 +201,102 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
     case "queue_start_next":
       return { name: "", remaining: 0, queue: [] } as T;
     case "queue_run_state":
-      return { armed: false, running: false, waiting_for_plate: false, message: "" } as T;
+      return { state: "idle", note: null } as T;
     case "queue_arm":
+      return { state: "armed", note: null } as T;
     case "queue_observe":
     case "queue_stop":
-      return { armed: false, running: false, waiting_for_plate: false, message: "" } as T;
+    case "queue_set_eject":
+    case "queue_cooled":
+    case "queue_plate_verdict":
+    case "removal_send":
+      return { state: "idle", note: null } as T;
+    case "camera_start":
+    case "camera_status":
+      if (cameraFault()) {
+        return {
+          running: false,
+          path: "jpeg",
+          frames: 0,
+          fps: 0,
+          hasJpeg: false,
+          codec: "",
+          faultCode: "lan_live_view_off",
+          fault:
+            "LAN-only live view is off. On the printer, open the network settings and turn on LAN-only live view. The printer can stay signed in to the cloud.",
+        } as T;
+      }
+      return {
+        running: args && true,
+        path: String(args.model ?? "").toLowerCase().includes("p2s") ? "rtsps" : "jpeg",
+        frames: 12,
+        fps: 4,
+        hasJpeg: true,
+        codec: "jpeg",
+        faultCode: null,
+        fault: null,
+      } as T;
+    case "camera_stop":
+      return {
+        running: false,
+        path: "",
+        frames: 0,
+        fps: 0,
+        hasJpeg: false,
+        codec: "",
+        faultCode: null,
+        fault: null,
+      } as T;
+    case "camera_frame":
+    case "camera_snapshot":
+      return (cameraFault() ? null : await chamberBase64()) as T;
+    case "camera_watch":
+      return {
+        kind: "spaghetti",
+        confidence: 0.82,
+        alert: false,
+        action: "none",
+        boxes: [{ x: 0.22, y: 0.3, w: 0.28, h: 0.22, label: "spaghetti", confidence: 0.82 }],
+        heatmap: Array.from({ length: 12 * 9 }, (_, index) => (index % 7 === 0 ? 0.45 : 0.05)),
+        heatmapCols: 12,
+        heatmapRows: 9,
+        note: "Stringy strands on the part. This may be spaghetti.",
+        detector: "builtin",
+      } as T;
+    case "camera_model_status":
+    case "camera_model_download":
+      return {
+        phase: "missing",
+        ready: false,
+        received: 0,
+        total: 202223918,
+        message: "The failure model is not downloaded. The built-in detector is in use.",
+      } as T;
+    case "camera_cloud_still":
+      throw new Error(
+        "The cloud camera is not available. Bambu's remote picture uses a private relay Shale does not speak. Use the LAN camera instead.",
+      );
+    case "camera_save_reference":
+      return null as T;
+    case "camera_compare":
+      return {
+        clear: true,
+        difference: 2.1,
+        note: "The plate matches the empty-plate picture.",
+      } as T;
+    case "removal_preview":
+      return {
+        offered: String(args.printerId) === "bambu_lab_a1",
+        accepted: String(args.printerId) === "bambu_lab_a1",
+        reasons:
+          String(args.printerId) === "bambu_lab_a1"
+            ? []
+            : ["Automatic removal is only offered for the A1."],
+        gcode:
+          String(args.printerId) === "bambu_lab_a1"
+            ? "; Shale experimental print removal for the A1\nM140 S0\nM190 S28\n"
+            : "",
+      } as T;
     case "host_send":
       return { remote: "mock.gcode", bytes: 522_285 } as T;
     case "scratch_path":

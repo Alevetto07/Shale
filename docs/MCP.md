@@ -357,6 +357,36 @@ Use this to write the open models as a `.shale` project. Meshes are stored as ST
 { "path": "/home/me/bracket.shale" }
 ```
 
+## Camera
+
+These three tools look at a picture. None of them starts, pauses, or jogs a printer. Pausing, when you have opted in, is a button in the Device pane.
+
+### `get_camera_snapshot`
+
+Use this for one JPEG from the chamber.
+
+```json
+{ "host": "192.168.1.42", "model": "bambu_lab_a1", "code": "12345678" }
+```
+
+`model` chooses the protocol. `bambu_lab_a1` and the P1 series are JPEG over TLS on port 6000. `bambu_lab_p2s` (and X1, H2) is RTSPS on port 322. An H.264 stream is decoded and returned as a JPEG. A frame that does not decode returns an error that says so, rather than a made-up picture. The access code is not repeated in the answer. The result is an image, plus a short line naming the path and the port.
+
+A wrong access code, LAN-only live view switched off, or a camera switched off on the printer, each come back as an error that says which one it is.
+
+### `camera_status`
+
+Use this to ask whether that camera can be reached, without returning the picture. The same arguments as `get_camera_snapshot`. The answer has `path`, `port`, `reachable`, `jpeg`, `faultCode`, and `fault`. `faultCode` is one of `wrong_access_code`, `lan_live_view_off`, `camera_disabled`, `unreachable`, `cloud_unavailable`, `protocol`, or null.
+
+### `get_failure_status`
+
+Use this to judge one JPEG for spaghetti, a part that has come off the bed, or a blob. The judgement runs on this computer. One frame does not notify: the same finding has to hold for three frames in the desktop watch before it counts. This tool reports that one frame and sets `alert` to false unless you would have asked for a single frame, which you cannot.
+
+```json
+{ "path": "/tmp/chamber.jpg", "previous": "/tmp/chamber-before.jpg", "confidence": 0.6, "sensitivity": "medium" }
+```
+
+`previous` is optional and is how a detachment is seen. `sensitivity` is `low`, `medium`, or `high`. A path inside the catalog cache is refused. The tool does not pause the printer.
+
 ## The same jobs from the terminal
 
 `shale-cli` covers the file-shaped tools:
