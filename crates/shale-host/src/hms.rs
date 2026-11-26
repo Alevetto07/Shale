@@ -9,8 +9,19 @@
 //! The wording here is Shale's, in British English. The wiki page is where the
 //! long troubleshooting steps live.
 
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::RwLock;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// `https://e.bambulab.com/query.php?lang=en` — the same call Bambu Studio makes
+/// for the English HMS table. The answer is cached under the app config
+/// directory, never the printer-profile cache.
+pub const QUERY_URL: &str = "https://e.bambulab.com/query.php?lang=en";
+
+static CATALOG: RwLock<Option<HmsCatalog>> = RwLock::new(None);
 
 /// One alert the printer is currently raising.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,7 +82,9 @@ pub fn describe(attr: u32, code: u32) -> HmsAlert {
         groups[0], groups[1], groups[2], groups[3]
     );
     let runout = filament_runout(groups);
-    let message = message_for(groups).unwrap_or_else(|| fallback(groups, &hyphen));
+    let message = lookup_installed(groups)
+        .or_else(|| message_for(groups))
+        .unwrap_or_else(|| fallback(groups, &hyphen));
     HmsAlert {
         code: hyphen,
         wiki,
@@ -193,6 +206,134 @@ fn u32_field(entry: &Value, key: &str) -> Option<u32> {
     }
 }
 
+/// The message table Bambu publishes, keyed by the 16 hex digits of a code.
+pub struct HmsCatalog {
+    messages: HashMap<String, String>,
+    version: String,
+}
+
+impl HmsCatalog {
+    fn lookup(&self, groups: [u16; 4]) -> Option<String> {
+        let key = format!(
+            "{:04X}{:04X}{:04X}{:04X}",
+            groups[0], groups[1], groups[2], groups[3]
+        );
+        self.messages.get(&key).cloned()
+    }
+
+    pub fn len(&self) -> usize {
+        self.messages.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+}
+
+fn lookup_installed(groups: [u16; 4]) -> Option<String> {
+    CATALOG.read().ok()?.as_ref()?.lookup(groups)
+}
+
+/// Read a `query.php` body, or a file already saved from one.
+pub fn parse_catalog(bytes: &[u8]) -> Option<HmsCatalog> {
+    let value: Value = serde_json::from_slice(bytes).ok()?;
+    if value.get("result").and_then(|item| item.as_i64()) == Some(201) {
+        return None;
+    }
+    let data = value.get("data").unwrap_or(&value);
+    let list = data.pointer("/device_hms/en")?.as_array()?;
+    let mut messages = HashMap::new();
+    for item in list {
+        let code = item.get("ecode")?.as_str()?.trim();
+        let intro = item.get("intro")?.as_str()?.trim();
+        if code.is_empty() || intro.is_empty() {
+            continue;
+        }
+        messages.insert(normalise_code(code), intro.to_string());
+    }
+    if messages.is_empty() {
+        return None;
+    }
+    let version = match value.get("ver") {
+        Some(Value::Number(number)) => number.to_string(),
+        Some(Value::String(text)) => text.clone(),
+        _ => String::new(),
+    };
+    Some(HmsCatalog { messages, version })
+}
+
+fn normalise_code(code: &str) -> String {
+    code.chars()
+        .filter(|ch| *ch != '-' && *ch != '_')
+        .collect::<String>()
+        .to_ascii_uppercase()
+}
+
+fn install(catalog: HmsCatalog) {
+    if let Ok(mut guard) = CATALOG.write() {
+        *guard = Some(catalog);
+    }
+}
+
+/// Where the cached table lives. This is the app config directory, the same
+/// folder as recents, and it is not the catalogue cache.
+pub fn cache_path(config_dir: &Path) -> std::path::PathBuf {
+    config_dir.join("hms").join("hms_en.json")
+}
+
+/// Load a cached table if one is readable, then ask Bambu for a newer one.
+/// A failed fetch leaves the cache, or the built-in sentences, in place.
+pub fn refresh(config_dir: &Path) -> Result<usize, String> {
+    let path = cache_path(config_dir);
+    if let Ok(bytes) = std::fs::read(&path) {
+        if let Some(catalog) = parse_catalog(&bytes) {
+            install(catalog);
+        }
+    }
+    let version = CATALOG
+        .read()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|catalog| catalog.version.clone()))
+        .unwrap_or_default();
+    let mut url = QUERY_URL.to_string();
+    if !version.is_empty() {
+        url.push_str("&v=");
+        url.push_str(&version);
+    }
+    let response = crate::cloud::http::send(
+        "GET",
+        &url,
+        &[("Accept", "application/json".into())],
+        None,
+    )
+    .map_err(|err| err.to_string())?;
+    if response.status != 200 {
+        return Err(format!(
+            "The HMS table request came back with status {}.",
+            response.status
+        ));
+    }
+    if let Ok(value) = response.json() {
+        if value.get("result").and_then(|item| item.as_i64()) == Some(201) {
+            return Ok(CATALOG
+                .read()
+                .ok()
+                .and_then(|guard| guard.as_ref().map(HmsCatalog::len))
+                .unwrap_or(0));
+        }
+    }
+    let Some(catalog) = parse_catalog(&response.body) else {
+        return Err("The HMS table did not contain any messages.".into());
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    std::fs::write(&path, &response.body).map_err(|err| err.to_string())?;
+    let count = catalog.len();
+    install(catalog);
+    Ok(count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,6 +373,27 @@ mod tests {
         let retry = describe(0x0700_7000, 0x0002_0007);
         assert!(retry.runout);
         assert!(retry.message.contains("resume the print"));
+    }
+
+    #[test]
+    fn a_table_sentence_replaces_the_offline_one_and_an_empty_intro_does_not() {
+        let bytes = br#"{
+            "result": 0,
+            "ver": 7,
+            "data": {"device_hms": {"en": [
+                {"ecode": "0300-0100-0001-0007", "intro": "Heatbed sensor open."},
+                {"ecode": "0700200000020001", "intro": ""}
+            ]}}
+        }"#;
+        let catalog = parse_catalog(bytes).expect("table");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog.version, "7");
+        let groups = [0x0300, 0x0100, 0x0001, 0x0007];
+        assert_eq!(
+            catalog.lookup(groups).as_deref(),
+            Some("Heatbed sensor open.")
+        );
+        assert!(catalog.lookup([0x0700, 0x2000, 0x0002, 0x0001]).is_none());
     }
 
     #[test]

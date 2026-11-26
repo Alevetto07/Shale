@@ -5834,6 +5834,15 @@ pub fn run() {
                 let imported = dir.join("imported-profiles");
                 let _ = std::fs::create_dir_all(&imported);
                 std::env::set_var("SHALE_IMPORTED_PROFILES", &imported);
+                // The HMS table is Bambu's, fetched the way Studio fetches it
+                // and kept beside the app config. A failure leaves the built-in
+                // sentences in place, and this never touches the profile cache.
+                let hms_dir = dir.clone();
+                std::thread::spawn(move || {
+                    if let Err(err) = shale_host::hms::refresh(&hms_dir) {
+                        eprintln!("[shale] HMS table: {err}");
+                    }
+                });
             }
             shale_core::remove_legacy_catalog_cache();
             if let Some(window) = app.get_webview_window("main") {
