@@ -18,7 +18,8 @@
 //! file checks out. ONNX Runtime is an optional backend and is not used by
 //! these tests.
 
-use image::{Rgb, RgbImage};
+use image::codecs::jpeg::JpegEncoder;
+use image::{ExtendedColorType, ImageEncoder, Rgb, RgbImage};
 
 /// Obico's published ONNX weights, release `ml-models-2026-11-23`.
 /// The GitHub release says the file is AGPL-3.0, like the rest of obico-server.
@@ -544,6 +545,33 @@ pub fn sample_frame(kind: FailureKind) -> RgbImage {
     image
 }
 
+pub struct SensitivityPreview {
+    pub jpeg: Vec<u8>,
+    pub finding: FrameFinding,
+}
+
+/// A generated frame, judged at this sensitivity. The pixels are drawn here,
+/// not taken from a photograph, so the control can be tried with no printer.
+pub fn preview_sensitivity(sensitivity: Sensitivity) -> Result<SensitivityPreview, String> {
+    let frame = sample_frame(FailureKind::Spaghetti);
+    let previous = sample_frame(FailureKind::None);
+    let settings = WatchSettings {
+        sensitivity,
+        ..WatchSettings::default()
+    };
+    let finding = inspect(&frame, Some(&previous), &settings);
+    let mut jpeg = Vec::new();
+    JpegEncoder::new_with_quality(&mut jpeg, 80)
+        .write_image(
+            frame.as_raw(),
+            frame.width(),
+            frame.height(),
+            ExtendedColorType::Rgb8,
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(SensitivityPreview { jpeg, finding })
+}
+
 /// The sample set the harness scores. Licences: these pixels are generated
 /// by Shale, not taken from a photograph.
 pub fn sample_cases() -> Vec<EvalCase> {
@@ -589,6 +617,16 @@ mod tests {
         assert!(!debounce.push(&finding, settings.confidence));
         assert!(!debounce.push(&finding, settings.confidence));
         assert!(debounce.push(&finding, settings.confidence));
+    }
+
+    #[test]
+    fn a_test_frame_shows_what_this_sensitivity_sees() {
+        let high = preview_sensitivity(Sensitivity::High).expect("preview");
+        let low = preview_sensitivity(Sensitivity::Low).expect("preview");
+        assert!(high.jpeg.starts_with(&[0xff, 0xd8]));
+        assert!(low.jpeg.starts_with(&[0xff, 0xd8]));
+        assert_eq!(high.finding.kind, FailureKind::Spaghetti);
+        assert_eq!(high.jpeg, low.jpeg);
     }
 
     #[test]

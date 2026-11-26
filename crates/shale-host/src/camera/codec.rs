@@ -109,7 +109,7 @@ pub fn refuse_catalog_cache(path: &Path) -> Result<(), String> {
     });
     if hit {
         Err(
-            "The OpenH264 library is stored in the app data directory, not the catalogue cache."
+            "That path is the catalogue cache. Shale keeps downloads and failure frames in the app data directory."
                 .into(),
         )
     } else {
@@ -153,6 +153,47 @@ pub fn install_blob(compressed: &[u8], dest: &Path, expected_sha256: &str) -> Re
 ///
 /// `url` is whatever the caller asks for. The window passes Cisco's URL. A
 /// test passes a loopback URL, so CI does not touch Cisco.
+/// Download Cisco's binary into `root/openh264` when it is not there yet.
+///
+/// A from-source build returns nothing: the decoder does not need a file.
+/// `url` overrides Cisco's address. Tests pass a loopback URL. The call with
+/// no override is what MCP uses, and the library's own tests cannot reach it.
+pub fn prepare_library(root: &Path) -> Result<Option<PathBuf>, String> {
+    #[cfg(test)]
+    {
+        let _ = root;
+        Err("Tests do not download Cisco's OpenH264 binary.".into())
+    }
+    #[cfg(not(test))]
+    {
+        let override_url = std::env::var("SHALE_OPENH264_URL").ok();
+        prepare_library_from(root, override_url.as_deref(), |_, _| {})
+    }
+}
+
+pub fn prepare_library_from(
+    root: &Path,
+    url: Option<&str>,
+    mut progress: impl FnMut(u64, Option<u64>),
+) -> Result<Option<PathBuf>, String> {
+    refuse_catalog_cache(root)?;
+    if codec_from_source() {
+        return Ok(None);
+    }
+    let dir = root.join("openh264");
+    if let Some(path) = installed_library(&dir) {
+        return Ok(Some(path));
+    }
+    let asset = asset_for_host()?;
+    let dest = dir.join(asset.file_name);
+    let official = download_url(&asset);
+    let fetch_url = url.unwrap_or(official.as_str());
+    fetch(fetch_url, &dest, asset.sha256, &mut progress)?;
+    installed_library(&dir).map(Some).ok_or_else(|| {
+        "Cisco's OpenH264 library did not match the checksum after it was unpacked.".into()
+    })
+}
+
 pub fn fetch(
     url: &str,
     dest: &Path,
@@ -279,6 +320,60 @@ mod tests {
         assert_eq!(fs::read(&dest).unwrap(), plain);
         let _ = fs::remove_dir_all(&dir);
         let _ = body;
+    }
+
+    #[test]
+    fn prepare_refuses_the_catalogue_cache_without_connecting() {
+        let root = std::env::temp_dir().join("catalog-cache");
+        let err = prepare_library_from(&root, Some("http://127.0.0.1:1/nope"), |_, _| {}).unwrap_err();
+        assert!(err.contains("catalogue cache"), "{err}");
+    }
+
+    #[test]
+    fn the_default_prepare_does_not_download_cisco() {
+        let root = std::env::temp_dir().join(format!("shale-no-cisco-{}", std::process::id()));
+        let err = prepare_library(&root).unwrap_err();
+        assert!(err.contains("do not download"), "{err}");
+        assert!(!root.join("openh264").exists());
+    }
+
+    #[test]
+    fn prepare_uses_the_supplied_url_and_discards_a_bad_checksum() {
+        let plain = b"not-the-cisco-library";
+        let body = compress(plain);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let payload = body.clone();
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut header = Vec::new();
+            let mut byte = [0u8; 1];
+            while stream.read(&mut byte).ok() == Some(1) {
+                header.push(byte[0]);
+                if header.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                payload.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(&payload);
+        });
+        let root = std::env::temp_dir().join(format!("shale-prepare-{port}"));
+        let url = format!("http://127.0.0.1:{port}/lib.bz2");
+        assert!(!url.contains("ciscobinary"));
+        assert!(!url.contains("openh264.org"));
+        let err = prepare_library_from(&root, Some(&url), |received, total| {
+            let _ = (received, total);
+        })
+        .unwrap_err();
+        assert!(err.contains("checksum") || err.contains("did not match"), "{err}");
+        assert!(installed_library(&root.join("openh264")).is_none());
+        let _ = fs::remove_dir_all(&root);
     }
 
     fn compress(plain: &[u8]) -> Vec<u8> {

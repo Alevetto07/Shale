@@ -22,6 +22,7 @@
 mod cloud;
 mod codec;
 mod detect;
+mod frames;
 mod h264;
 mod jpeg;
 mod obico;
@@ -129,9 +130,13 @@ pub use plate::{decode_jpeg, plates_match, PlateVerdict};
 pub use codec::{
     asset_for_host as codec_asset, download_url as codec_download_url, fetch as fetch_codec,
     installed_library, is_verified as codec_is_verified, library_path as codec_library_path,
-    CREDIT as OPENH264_CREDIT,
+    prepare_library, CREDIT as OPENH264_CREDIT,
 };
 pub use codec::codec_from_source;
+pub use detect::preview_sensitivity;
+pub use frames::{
+    data_root, list_warnings, save_warning, StoredWarning, MAX_FRAMES_EACH, MAX_WARNINGS,
+};
 pub use h264::nal_payloads;
 pub use timelapse::{save as save_timelapse, TimelapseSaved};
 pub use obico::score as score_obico;

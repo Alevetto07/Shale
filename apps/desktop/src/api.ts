@@ -416,6 +416,8 @@ export interface CodecStatus {
   phase: string;
   ready: boolean;
   fromSource: boolean;
+  received: number;
+  total: number;
   credit: string;
   message: string;
 }
@@ -425,6 +427,19 @@ export interface TimelapseSaved {
   directory: string;
   preview: string;
   video: string | null;
+  note: string;
+}
+
+export interface FailureWarning {
+  id: string;
+  note: string;
+  frames: string[];
+}
+
+export interface SensitivityPreview {
+  jpeg: string;
+  kind: string;
+  confidence: number;
   note: string;
 }
 
@@ -465,6 +480,11 @@ export const cameraTimelapseSave = (args: {
   frames: string[];
   intervalMs: number;
 }) => invoke<TimelapseSaved>("camera_timelapse_save", args);
+export const cameraFailureSave = (args: { note: string; frames: string[] }) =>
+  invoke<FailureWarning[]>("camera_failure_save", args);
+export const cameraFailureHistory = () => invoke<FailureWarning[]>("camera_failure_history");
+export const cameraSensitivityPreview = (sensitivity: string) =>
+  invoke<SensitivityPreview>("camera_sensitivity_preview", { sensitivity });
 export const cameraCloudStill = (devId: string) =>
   invoke<string>("camera_cloud_still", { devId });
 export const cameraSaveReference = (serial: string) =>

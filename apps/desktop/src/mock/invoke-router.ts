@@ -41,6 +41,8 @@ function cameraFault(): boolean {
   return cameraQuery("camera") === "fault";
 }
 
+const failureHistory: { id: string; note: string; frames: string[] }[] = [];
+
 const flags = readMockFlags();
 const models = flags.models ? [mockModel(1)] : [];
 let cloudSession = mockCloud(flags.cloudSignedIn);
@@ -268,20 +270,29 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
         detector: "builtin",
       } as T;
     case "camera_codec_status":
-      return {
-        phase: "missing",
-        ready: false,
-        fromSource: false,
-        credit: "OpenH264 Video Codec provided by Cisco Systems, Inc.",
-        message: "Cisco's OpenH264 library is not installed yet. Shale downloads it on first use.",
-      } as T;
     case "camera_codec_download":
+      if (cameraQuery("download") === "bytes") {
+        return {
+          phase: "downloading",
+          ready: false,
+          fromSource: false,
+          received: 200_000,
+          total: 634_264,
+          credit: "OpenH264 Video Codec provided by Cisco Systems, Inc.",
+          message: "Downloading OpenH264 from Cisco.",
+        } as T;
+      }
       return {
         phase: "missing",
         ready: false,
         fromSource: false,
+        received: 0,
+        total: 0,
         credit: "OpenH264 Video Codec provided by Cisco Systems, Inc.",
-        message: "This preview does not download Cisco's library.",
+        message:
+          cmd === "camera_codec_download"
+            ? "This preview does not download Cisco's library."
+            : "Cisco's OpenH264 library is not installed yet. Shale downloads it on first use.",
       } as T;
     case "camera_timelapse_save":
       return {
@@ -293,12 +304,50 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown>):
       } as T;
     case "camera_model_status":
     case "camera_model_download":
+      if (cameraQuery("model") === "progress") {
+        return {
+          phase: "downloading",
+          ready: false,
+          received: 50_331_648,
+          total: 202_223_918,
+          message: "Downloading the failure model.",
+        } as T;
+      }
       return {
         phase: "missing",
         ready: false,
         received: 0,
         total: 202223918,
         message: "The failure model is not downloaded. The built-in detector is in use.",
+      } as T;
+    case "camera_failure_history":
+      if (failureHistory.length === 0 && cameraQuery("camera") === "history") {
+        const jpeg = await chamberBase64();
+        failureHistory.push({
+          id: "earlier",
+          note: "Stringy strands on the part. The last frame is attached.",
+          frames: [jpeg],
+        });
+      }
+      return failureHistory as T;
+    case "camera_failure_save": {
+      const frames = Array.isArray(args.frames) ? args.frames.map(String) : [];
+      failureHistory.unshift({
+        id: `saved-${failureHistory.length + 1}`,
+        note: String(args.note ?? ""),
+        frames,
+      });
+      return failureHistory.slice(0, 8) as T;
+    }
+    case "camera_sensitivity_preview":
+      return {
+        jpeg: await chamberBase64(),
+        kind: String(args.sensitivity) === "low" ? "none" : "spaghetti",
+        confidence: String(args.sensitivity) === "low" ? 0.2 : 0.82,
+        note:
+          String(args.sensitivity) === "low"
+            ? "The test frame looks clear at this sensitivity."
+            : "Stringy strands on the test frame. This may be spaghetti.",
       } as T;
     case "camera_cloud_still":
       throw new Error(

@@ -289,7 +289,10 @@ fn model_progress() -> &'static Mutex<ModelProgress> {
 }
 
 fn codec_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    Ok(config_dir(app)?.join("openh264"))
+    // `SHALE_CACHE_DIR` wins, so a test never writes the real app data folder.
+    // The desktop app leaves that unset and lands in the same config directory.
+    let _ = app;
+    Ok(camera::data_root().join("openh264"))
 }
 
 fn codec_library(app: &AppHandle) -> Option<std::path::PathBuf> {
@@ -401,18 +404,24 @@ pub struct CodecStatus {
     pub phase: String,
     pub ready: bool,
     pub from_source: bool,
+    pub received: u64,
+    pub total: u64,
     pub credit: String,
     pub message: String,
 }
 
 struct CodecProgress {
     phase: String,
+    received: u64,
+    total: u64,
     message: String,
 }
 
 fn codec_progress() -> &'static Mutex<CodecProgress> {
     static PROGRESS: Mutex<CodecProgress> = Mutex::new(CodecProgress {
         phase: String::new(),
+        received: 0,
+        total: 0,
         message: String::new(),
     });
     &PROGRESS
@@ -425,6 +434,8 @@ fn codec_status_of(app: &AppHandle) -> Result<CodecStatus, String> {
             phase: "ready".into(),
             ready: true,
             from_source: true,
+            received: 0,
+            total: 0,
             credit,
             message: "This build compiles OpenH264 from source. Cisco's patent promise does not cover that build.".into(),
         });
@@ -433,10 +444,13 @@ fn codec_status_of(app: &AppHandle) -> Result<CodecStatus, String> {
     let path = camera::codec_library_path(&dir)?;
     let asset = camera::codec_asset()?;
     if camera::codec_is_verified(&path, asset.sha256) {
+        let (received, total) = codec_counts();
         return Ok(CodecStatus {
             phase: "ready".into(),
             ready: true,
             from_source: false,
+            received,
+            total,
             credit,
             message: "Cisco's OpenH264 library is ready.".into(),
         });
@@ -458,9 +472,18 @@ fn codec_status_of(app: &AppHandle) -> Result<CodecStatus, String> {
         phase: phase.into(),
         ready: false,
         from_source: false,
+        received: progress.received,
+        total: progress.total,
         credit,
         message: message.into(),
     })
+}
+
+fn codec_counts() -> (u64, u64) {
+    codec_progress()
+        .lock()
+        .map(|progress| (progress.received, progress.total))
+        .unwrap_or((0, 0))
 }
 
 #[tauri::command]
@@ -496,12 +519,21 @@ pub fn camera_codec_download(app: AppHandle) -> Result<CodecStatus, String> {
             .lock()
             .map_err(|_| "the codec lock is poisoned".to_string())?;
         progress.phase = "downloading".into();
+        progress.received = 0;
+        progress.total = 0;
         progress.message = "Downloading OpenH264 from Cisco.".into();
     }
     let url = camera::codec_download_url(&asset);
     let sha = asset.sha256.to_string();
     thread::spawn(move || {
-        let result = camera::fetch_codec(&url, &dest, &sha, |_, _| {});
+        let result = camera::fetch_codec(&url, &dest, &sha, |received, total| {
+            if let Ok(mut progress) = codec_progress().lock() {
+                progress.received = received;
+                if let Some(total) = total {
+                    progress.total = total;
+                }
+            }
+        });
         if let Ok(mut progress) = codec_progress().lock() {
             match result {
                 Ok(()) => {
@@ -567,6 +599,70 @@ pub fn camera_timelapse_save(
         preview: saved.preview.display().to_string(),
         video: saved.video.map(|path| path.display().to_string()),
         note: saved.note,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailureWarning {
+    pub id: String,
+    pub note: String,
+    pub frames: Vec<String>,
+}
+
+fn warning_views() -> Result<Vec<FailureWarning>, String> {
+    Ok(camera::list_warnings(&camera::data_root())?
+        .into_iter()
+        .map(|item| FailureWarning {
+            id: item.id,
+            note: item.note,
+            frames: item.frames.iter().map(|jpeg| camera::base64(jpeg)).collect(),
+        })
+        .collect())
+}
+
+/// Keep the frames from just before a warning. The folder is the app data
+/// directory, or `SHALE_CACHE_DIR` when that is set. Older warnings are pruned.
+#[tauri::command]
+pub fn camera_failure_save(note: String, frames: Vec<String>) -> Result<Vec<FailureWarning>, String> {
+    if frames.is_empty() {
+        return Err("There is no JPEG to keep with this warning.".into());
+    }
+    let mut jpegs = Vec::with_capacity(frames.len());
+    for frame in &frames {
+        let raw = frame
+            .split_once(',')
+            .map(|(_, body)| body)
+            .unwrap_or(frame.as_str());
+        jpegs.push(camera::base64_decode(raw)?);
+    }
+    camera::save_warning(&camera::data_root(), &note, &jpegs)?;
+    warning_views()
+}
+
+#[tauri::command]
+pub fn camera_failure_history() -> Result<Vec<FailureWarning>, String> {
+    warning_views()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SensitivityPreviewView {
+    pub jpeg: String,
+    pub kind: String,
+    pub confidence: f64,
+    pub note: String,
+}
+
+/// Judge a generated test frame at the chosen sensitivity. No printer is used.
+#[tauri::command]
+pub fn camera_sensitivity_preview(sensitivity: String) -> Result<SensitivityPreviewView, String> {
+    let preview = camera::preview_sensitivity(camera::Sensitivity::parse(&sensitivity))?;
+    Ok(SensitivityPreviewView {
+        jpeg: camera::base64(&preview.jpeg),
+        kind: preview.finding.kind.as_str().into(),
+        confidence: preview.finding.confidence,
+        note: preview.finding.note,
     })
 }
 

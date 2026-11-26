@@ -1260,20 +1260,34 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Read the printer camera once and return one JPEG. The A1 and P1 series use JPEG on port 6000. The P2S uses RTSPS on port 322 and this build cannot decode H.264, so a P2S still is returned only when the stream carries a JPEG. Does not move the printer. Example: {\"host\":\"192.168.1.42\",\"model\":\"bambu_lab_a1\",\"code\":\"12345678\"}."
+        description = "Read the printer camera once and return one JPEG. The A1 and P1 series use JPEG on port 6000. The P2S uses RTSPS on port 322. When Cisco's OpenH264 library is missing, this downloads the official binary, checks its SHA-256, and includes the credit. Does not move the printer. Example: {\"host\":\"192.168.1.42\",\"model\":\"bambu_lab_a1\",\"code\":\"12345678\"}."
     )]
     fn get_camera_snapshot(
         &self,
         Parameters(args): Parameters<CameraArgs>,
     ) -> Result<CallToolResult, McpError> {
         let target = shale_host::camera::CameraTarget::new(args.host, &args.model, args.code);
-        let jpeg = shale_host::camera::snapshot_jpeg(&target, Duration::from_secs(8))
-            .map_err(|err| fail(err.message()))?;
-        let note = format!(
+        let library = if target.path == shale_host::camera::CameraPath::Rtsps {
+            shale_host::camera::prepare_library(&shale_host::camera::data_root())
+                .map_err(fail)?
+        } else {
+            None
+        };
+        let jpeg = shale_host::camera::snapshot_jpeg_with(
+            &target,
+            Duration::from_secs(8),
+            library.as_deref(),
+        )
+        .map_err(|err| fail(err.message()))?;
+        let mut note = format!(
             "{} camera, port {}. One JPEG.",
             target.path.as_str(),
             target.port
         );
+        if library.is_some() {
+            note.push(' ');
+            note.push_str(shale_host::camera::OPENH264_CREDIT);
+        }
         Ok(CallToolResult::success(vec![
             ContentBlock::text(note),
             ContentBlock::image(shale_host::camera::base64(&jpeg), "image/jpeg"),
@@ -1281,7 +1295,7 @@ impl ShaleMcp {
     }
 
     #[tool(
-        description = "Say whether the printer camera can be reached, and the fault if it cannot: wrong access code, LAN-only live view off, or the camera switched off. Does not move the printer and does not return the picture."
+        description = "Say whether the printer camera can be reached, and the fault if it cannot: wrong access code, LAN-only live view off, or the camera switched off. Uses Cisco's OpenH264 library when it is already installed, and does not download it. Does not move the printer and does not return the picture."
     )]
     fn camera_status(
         &self,
@@ -1290,7 +1304,13 @@ impl ShaleMcp {
         let target = shale_host::camera::CameraTarget::new(args.host, &args.model, args.code);
         let path = target.path.as_str();
         let port = target.port;
-        match shale_host::camera::snapshot_jpeg(&target, Duration::from_secs(8)) {
+        let library =
+            shale_host::camera::installed_library(&shale_host::camera::data_root().join("openh264"));
+        match shale_host::camera::snapshot_jpeg_with(
+            &target,
+            Duration::from_secs(8),
+            library.as_deref(),
+        ) {
             Ok(jpeg) => ok_json(json!({
                 "path": path,
                 "port": port,

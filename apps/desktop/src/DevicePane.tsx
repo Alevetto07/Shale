@@ -92,7 +92,7 @@ export function DevicePane({
   /// What the run is allowed to do. The rules are in `shale_core::queue` and
   /// the gate is in Rust; this is only what the pane was told last.
   const [queueRun, setQueueRun] = useState("idle");
-  const [failureFrames, setFailureFrames] = useState<string[]>([]);
+  const [warnings, setWarnings] = useState<api.FailureWarning[]>([]);
   const [ejectMode, setEjectMode] = useState<"off" | "in_file" | "after_print">("off");
   const [ejectAsk, setEjectAsk] = useState<"in_file" | "after_print" | null>(null);
   const [coolC, setCoolC] = useState(28);
@@ -106,6 +106,18 @@ export function DevicePane({
   useEffect(() => {
     localStorage.setItem("shale.device.host", host);
   }, [host]);
+  useEffect(() => {
+    let live = true;
+    void api
+      .cameraFailureHistory()
+      .then((stored) => {
+        if (live) setWarnings(stored);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
   useEffect(() => {
     localStorage.setItem("shale.device.serial", serial);
   }, [serial]);
@@ -373,7 +385,11 @@ export function DevicePane({
   }, []);
   const notifyFailure = useCallback((message: string, frames?: string[]) => {
     setNote(message);
-    if (frames && frames.length > 0) setFailureFrames(frames);
+    if (!frames || frames.length === 0) return;
+    void api
+      .cameraFailureSave({ note: message, frames })
+      .then(setWarnings)
+      .catch((err: unknown) => setNote(String(err)));
   }, []);
 
   function chooseEject(next: "off" | "in_file" | "after_print") {
@@ -783,14 +799,23 @@ export function DevicePane({
             ))}
           </ol>
         )}
-        {failureFrames.length > 0 ? (
+        {warnings.length > 0 ? (
           <div className="camera-snaps">
-            <p className="device-note">Frames from just before this warning.</p>
-            <div className="camera-snap-row" aria-label="Frames from just before this warning">
-              {failureFrames.map((src, index) => (
-                <img key={index} src={src} alt={`Frame ${index + 1} from just before the warning`} />
-              ))}
-            </div>
+            <p className="device-note">Warning history</p>
+            {warnings.map((warning) => (
+              <div key={warning.id}>
+                <p className="device-note">{warning.note}</p>
+                <div className="camera-snap-row" aria-label="Frames from just before this warning">
+                  {warning.frames.map((frame, index) => (
+                    <img
+                      key={`${warning.id}-${index}`}
+                      src={frame.startsWith("data:") ? frame : `data:image/jpeg;base64,${frame}`}
+                      alt={`Frame ${index + 1} from just before the warning`}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         ) : null}
 

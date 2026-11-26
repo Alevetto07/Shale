@@ -369,13 +369,13 @@ Use this for one JPEG from the chamber.
 { "host": "192.168.1.42", "model": "bambu_lab_a1", "code": "12345678" }
 ```
 
-`model` chooses the protocol. `bambu_lab_a1` and the P1 series are JPEG over TLS on port 6000. `bambu_lab_p2s` (and X1, H2) is RTSPS on port 322. An H.264 stream is decoded with Cisco's OpenH264 binary, when that library has already been downloaded by the app, and returned as a JPEG. This tool does not download the library. A frame that does not decode returns an error that says so, rather than a made-up picture. The access code is not repeated in the answer. The result is an image, plus a short line naming the path and the port.
+`model` chooses the protocol. `bambu_lab_a1` and the P1 series are JPEG over TLS on port 6000. `bambu_lab_p2s` (and X1, H2) is RTSPS on port 322. An H.264 stream is decoded with Cisco's OpenH264 binary and returned as a JPEG. When that library is missing, this tool downloads the official binary, checks the SHA-256, and stores it under the app data directory (`SHALE_CACHE_DIR` when that is set). The text note includes "OpenH264 Video Codec provided by Cisco Systems, Inc." A frame that does not decode returns an error that says so, rather than a made-up picture. The access code is not repeated in the answer. The result is an image, plus a short line naming the path and the port.
 
 A wrong access code, LAN-only live view switched off, or a camera switched off on the printer, each come back as an error that says which one it is.
 
 ### `camera_status`
 
-Use this to ask whether that camera can be reached, without returning the picture. The same arguments as `get_camera_snapshot`. The answer has `path`, `port`, `reachable`, `jpeg`, `faultCode`, and `fault`. `faultCode` is one of `wrong_access_code`, `lan_live_view_off`, `camera_disabled`, `unreachable`, `cloud_unavailable`, `protocol`, or null.
+Use this to ask whether that camera can be reached, without returning the picture. The same arguments as `get_camera_snapshot`. If Cisco's library is already installed it is used to decode an H.264 frame; this tool does not download it. The answer has `path`, `port`, `reachable`, `jpeg`, `faultCode`, and `fault`. `faultCode` is one of `wrong_access_code`, `lan_live_view_off`, `camera_disabled`, `unreachable`, `cloud_unavailable`, `protocol`, or null.
 
 ### `get_failure_status`
 

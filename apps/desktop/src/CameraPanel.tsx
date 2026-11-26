@@ -39,8 +39,10 @@ function dataUrl(jpeg: string): string {
   return `data:image/jpeg;base64,${jpeg}`;
 }
 
-function megabytes(bytes: number): string {
-  return `${Math.max(0, Math.round(bytes / 1_048_576))} MB`;
+function byteLine(received: number, total: number): string {
+  const count = (bytes: number) => Math.max(0, Math.round(bytes)).toLocaleString("en-GB");
+  if (total > 0) return `${count(received)} of ${count(total)} bytes`;
+  return `${count(received)} bytes`;
 }
 
 /**
@@ -74,6 +76,7 @@ export function CameraPanel({
   const [sampleSeconds, setSampleSeconds] = useState("5");
   const [debounceFrames, setDebounceFrames] = useState("3");
   const [finding, setFinding] = useState<api.WatchView | null>(null);
+  const [sample, setSample] = useState<api.SensitivityPreview | null>(null);
   const [codec, setCodec] = useState<api.CodecStatus | null>(null);
   const [recording, setRecording] = useState(false);
   const [folder, setFolder] = useState<string | null>(null);
@@ -94,6 +97,20 @@ export function CameraPanel({
   useEffect(() => {
     setPauseOptIn(localStorage.getItem(pauseKey) === "1");
   }, [pauseKey]);
+
+  useEffect(() => {
+    if (!watchOn) return;
+    let live = true;
+    void api
+      .cameraSensitivityPreview(sensitivity)
+      .then((view) => {
+        if (live) setSample(view);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [watchOn, sensitivity]);
 
   useEffect(() => {
     if (!running) return;
@@ -154,7 +171,11 @@ export function CameraPanel({
           const frames = recent.current.slice();
           const attached =
             frames.length > 0
-              ? `${view.note} The last ${frames.length} frames are attached.`
+              ? `${view.note} ${
+                  frames.length === 1
+                    ? "The last frame is attached."
+                    : `The last ${frames.length} frames are attached.`
+                }`
               : view.note;
           if (view.action === "pause" && !pausedFor.current) {
             pausedFor.current = true;
@@ -435,7 +456,7 @@ export function CameraPanel({
         <>
           <p className="device-note">{codec.message}</p>
           {codec.phase === "downloading" ? (
-            <p className="device-note">Downloading OpenH264 from Cisco.</p>
+            <p className="device-note">{byteLine(codec.received, codec.total)}</p>
           ) : (
             <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={() => void downloadCodec()}>
               Download OpenH264
@@ -544,9 +565,7 @@ export function CameraPanel({
             <>
               <p className="device-note">{model.message}</p>
               {model.phase === "downloading" ? (
-                <p className="device-note">
-                  {megabytes(model.received)} of {megabytes(model.total)}
-                </p>
+                <p className="device-note">{byteLine(model.received, model.total)}</p>
               ) : (
                 <Button type="button" variant="secondary" size="sm" onClick={() => void api.cameraModelDownload()}>
                   Download the Obico failure model
@@ -568,6 +587,17 @@ export function CameraPanel({
             ]}
             onChange={setSensitivity}
           />
+          {sample ? (
+            <div className="camera-snaps">
+              <p className="device-note">
+                Test frame at this sensitivity. {sample.note} Confidence{" "}
+                {Math.round(sample.confidence * 100)}%.
+              </p>
+              <div className="camera-snap-row" aria-label="Test frame for this sensitivity">
+                <img src={dataUrl(sample.jpeg)} alt="A generated test frame at this sensitivity" />
+              </div>
+            </div>
+          ) : null}
           <Slider
             label="Confidence"
             value={[Math.round(confidence * 100)]}
